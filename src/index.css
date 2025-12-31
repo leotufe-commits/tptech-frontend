@@ -1,0 +1,64 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html, body, #root {
+  height: 100%;
+  margin: 0;
+  background: #fff;
+}
+
+/* Input estilo TPTech */
+.tp-input {
+  width: 100%;
+  border-radius: 0.75rem; /* rounded-xl */
+  border: 1px solid rgb(229 231 235); /* gray-200 */
+  padding: 0.75rem 1rem; /* px-4 py-3 */
+  outline: none;
+  transition: box-shadow 180ms ease, border-color 180ms ease;
+  background: #fff;
+}
+
+.tp-input:focus {
+  border-color: rgba(243, 106, 33, 0.55);
+  box-shadow:
+    0 0 0 3px rgba(243, 106, 33, 0.12),
+    0 10px 22px rgba(243, 106, 33, 0.10);
+}
+
+/* Hover suave */
+.tp-input:hover {
+  border-color: rgba(243, 106, 33, 0.35);
+  box-shadow: 0 6px 18px rgba(243, 106, 33, 0.06);
+}
+
+
+/* ================================
+   Scrollbar TPTech (naranja suave)
+   ================================ */
+
+/* Chrome / Edge / Safari */
+.tp-scroll::-webkit-scrollbar {
+  width: 10px;
+}
+
+.tp-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.tp-scroll::-webkit-scrollbar-thumb {
+  background: rgba(243, 106, 33, 0.25); /* naranja claro, tipo sombra */
+  border-radius: 999px;
+  border: 3px solid transparent;
+  background-clip: content-box;
+}
+
+.tp-scroll::-webkit-scrollbar-thumb:hover {
+  background: rgba(243, 106, 33, 0.38);
+}
+
+/* Firefox */
+.tp-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(243, 106, 33, 0.35) transparent;
+}
