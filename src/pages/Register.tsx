@@ -158,10 +158,7 @@ export default function Register() {
         body: JSON.stringify(payload),
       });
 
-      // Guardar token (igual que login)
       localStorage.setItem("tptech_token", data.token);
-
-      // opcional: guardar user/jewelry si querés
       localStorage.setItem("tptech_user", JSON.stringify(data.user));
       if (data.jewelry) localStorage.setItem("tptech_jewelry", JSON.stringify(data.jewelry));
 
@@ -174,46 +171,69 @@ export default function Register() {
   }
 
   return (
-    <div className="min-h-screen bg-white flex items-center justify-center px-4 py-10">
-      <div className="w-full max-w-2xl rounded-2xl bg-white shadow-[0_20px_60px_rgba(0,0,0,0.10)]">
+    <div
+      className="min-h-screen flex items-center justify-center px-4 py-10"
+      style={{ background: "var(--surface)", color: "var(--text)" }}
+    >
+      <div
+        className="w-full max-w-2xl rounded-2xl"
+        style={{
+          background: "var(--card)",
+          border: "1px solid var(--border)",
+          boxShadow: "var(--shadow)",
+        }}
+      >
         <div className="max-h-[calc(100vh-5rem)] overflow-y-auto p-8 tp-scroll">
           <div className="flex items-start justify-between gap-4">
             <div>
-              <p className="text-xs font-semibold tracking-wide text-[#F36A21]">TPTech</p>
-              <h1 className="mt-2 text-3xl font-semibold text-[#1F1F1F]">Crear cuenta</h1>
-              <p className="mt-1 text-sm text-gray-500">
+              <p className="text-xs font-semibold tracking-wide" style={{ color: "var(--primary)" }}>
+                TPTech
+              </p>
+              <h1 className="mt-2 text-3xl font-semibold text-text">Crear cuenta</h1>
+              <p className="mt-1 text-sm text-[color:var(--muted)]">
                 Completá tus datos para registrar tu joyería.
               </p>
             </div>
 
-            <Link to="/login" className="text-sm text-[#F36A21] hover:underline">
+            <Link to="/login" className="text-sm hover:underline" style={{ color: "var(--primary)" }}>
               Volver a iniciar sesión
             </Link>
           </div>
 
           {error && (
-            <div className="mt-6 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+            <div
+              className="mt-6 rounded-xl px-4 py-3 text-sm"
+              style={{
+                border: "1px solid rgba(239,68,68,0.35)",
+                background: "rgba(239,68,68,0.12)",
+                color: "color-mix(in oklab, var(--text) 85%, #ef4444)",
+              }}
+            >
               {error}
             </div>
           )}
 
           <form onSubmit={onSubmit} className="mt-8 space-y-8">
             <section>
-              <h2 className="text-sm font-semibold text-gray-800">Datos de la joyería</h2>
+              <h2 className="text-sm font-semibold text-text">Datos de la joyería</h2>
 
               <div className="mt-4 grid grid-cols-1 gap-4">
                 <div>
-                  <label className="block text-sm text-gray-600 mb-2">Nombre de joyería</label>
+                  <label className="block text-sm mb-2" style={{ color: "var(--muted)" }}>
+                    Nombre de joyería
+                  </label>
                   <input
                     value={form.jewelryName}
                     onChange={(e) => update("jewelryName", e.target.value)}
-                    placeholder="Ej: Joyería Tupor"
+                    placeholder="Ej: Joyería Tuport"
                     className="tp-input"
                   />
                 </div>
 
                 <div>
-                  <label className="block text-sm text-gray-600 mb-2">Email</label>
+                  <label className="block text-sm mb-2" style={{ color: "var(--muted)" }}>
+                    Email
+                  </label>
                   <div className="relative">
                     <input
                       type="email"
@@ -227,8 +247,10 @@ export default function Register() {
                       <button
                         type="button"
                         onClick={() => update("email", "")}
-                        className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 transition"
+                        className="absolute right-3 top-1/2 -translate-y-1/2 transition"
+                        style={{ color: "var(--muted)" }}
                         aria-label="Limpiar email"
+                        title="Limpiar"
                       >
                         <XIcon />
                       </button>
@@ -239,11 +261,13 @@ export default function Register() {
             </section>
 
             <section>
-              <h2 className="text-sm font-semibold text-gray-800">Datos del responsable</h2>
+              <h2 className="text-sm font-semibold text-text">Datos del responsable</h2>
 
               <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-sm text-gray-600 mb-2">Nombre</label>
+                  <label className="block text-sm mb-2" style={{ color: "var(--muted)" }}>
+                    Nombre
+                  </label>
                   <input
                     value={form.firstName}
                     onChange={(e) => update("firstName", e.target.value)}
@@ -253,7 +277,9 @@ export default function Register() {
                 </div>
 
                 <div>
-                  <label className="block text-sm text-gray-600 mb-2">Apellido</label>
+                  <label className="block text-sm mb-2" style={{ color: "var(--muted)" }}>
+                    Apellido
+                  </label>
                   <input
                     value={form.lastName}
                     onChange={(e) => update("lastName", e.target.value)}
@@ -263,7 +289,9 @@ export default function Register() {
                 </div>
 
                 <div className="md:col-span-2">
-                  <label className="block text-sm text-gray-600 mb-2">Teléfono</label>
+                  <label className="block text-sm mb-2" style={{ color: "var(--muted)" }}>
+                    Teléfono
+                  </label>
 
                   <div className="flex gap-3">
                     <input
@@ -284,11 +312,13 @@ export default function Register() {
             </section>
 
             <section>
-              <h2 className="text-sm font-semibold text-gray-800">Dirección</h2>
+              <h2 className="text-sm font-semibold text-text">Dirección</h2>
 
               <div className="mt-4 grid grid-cols-1 md:grid-cols-3 gap-4">
                 <div className="md:col-span-2">
-                  <label className="block text-sm text-gray-600 mb-2">Domicilio (calle)</label>
+                  <label className="block text-sm mb-2" style={{ color: "var(--muted)" }}>
+                    Domicilio (calle)
+                  </label>
                   <input
                     value={form.street}
                     onChange={(e) => update("street", e.target.value)}
@@ -298,7 +328,9 @@ export default function Register() {
                 </div>
 
                 <div>
-                  <label className="block text-sm text-gray-600 mb-2">Número</label>
+                  <label className="block text-sm mb-2" style={{ color: "var(--muted)" }}>
+                    Número
+                  </label>
                   <input
                     value={form.number}
                     onChange={(e) => update("number", e.target.value)}
@@ -308,7 +340,9 @@ export default function Register() {
                 </div>
 
                 <div>
-                  <label className="block text-sm text-gray-600 mb-2">Ciudad</label>
+                  <label className="block text-sm mb-2" style={{ color: "var(--muted)" }}>
+                    Ciudad
+                  </label>
                   <input
                     value={form.city}
                     onChange={(e) => update("city", e.target.value)}
@@ -318,7 +352,9 @@ export default function Register() {
                 </div>
 
                 <div>
-                  <label className="block text-sm text-gray-600 mb-2">Provincia</label>
+                  <label className="block text-sm mb-2" style={{ color: "var(--muted)" }}>
+                    Provincia
+                  </label>
                   <input
                     value={form.province}
                     onChange={(e) => update("province", e.target.value)}
@@ -328,7 +364,9 @@ export default function Register() {
                 </div>
 
                 <div>
-                  <label className="block text-sm text-gray-600 mb-2">Código Postal</label>
+                  <label className="block text-sm mb-2" style={{ color: "var(--muted)" }}>
+                    Código Postal
+                  </label>
                   <input
                     value={form.postalCode}
                     onChange={(e) => update("postalCode", e.target.value)}
@@ -338,7 +376,9 @@ export default function Register() {
                 </div>
 
                 <div className="md:col-span-3">
-                  <label className="block text-sm text-gray-600 mb-2">País</label>
+                  <label className="block text-sm mb-2" style={{ color: "var(--muted)" }}>
+                    País
+                  </label>
                   <input
                     value={form.country}
                     onChange={(e) => update("country", e.target.value)}
@@ -350,11 +390,13 @@ export default function Register() {
             </section>
 
             <section>
-              <h2 className="text-sm font-semibold text-gray-800">Seguridad</h2>
+              <h2 className="text-sm font-semibold text-text">Seguridad</h2>
 
               <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-sm text-gray-600 mb-2">Contraseña</label>
+                  <label className="block text-sm mb-2" style={{ color: "var(--muted)" }}>
+                    Contraseña
+                  </label>
 
                   <div className="relative">
                     <input
@@ -367,8 +409,10 @@ export default function Register() {
                     <button
                       type="button"
                       onClick={() => setShowPass((s) => !s)}
-                      className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 hover:text-[#F36A21] transition"
+                      className="absolute right-3 top-1/2 -translate-y-1/2 transition"
+                      style={{ color: "var(--muted)" }}
                       aria-label={showPass ? "Ocultar contraseña" : "Ver contraseña"}
+                      title={showPass ? "Ocultar" : "Ver"}
                     >
                       <EyeIcon open={showPass} />
                     </button>
@@ -376,7 +420,9 @@ export default function Register() {
                 </div>
 
                 <div>
-                  <label className="block text-sm text-gray-600 mb-2">Repetir contraseña</label>
+                  <label className="block text-sm mb-2" style={{ color: "var(--muted)" }}>
+                    Repetir contraseña
+                  </label>
 
                   <div className="relative">
                     <input
@@ -389,8 +435,10 @@ export default function Register() {
                     <button
                       type="button"
                       onClick={() => setShowPass2((s) => !s)}
-                      className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 hover:text-[#F36A21] transition"
+                      className="absolute right-3 top-1/2 -translate-y-1/2 transition"
+                      style={{ color: "var(--muted)" }}
                       aria-label={showPass2 ? "Ocultar contraseña" : "Ver contraseña"}
+                      title={showPass2 ? "Ocultar" : "Ver"}
                     >
                       <EyeIcon open={showPass2} />
                     </button>
@@ -399,17 +447,13 @@ export default function Register() {
               </div>
             </section>
 
-            <button
-              type="submit"
-              disabled={!canSubmit}
-              className="w-full rounded-xl bg-[#F36A21] py-3 font-semibold text-white hover:opacity-90 transition disabled:opacity-50 disabled:cursor-not-allowed"
-            >
+            <button type="submit" disabled={!canSubmit} className="tp-btn-primary w-full">
               {loading ? "Registrando..." : "Registrarme"}
             </button>
 
-            <p className="text-center text-sm text-gray-600">
+            <p className="text-center text-sm" style={{ color: "var(--muted)" }}>
               ¿Ya tenés cuenta?{" "}
-              <Link to="/login" className="text-[#F36A21] hover:underline">
+              <Link to="/login" className="hover:underline" style={{ color: "var(--primary)" }}>
                 Iniciar sesión
               </Link>
             </p>

@@ -37,39 +37,71 @@ export default function ForgotPassword() {
   }
 
   return (
-    <div className="min-h-screen bg-white flex items-center justify-center px-4 py-10">
-      <div className="w-full max-w-md rounded-2xl bg-white p-8 shadow-[0_20px_60px_rgba(0,0,0,0.10)]">
-        <p className="text-xs font-semibold tracking-wide text-[#F36A21]">TPTech</p>
-        <h1 className="mt-2 text-3xl font-semibold text-[#1F1F1F]">
-          Recuperar contraseña
-        </h1>
-        <p className="mt-1 text-sm text-gray-500">
+    <div
+      className="min-h-screen flex items-center justify-center px-4 py-10"
+      style={{ background: "var(--surface)", color: "var(--text)" }}
+    >
+      <div
+        className="w-full max-w-md rounded-2xl p-8"
+        style={{
+          background: "var(--card)",
+          border: "1px solid var(--border)",
+          boxShadow: "var(--shadow)",
+        }}
+      >
+        <p className="text-xs font-semibold tracking-wide" style={{ color: "var(--primary)" }}>
+          TPTech
+        </p>
+
+        <h1 className="mt-2 text-3xl font-semibold text-text">Recuperar contraseña</h1>
+
+        <p className="mt-1 text-sm text-[color:var(--muted)]">
           Te enviaremos un link para restablecer tu contraseña.
         </p>
 
         {error && (
-          <div className="mt-6 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+          <div
+            className="mt-6 rounded-xl px-4 py-3 text-sm"
+            style={{
+              border: "1px solid rgba(239,68,68,0.35)",
+              background: "rgba(239,68,68,0.12)",
+              color: "color-mix(in oklab, var(--text) 85%, #ef4444)",
+            }}
+          >
             {error}
           </div>
         )}
 
         {sent ? (
           <div className="mt-8">
-            <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">
+            <div
+              className="rounded-xl px-4 py-3 text-sm"
+              style={{
+                border: "1px solid rgba(16,185,129,0.35)",
+                background: "rgba(16,185,129,0.12)",
+                color: "color-mix(in oklab, var(--text) 85%, #10b981)",
+              }}
+            >
               Si el email existe, te enviamos un link de recuperación.
             </div>
 
             <div className="mt-6 flex items-center justify-between">
-              <Link to="/login" className="text-sm text-[#F36A21] hover:underline">
+              <Link
+                to="/login"
+                className="text-sm hover:underline"
+                style={{ color: "var(--primary)" }}
+              >
                 Volver a iniciar sesión
               </Link>
+
               <button
                 type="button"
                 onClick={() => {
                   setSent(false);
                   setEmail("");
                 }}
-                className="text-sm text-gray-600 hover:underline"
+                className="text-sm hover:underline"
+                style={{ color: "var(--muted)" }}
               >
                 Enviar a otro email
               </button>
@@ -78,7 +110,10 @@ export default function ForgotPassword() {
         ) : (
           <form onSubmit={onSubmit} className="mt-8 space-y-5">
             <div>
-              <label className="block text-sm text-gray-600 mb-2">Email</label>
+              <label className="block text-sm mb-2" style={{ color: "var(--muted)" }}>
+                Email
+              </label>
+
               <input
                 type="email"
                 value={email}
@@ -91,13 +126,13 @@ export default function ForgotPassword() {
             <button
               type="submit"
               disabled={!email.trim() || loading}
-              className="w-full rounded-xl bg-[#F36A21] py-3 font-semibold text-white hover:opacity-90 transition disabled:opacity-50 disabled:cursor-not-allowed"
+              className="tp-btn-primary w-full"
             >
               {loading ? "Enviando..." : "Enviar link"}
             </button>
 
-            <p className="text-center text-sm text-gray-600">
-              <Link to="/login" className="text-[#F36A21] hover:underline">
+            <p className="text-center text-sm" style={{ color: "var(--muted)" }}>
+              <Link to="/login" className="hover:underline" style={{ color: "var(--primary)" }}>
                 Volver a iniciar sesión
               </Link>
             </p>

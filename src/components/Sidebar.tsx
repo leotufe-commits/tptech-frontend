@@ -18,7 +18,7 @@ type NavItem =
 function Divider({ collapsed }: { collapsed: boolean }) {
   return (
     <div className={cn("my-3", collapsed ? "px-1" : "px-4")}>
-      <div className="h-px bg-zinc-300" />
+      <div className="h-px bg-border" />
     </div>
   );
 }
@@ -38,38 +38,39 @@ function Leaf({
       to={to}
       className={({ isActive }) =>
         cn(
-          "group relative w-full rounded-lg select-none transition",
-          "min-h-[56px] px-5 flex items-center",
+          "group relative w-full select-none transition",
+          "min-h-[56px] rounded-lg px-5 flex items-center",
           "text-[16px] font-semibold",
           collapsed && "justify-center px-0",
           "border",
+          "focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-primary/20",
           isActive
-            ? "bg-zinc-100 text-zinc-900 border-zinc-300 shadow-[0_2px_0_0_rgba(0,0,0,0.08)]"
-            : "bg-white text-zinc-700 border-zinc-200 shadow-[0_1px_0_0_rgba(0,0,0,0.05)] hover:bg-zinc-50 hover:text-zinc-900"
+            ? "bg-surface2 text-text border-border shadow-[0_2px_0_0_rgba(0,0,0,0.08)]"
+            : "bg-card text-muted border-border shadow-[0_1px_0_0_rgba(0,0,0,0.05)] hover:bg-surface2 hover:text-text"
         )
       }
       title={collapsed ? label : undefined}
     >
       {({ isActive }) => (
         <>
-          {/* rail naranja */}
+          {/* rail primary */}
           <span
             className={cn(
               "absolute left-0 top-1/2 -translate-y-1/2 h-8 w-1 rounded-full transition",
-              isActive ? "bg-orange-500" : "bg-transparent group-hover:bg-orange-300"
+              isActive ? "bg-primary" : "bg-transparent group-hover:bg-primary/40"
             )}
           />
 
           {collapsed ? (
-            <span className={cn("text-sm font-bold", isActive ? "text-orange-600" : "text-zinc-500")}>
+            <span className={cn("text-sm font-bold", isActive ? "text-primary" : "text-muted")}>
               •
             </span>
           ) : (
             <span className="relative truncate pl-3">
               {label}
-              {/* subrayado naranja */}
+              {/* subrayado primary */}
               {isActive && (
-                <span className="absolute left-3 -bottom-1 h-[2px] w-[calc(100%-12px)] rounded-full bg-orange-500" />
+                <span className="absolute left-3 -bottom-1 h-[2px] w-[calc(100%-12px)] rounded-full bg-primary" />
               )}
             </span>
           )}
@@ -104,20 +105,18 @@ function Group({
         className={cn(
           "group relative w-full rounded-lg transition",
           "min-h-[56px] flex items-center justify-center",
-          "border border-zinc-200 bg-white shadow-[0_1px_0_0_rgba(0,0,0,0.05)]",
-          active && "bg-zinc-100 shadow-[0_2px_0_0_rgba(0,0,0,0.08)]"
+          "border border-border bg-card shadow-[0_1px_0_0_rgba(0,0,0,0.05)]",
+          active && "bg-surface2 shadow-[0_2px_0_0_rgba(0,0,0,0.08)]"
         )}
         title={label}
       >
         <span
           className={cn(
             "absolute left-0 top-1/2 -translate-y-1/2 h-8 w-1 rounded-full",
-            active ? "bg-orange-500" : "bg-transparent"
+            active ? "bg-primary" : "bg-transparent"
           )}
         />
-        <span className={cn("text-sm font-bold", active ? "text-orange-600" : "text-zinc-500")}>
-          •
-        </span>
+        <span className={cn("text-sm font-bold", active ? "text-primary" : "text-muted")}>•</span>
       </button>
     );
   }
@@ -132,24 +131,25 @@ function Group({
           "group relative w-full rounded-lg transition select-none",
           "min-h-[56px] px-5 flex items-center justify-between",
           "text-[16px] font-bold",
-          "border border-zinc-200 bg-white shadow-[0_1px_0_0_rgba(0,0,0,0.05)]",
-          "hover:bg-zinc-50",
-          open && "bg-zinc-50",
-          active && "shadow-[0_2px_0_0_rgba(0,0,0,0.08)]"
+          "border border-border bg-card shadow-[0_1px_0_0_rgba(0,0,0,0.05)]",
+          "hover:bg-surface2 hover:text-text",
+          open && "bg-surface2",
+          active && "shadow-[0_2px_0_0_rgba(0,0,0,0.08)]",
+          "focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-primary/20"
         )}
         aria-expanded={open}
       >
         <span
           className={cn(
             "absolute left-0 top-1/2 -translate-y-1/2 h-8 w-1 rounded-full transition",
-            active ? "bg-orange-500" : "bg-transparent group-hover:bg-orange-300"
+            active ? "bg-primary" : "bg-transparent group-hover:bg-primary/40"
           )}
         />
-        <span className="truncate pl-3">{label}</span>
-        <span className={cn("text-sm transition", open && "rotate-180")}>▾</span>
+        <span className={cn("truncate pl-3", active ? "text-text" : "text-muted")}>{label}</span>
+        <span className={cn("text-sm transition text-muted", open && "rotate-180")}>▾</span>
       </button>
 
-      {/* SUBMENÚ con árbol: línea vertical corta en el último botón */}
+      {/* SUBMENÚ con árbol */}
       {open && (
         <div className="relative ml-10 space-y-3">
           {children.map((c, idx) => {
@@ -159,12 +159,12 @@ function Group({
                 {/* tramo vertical por item (corta en el último) */}
                 <div
                   className={cn(
-                    "absolute left-5 top-0 w-px bg-zinc-800/60",
+                    "absolute left-5 top-0 w-px bg-border",
                     isLast ? "h-1/2" : "h-full"
                   )}
                 />
-                {/* conector horizontal hasta el borde del botón */}
-                <div className="absolute left-5 top-1/2 h-px w-5 bg-zinc-800/60" />
+                {/* conector horizontal */}
+                <div className="absolute left-5 top-1/2 h-px w-5 bg-border" />
 
                 <div className="pl-10">
                   <Leaf to={c.to} label={c.label} collapsed={false} />
@@ -278,25 +278,25 @@ export default function Sidebar() {
 
   return (
     <aside
-      className="fixed left-0 top-0 z-40 flex h-screen flex-col border-r border-zinc-200 bg-white"
+      className="fixed left-0 top-0 z-40 flex h-screen flex-col border-r border-border bg-bg"
       style={{ width: actualWidth }}
     >
       {/* HEADER */}
-      <div className={cn("border-b border-zinc-200 px-4 py-4", collapsed && "px-3")}>
+      <div className={cn("border-b border-border px-4 py-4", collapsed && "px-3")}>
         <div className="flex items-center justify-between gap-3">
           <div className="flex items-center gap-3">
-            <div className="h-11 w-11 rounded-xl bg-zinc-100 grid place-items-center overflow-hidden">
+            <div className="h-11 w-11 rounded-xl bg-surface2 grid place-items-center overflow-hidden border border-border">
               {logoUrl ? (
                 <img src={logoUrl} alt="Logo" className="h-full w-full object-cover" />
               ) : (
-                <span className="font-bold text-orange-600">TP</span>
+                <span className="font-bold text-primary">TP</span>
               )}
             </div>
 
             {!headerTextHidden && (
               <div className="min-w-0">
-                <div className="text-xs font-semibold text-zinc-500">TPTech</div>
-                <div className="truncate font-semibold text-zinc-900 text-base">{jewelryName}</div>
+                <div className="text-xs font-semibold text-muted">TPTech</div>
+                <div className="truncate font-semibold text-text text-base">{jewelryName}</div>
               </div>
             )}
           </div>
@@ -304,7 +304,8 @@ export default function Sidebar() {
           {!collapsed && (
             <button
               onClick={() => setMini((m) => !m)}
-              className="h-10 w-10 grid place-items-center rounded-md border border-zinc-200 bg-white text-lg font-bold text-zinc-700 hover:bg-zinc-50"
+              className="h-10 w-10 grid place-items-center rounded-md border border-border bg-card text-lg font-bold text-text hover:bg-surface2 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-primary/20"
+              title={mini ? "Expandir" : "Contraer"}
             >
               {mini ? ">" : "<"}
             </button>
@@ -330,17 +331,17 @@ export default function Sidebar() {
       </nav>
 
       {/* FOOTER */}
-      <div className="mt-auto border-t border-zinc-200 bg-white p-4">
+      <div className="mt-auto border-t border-border bg-bg p-4">
         {!collapsed && (
           <div className="mb-3">
-            <div className="text-sm font-semibold text-zinc-900 truncate">{userName}</div>
-            {!mini && <div className="text-xs text-zinc-500 truncate">{userEmail}</div>}
+            <div className="text-sm font-semibold text-text truncate">{userName}</div>
+            {!mini && <div className="text-xs text-muted truncate">{userEmail}</div>}
           </div>
         )}
 
         <button
           onClick={logout}
-          className="w-full min-h-[56px] rounded-lg border border-zinc-200 bg-white text-sm font-semibold hover:bg-zinc-50 focus:outline-none focus:ring-2 focus:ring-zinc-300 shadow-[0_1px_0_0_rgba(0,0,0,0.05)]"
+          className="w-full min-h-[56px] rounded-lg border border-border bg-card text-sm font-semibold text-text hover:bg-surface2 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-primary/20 shadow-[0_1px_0_0_rgba(0,0,0,0.05)]"
         >
           Cerrar sesión
         </button>

@@ -16,6 +16,7 @@ import VentasClientes from "./pages/VentasClientes";
 import ComprasProveedores from "./pages/ComprasProveedores";
 
 import PerfilJoyeria from "./pages/PerfilJoyeria";
+import Cuenta from "./pages/Cuenta";
 import Placeholder from "./pages/Placeholder";
 
 // ✅ IMPORT DEFAULT (porque ProtectedRoute exporta default)
@@ -49,6 +50,7 @@ const router = createBrowserRouter([
 
           // Configuración
           { path: "configuracion/joyeria", element: <PerfilJoyeria /> },
+          { path: "configuracion/cuenta", element: <Cuenta /> },
           { path: "configuracion", element: <Placeholder title="Configuración" /> },
 
           // Inventario

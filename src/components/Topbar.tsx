@@ -1,5 +1,6 @@
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { useMe } from "../hooks/useMe";
+import ThemeSwitcher from "./ThemeSwitcher";
 
 type RouteMeta = {
   title: string;
@@ -111,35 +112,38 @@ export default function Topbar() {
   }
 
   return (
-    <header className="sticky top-0 z-10 border-b border-zinc-200 bg-white/90 backdrop-blur">
+    <header className="sticky top-0 z-10 border-b border-border bg-bg/90 backdrop-blur">
       <div className="mx-auto flex max-w-7xl items-center justify-between px-6 py-4">
         {/* Izquierda: Breadcrumb + título */}
         <div className="min-w-0">
-          <div className="flex flex-wrap items-center gap-2 text-xs text-zinc-500">
+          <div className="flex flex-wrap items-center gap-2 text-xs text-muted">
             {meta.crumbs.map((c, i) => (
               <span key={`${c.label}-${i}`} className="flex items-center gap-2">
                 {c.to ? (
-                  <Link className="hover:text-orange-600" to={c.to}>
+                  <Link className="hover:text-primary" to={c.to}>
                     {c.label}
                   </Link>
                 ) : (
-                  <span className="text-zinc-500">{c.label}</span>
+                  <span className="text-muted">{c.label}</span>
                 )}
-                {i < meta.crumbs.length - 1 && <span className="text-zinc-300">/</span>}
+                {i < meta.crumbs.length - 1 && <span className="opacity-40">/</span>}
               </span>
             ))}
           </div>
 
-          <h1 className="truncate text-lg font-semibold text-zinc-900">{meta.title}</h1>
+          <h1 className="truncate text-lg font-semibold text-text">{meta.title}</h1>
 
-          <div className="mt-1 text-xs text-zinc-500">Resumen {today}</div>
+          {/* ✅ ACÁ estaba el problema: antes era text-black/60 */}
+          <div className="mt-1 text-xs text-muted">Resumen {today}</div>
         </div>
 
-        {/* Derecha: Joyería + Acciones + Usuario */}
+        {/* Derecha: Theme + Joyería + Acciones + Usuario */}
         <div className="flex items-center gap-3">
+          <ThemeSwitcher />
+
           <button
             type="button"
-            className="rounded-xl border border-zinc-200 bg-white px-3 py-2 text-sm font-medium text-zinc-700 hover:bg-zinc-50"
+            className="rounded-xl border border-border bg-card px-3 py-2 text-sm font-medium text-text hover:opacity-90"
             onClick={() => alert("Selector de empresa (próximo paso)")}
             title={jewelryName}
           >
@@ -148,19 +152,19 @@ export default function Topbar() {
 
           <button
             type="button"
-            className="rounded-xl bg-orange-500 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-orange-600"
+            className="rounded-xl bg-primary px-4 py-2 text-sm font-semibold text-white shadow-sm hover:opacity-90 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-primary/30"
             onClick={() => alert("Acciones rápidas (próximo paso)")}
           >
             Acciones rápidas
           </button>
 
-          <div className="hidden items-center gap-2 rounded-xl border border-zinc-200 bg-white px-3 py-2 md:flex">
-            <div className="h-8 w-8 rounded-full bg-zinc-100" />
+          <div className="hidden items-center gap-2 rounded-xl border border-border bg-card px-3 py-2 md:flex">
+            <div className="h-8 w-8 rounded-full bg-surface" />
             <div className="leading-tight">
-              <div className="max-w-[180px] truncate text-sm font-semibold text-zinc-900">
+              <div className="max-w-[180px] truncate text-sm font-semibold text-text">
                 {userLabel}
               </div>
-              <div className="max-w-[180px] truncate text-xs text-zinc-500">
+              <div className="max-w-[180px] truncate text-xs text-muted">
                 {me?.user?.email || "—"}
               </div>
             </div>
@@ -168,7 +172,7 @@ export default function Topbar() {
             <button
               type="button"
               onClick={logout}
-              className="ml-2 rounded-lg border border-zinc-200 px-3 py-1.5 text-xs font-semibold text-zinc-700 hover:bg-zinc-50"
+              className="ml-2 rounded-lg border border-border bg-card px-3 py-1.5 text-xs font-semibold text-text hover:opacity-90"
             >
               Salir
             </button>

@@ -1,13 +1,33 @@
 import { useMemo, useState, type ReactNode } from "react";
 import * as XLSX from "xlsx";
 import { saveAs } from "file-saver";
-import {
-  useInventory,
-  type Categoria,
-  type Metal,
-  type Articulo,
-} from "../context/InventoryContext";
+import { useInventory, type Categoria, type Metal, type Articulo } from "../context/InventoryContext";
 
+import {
+  TP_INPUT,
+  TP_SELECT,
+  TP_BTN_PRIMARY,
+  TP_BTN_SECONDARY,
+  TP_BTN_LINK_PRIMARY,
+  TP_BTN_DANGER,
+  cn,
+} from "../components/ui/tp";
+
+import {
+  TPTableWrap,
+  TPTableHeader,
+  TPTableEl,
+  TPThead,
+  TPTbody,
+  TPTr,
+  TPTh,
+  TPTd,
+  TPEmptyRow,
+} from "../components/ui/TPTable";
+
+import { TPStockBadge, TPStockLabelBadge, TPActiveBadge } from "../components/ui/TPBadges";
+
+/* ---------------- utils ---------------- */
 function moneyARS(n: number) {
   return new Intl.NumberFormat("es-AR", {
     style: "currency",
@@ -27,28 +47,7 @@ function sumStock(stockByAlmacen: Record<string, number>) {
   );
 }
 
-function StockMiniBadge({ n }: { n: number }) {
-  if (n === 0) {
-    return (
-      <span className="rounded-full bg-zinc-100 px-2 py-1 text-xs font-semibold text-zinc-700">
-        0
-      </span>
-    );
-  }
-  if (n <= 5) {
-    return (
-      <span className="rounded-full bg-orange-50 px-2 py-1 text-xs font-semibold text-orange-700">
-        {n}
-      </span>
-    );
-  }
-  return (
-    <span className="rounded-full bg-emerald-50 px-2 py-1 text-xs font-semibold text-emerald-700">
-      {n}
-    </span>
-  );
-}
-
+/* ---------------- Modal + Field ---------------- */
 function Modal({
   open,
   title,
@@ -64,18 +63,14 @@ function Modal({
 
   return (
     <div className="fixed inset-0 z-50">
-      <div
-        className="absolute inset-0 bg-zinc-900/40"
-        onClick={onClose}
-        aria-hidden="true"
-      />
+      <div className="absolute inset-0 bg-black/50" onClick={onClose} aria-hidden="true" />
       <div className="absolute inset-0 flex items-center justify-center p-4">
-        <div className="w-full max-w-2xl overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-xl">
-          <div className="flex items-center justify-between border-b border-zinc-200 px-5 py-4">
-            <div className="text-sm font-semibold text-zinc-900">{title}</div>
+        <div className="w-full max-w-2xl overflow-hidden rounded-2xl border border-border bg-card shadow-xl">
+          <div className="flex items-center justify-between border-b border-border px-5 py-4 bg-surface2/30">
+            <div className="text-sm font-semibold text-text">{title}</div>
             <button
               onClick={onClose}
-              className="rounded-lg px-2 py-1 text-sm font-semibold text-zinc-600 hover:bg-zinc-100"
+              className="rounded-lg px-2 py-1 text-sm font-semibold text-muted hover:bg-surface2 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-primary/20"
             >
               ✕
             </button>
@@ -98,27 +93,20 @@ function Field({
 }) {
   return (
     <div>
-      <div className="text-xs font-medium text-zinc-600">{label}</div>
+      <div className="text-xs font-medium text-muted">{label}</div>
       {children}
-      {error && (
-        <div className="mt-1 text-xs font-medium text-red-600">{error}</div>
-      )}
+      {error && <div className="mt-1 text-xs font-medium text-red-500">{error}</div>}
     </div>
   );
 }
 
+/* ---------------- types ---------------- */
 type SortKey = "sku" | "stock" | "precio";
 type SortDir = "asc" | "desc";
 
 export default function InventarioArticulos() {
-  const {
-    almacenes,
-    articulos,
-    getStockTotal,
-    addArticulo,
-    updateArticulo,
-    deleteArticulo,
-  } = useInventory();
+  const { almacenes, articulos, getStockTotal, addArticulo, updateArticulo, deleteArticulo } =
+    useInventory();
 
   // Modal stock por almacén
   const [openStockModal, setOpenStockModal] = useState(false);
@@ -191,7 +179,6 @@ export default function InventarioArticulos() {
 
     const sorted = [...filtered].sort((a, b) => {
       const dir = sortDir === "asc" ? 1 : -1;
-
       const stockA = getStockTotal(a);
       const stockB = getStockTotal(b);
 
@@ -346,10 +333,7 @@ export default function InventarioArticulos() {
     if (precio <= 0) e.precio = "Precio debe ser mayor a 0.";
 
     const skuUpper = sku.toUpperCase();
-    if (
-      sku &&
-      articulos.some((x) => x.id !== editId && x.sku.toUpperCase() === skuUpper)
-    ) {
+    if (sku && articulos.some((x) => x.id !== editId && x.sku.toUpperCase() === skuUpper)) {
       e.sku = "Ese SKU ya existe.";
     }
 
@@ -381,29 +365,6 @@ export default function InventarioArticulos() {
     resetPage();
   }
 
-  // badges
-  function stockBadge(stock: number) {
-    if (stock === 0) {
-      return (
-        <span className="rounded-full bg-zinc-100 px-2 py-1 text-xs font-semibold text-zinc-700">
-          Sin stock
-        </span>
-      );
-    }
-    if (stock <= 2) {
-      return (
-        <span className="rounded-full bg-orange-50 px-2 py-1 text-xs font-semibold text-orange-700">
-          Bajo ({stock})
-        </span>
-      );
-    }
-    return (
-      <span className="rounded-full bg-emerald-50 px-2 py-1 text-xs font-semibold text-emerald-700">
-        {stock} u.
-      </span>
-    );
-  }
-
   const stockModalItem = useMemo(() => {
     if (!stockModalId) return null;
     return articulos.find((a) => a.id === stockModalId) ?? null;
@@ -414,39 +375,28 @@ export default function InventarioArticulos() {
       {/* Header */}
       <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
         <div>
-          <div className="text-xs font-medium text-zinc-500">Inventario</div>
-          <div className="text-lg font-semibold text-zinc-900">Artículos</div>
-          <div className="mt-1 text-sm text-zinc-600">
-            (✅ Stock se actualiza por Movimientos)
-          </div>
+          <div className="text-xs font-medium text-muted">Inventario</div>
+          <div className="text-lg font-semibold text-text">Artículos</div>
+          <div className="mt-1 text-sm text-muted">(✅ Stock se actualiza por Movimientos)</div>
         </div>
 
         <div className="flex w-full flex-col gap-2 md:w-auto md:flex-row md:items-center">
-          <button
-            className="rounded-xl border border-zinc-200 bg-white px-4 py-2 text-sm font-semibold text-zinc-700 hover:bg-zinc-50"
-            onClick={exportCSV}
-          >
+          <button className={TP_BTN_SECONDARY} onClick={exportCSV}>
             Exportar CSV
           </button>
-          <button
-            className="rounded-xl border border-zinc-200 bg-white px-4 py-2 text-sm font-semibold text-zinc-700 hover:bg-zinc-50"
-            onClick={exportExcel}
-          >
+          <button className={TP_BTN_SECONDARY} onClick={exportExcel}>
             Exportar Excel
           </button>
-          <button
-            className="rounded-xl bg-orange-500 px-4 py-2 text-sm font-semibold text-white hover:bg-orange-600"
-            onClick={openNewModal}
-          >
+          <button className={TP_BTN_PRIMARY} onClick={openNewModal}>
             + Nuevo artículo
           </button>
         </div>
       </div>
 
       {/* Filtros */}
-      <div className="grid grid-cols-1 gap-3 rounded-2xl border border-zinc-200 bg-white p-4 md:grid-cols-12">
+      <div className="grid grid-cols-1 gap-3 rounded-2xl border border-border bg-card p-4 md:grid-cols-12">
         <div className="md:col-span-6">
-          <label className="text-xs font-medium text-zinc-600">Buscar</label>
+          <label className="text-xs font-medium text-muted">Buscar</label>
           <input
             value={q}
             onChange={(e) => {
@@ -454,19 +404,19 @@ export default function InventarioArticulos() {
               resetPage();
             }}
             placeholder="SKU, nombre, metal…"
-            className="mt-1 w-full rounded-xl border border-zinc-200 bg-white px-3 py-2 text-sm outline-none focus:border-orange-300 focus:ring-4 focus:ring-orange-100"
+            className={TP_INPUT}
           />
         </div>
 
         <div className="md:col-span-4">
-          <label className="text-xs font-medium text-zinc-600">Categoría</label>
+          <label className="text-xs font-medium text-muted">Categoría</label>
           <select
             value={categoria}
             onChange={(e) => {
               setCategoria(e.target.value as any);
               resetPage();
             }}
-            className="mt-1 w-full rounded-xl border border-zinc-200 bg-white px-3 py-2 text-sm outline-none focus:border-orange-300 focus:ring-4 focus:ring-orange-100"
+            className={TP_SELECT}
           >
             <option value="Todas">Todas</option>
             <option value="Anillos">Anillos</option>
@@ -479,163 +429,130 @@ export default function InventarioArticulos() {
         </div>
 
         <div className="md:col-span-2">
-          <label className="text-xs font-medium text-zinc-600">Estado</label>
+          <label className="text-xs font-medium text-muted">Estado</label>
           <button
             type="button"
             onClick={() => {
               setSoloActivos((v) => !v);
               resetPage();
             }}
-            className={`mt-1 w-full rounded-xl border px-3 py-2 text-sm font-medium transition ${
+            className={cn(
+              "mt-1 w-full rounded-xl border px-3 py-2 text-sm font-medium transition",
+              "focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-primary/20",
               soloActivos
-                ? "border-orange-200 bg-orange-50 text-orange-700"
-                : "border-zinc-200 bg-white text-zinc-700 hover:bg-zinc-50"
-            }`}
+                ? "border-primary/30 bg-primary/10 text-primary"
+                : "border-border bg-card text-text hover:bg-surface2"
+            )}
           >
             {soloActivos ? "Activos" : "Todos"}
           </button>
         </div>
       </div>
 
-      {/* Tabla */}
-      <div className="overflow-hidden rounded-2xl border border-zinc-200 bg-white">
-        <div className="flex flex-col gap-3 border-b border-zinc-200 px-5 py-4 md:flex-row md:items-center md:justify-between">
-          <div className="text-sm font-medium text-zinc-900">
-            Resultados: {total}
-          </div>
+      {/* Tabla Base TP */}
+      <TPTableWrap>
+        <TPTableHeader
+          left={`Resultados: ${total}`}
+          right={
+            <>
+              <div className="text-xs text-muted">
+                Página {page} / {totalPages}
+              </div>
+              <button
+                className={TP_BTN_SECONDARY}
+                onClick={() => setPage((p) => Math.max(1, p - 1))}
+                disabled={page === 1}
+              >
+                Anterior
+              </button>
+              <button
+                className={TP_BTN_SECONDARY}
+                onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                disabled={page === totalPages}
+              >
+                Siguiente
+              </button>
+            </>
+          }
+        />
 
-          <div className="flex items-center gap-2">
-            <div className="text-xs text-zinc-500">
-              Página {page} / {totalPages}
-            </div>
-            <button
-              className="rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm font-semibold text-zinc-700 hover:bg-zinc-50 disabled:opacity-40"
-              onClick={() => setPage((p) => Math.max(1, p - 1))}
-              disabled={page === 1}
-            >
-              Anterior
-            </button>
-            <button
-              className="rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm font-semibold text-zinc-700 hover:bg-zinc-50 disabled:opacity-40"
-              onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-              disabled={page === totalPages}
-            >
-              Siguiente
-            </button>
-          </div>
-        </div>
-
-        <div className="overflow-x-auto">
+        <TPTableEl>
           <table className="min-w-full text-left text-sm">
-            <thead className="bg-zinc-50 text-xs uppercase text-zinc-500">
-              <tr>
-                <th className="px-5 py-3">
-                  <button
-                    className="font-semibold hover:text-orange-600"
-                    onClick={() => toggleSort("sku")}
-                  >
+            <TPThead>
+              <TPTr>
+                <TPTh>
+                  <button className="font-semibold hover:text-primary" onClick={() => toggleSort("sku")}>
                     SKU{sortIndicator("sku")}
                   </button>
-                </th>
-                <th className="px-5 py-3">Nombre</th>
-                <th className="px-5 py-3">Categoría</th>
-                <th className="px-5 py-3">Metal</th>
-                <th className="px-5 py-3">
-                  <button
-                    className="font-semibold hover:text-orange-600"
-                    onClick={() => toggleSort("stock")}
-                  >
+                </TPTh>
+                <TPTh>Nombre</TPTh>
+                <TPTh>Categoría</TPTh>
+                <TPTh>Metal</TPTh>
+                <TPTh>
+                  <button className="font-semibold hover:text-primary" onClick={() => toggleSort("stock")}>
                     Stock{sortIndicator("stock")}
                   </button>
-                </th>
-                <th className="px-5 py-3">
-                  <button
-                    className="font-semibold hover:text-orange-600"
-                    onClick={() => toggleSort("precio")}
-                  >
+                </TPTh>
+                <TPTh>
+                  <button className="font-semibold hover:text-primary" onClick={() => toggleSort("precio")}>
                     Precio{sortIndicator("precio")}
                   </button>
-                </th>
-                <th className="px-5 py-3">Estado</th>
-                <th className="px-5 py-3 text-right">Acciones</th>
-              </tr>
-            </thead>
+                </TPTh>
+                <TPTh>Estado</TPTh>
+                <TPTh className="text-right">Acciones</TPTh>
+              </TPTr>
+            </TPThead>
 
-            <tbody className="divide-y divide-zinc-200">
+            <TPTbody>
               {pageItems.map((x) => {
                 const stock = getStockTotal(x);
                 return (
-                  <tr key={x.id} className="hover:bg-zinc-50">
-                    <td className="px-5 py-3 font-semibold text-zinc-900">
-                      {x.sku}
-                    </td>
-                    <td className="px-5 py-3 text-zinc-700">{x.nombre}</td>
-                    <td className="px-5 py-3 text-zinc-700">{x.categoria}</td>
-                    <td className="px-5 py-3 text-zinc-700">{x.metal}</td>
-                    <td className="px-5 py-3">{stockBadge(stock)}</td>
-                    <td className="px-5 py-3 text-zinc-700">
-                      {moneyARS(x.precio)}
-                    </td>
-                    <td className="px-5 py-3">
-                      <span
-                        className={`rounded-full px-2 py-1 text-xs font-semibold ${
-                          x.activo
-                            ? "bg-emerald-50 text-emerald-700"
-                            : "bg-zinc-100 text-zinc-700"
-                        }`}
-                      >
-                        {x.activo ? "Activo" : "Inactivo"}
-                      </span>
-                    </td>
-
-                    <td className="px-5 py-3 text-right">
+                  <TPTr key={x.id}>
+                    <TPTd className="font-semibold text-text">{x.sku}</TPTd>
+                    <TPTd className="text-muted">{x.nombre}</TPTd>
+                    <TPTd className="text-muted">{x.categoria}</TPTd>
+                    <TPTd className="text-muted">{x.metal}</TPTd>
+                    <TPTd>
+                      <TPStockLabelBadge n={stock} low={2} />
+                    </TPTd>
+                    <TPTd className="text-muted">{moneyARS(x.precio)}</TPTd>
+                    <TPTd>
+                      <TPActiveBadge active={x.activo} />
+                    </TPTd>
+                    <TPTd className="text-right">
                       <button
-                        className="rounded-lg px-3 py-2 text-sm font-semibold text-zinc-700 hover:bg-zinc-100"
+                        className={cn("text-text hover:bg-surface2", TP_BTN_LINK_PRIMARY)}
                         onClick={() => openStock(x.id)}
                       >
                         Stock
                       </button>
-
-                      <button
-                        className="ml-2 rounded-lg px-3 py-2 text-sm font-semibold text-orange-600 hover:bg-orange-50"
-                        onClick={() => openEditModal(x)}
-                      >
+                      <button className={cn("ml-2", TP_BTN_LINK_PRIMARY)} onClick={() => openEditModal(x)}>
                         Editar
                       </button>
-                    </td>
-                  </tr>
+                    </TPTd>
+                  </TPTr>
                 );
               })}
 
-              {pageItems.length === 0 && (
-                <tr>
-                  <td
-                    className="px-5 py-10 text-center text-sm text-zinc-500"
-                    colSpan={8}
-                  >
-                    No hay resultados con esos filtros.
-                  </td>
-                </tr>
-              )}
-            </tbody>
+              {pageItems.length === 0 && <TPEmptyRow colSpan={8} text="No hay resultados con esos filtros." />}
+            </TPTbody>
           </table>
-        </div>
+        </TPTableEl>
 
-        <div className="flex items-center justify-between border-t border-zinc-200 px-5 py-4">
-          <div className="text-xs text-zinc-500">
-            Mostrando{" "}
-            {total === 0 ? 0 : (page - 1) * pageSize + 1}–{Math.min(page * pageSize, total)} de {total}
+        <div className="flex items-center justify-between border-t border-border bg-surface2/30 px-5 py-4">
+          <div className="text-xs text-muted">
+            Mostrando {total === 0 ? 0 : (page - 1) * pageSize + 1}–{Math.min(page * pageSize, total)} de {total}
           </div>
           <div className="flex items-center gap-2">
             <button
-              className="rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm font-semibold text-zinc-700 hover:bg-zinc-50 disabled:opacity-40"
+              className={TP_BTN_SECONDARY}
               onClick={() => setPage((p) => Math.max(1, p - 1))}
               disabled={page === 1}
             >
               Anterior
             </button>
             <button
-              className="rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm font-semibold text-zinc-700 hover:bg-zinc-50 disabled:opacity-40"
+              className={TP_BTN_SECONDARY}
               onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
               disabled={page === totalPages}
             >
@@ -643,7 +560,7 @@ export default function InventarioArticulos() {
             </button>
           </div>
         </div>
-      </div>
+      </TPTableWrap>
 
       {/* Modal: Nuevo */}
       <Modal open={openNew} title="Nuevo artículo" onClose={() => setOpenNew(false)}>
@@ -653,11 +570,10 @@ export default function InventarioArticulos() {
               value={newForm.sku}
               onChange={(e) => setNewForm((p) => ({ ...p, sku: e.target.value }))}
               placeholder="Ej: A195"
-              className={`mt-1 w-full rounded-xl border bg-white px-3 py-2 text-sm outline-none focus:ring-4 ${
-                newErrors.sku
-                  ? "border-red-300 focus:border-red-300 focus:ring-red-100"
-                  : "border-zinc-200 focus:border-orange-300 focus:ring-orange-100"
-              }`}
+              className={cn(
+                TP_INPUT,
+                newErrors.sku && "border-red-400/40 focus:border-red-400/40 focus:ring-red-500/15"
+              )}
             />
           </Field>
 
@@ -666,11 +582,10 @@ export default function InventarioArticulos() {
               value={newForm.nombre}
               onChange={(e) => setNewForm((p) => ({ ...p, nombre: e.target.value }))}
               placeholder="Ej: Anillo cinta"
-              className={`mt-1 w-full rounded-xl border bg-white px-3 py-2 text-sm outline-none focus:ring-4 ${
-                newErrors.nombre
-                  ? "border-red-300 focus:border-red-300 focus:ring-red-100"
-                  : "border-zinc-200 focus:border-orange-300 focus:ring-orange-100"
-              }`}
+              className={cn(
+                TP_INPUT,
+                newErrors.nombre && "border-red-400/40 focus:border-red-400/40 focus:ring-red-500/15"
+              )}
             />
           </Field>
 
@@ -678,7 +593,7 @@ export default function InventarioArticulos() {
             <select
               value={newForm.categoria}
               onChange={(e) => setNewForm((p) => ({ ...p, categoria: e.target.value as Categoria }))}
-              className="mt-1 w-full rounded-xl border border-zinc-200 bg-white px-3 py-2 text-sm outline-none focus:border-orange-300 focus:ring-4 focus:ring-orange-100"
+              className={TP_SELECT}
             >
               <option value="Anillos">Anillos</option>
               <option value="Cadenas">Cadenas</option>
@@ -693,7 +608,7 @@ export default function InventarioArticulos() {
             <select
               value={newForm.metal}
               onChange={(e) => setNewForm((p) => ({ ...p, metal: e.target.value as Metal }))}
-              className="mt-1 w-full rounded-xl border border-zinc-200 bg-white px-3 py-2 text-sm outline-none focus:border-orange-300 focus:ring-4 focus:ring-orange-100"
+              className={TP_SELECT}
             >
               <option value="Oro amarillo">Oro amarillo</option>
               <option value="Oro blanco">Oro blanco</option>
@@ -707,11 +622,10 @@ export default function InventarioArticulos() {
               value={newForm.stockTotal}
               onChange={(e) => setNewForm((p) => ({ ...p, stockTotal: onlyDigits(e.target.value) }))}
               inputMode="numeric"
-              className={`mt-1 w-full rounded-xl border bg-white px-3 py-2 text-sm outline-none focus:ring-4 ${
-                newErrors.stockTotal
-                  ? "border-red-300 focus:border-red-300 focus:ring-red-100"
-                  : "border-zinc-200 focus:border-orange-300 focus:ring-orange-100"
-              }`}
+              className={cn(
+                TP_INPUT,
+                newErrors.stockTotal && "border-red-400/40 focus:border-red-400/40 focus:ring-red-500/15"
+              )}
             />
           </Field>
 
@@ -720,21 +634,20 @@ export default function InventarioArticulos() {
               value={newForm.precio}
               onChange={(e) => setNewForm((p) => ({ ...p, precio: onlyDigits(e.target.value) }))}
               inputMode="numeric"
-              className={`mt-1 w-full rounded-xl border bg-white px-3 py-2 text-sm outline-none focus:ring-4 ${
-                newErrors.precio
-                  ? "border-red-300 focus:border-red-300 focus:ring-red-100"
-                  : "border-zinc-200 focus:border-orange-300 focus:ring-orange-100"
-              }`}
+              className={cn(
+                TP_INPUT,
+                newErrors.precio && "border-red-400/40 focus:border-red-400/40 focus:ring-red-500/15"
+              )}
             />
           </Field>
 
           <div className="md:col-span-2">
-            <label className="flex items-center gap-2 text-sm text-zinc-700">
+            <label className="flex items-center gap-2 text-sm text-text">
               <input
                 type="checkbox"
                 checked={newForm.activo}
                 onChange={(e) => setNewForm((p) => ({ ...p, activo: e.target.checked }))}
-                className="h-4 w-4 rounded border-zinc-300"
+                className="h-4 w-4 rounded border-border bg-surface"
               />
               Activo
             </label>
@@ -742,16 +655,10 @@ export default function InventarioArticulos() {
         </div>
 
         <div className="mt-6 flex flex-col-reverse gap-3 md:flex-row md:justify-end">
-          <button
-            className="rounded-xl border border-zinc-200 bg-white px-4 py-2 text-sm font-semibold text-zinc-700 hover:bg-zinc-50"
-            onClick={() => setOpenNew(false)}
-          >
+          <button className={TP_BTN_SECONDARY} onClick={() => setOpenNew(false)}>
             Cancelar
           </button>
-          <button
-            className="rounded-xl bg-orange-500 px-4 py-2 text-sm font-semibold text-white hover:bg-orange-600"
-            onClick={saveNew}
-          >
+          <button className={TP_BTN_PRIMARY} onClick={saveNew}>
             Guardar
           </button>
         </div>
@@ -760,16 +667,14 @@ export default function InventarioArticulos() {
       {/* Modal: Editar */}
       <Modal open={openEdit} title="Editar artículo" onClose={() => setOpenEdit(false)}>
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-
           <Field label="SKU" error={editErrors.sku}>
             <input
               value={editForm.sku}
               onChange={(e) => setEditForm((p) => ({ ...p, sku: e.target.value }))}
-              className={`mt-1 w-full rounded-xl border bg-white px-3 py-2 text-sm outline-none focus:ring-4 ${
-                editErrors.sku
-                  ? "border-red-300 focus:border-red-300 focus:ring-red-100"
-                  : "border-zinc-200 focus:border-orange-300 focus:ring-orange-100"
-              }`}
+              className={cn(
+                TP_INPUT,
+                editErrors.sku && "border-red-400/40 focus:border-red-400/40 focus:ring-red-500/15"
+              )}
             />
           </Field>
 
@@ -777,11 +682,10 @@ export default function InventarioArticulos() {
             <input
               value={editForm.nombre}
               onChange={(e) => setEditForm((p) => ({ ...p, nombre: e.target.value }))}
-              className={`mt-1 w-full rounded-xl border bg-white px-3 py-2 text-sm outline-none focus:ring-4 ${
-                editErrors.nombre
-                  ? "border-red-300 focus:border-red-300 focus:ring-red-100"
-                  : "border-zinc-200 focus:border-orange-300 focus:ring-orange-100"
-              }`}
+              className={cn(
+                TP_INPUT,
+                editErrors.nombre && "border-red-400/40 focus:border-red-400/40 focus:ring-red-500/15"
+              )}
             />
           </Field>
 
@@ -789,7 +693,7 @@ export default function InventarioArticulos() {
             <select
               value={editForm.categoria}
               onChange={(e) => setEditForm((p) => ({ ...p, categoria: e.target.value as Categoria }))}
-              className="mt-1 w-full rounded-xl border border-zinc-200 bg-white px-3 py-2 text-sm outline-none focus:border-orange-300 focus:ring-4 focus:ring-orange-100"
+              className={TP_SELECT}
             >
               <option value="Anillos">Anillos</option>
               <option value="Cadenas">Cadenas</option>
@@ -804,7 +708,7 @@ export default function InventarioArticulos() {
             <select
               value={editForm.metal}
               onChange={(e) => setEditForm((p) => ({ ...p, metal: e.target.value as Metal }))}
-              className="mt-1 w-full rounded-xl border border-zinc-200 bg-white px-3 py-2 text-sm outline-none focus:border-orange-300 focus:ring-4 focus:ring-orange-100"
+              className={TP_SELECT}
             >
               <option value="Oro amarillo">Oro amarillo</option>
               <option value="Oro blanco">Oro blanco</option>
@@ -818,21 +722,20 @@ export default function InventarioArticulos() {
               value={editForm.precio}
               onChange={(e) => setEditForm((p) => ({ ...p, precio: onlyDigits(e.target.value) }))}
               inputMode="numeric"
-              className={`mt-1 w-full rounded-xl border bg-white px-3 py-2 text-sm outline-none focus:ring-4 ${
-                editErrors.precio
-                  ? "border-red-300 focus:border-red-300 focus:ring-red-100"
-                  : "border-zinc-200 focus:border-orange-300 focus:ring-orange-100"
-              }`}
+              className={cn(
+                TP_INPUT,
+                editErrors.precio && "border-red-400/40 focus:border-red-400/40 focus:ring-red-500/15"
+              )}
             />
           </Field>
 
           <div className="md:col-span-2">
-            <label className="flex items-center gap-2 text-sm text-zinc-700">
+            <label className="flex items-center gap-2 text-sm text-text">
               <input
                 type="checkbox"
                 checked={editForm.activo}
                 onChange={(e) => setEditForm((p) => ({ ...p, activo: e.target.checked }))}
-                className="h-4 w-4 rounded border-zinc-300"
+                className="h-4 w-4 rounded border-border bg-surface"
               />
               Activo
             </label>
@@ -840,24 +743,15 @@ export default function InventarioArticulos() {
         </div>
 
         <div className="mt-6 flex flex-col-reverse gap-3 md:flex-row md:justify-between">
-          <button
-            className="rounded-xl border border-red-200 bg-red-50 px-4 py-2 text-sm font-semibold text-red-700 hover:bg-red-100"
-            onClick={deleteCurrent}
-          >
+          <button className={TP_BTN_DANGER} onClick={deleteCurrent}>
             Eliminar
           </button>
 
           <div className="flex flex-col-reverse gap-3 md:flex-row md:justify-end">
-            <button
-              className="rounded-xl border border-zinc-200 bg-white px-4 py-2 text-sm font-semibold text-zinc-700 hover:bg-zinc-50"
-              onClick={() => setOpenEdit(false)}
-            >
+            <button className={TP_BTN_SECONDARY} onClick={() => setOpenEdit(false)}>
               Cancelar
             </button>
-            <button
-              className="rounded-xl bg-orange-500 px-4 py-2 text-sm font-semibold text-white hover:bg-orange-600"
-              onClick={saveEdit}
-            >
+            <button className={TP_BTN_PRIMARY} onClick={saveEdit}>
               Guardar cambios
             </button>
           </div>
@@ -865,61 +759,52 @@ export default function InventarioArticulos() {
       </Modal>
 
       {/* Modal: Stock por almacén */}
-      <Modal
-        open={openStockModal}
-        title="Stock por almacén"
-        onClose={() => setOpenStockModal(false)}
-      >
+      <Modal open={openStockModal} title="Stock por almacén" onClose={() => setOpenStockModal(false)}>
         {!stockModalItem ? (
-          <div className="text-sm text-zinc-600">Artículo no encontrado.</div>
+          <div className="text-sm text-muted">Artículo no encontrado.</div>
         ) : (
           <div className="space-y-4">
-            <div className="rounded-2xl border border-zinc-200 bg-white p-4">
-              <div className="text-xs font-medium text-zinc-500">Artículo</div>
-              <div className="mt-1 text-sm font-semibold text-zinc-900">
+            <div className="rounded-2xl border border-border bg-card p-4">
+              <div className="text-xs font-medium text-muted">Artículo</div>
+              <div className="mt-1 text-sm font-semibold text-text">
                 {stockModalItem.sku} — {stockModalItem.nombre}
               </div>
-              <div className="mt-2 text-sm text-zinc-700">
-                Total:{" "}
-                <span className="font-semibold">
-                  {sumStock(stockModalItem.stockByAlmacen)}
-                </span>
+              <div className="mt-2 text-sm text-muted">
+                Total: <span className="font-semibold text-text">{sumStock(stockModalItem.stockByAlmacen)}</span>
               </div>
             </div>
 
-            <div className="overflow-hidden rounded-2xl border border-zinc-200 bg-white">
-              <table className="min-w-full text-left text-sm">
-                <thead className="bg-zinc-50 text-xs uppercase text-zinc-500">
-                  <tr>
-                    <th className="px-5 py-3">Almacén</th>
-                    <th className="px-5 py-3">Código</th>
-                    <th className="px-5 py-3">Ubicación</th>
-                    <th className="px-5 py-3">Stock</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-zinc-200">
-                  {almacenes.map((al) => {
-                    const n = stockModalItem.stockByAlmacen?.[al.id] ?? 0;
-                    return (
-                      <tr key={al.id} className="hover:bg-zinc-50">
-                        <td className="px-5 py-3 font-semibold text-zinc-900">
-                          {al.nombre}
-                        </td>
-                        <td className="px-5 py-3 text-zinc-700">{al.codigo}</td>
-                        <td className="px-5 py-3 text-zinc-700">
-                          {al.ubicacion}
-                        </td>
-                        <td className="px-5 py-3">
-                          <StockMiniBadge n={n} />
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
+            <div className="overflow-hidden rounded-2xl border border-border bg-card">
+              <div className="overflow-x-auto">
+                <table className="min-w-full text-left text-sm">
+                  <TPThead>
+                    <TPTr>
+                      <TPTh>Almacén</TPTh>
+                      <TPTh>Código</TPTh>
+                      <TPTh>Ubicación</TPTh>
+                      <TPTh>Stock</TPTh>
+                    </TPTr>
+                  </TPThead>
+                  <TPTbody>
+                    {almacenes.map((al) => {
+                      const n = stockModalItem.stockByAlmacen?.[al.id] ?? 0;
+                      return (
+                        <TPTr key={al.id}>
+                          <TPTd className="font-semibold text-text">{al.nombre}</TPTd>
+                          <TPTd className="text-muted">{al.codigo}</TPTd>
+                          <TPTd className="text-muted">{al.ubicacion}</TPTd>
+                          <TPTd>
+                            <TPStockBadge n={n} size="sm" />
+                          </TPTd>
+                        </TPTr>
+                      );
+                    })}
+                  </TPTbody>
+                </table>
+              </div>
             </div>
 
-            <div className="text-xs text-zinc-500">
+            <div className="text-xs text-muted">
               Tip: registrá un movimiento (Entrada/Salida/Ajuste) y este detalle se actualiza solo.
             </div>
           </div>

@@ -1,41 +1,174 @@
+@import "./styles/themes.css";
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
-html, body, #root {
+/* =====================================
+   Base global (respeta themes)
+   ===================================== */
+html,
+body,
+#root {
   height: 100%;
   margin: 0;
-  background: #fff;
+  background: var(--bg);
+  color: var(--text);
 }
 
-/* Input estilo TPTech */
+/* =====================================
+   Inputs (premium + mejoras en DARK)
+   ===================================== */
 .tp-input {
   width: 100%;
-  border-radius: 0.75rem; /* rounded-xl */
-  border: 1px solid rgb(229 231 235); /* gray-200 */
-  padding: 0.75rem 1rem; /* px-4 py-3 */
+  border-radius: 0.75rem;
+  border: 1px solid var(--border);
+  padding: 0.75rem 1rem;
   outline: none;
-  transition: box-shadow 180ms ease, border-color 180ms ease;
-  background: #fff;
+  background: var(--card);
+  color: var(--text);
+  font-size: 0.95rem;
+  transition: box-shadow 180ms ease, border-color 180ms ease, opacity 180ms ease, background 180ms ease;
+}
+
+.tp-input::placeholder {
+  color: var(--muted);
 }
 
 .tp-input:focus {
-  border-color: rgba(243, 106, 33, 0.55);
-  box-shadow:
-    0 0 0 3px rgba(243, 106, 33, 0.12),
-    0 10px 22px rgba(243, 106, 33, 0.10);
+  border-color: color-mix(in oklab, var(--primary) 55%, var(--border));
+  box-shadow: 0 0 0 4px color-mix(in oklab, var(--primary) 28%, transparent);
 }
 
-/* Hover suave */
 .tp-input:hover {
-  border-color: rgba(243, 106, 33, 0.35);
-  box-shadow: 0 6px 18px rgba(243, 106, 33, 0.06);
+  border-color: color-mix(in oklab, var(--border) 65%, var(--primary));
+  box-shadow: 0 6px 18px color-mix(in oklab, var(--primary) 10%, transparent);
 }
 
+/* ✅ DARK: inputs más distinguibles que el card */
+[data-theme="dark"] .tp-input {
+  background: color-mix(in oklab, var(--card) 82%, #000);
+  border-color: rgba(255, 255, 255, 0.22);
+}
 
-/* ================================
-   Scrollbar TPTech (naranja suave)
-   ================================ */
+[data-theme="dark"] .tp-input:hover {
+  border-color: rgba(255, 255, 255, 0.30);
+}
+
+[data-theme="dark"] .tp-input:focus {
+  border-color: color-mix(in oklab, var(--primary) 60%, rgba(255, 255, 255, 0.22));
+  box-shadow:
+    0 0 0 4px color-mix(in oklab, var(--primary) 26%, transparent),
+    0 10px 26px rgba(0, 0, 0, 0.35);
+}
+
+/* =====================================
+   Botones TPTech (THEME AWARE)
+   ===================================== */
+
+/* Botón primario (usa --primary del theme) */
+.tp-btn-primary {
+  background: var(--primary);
+  color: #fff;
+  border: 1px solid color-mix(in oklab, var(--primary) 70%, transparent);
+  border-radius: 0.75rem;
+  padding: 0.75rem 1rem;
+  font-weight: 800;
+  font-size: 0.95rem;
+  line-height: 1;
+  transition: opacity 160ms ease, box-shadow 160ms ease, transform 160ms ease;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+}
+
+.tp-btn-primary:hover {
+  opacity: 0.92;
+}
+
+.tp-btn-primary:active {
+  transform: translateY(0.5px);
+}
+
+.tp-btn-primary:focus {
+  outline: none;
+  box-shadow: 0 0 0 4px color-mix(in oklab, var(--primary) 28%, transparent);
+}
+
+.tp-btn-primary:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+/* ✅ DARK: sombra para separar del fondo */
+[data-theme="dark"] .tp-btn-primary {
+  box-shadow: 0 14px 28px rgba(0, 0, 0, 0.45);
+}
+
+/* Botón secundario (card + borde) */
+.tp-btn-secondary {
+  background: var(--card);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 0.75rem;
+  padding: 0.75rem 1rem;
+  font-weight: 800;
+  font-size: 0.95rem;
+  line-height: 1;
+  transition: opacity 160ms ease, box-shadow 160ms ease, transform 160ms ease;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+}
+
+.tp-btn-secondary:hover {
+  opacity: 0.92;
+}
+
+.tp-btn-secondary:active {
+  transform: translateY(0.5px);
+}
+
+.tp-btn-secondary:focus {
+  outline: none;
+  box-shadow: 0 0 0 4px color-mix(in oklab, var(--primary) 18%, transparent);
+}
+
+.tp-btn-secondary:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+/* =====================================
+   Cards / Paneles (opcional)
+   ===================================== */
+.tp-card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 1rem;
+  box-shadow: var(--shadow);
+}
+
+/* =====================================
+   Badge (opcional)
+   ===================================== */
+.tp-badge {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--border);
+  background: color-mix(in oklab, var(--primary) 10%, transparent);
+  color: var(--text);
+  border-radius: 999px;
+  padding: 0.25rem 0.5rem;
+  font-size: 0.75rem;
+  font-weight: 800;
+}
+
+/* =====================================
+   Scrollbar TPTech (THEME AWARE)
+   ===================================== */
 
 /* Chrome / Edge / Safari */
 .tp-scroll::-webkit-scrollbar {
@@ -47,18 +180,18 @@ html, body, #root {
 }
 
 .tp-scroll::-webkit-scrollbar-thumb {
-  background: rgba(243, 106, 33, 0.25); /* naranja claro, tipo sombra */
+  background: color-mix(in oklab, var(--primary) 28%, transparent);
   border-radius: 999px;
   border: 3px solid transparent;
   background-clip: content-box;
 }
 
 .tp-scroll::-webkit-scrollbar-thumb:hover {
-  background: rgba(243, 106, 33, 0.38);
+  background: color-mix(in oklab, var(--primary) 45%, transparent);
 }
 
 /* Firefox */
 .tp-scroll {
   scrollbar-width: thin;
-  scrollbar-color: rgba(243, 106, 33, 0.35) transparent;
+  scrollbar-color: color-mix(in oklab, var(--primary) 40%, transparent) transparent;
 }

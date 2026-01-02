@@ -39,48 +39,58 @@ export default function Dashboard() {
 
   return (
     <div className="space-y-6">
+      {/* Header */}
       <div>
-        <div className="text-xs font-medium text-zinc-500">TPTech</div>
-        <h1 className="text-xl font-semibold text-zinc-900">Dashboard</h1>
+        <div className="text-xs font-medium text-muted">TPTech</div>
+        <h1 className="text-xl font-semibold text-text">Dashboard</h1>
       </div>
 
       {/* Cards */}
       <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
-        <div className="rounded-2xl border border-zinc-200 bg-white p-5">
-          <div className="text-sm text-zinc-500">Ventas</div>
-          <div className="mt-2 text-2xl font-semibold text-zinc-900">
-            $ 12.450.000
+        {[
+          { label: "Ventas", value: "$ 12.450.000" },
+          { label: "Órdenes", value: "128" },
+          { label: "Clientes", value: "42" },
+          { label: "Stock bajo", value: "6", highlight: true },
+        ].map((c) => (
+          <div
+            key={c.label}
+            className="rounded-2xl border border-border bg-card p-5 shadow-sm"
+          >
+            <div className="text-sm text-muted">{c.label}</div>
+            <div
+              className={`mt-2 text-2xl font-semibold ${
+                c.highlight ? "text-primary" : "text-text"
+              }`}
+            >
+              {c.value}
+            </div>
           </div>
-        </div>
-
-        <div className="rounded-2xl border border-zinc-200 bg-white p-5">
-          <div className="text-sm text-zinc-500">Órdenes</div>
-          <div className="mt-2 text-2xl font-semibold text-zinc-900">128</div>
-        </div>
-
-        <div className="rounded-2xl border border-zinc-200 bg-white p-5">
-          <div className="text-sm text-zinc-500">Clientes</div>
-          <div className="mt-2 text-2xl font-semibold text-zinc-900">42</div>
-        </div>
-
-        <div className="rounded-2xl border border-zinc-200 bg-white p-5">
-          <div className="text-sm text-zinc-500">Stock bajo</div>
-          <div className="mt-2 text-2xl font-semibold text-orange-600">6</div>
-        </div>
+        ))}
       </div>
 
       {/* Gráfico */}
-      <div className="rounded-2xl border border-zinc-200 bg-white p-6">
-        <div className="text-sm font-medium text-zinc-900">
+      <div className="rounded-2xl border border-border bg-card p-6">
+        <div className="text-sm font-medium text-text">
           Ventas últimos 30 días
         </div>
 
-        <div className="mt-4 h-64 w-full rounded-xl bg-zinc-50 p-2">
+        <div className="mt-4 h-64 w-full rounded-xl bg-surface p-2">
           <ResponsiveContainer width="100%" height="100%">
-            <LineChart data={data} margin={{ top: 10, right: 20, left: 0, bottom: 0 }}>
-              <CartesianGrid strokeDasharray="3 3" />
-              <XAxis dataKey="day" tick={{ fontSize: 12 }} />
-              <YAxis tick={{ fontSize: 12 }} />
+            <LineChart data={data}>
+              <CartesianGrid
+                stroke="var(--border)"
+                strokeDasharray="3 3"
+              />
+              <XAxis
+                dataKey="day"
+                tick={{ fontSize: 12, fill: "var(--muted)" }}
+                axisLine={{ stroke: "var(--border)" }}
+              />
+              <YAxis
+                tick={{ fontSize: 12, fill: "var(--muted)" }}
+                axisLine={{ stroke: "var(--border)" }}
+              />
               <Tooltip
                 formatter={(v: any) =>
                   new Intl.NumberFormat("es-AR", {
@@ -89,12 +99,18 @@ export default function Dashboard() {
                     maximumFractionDigits: 0,
                   }).format(Number(v))
                 }
+                contentStyle={{
+                  background: "var(--card)",
+                  border: "1px solid var(--border)",
+                  borderRadius: "12px",
+                  color: "var(--text)",
+                }}
                 labelFormatter={(l) => `Día ${l}`}
               />
               <Line
                 type="monotone"
                 dataKey="ventas"
-                stroke="#F97316"
+                stroke="var(--primary)"
                 strokeWidth={3}
                 dot={false}
               />
@@ -104,37 +120,40 @@ export default function Dashboard() {
       </div>
 
       {/* Acciones rápidas */}
-      <div className="rounded-2xl border border-zinc-200 bg-white p-6">
-        <div className="text-sm font-medium text-zinc-900">Acciones rápidas</div>
+      <div className="rounded-2xl border border-border bg-card p-6">
+        <div className="text-sm font-medium text-text">Acciones rápidas</div>
 
         <div className="mt-4 flex flex-wrap gap-3">
-          <button className="rounded-xl bg-orange-500 px-4 py-2 text-sm font-semibold text-white hover:bg-orange-600">
-            Nueva Venta
-          </button>
-          <button className="rounded-xl bg-orange-500 px-4 py-2 text-sm font-semibold text-white hover:bg-orange-600">
-            Nueva Compra
-          </button>
-          <button className="rounded-xl bg-orange-500 px-4 py-2 text-sm font-semibold text-white hover:bg-orange-600">
-            Revisar Inventario
-          </button>
-          <button className="rounded-xl bg-orange-500 px-4 py-2 text-sm font-semibold text-white hover:bg-orange-600">
-            Generar Reportes
-          </button>
+          {[
+            "Nueva Venta",
+            "Nueva Compra",
+            "Revisar Inventario",
+            "Generar Reportes",
+          ].map((b) => (
+            <button
+              key={b}
+              className="rounded-xl bg-primary px-4 py-2 text-sm font-semibold text-white transition hover:opacity-90 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-primary/30"
+            >
+              {b}
+            </button>
+          ))}
         </div>
       </div>
 
       {/* Actividad reciente */}
-      <div className="rounded-2xl border border-zinc-200 bg-white p-6">
-        <div className="text-sm font-medium text-zinc-900">Actividad reciente</div>
+      <div className="rounded-2xl border border-border bg-card p-6">
+        <div className="text-sm font-medium text-text">Actividad reciente</div>
 
         <div className="mt-4 space-y-3">
           {activity.map((item, idx) => (
             <div
               key={idx}
-              className="flex items-start justify-between gap-4 rounded-xl border border-zinc-200 bg-white px-4 py-3 hover:bg-zinc-50"
+              className="flex items-start justify-between gap-4 rounded-xl border border-border bg-surface px-4 py-3 hover:bg-surface2/40"
             >
-              <div className="text-sm text-zinc-700">{item.t}</div>
-              <div className="shrink-0 text-xs font-medium text-zinc-500">{item.d}</div>
+              <div className="text-sm text-text">{item.t}</div>
+              <div className="shrink-0 text-xs font-medium text-muted">
+                {item.d}
+              </div>
             </div>
           ))}
         </div>
