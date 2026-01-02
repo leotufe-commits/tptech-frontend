@@ -1,6 +1,4 @@
 import { useMemo, useState, type ReactNode } from "react";
-import * as XLSX from "xlsx";
-import { saveAs } from "file-saver";
 import { useInventory, type Categoria, type Metal, type Articulo } from "../context/InventoryContext";
 
 import {
@@ -45,6 +43,50 @@ function sumStock(stockByAlmacen: Record<string, number>) {
     (acc, n) => acc + (Number.isFinite(n) ? n : 0),
     0
   );
+}
+
+function downloadBlob(blob: Blob, filename: string) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+function csvCell(v: unknown) {
+  const s = String(v ?? "");
+  if (/[",\n\r]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
+  return s;
+}
+
+function rowsToCSV(rows: Array<Record<string, unknown>>) {
+  if (rows.length === 0) return "";
+  const headers = Object.keys(rows[0]);
+  const lines = [
+    headers.map(csvCell).join(","),
+    ...rows.map((r) => headers.map((h) => csvCell(r[h])).join(",")),
+  ];
+  return lines.join("\r\n");
+}
+
+function rowsToHTMLTable(rows: Array<Record<string, unknown>>) {
+  if (rows.length === 0) return "<table></table>";
+  const headers = Object.keys(rows[0]);
+
+  const ths = headers.map((h) => `<th>${String(h)}</th>`).join("");
+  const trs = rows
+    .map((r) => {
+      const tds = headers
+        .map((h) => `<td>${String(r[h] ?? "")}</td>`)
+        .join("");
+      return `<tr>${tds}</tr>`;
+    })
+    .join("");
+
+  return `<table border="1"><thead><tr>${ths}</tr></thead><tbody>${trs}</tbody></table>`;
 }
 
 /* ---------------- Modal + Field ---------------- */
@@ -212,9 +254,9 @@ export default function InventarioArticulos() {
     return sortDir === "asc" ? " ▲" : " ▼";
   }
 
-  // ---- EXPORT ----
-  function exportExcel() {
-    const rows = filteredSorted.map((x) => ({
+  // ---- EXPORT (sin xlsx) ----
+  function buildRows() {
+    return filteredSorted.map((x) => ({
       SKU: x.sku,
       Nombre: x.nombre,
       Categoría: x.categoria,
@@ -223,34 +265,32 @@ export default function InventarioArticulos() {
       Precio_ARS: x.precio,
       Activo: x.activo ? "Sí" : "No",
     }));
-
-    const ws = XLSX.utils.json_to_sheet(rows);
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, "Articulos");
-
-    const buf = XLSX.write(wb, { bookType: "xlsx", type: "array" });
-    const blob = new Blob([buf], {
-      type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    });
-    saveAs(blob, `articulos_${new Date().toISOString().slice(0, 10)}.xlsx`);
   }
 
   function exportCSV() {
-    const rows = filteredSorted.map((x) => ({
-      SKU: x.sku,
-      Nombre: x.nombre,
-      Categoría: x.categoria,
-      Metal: x.metal,
-      Stock_Total: getStockTotal(x),
-      Precio_ARS: x.precio,
-      Activo: x.activo ? "Sí" : "No",
-    }));
-
-    const ws = XLSX.utils.json_to_sheet(rows);
-    const csv = XLSX.utils.sheet_to_csv(ws);
-
+    const rows = buildRows();
+    const csv = rowsToCSV(rows);
     const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
-    saveAs(blob, `articulos_${new Date().toISOString().slice(0, 10)}.csv`);
+    downloadBlob(blob, `articulos_${new Date().toISOString().slice(0, 10)}.csv`);
+  }
+
+  // Excel “simple” (HTML -> .xls) para evitar dependencias
+  function exportExcel() {
+    const rows = buildRows();
+    const table = rowsToHTMLTable(rows);
+
+    const html = `<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8" />
+</head>
+<body>
+${table}
+</body>
+</html>`;
+
+    const blob = new Blob([html], { type: "application/vnd.ms-excel;charset=utf-8" });
+    downloadBlob(blob, `articulos_${new Date().toISOString().slice(0, 10)}.xls`);
   }
 
   // ---- MODALES ----
