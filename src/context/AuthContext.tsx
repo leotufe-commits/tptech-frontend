@@ -1,103 +1,125 @@
-import React, { createContext, useContext, useEffect, useMemo, useState } from "react";
+// src/context/AuthContext.tsx
+import React, { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
+import { apiFetch } from "../lib/api";
 
 type User = { id: string; email: string; name?: string | null };
 type Jewelry = any;
 
 type AuthState = {
-  token: string | null;
   user: User | null;
   jewelry: Jewelry | null;
   loading: boolean;
 
-  setSession: (payload: { token: string; user: User; jewelry?: Jewelry | null }) => void;
   refreshMe: () => Promise<void>;
-  logout: () => void;
+  logout: () => Promise<void>;
+
+  // ✅ sync tabs (nombres “oficiales”)
+  notifyLogin: () => void;
+  notifyLogout: () => void;
+
+  // ✅ aliases para no romper Login.tsx actual
+  broadcastLogin: () => void;
+  broadcastLogout: () => void;
 };
 
 const AuthContext = createContext<AuthState | null>(null);
 
+const AUTH_SYNC_KEY = "tptech_auth_sync";
 const LS_TOKEN_KEY = "tptech_token";
 
-function getApiBase() {
-  // lee VITE_API_URL del .env del frontend
-  return import.meta.env.VITE_API_URL || "http://localhost:3001";
-}
-
-async function api<T>(
-  path: string,
-  opts: { method?: string; body?: any; token?: string | null } = {}
-): Promise<T> {
-  const url = `${getApiBase()}${path}`;
-  const res = await fetch(url, {
-    method: opts.method || "GET",
-    headers: {
-      "Content-Type": "application/json",
-      ...(opts.token ? { Authorization: `Bearer ${opts.token}` } : {}),
-    },
-    body: opts.body ? JSON.stringify(opts.body) : undefined,
-  });
-
-  // Intentar leer JSON siempre que se pueda
-  const text = await res.text();
-  const data = text ? JSON.parse(text) : null;
-
-  if (!res.ok) {
-    const msg = data?.message || `HTTP ${res.status}`;
-    throw new Error(msg);
-  }
-  return data as T;
-}
-
 export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const [token, setToken] = useState<string | null>(() => localStorage.getItem(LS_TOKEN_KEY));
   const [user, setUser] = useState<User | null>(null);
   const [jewelry, setJewelry] = useState<Jewelry | null>(null);
   const [loading, setLoading] = useState(true);
 
-  const setSession: AuthState["setSession"] = ({ token, user, jewelry }) => {
-    setToken(token);
-    localStorage.setItem(LS_TOKEN_KEY, token);
-    setUser(user);
-    setJewelry(jewelry ?? null);
-  };
-
-  const logout = () => {
-    setToken(null);
-    localStorage.removeItem(LS_TOKEN_KEY);
-    setUser(null);
-    setJewelry(null);
-  };
+  const bootedRef = useRef(false);
 
   const refreshMe = async () => {
-    if (!token) {
+    try {
+      const data = await apiFetch<{ user: User; jewelry: Jewelry | null }>("/auth/me");
+      setUser(data.user);
+      setJewelry(data.jewelry ?? null);
+    } catch {
+      // ✅ si sesión/token inválido → limpiar
+      localStorage.removeItem(LS_TOKEN_KEY);
       setUser(null);
       setJewelry(null);
-      return;
     }
-    // /auth/me devuelve { user, jewelry }
-    const data = await api<{ user: User; jewelry: Jewelry | null }>("/auth/me", { token });
-    setUser(data.user);
-    setJewelry(data.jewelry ?? null);
   };
 
-  // Al iniciar la app: si hay token, validarlo
+  const notifyLogin = () => {
+    localStorage.setItem(AUTH_SYNC_KEY, JSON.stringify({ type: "login", at: Date.now() }));
+  };
+
+  const notifyLogout = () => {
+    localStorage.setItem(AUTH_SYNC_KEY, JSON.stringify({ type: "logout", at: Date.now() }));
+  };
+
+  // Aliases (para Login.tsx que usa broadcastLogin/broadcastLogout)
+  const broadcastLogin = notifyLogin;
+  const broadcastLogout = notifyLogout;
+
+  const logout = async () => {
+    try {
+      await apiFetch("/auth/logout", { method: "POST" });
+    } catch {}
+
+    localStorage.removeItem(LS_TOKEN_KEY);
+
+    setUser(null);
+    setJewelry(null);
+
+    notifyLogout();
+  };
+
+  // bootstrap sesión (evita múltiples boots en dev)
   useEffect(() => {
+    if (bootedRef.current) return;
+    bootedRef.current = true;
+
     (async () => {
-      try {
-        if (token) await refreshMe();
-      } catch (e) {
-        // token inválido -> logout
-        logout();
-      } finally {
-        setLoading(false);
-      }
+      await refreshMe();
+      setLoading(false);
     })();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // ✅ escuchar cambios desde OTRAS pestañas
+  useEffect(() => {
+    const onStorage = async (e: StorageEvent) => {
+      if (e.key !== AUTH_SYNC_KEY || !e.newValue) return;
+
+      try {
+        const msg = JSON.parse(e.newValue);
+
+        if (msg.type === "login") {
+          await refreshMe();
+        }
+
+        if (msg.type === "logout") {
+          localStorage.removeItem(LS_TOKEN_KEY);
+          setUser(null);
+          setJewelry(null);
+        }
+      } catch {}
+    };
+
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
   }, []);
 
   const value = useMemo<AuthState>(
-    () => ({ token, user, jewelry, loading, setSession, refreshMe, logout }),
-    [token, user, jewelry, loading]
+    () => ({
+      user,
+      jewelry,
+      loading,
+      refreshMe,
+      logout,
+      notifyLogin,
+      notifyLogout,
+      broadcastLogin,
+      broadcastLogout,
+    }),
+    [user, jewelry, loading]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
