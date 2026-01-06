@@ -1,6 +1,5 @@
-// FRONTEND
 // tptech-frontend/src/pages/Login.tsx
-import { useMemo, useState } from "react";
+import { useMemo, useState, type FormEvent } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { apiFetch } from "../lib/api";
 import { useAuth } from "../context/AuthContext";
@@ -39,7 +38,7 @@ export default function Login() {
 
   const canSubmit = useMemo(() => Boolean(email.trim()) && Boolean(pass.trim()), [email, pass]);
 
-  async function onSubmit(e: React.FormEvent) {
+  async function onSubmit(e: FormEvent) {
     e.preventDefault();
     setError(null);
 
@@ -57,23 +56,18 @@ export default function Login() {
         body: JSON.stringify({ email, password: pass }),
       });
 
-      if (!resp?.token) {
-        throw new Error("No se recibió token.");
-      }
+      if (!resp?.token) throw new Error("No se recibió token.");
 
-      // 2) ✅ Setear token en ESTA pestaña + notificar multi-tab
+      // 2) Setear token en ESTA pestaña + notificar multi-tab
       setTokenOnly(resp.token);
 
-      // 3) ✅ Navegar INMEDIATO (no esperar /me)
+      // 3) Navegar inmediato
       navigate("/dashboard", { replace: true });
 
-      // 4) Cargar /me en background (sin bloquear navegación)
-      // (si falla, apiFetch fuerza logout global)
+      // 4) Cargar /me sin bloquear
       void refreshMe();
     } catch (err: any) {
-      // ✅ Ajuste opcional: normaliza el input si hubo error (evita espacios raros)
       setEmail((v) => v.trim());
-
       setError(String(err?.message || "Email o contraseña incorrectos."));
     } finally {
       setLoading(false);

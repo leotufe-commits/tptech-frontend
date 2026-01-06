@@ -1,46 +1,70 @@
-// FRONTEND
 // tptech-frontend/src/lib/api.ts
 
-const API_URL = (import.meta.env.VITE_API_URL as string) || "http://localhost:3001";
+const RAW_API_URL = (import.meta.env.VITE_API_URL as string) || "http://localhost:3001";
 
-const LS_TOKEN_KEY = "tptech_token";
-const LS_LOGOUT_KEY = "tptech_logout";
-const LS_AUTH_EVENT_KEY = "tptech_auth_event";
+// normaliza: sin slash final
+const API_URL = RAW_API_URL.replace(/\/+$/, "");
 
-function forceLogout() {
-  localStorage.removeItem(LS_TOKEN_KEY);
+export const LS_TOKEN_KEY = "tptech_token";
+export const LS_LOGOUT_KEY = "tptech_logout";
+export const LS_AUTH_EVENT_KEY = "tptech_auth_event";
 
-  // evento legacy (storage event)
-  localStorage.setItem(LS_LOGOUT_KEY, String(Date.now()));
+type AuthEvent = { type: "LOGIN" | "LOGOUT"; at: number };
 
-  // evento unificado (LOGIN/LOGOUT)
-  localStorage.setItem(LS_AUTH_EVENT_KEY, JSON.stringify({ type: "LOGOUT", at: Date.now() }));
+function emitAuthEvent(ev: AuthEvent) {
+  try {
+    // evento legacy (storage event)
+    if (ev.type === "LOGOUT") localStorage.setItem(LS_LOGOUT_KEY, String(ev.at));
 
-  // BroadcastChannel (si existe)
-  if ("BroadcastChannel" in window) {
-    const bc = new BroadcastChannel("tptech_auth");
-    bc.postMessage({ type: "LOGOUT" });
-    bc.close();
+    // evento unificado (LOGIN/LOGOUT)
+    localStorage.setItem(LS_AUTH_EVENT_KEY, JSON.stringify(ev));
+
+    // BroadcastChannel (si existe)
+    if ("BroadcastChannel" in window) {
+      const bc = new BroadcastChannel("tptech_auth");
+      bc.postMessage(ev);
+      bc.close();
+    }
+  } catch {
+    // si localStorage está bloqueado, no rompemos la app
   }
 }
 
+export function forceLogout() {
+  // si ya está deslogueado, igual emito evento para sincronizar pestañas
+  try {
+    localStorage.removeItem(LS_TOKEN_KEY);
+  } catch {}
+
+  emitAuthEvent({ type: "LOGOUT", at: Date.now() });
+}
+
+function joinUrl(base: string, path: string) {
+  const p = path.startsWith("/") ? path : `/${path}`;
+  return `${base}${p}`;
+}
+
 export async function apiFetch<T>(path: string, options: RequestInit = {}): Promise<T> {
-  const token = localStorage.getItem(LS_TOKEN_KEY);
+  const token = (() => {
+    try {
+      return localStorage.getItem(LS_TOKEN_KEY);
+    } catch {
+      return null;
+    }
+  })();
 
   const headers = new Headers(options.headers || {});
-  if (!headers.has("Content-Type")) {
-    headers.set("Content-Type", "application/json");
-  }
+  if (!headers.has("Content-Type")) headers.set("Content-Type", "application/json");
 
   // ✅ Bearer token (fallback/robusto)
   if (token && !headers.has("Authorization")) {
     headers.set("Authorization", `Bearer ${token}`);
   }
 
-  const res = await fetch(`${API_URL}${path}`, {
+  const res = await fetch(joinUrl(API_URL, path), {
     ...options,
     headers,
-    credentials: "include", // compatible con cookies ahora o futuro
+    credentials: "include",
   });
 
   // ✅ sesión inválida → logout global (multi-tab)
@@ -49,9 +73,7 @@ export async function apiFetch<T>(path: string, options: RequestInit = {}): Prom
     throw new Error("Sesión expirada");
   }
 
-  if (res.status === 204) {
-    return undefined as T;
-  }
+  if (res.status === 204) return undefined as T;
 
   let payload: any = null;
   const ct = res.headers.get("content-type") || "";
