@@ -1,6 +1,9 @@
+// FRONTEND
+// tptech-frontend/src/components/Topbar.tsx
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { useMe } from "../hooks/useMe";
 import ThemeSwitcher from "./ThemeSwitcher";
+import { useAuth } from "../context/AuthContext";
 
 type RouteMeta = {
   title: string;
@@ -95,6 +98,7 @@ export default function Topbar() {
   const navigate = useNavigate();
 
   const { me, loading } = useMe();
+  const { logout } = useAuth();
 
   const today = new Date().toLocaleDateString("es-AR", {
     day: "2-digit",
@@ -105,10 +109,12 @@ export default function Topbar() {
   const jewelryName = me?.jewelry?.name ?? (loading ? "Cargando..." : "Sin joyería");
   const userLabel = me?.user?.name?.trim() || me?.user?.email || "Usuario";
 
-  function logout() {
-    localStorage.removeItem("tptech_token");
-    localStorage.removeItem("tptech_user");
-    navigate("/login");
+  async function onLogout() {
+    try {
+      await logout(); // ✅ limpia backend cookie + limpia estado + multi-tab
+    } finally {
+      navigate("/login", { replace: true });
+    }
   }
 
   return (
@@ -133,7 +139,6 @@ export default function Topbar() {
 
           <h1 className="truncate text-lg font-semibold text-text">{meta.title}</h1>
 
-          {/* ✅ ACÁ estaba el problema: antes era text-black/60 */}
           <div className="mt-1 text-xs text-muted">Resumen {today}</div>
         </div>
 
@@ -171,7 +176,7 @@ export default function Topbar() {
 
             <button
               type="button"
-              onClick={logout}
+              onClick={onLogout}
               className="ml-2 rounded-lg border border-border bg-card px-3 py-1.5 text-xs font-semibold text-text hover:opacity-90"
             >
               Salir

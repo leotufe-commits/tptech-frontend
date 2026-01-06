@@ -1,10 +1,9 @@
-// src/pages/Login.tsx
+// FRONTEND
+// tptech-frontend/src/pages/Login.tsx
 import { useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { apiFetch } from "../lib/api";
 import { useAuth } from "../context/AuthContext";
-
-const LS_TOKEN_KEY = "tptech_token";
 
 function EyeIcon({ open }: { open: boolean }) {
   return (
@@ -30,7 +29,7 @@ function EyeIcon({ open }: { open: boolean }) {
 
 export default function Login() {
   const navigate = useNavigate();
-  const { refreshMe, broadcastLogin } = useAuth();
+  const { setTokenOnly, refreshMe } = useAuth();
 
   const [email, setEmail] = useState("");
   const [pass, setPass] = useState("");
@@ -58,19 +57,23 @@ export default function Login() {
         body: JSON.stringify({ email, password: pass }),
       });
 
-      // ✅ guardar token como fallback (robusto)
-      if (resp?.token) {
-        localStorage.setItem(LS_TOKEN_KEY, resp.token);
+      if (!resp?.token) {
+        throw new Error("No se recibió token.");
       }
 
-      // 2) Traer sesión real (/auth/me)
-      await refreshMe();
+      // 2) ✅ Setear token en ESTA pestaña + notificar multi-tab
+      setTokenOnly(resp.token);
 
-      // 3) Sincronizar otras pestañas
-      broadcastLogin();
-
+      // 3) ✅ Navegar INMEDIATO (no esperar /me)
       navigate("/dashboard", { replace: true });
+
+      // 4) Cargar /me en background (sin bloquear navegación)
+      // (si falla, apiFetch fuerza logout global)
+      void refreshMe();
     } catch (err: any) {
+      // ✅ Ajuste opcional: normaliza el input si hubo error (evita espacios raros)
+      setEmail((v) => v.trim());
+
       setError(String(err?.message || "Email o contraseña incorrectos."));
     } finally {
       setLoading(false);

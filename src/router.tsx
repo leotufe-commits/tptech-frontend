@@ -1,4 +1,9 @@
+// FRONTEND
+// tptech-frontend/src/router.tsx
+import React from "react";
 import { createBrowserRouter, Navigate } from "react-router-dom";
+
+import { useAuth } from "./context/AuthContext";
 
 import Login from "./pages/Login";
 import Register from "./pages/Register";
@@ -22,15 +27,38 @@ import Placeholder from "./pages/Placeholder";
 // ✅ IMPORT DEFAULT (porque ProtectedRoute exporta default)
 import ProtectedRoute from "./components/ProtectedRoute";
 
-const router = createBrowserRouter([
-  // Redirección inicial
-  { path: "/", element: <Navigate to="/login" replace /> },
+/**
+ * Si hay sesión => /dashboard
+ * Si no hay sesión => /login
+ * Esto permite que, si otra pestaña hace LOGIN, esta pestaña redirija sola.
+ */
+function IndexRedirect() {
+  const { token, loading } = useAuth();
+  if (loading) return null; // o un loader si querés
+  return token ? <Navigate to="/dashboard" replace /> : <Navigate to="/login" replace />;
+}
 
-  // Rutas públicas
-  { path: "/login", element: <Login /> },
-  { path: "/register", element: <Register /> },
-  { path: "/forgot-password", element: <ForgotPassword /> },
-  // { path: "/reset-password", element: <ResetPassword /> },
+/**
+ * Wrapper para rutas públicas:
+ * - Si ya está logueado => lo manda al dashboard
+ * - Si no => renderiza la página pública
+ */
+function PublicOnly({ children }: { children: React.ReactNode }) {
+  const { token, loading } = useAuth();
+  if (loading) return null; // o un loader si querés
+  if (token) return <Navigate to="/dashboard" replace />;
+  return <>{children}</>;
+}
+
+const router = createBrowserRouter([
+  // ✅ Redirección inicial dinámica (según sesión)
+  { path: "/", element: <IndexRedirect /> },
+
+  // ✅ Rutas públicas (si ya hay sesión, redirigen a /dashboard)
+  { path: "/login", element: <PublicOnly><Login /></PublicOnly> },
+  { path: "/register", element: <PublicOnly><Register /></PublicOnly> },
+  { path: "/forgot-password", element: <PublicOnly><ForgotPassword /></PublicOnly> },
+  // { path: "/reset-password", element: <PublicOnly><ResetPassword /></PublicOnly> },
 
   // Rutas protegidas
   {

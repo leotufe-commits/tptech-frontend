@@ -1,6 +1,9 @@
+// FRONTEND
+// tptech-frontend/src/components/Sidebar.tsx
 import { useEffect, useMemo, useRef, useState } from "react";
 import { NavLink, useLocation, useNavigate } from "react-router-dom";
 import { useMe } from "../hooks/useMe";
+import { useAuth } from "../context/AuthContext";
 
 /* ---------------- utils ---------------- */
 function cn(...classes: Array<string | false | null | undefined>) {
@@ -24,15 +27,7 @@ function Divider({ collapsed }: { collapsed: boolean }) {
 }
 
 /* ---------- LEAF ---------- */
-function Leaf({
-  to,
-  label,
-  collapsed,
-}: {
-  to: string;
-  label: string;
-  collapsed: boolean;
-}) {
+function Leaf({ to, label, collapsed }: { to: string; label: string; collapsed: boolean }) {
   return (
     <NavLink
       to={to}
@@ -182,6 +177,7 @@ function Group({
 export default function Sidebar() {
   const navigate = useNavigate();
   const { me, loading } = useMe();
+  const { logout } = useAuth();
 
   const storedWidth = Number(localStorage.getItem("tptech_sidebar_width")) || 300;
   const storedMini = localStorage.getItem("tptech_sidebar_mini") === "1";
@@ -218,10 +214,12 @@ export default function Sidebar() {
   const userEmail = me?.user?.email || "";
   const logoUrl = (me as any)?.jewelry?.logoUrl as string | undefined;
 
-  function logout() {
-    localStorage.removeItem("tptech_token");
-    localStorage.removeItem("tptech_user");
-    navigate("/login");
+  async function onLogout() {
+    try {
+      await logout(); // ✅ backend cookie + estado + multi-tab
+    } finally {
+      navigate("/login", { replace: true });
+    }
   }
 
   const nav: NavItem[] = useMemo(
@@ -340,7 +338,7 @@ export default function Sidebar() {
         )}
 
         <button
-          onClick={logout}
+          onClick={onLogout}
           className="w-full min-h-[56px] rounded-lg border border-border bg-card text-sm font-semibold text-text hover:bg-surface2 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-primary/20 shadow-[0_1px_0_0_rgba(0,0,0,0.05)]"
         >
           Cerrar sesión
