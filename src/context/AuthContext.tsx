@@ -1,21 +1,68 @@
 // tptech-frontend/src/context/AuthContext.tsx
-import React, { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
-import { apiFetch } from "../lib/api";
+import React, {
+  createContext,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import {
+  apiFetch,
+  LS_TOKEN_KEY,
+  SS_TOKEN_KEY,
+  LS_LOGOUT_KEY,
+  LS_AUTH_EVENT_KEY,
+  forceLogout,
+} from "../lib/api";
 
 /* =========================
    TYPES
 ========================= */
-export type User = { id: string; email: string; name?: string | null };
+export type User = {
+  id: string;
+  email: string;
+  name?: string | null;
+  avatarUrl?: string | null;
+};
+
 export type Jewelry = any;
+
+export type Role = { id: string; name: string; isSystem?: boolean };
+
+export type MeResponse = {
+  user: User;
+  jewelry?: Jewelry | null;
+  roles?: Role[];
+  permissions?: string[];
+  favoriteWarehouse?: any | null;
+  token?: string; // legacy si backend lo manda
+  accessToken?: string; // nuevo estándar si backend lo manda
+};
+
+type AuthEvent = { type: "LOGIN" | "LOGOUT"; at: number };
 
 type AuthState = {
   token: string | null;
   user: User | null;
   jewelry: Jewelry | null;
+
+  roles: Role[];
+  permissions: string[];
+
   loading: boolean;
 
+  // setters controlados
   setTokenOnly: (token: string | null) => void;
-  setSession: (payload: { token: string; user: User; jewelry?: Jewelry | null }) => void;
+  setSession: (payload: {
+    token: string;
+    user: User;
+    jewelry?: Jewelry | null;
+    roles?: Role[];
+    permissions?: string[];
+  }) => void;
+
+  // acciones
   refreshMe: () => Promise<void>;
   logout: () => Promise<void>;
   clearSession: () => void;
@@ -24,23 +71,35 @@ type AuthState = {
 const AuthContext = createContext<AuthState | null>(null);
 
 /* =========================
-   STORAGE KEYS
+   STORAGE HELPERS
 ========================= */
-const LS_TOKEN_KEY = "tptech_token";
-const LS_LOGOUT_KEY = "tptech_logout";
-const LS_AUTH_EVENT_KEY = "tptech_auth_event";
+function readStoredToken() {
+  // 1) DEV: sessionStorage (prioridad)
+  try {
+    const t = sessionStorage.getItem(SS_TOKEN_KEY);
+    if (t) return t;
+  } catch {}
 
-/* =========================
-   HELPERS (single source of truth for auth events)
-========================= */
-type AuthEvent = { type: "LOGIN" | "LOGOUT"; at: number };
+  // 2) legacy / multi-tab: localStorage
+  try {
+    const t = localStorage.getItem(LS_TOKEN_KEY);
+    if (t) return t;
+  } catch {}
 
+  return null;
+}
+
+/**
+ * Emitimos un evento unificado (LOGIN/LOGOUT) para sincronizar pestañas.
+ * (Además, mantenemos LS_LOGOUT_KEY como “legacy” por si algún lado lo escucha.)
+ */
 function emitAuthEvent(ev: AuthEvent) {
   try {
-    // Evento unificado
-    localStorage.setItem(LS_AUTH_EVENT_KEY, JSON.stringify(ev));
-    // Legacy para forzar storage event “simple” en otras pestañas
+    // legacy: marca logout
     if (ev.type === "LOGOUT") localStorage.setItem(LS_LOGOUT_KEY, String(ev.at));
+
+    // evento unificado
+    localStorage.setItem(LS_AUTH_EVENT_KEY, JSON.stringify(ev));
 
     // BroadcastChannel (si existe)
     if ("BroadcastChannel" in window) {
@@ -49,23 +108,31 @@ function emitAuthEvent(ev: AuthEvent) {
       bc.close();
     }
   } catch {
-    // no romper si localStorage está bloqueado
+    // no romper si storage está bloqueado
   }
 }
 
-function clearStoredSession() {
+function clearStoredTokenOnly() {
+  // borramos ambos (DEV + legacy)
+  try {
+    sessionStorage.removeItem(SS_TOKEN_KEY);
+  } catch {}
+
   try {
     localStorage.removeItem(LS_TOKEN_KEY);
   } catch {}
-  emitAuthEvent({ type: "LOGOUT", at: Date.now() });
 }
 
-function readStoredToken() {
+function storeTokenEverywhere(token: string) {
+  // ✅ DEV: sessionStorage
   try {
-    return localStorage.getItem(LS_TOKEN_KEY);
-  } catch {
-    return null;
-  }
+    sessionStorage.setItem(SS_TOKEN_KEY, token);
+  } catch {}
+
+  // ✅ legacy/multi-tab: localStorage
+  try {
+    localStorage.setItem(LS_TOKEN_KEY, token);
+  } catch {}
 }
 
 /* =========================
@@ -75,50 +142,79 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [token, setToken] = useState<string | null>(() => readStoredToken());
   const [user, setUser] = useState<User | null>(null);
   const [jewelry, setJewelry] = useState<Jewelry | null>(null);
+
+  const [roles, setRoles] = useState<Role[]>([]);
+  const [permissions, setPermissions] = useState<string[]>([]);
+
   const [loading, setLoading] = useState(true);
 
-  // evita spam /me (solo 1 request activa)
+  // evita spam de /auth/me (single-flight)
   const refreshPromiseRef = useRef<Promise<void> | null>(null);
+
+  // para evitar re-cargar /me si ya lo cargamos con el mismo token
   const lastTokenLoadedRef = useRef<string | null>(null);
 
   /* -------------------------
-     Multi-tab sync (storage)
+     Multi-tab sync (storage events)
   ------------------------- */
   useEffect(() => {
     const onStorage = (e: StorageEvent) => {
+      // si cambiaron token directo
       if (e.key === LS_TOKEN_KEY) {
         const newToken = readStoredToken();
         setToken(newToken);
+
         if (!newToken) {
           setUser(null);
           setJewelry(null);
+          setRoles([]);
+          setPermissions([]);
+          setLoading(false);
+        } else {
+          // token nuevo => refrescar me
+          refreshMe().catch(() => {});
         }
       }
 
+      // legacy logout
       if (e.key === LS_LOGOUT_KEY) {
         setToken(null);
         setUser(null);
         setJewelry(null);
+        setRoles([]);
+        setPermissions([]);
+        setLoading(false);
       }
 
+      // evento unificado
       if (e.key === LS_AUTH_EVENT_KEY && e.newValue) {
         try {
           const ev = JSON.parse(e.newValue) as AuthEvent;
+
           if (ev?.type === "LOGOUT") {
             setToken(null);
             setUser(null);
             setJewelry(null);
+            setRoles([]);
+            setPermissions([]);
+            setLoading(false);
+            return;
           }
+
           if (ev?.type === "LOGIN") {
             const newToken = readStoredToken();
             setToken(newToken);
+            refreshMe().catch(() => {});
           }
-        } catch {}
+        } catch {
+          // ignore
+        }
       }
     };
 
     window.addEventListener("storage", onStorage);
     return () => window.removeEventListener("storage", onStorage);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   /* -------------------------
@@ -130,55 +226,83 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const bc = new BroadcastChannel("tptech_auth");
     bc.onmessage = (msg) => {
       const ev = msg.data as AuthEvent | undefined;
-      if (ev?.type === "LOGOUT") {
+      if (!ev?.type) return;
+
+      if (ev.type === "LOGOUT") {
         setToken(null);
         setUser(null);
         setJewelry(null);
+        setRoles([]);
+        setPermissions([]);
+        setLoading(false);
+        return;
       }
-      if (ev?.type === "LOGIN") {
+
+      if (ev.type === "LOGIN") {
         const newToken = readStoredToken();
         setToken(newToken);
+        refreshMe().catch(() => {});
       }
     };
 
     return () => bc.close();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   /* -------------------------
      Session helpers
   ------------------------- */
   const clearSession = () => {
-    // una sola vez (no duplicar broadcast acá)
-    clearStoredSession();
+    // ✅ esto limpia token + emite evento multi-tab desde api.ts
+    // (pero igual emitimos un evento local por consistencia)
+    try {
+      forceLogout();
+    } catch {
+      clearStoredTokenOnly();
+    }
+
+    emitAuthEvent({ type: "LOGOUT", at: Date.now() });
+
     setToken(null);
     setUser(null);
     setJewelry(null);
+    setRoles([]);
+    setPermissions([]);
     setLoading(false);
+
+    lastTokenLoadedRef.current = null;
   };
 
-  // ✅ nuevo: actualiza token en ESTA pestaña + notifica otras
   const setTokenOnly = (newToken: string | null) => {
     if (!newToken) {
       clearSession();
       return;
     }
 
-    try {
-      localStorage.setItem(LS_TOKEN_KEY, newToken);
-    } catch {}
+    // ✅ guardamos en sessionStorage (DEV) y localStorage (multi-tab)
+    storeTokenEverywhere(newToken);
 
     setToken(newToken);
     emitAuthEvent({ type: "LOGIN", at: Date.now() });
   };
 
-  const setSession = (payload: { token: string; user: User; jewelry?: Jewelry | null }) => {
-    try {
-      localStorage.setItem(LS_TOKEN_KEY, payload.token);
-    } catch {}
+  const setSession = (payload: {
+    token: string;
+    user: User;
+    jewelry?: Jewelry | null;
+    roles?: Role[];
+    permissions?: string[];
+  }) => {
+    // ✅ guardamos en sessionStorage (DEV) y localStorage (multi-tab)
+    storeTokenEverywhere(payload.token);
 
     setToken(payload.token);
     setUser(payload.user);
     setJewelry(payload.jewelry ?? null);
+    setRoles(payload.roles ?? []);
+    setPermissions(payload.permissions ?? []);
+
+    lastTokenLoadedRef.current = payload.token;
 
     emitAuthEvent({ type: "LOGIN", at: Date.now() });
   };
@@ -186,47 +310,47 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const logout = async () => {
     try {
       await apiFetch("/auth/logout", { method: "POST" });
-    } catch {}
-    clearSession();
+    } catch {
+      // ignore
+    } finally {
+      clearSession();
+    }
   };
 
   /* -------------------------
-     /me loader (anti-spam)
+     /auth/me loader (anti-spam)
   ------------------------- */
   const refreshMe = async () => {
     const currentToken = readStoredToken();
 
-    // sin token -> estado “logged out”
     if (!currentToken) {
-      lastTokenLoadedRef.current = null;
-      setUser(null);
-      setJewelry(null);
-      setLoading(false);
+      clearSession();
       return;
     }
 
-    // si ya cargamos /me para este mismo token, no repitas
+    // si ya cargamos /me para este token y tenemos user => no re-spamear
     if (lastTokenLoadedRef.current === currentToken && user) {
       setLoading(false);
       return;
     }
 
-    // si ya hay un refresh en curso, reusalo
+    // single-flight
     if (refreshPromiseRef.current) return refreshPromiseRef.current;
 
     setLoading(true);
 
     const p = (async () => {
       try {
-        const data = await apiFetch<{ user: User; jewelry?: Jewelry | null }>("/auth/me", {
-          method: "GET",
-        });
+        const data = await apiFetch<MeResponse>("/auth/me", { method: "GET" });
 
         lastTokenLoadedRef.current = currentToken;
-        setUser(data.user);
+
+        setUser(data.user ?? null);
         setJewelry(data.jewelry ?? null);
+        setRoles(data.roles ?? []);
+        setPermissions(data.permissions ?? []);
       } catch {
-        // si falla /me => sesión inválida
+        // si falla (401) apiFetch ya hace forceLogout(), pero igual limpiamos estado
         clearSession();
       } finally {
         setLoading(false);
@@ -238,9 +362,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return p;
   };
 
-  // ✅ solo reacciona a cambios reales del token
+  // bootstrap al montar y cuando cambia token
   useEffect(() => {
-    refreshMe();
+    refreshMe().catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token]);
 
@@ -249,6 +373,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       token,
       user,
       jewelry,
+      roles,
+      permissions,
       loading,
       setTokenOnly,
       setSession,
@@ -256,7 +382,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       logout,
       clearSession,
     }),
-    [token, user, jewelry, loading]
+    [token, user, jewelry, roles, permissions, loading]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

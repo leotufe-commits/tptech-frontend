@@ -1,7 +1,7 @@
 // tptech-frontend/src/pages/Login.tsx
 import { useMemo, useState, type FormEvent } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { apiFetch } from "../lib/api";
+import { apiFetch, SS_TOKEN_KEY } from "../lib/api";
 import { useAuth } from "../context/AuthContext";
 
 function EyeIcon({ open }: { open: boolean }) {
@@ -25,6 +25,14 @@ function EyeIcon({ open }: { open: boolean }) {
     </svg>
   );
 }
+
+type LoginResponse = {
+  // nuevo (recomendado)
+  accessToken?: string;
+
+  // legacy (por si queda en algún lado)
+  token?: string;
+};
 
 export default function Login() {
   const navigate = useNavigate();
@@ -50,21 +58,31 @@ export default function Login() {
     try {
       setLoading(true);
 
-      // 1) Login (backend setea cookie httpOnly + devuelve token)
-      const resp = await apiFetch<{ token?: string }>("/auth/login", {
+      // 1) Login (backend setea cookie httpOnly + devuelve accessToken para DEV)
+      const resp = await apiFetch<LoginResponse>("/auth/login", {
         method: "POST",
-        body: JSON.stringify({ email, password: pass }),
+        body: { email, password: pass },
       });
 
-      if (!resp?.token) throw new Error("No se recibió token.");
+      const token = resp?.accessToken || resp?.token;
+      if (!token) throw new Error("No se recibió token.");
 
-      // 2) Setear token en ESTA pestaña + notificar multi-tab
-      setTokenOnly(resp.token);
+      // 2) DEV: guardar token en sessionStorage (Bearer)
+      // PROD: no hace daño, pero el navegador igual usará cookie
+      try {
+        sessionStorage.setItem(SS_TOKEN_KEY, token);
+      } catch {
+        // si sessionStorage falla por políticas del navegador, igual seguimos
+      }
 
-      // 3) Navegar inmediato
+      // 3) Mantengo tu sistema actual (multi-tab) con setTokenOnly
+      // (si setTokenOnly guarda en localStorage, no pasa nada: igual apiFetch prioriza sessionStorage)
+      setTokenOnly(token);
+
+      // 4) Navegar inmediato
       navigate("/dashboard", { replace: true });
 
-      // 4) Cargar /me sin bloquear
+      // 5) Cargar /me sin bloquear
       void refreshMe();
     } catch (err: any) {
       setEmail((v) => v.trim());

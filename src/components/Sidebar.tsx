@@ -1,4 +1,3 @@
-// FRONTEND
 // tptech-frontend/src/components/Sidebar.tsx
 import { useEffect, useMemo, useRef, useState } from "react";
 import { NavLink, useLocation, useNavigate } from "react-router-dom";
@@ -48,7 +47,7 @@ function Leaf({ to, label, collapsed }: { to: string; label: string; collapsed: 
     >
       {({ isActive }) => (
         <>
-          {/* rail primary */}
+          {/* rail */}
           <span
             className={cn(
               "absolute left-0 top-1/2 -translate-y-1/2 h-8 w-1 rounded-full transition",
@@ -63,7 +62,6 @@ function Leaf({ to, label, collapsed }: { to: string; label: string; collapsed: 
           ) : (
             <span className="relative truncate pl-3">
               {label}
-              {/* subrayado primary */}
               {isActive && (
                 <span className="absolute left-3 -bottom-1 h-[2px] w-[calc(100%-12px)] rounded-full bg-primary" />
               )}
@@ -189,18 +187,15 @@ export default function Sidebar() {
   useEffect(() => localStorage.setItem("tptech_sidebar_mini", mini ? "1" : "0"), [mini]);
 
   const resizing = useRef(false);
-  function onMouseDown() {
-    resizing.current = true;
-  }
-  function onMouseMove(e: MouseEvent) {
-    if (!resizing.current) return;
-    setWidth(Math.min(420, Math.max(92, e.clientX)));
-  }
-  function onMouseUp() {
-    resizing.current = false;
-  }
 
   useEffect(() => {
+    function onMouseMove(e: MouseEvent) {
+      if (!resizing.current) return;
+      setWidth(Math.min(420, Math.max(92, e.clientX)));
+    }
+    function onMouseUp() {
+      resizing.current = false;
+    }
     window.addEventListener("mousemove", onMouseMove);
     window.addEventListener("mouseup", onMouseUp);
     return () => {
@@ -210,20 +205,35 @@ export default function Sidebar() {
   }, []);
 
   const jewelryName = me?.jewelry?.name ?? (loading ? "Cargando..." : "Sin joyería");
-  const userName = me?.user?.name || "Usuario";
-  const userEmail = me?.user?.email || "";
+  const user = me?.user;
+  const avatarUrl = user?.avatarUrl ?? null;
+  const userName = user?.name || "Usuario";
+  const userEmail = user?.email || "";
   const logoUrl = (me as any)?.jewelry?.logoUrl as string | undefined;
+
+  // ✅ permisos del /auth/me (string[])
+  const perms: string[] = (me as any)?.permissions ?? [];
+  const canSeeUsers = perms.includes("USERS_ROLES:VIEW") || perms.includes("USERS_ROLES:ADMIN");
 
   async function onLogout() {
     try {
-      await logout(); // ✅ backend cookie + estado + multi-tab
+      await logout();
     } finally {
       navigate("/login", { replace: true });
     }
   }
 
-  const nav: NavItem[] = useMemo(
-    () => [
+  const nav: NavItem[] = useMemo(() => {
+    const configChildren: GroupItem[] = [
+      { label: "Datos de la empresa", to: "/configuracion/joyeria" },
+      { label: "Cuenta", to: "/configuracion/cuenta" },
+    ];
+
+    if (canSeeUsers) {
+      configChildren.push({ label: "Usuarios", to: "/configuracion/usuarios" });
+    }
+
+    return [
       { kind: "link", label: "Dashboard", to: "/dashboard" },
       { kind: "link", label: "Divisas", to: "/divisas" },
 
@@ -261,14 +271,10 @@ export default function Sidebar() {
       {
         kind: "group",
         label: "Configuración",
-        children: [
-          { label: "Datos de la empresa", to: "/configuracion/joyeria" },
-          { label: "Cuenta", to: "/configuracion/cuenta" },
-        ],
+        children: configChildren,
       },
-    ],
-    []
-  );
+    ];
+  }, [canSeeUsers]);
 
   const actualWidth = mini ? 180 : width;
   const collapsed = !mini && actualWidth <= 92;
@@ -331,9 +337,21 @@ export default function Sidebar() {
       {/* FOOTER */}
       <div className="mt-auto border-t border-border bg-bg p-4">
         {!collapsed && (
-          <div className="mb-3">
-            <div className="text-sm font-semibold text-text truncate">{userName}</div>
-            {!mini && <div className="text-xs text-muted truncate">{userEmail}</div>}
+          <div className="mb-3 flex items-center gap-3">
+            <div className="h-10 w-10 rounded-full overflow-hidden border border-border bg-card">
+              {avatarUrl ? (
+                <img src={avatarUrl} alt="Avatar" className="h-full w-full object-cover" />
+              ) : (
+                <div className="grid h-full w-full place-items-center text-sm font-bold text-primary">
+                  {userName.charAt(0).toUpperCase()}
+                </div>
+              )}
+            </div>
+
+            <div className="min-w-0">
+              <div className="text-sm font-semibold text-text truncate">{userName}</div>
+              {!mini && <div className="text-xs text-muted truncate">{userEmail}</div>}
+            </div>
           </div>
         )}
 
@@ -347,7 +365,7 @@ export default function Sidebar() {
 
       {!mini && (
         <div
-          onMouseDown={onMouseDown}
+          onMouseDown={() => (resizing.current = true)}
           className="absolute right-0 top-0 h-full w-1 cursor-ew-resize"
         />
       )}

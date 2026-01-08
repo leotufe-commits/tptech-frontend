@@ -1,9 +1,10 @@
-// FRONTEND
 // tptech-frontend/src/components/Topbar.tsx
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { useMe } from "../hooks/useMe";
 import ThemeSwitcher from "./ThemeSwitcher";
 import { useAuth } from "../context/AuthContext";
+import { updateUserAvatar } from "../services/users";
 
 type RouteMeta = {
   title: string;
@@ -92,9 +93,31 @@ function getMeta(pathname: string): RouteMeta {
   return { title: "TPTech", crumbs: [{ label: "Dashboard", to: "/dashboard" }] };
 }
 
+function cn(...classes: Array<string | false | null | undefined>) {
+  return classes.filter(Boolean).join(" ");
+}
+
+function initialsFrom(label: string) {
+  const clean = (label || "").trim();
+  if (!clean) return "U";
+  const parts = clean.split(/\s+/).filter(Boolean);
+  const a = parts[0]?.[0] ?? "U";
+  const b = parts.length > 1 ? parts[parts.length - 1]?.[0] ?? "" : "";
+  return (a + b).toUpperCase();
+}
+
+async function fileToDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error("No se pudo leer el archivo"));
+    reader.onload = () => resolve(String(reader.result));
+    reader.readAsDataURL(file);
+  });
+}
+
 export default function Topbar() {
   const { pathname } = useLocation();
-  const meta = getMeta(pathname);
+  const meta = useMemo(() => getMeta(pathname), [pathname]);
   const navigate = useNavigate();
 
   const { me, loading } = useMe();
@@ -107,20 +130,68 @@ export default function Topbar() {
   });
 
   const jewelryName = me?.jewelry?.name ?? (loading ? "Cargando..." : "Sin joyería");
-  const userLabel = me?.user?.name?.trim() || me?.user?.email || "Usuario";
+
+  const userId = me?.user?.id ?? null;
+  const userName = me?.user?.name?.trim() || "";
+  const userEmail = me?.user?.email || "";
+  const userLabel = userName || userEmail || "Usuario";
+  const avatarUrl = me?.user?.avatarUrl ?? null;
+
+  // Dropdown usuario
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [avatarBusy, setAvatarBusy] = useState(false);
+  const menuRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    function onDocClick(e: MouseEvent) {
+      if (!menuOpen) return;
+      const el = menuRef.current;
+      if (!el) return;
+      if (e.target instanceof Node && !el.contains(e.target)) setMenuOpen(false);
+    }
+    document.addEventListener("mousedown", onDocClick);
+    return () => document.removeEventListener("mousedown", onDocClick);
+  }, [menuOpen]);
 
   async function onLogout() {
     try {
-      await logout(); // ✅ limpia backend cookie + limpia estado + multi-tab
+      await logout();
     } finally {
       navigate("/login", { replace: true });
+    }
+  }
+
+  async function onPickAvatar(file: File) {
+    if (!userId) return;
+    setAvatarBusy(true);
+    try {
+      const dataUrl = await fileToDataUrl(file);
+      await updateUserAvatar(userId, dataUrl);
+      // No forzamos refetch acá (tu useMe seguramente refresca por navegación o mount).
+      // Si querés refresh instantáneo, lo hacemos en el siguiente paso con un "auth/me refresh".
+      setMenuOpen(false);
+      window.location.reload(); // ✅ MVP simple: reflejar avatar al instante
+    } finally {
+      setAvatarBusy(false);
+    }
+  }
+
+  async function onRemoveAvatar() {
+    if (!userId) return;
+    setAvatarBusy(true);
+    try {
+      await updateUserAvatar(userId, null);
+      setMenuOpen(false);
+      window.location.reload(); // ✅ MVP simple
+    } finally {
+      setAvatarBusy(false);
     }
   }
 
   return (
     <header className="sticky top-0 z-10 border-b border-border bg-bg/90 backdrop-blur">
       <div className="mx-auto flex max-w-7xl items-center justify-between px-6 py-4">
-        {/* Izquierda: Breadcrumb + título */}
+        {/* Izquierda */}
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2 text-xs text-muted">
             {meta.crumbs.map((c, i) => (
@@ -138,11 +209,10 @@ export default function Topbar() {
           </div>
 
           <h1 className="truncate text-lg font-semibold text-text">{meta.title}</h1>
-
           <div className="mt-1 text-xs text-muted">Resumen {today}</div>
         </div>
 
-        {/* Derecha: Theme + Joyería + Acciones + Usuario */}
+        {/* Derecha */}
         <div className="flex items-center gap-3">
           <ThemeSwitcher />
 
@@ -163,25 +233,106 @@ export default function Topbar() {
             Acciones rápidas
           </button>
 
-          <div className="hidden items-center gap-2 rounded-xl border border-border bg-card px-3 py-2 md:flex">
-            <div className="h-8 w-8 rounded-full bg-surface" />
-            <div className="leading-tight">
-              <div className="max-w-[180px] truncate text-sm font-semibold text-text">
-                {userLabel}
-              </div>
-              <div className="max-w-[180px] truncate text-xs text-muted">
-                {me?.user?.email || "—"}
-              </div>
-            </div>
-
+          {/* Usuario + dropdown */}
+          <div ref={menuRef} className="relative hidden md:block">
             <button
               type="button"
-              onClick={onLogout}
-              className="ml-2 rounded-lg border border-border bg-card px-3 py-1.5 text-xs font-semibold text-text hover:opacity-90"
+              onClick={() => setMenuOpen((v) => !v)}
+              className={cn(
+                "flex items-center gap-2 rounded-xl border border-border bg-card px-3 py-2 hover:opacity-90",
+                "focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-primary/30"
+              )}
             >
-              Salir
+              <div className="h-8 w-8 overflow-hidden rounded-full border border-border bg-surface">
+                {avatarUrl ? (
+                  <img src={avatarUrl} alt="Avatar" className="h-full w-full object-cover" />
+                ) : (
+                  <div className="grid h-full w-full place-items-center text-xs font-bold text-primary">
+                    {initialsFrom(userLabel)}
+                  </div>
+                )}
+              </div>
+
+              <div className="max-w-[200px] text-left leading-tight">
+                <div className="truncate text-sm font-semibold text-text">{userLabel}</div>
+                <div className="truncate text-xs text-muted">{userEmail || "—"}</div>
+              </div>
+
+              <span className="ml-1 text-xs text-muted">▾</span>
             </button>
+
+            {menuOpen && (
+              <div className="absolute right-0 mt-2 w-[260px] overflow-hidden rounded-xl border border-border bg-bg shadow-xl">
+                <div className="border-b border-border px-3 py-2">
+                  <div className="text-xs text-muted">Cuenta</div>
+                  <div className="truncate text-sm font-semibold text-text">{userEmail || "—"}</div>
+                </div>
+
+                <div className="p-2 space-y-1">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setMenuOpen(false);
+                      navigate("/configuracion/cuenta");
+                    }}
+                    className="w-full rounded-lg border border-border bg-card px-3 py-2 text-left text-sm font-semibold text-text hover:bg-surface2"
+                  >
+                    Perfil
+                  </button>
+
+                  <label
+                    className={cn(
+                      "block w-full cursor-pointer rounded-lg border border-border bg-card px-3 py-2 text-left text-sm font-semibold text-text hover:bg-surface2",
+                      avatarBusy && "pointer-events-none opacity-60"
+                    )}
+                  >
+                    {avatarBusy ? "Guardando…" : "Cambiar foto"}
+                    <input
+                      type="file"
+                      accept="image/*"
+                      className="hidden"
+                      onChange={(e) => {
+                        const f = e.target.files?.[0];
+                        e.target.value = "";
+                        if (f) onPickAvatar(f);
+                      }}
+                    />
+                  </label>
+
+                  <button
+                    type="button"
+                    disabled={avatarBusy || !avatarUrl}
+                    onClick={onRemoveAvatar}
+                    className={cn(
+                      "w-full rounded-lg border border-border bg-card px-3 py-2 text-left text-sm font-semibold text-text hover:bg-surface2",
+                      (avatarBusy || !avatarUrl) && "opacity-60"
+                    )}
+                  >
+                    Quitar foto
+                  </button>
+
+                  <div className="my-2 h-px bg-border" />
+
+                  <button
+                    type="button"
+                    onClick={onLogout}
+                    className="w-full rounded-lg border border-border bg-card px-3 py-2 text-left text-sm font-semibold text-text hover:bg-surface2"
+                  >
+                    Salir
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
+
+          {/* Mobile: botón salir simple */}
+          <button
+            type="button"
+            onClick={onLogout}
+            className="md:hidden rounded-xl border border-border bg-card px-3 py-2 text-sm font-semibold text-text hover:opacity-90"
+          >
+            Salir
+          </button>
         </div>
       </div>
     </header>

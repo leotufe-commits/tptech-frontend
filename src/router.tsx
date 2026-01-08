@@ -24,6 +24,9 @@ import PerfilJoyeria from "./pages/PerfilJoyeria";
 import Cuenta from "./pages/Cuenta";
 import Placeholder from "./pages/Placeholder";
 
+// 👉 NUEVO
+import Usuarios from "./pages/Usuarios";
+
 // ✅ IMPORT DEFAULT (porque ProtectedRoute exporta default)
 import ProtectedRoute from "./components/ProtectedRoute";
 
@@ -34,7 +37,7 @@ import ProtectedRoute from "./components/ProtectedRoute";
  */
 function IndexRedirect() {
   const { token, loading } = useAuth();
-  if (loading) return null; // o un loader si querés
+  if (loading) return null;
   return token ? <Navigate to="/dashboard" replace /> : <Navigate to="/login" replace />;
 }
 
@@ -45,22 +48,18 @@ function IndexRedirect() {
  */
 function PublicOnly({ children }: { children: React.ReactNode }) {
   const { token, loading } = useAuth();
-  if (loading) return null; // o un loader si querés
+  if (loading) return null;
   if (token) return <Navigate to="/dashboard" replace />;
   return <>{children}</>;
 }
 
 const router = createBrowserRouter([
-  // ✅ Redirección inicial dinámica (según sesión)
   { path: "/", element: <IndexRedirect /> },
 
-  // ✅ Rutas públicas (si ya hay sesión, redirigen a /dashboard)
   { path: "/login", element: <PublicOnly><Login /></PublicOnly> },
   { path: "/register", element: <PublicOnly><Register /></PublicOnly> },
   { path: "/forgot-password", element: <PublicOnly><ForgotPassword /></PublicOnly> },
-  // { path: "/reset-password", element: <PublicOnly><ResetPassword /></PublicOnly> },
 
-  // Rutas protegidas
   {
     element: <ProtectedRoute />,
     children: [
@@ -68,7 +67,6 @@ const router = createBrowserRouter([
         path: "/",
         element: <MainLayout />,
         children: [
-          // ✅ si entran a "/" ya logueados, mandalos al dashboard
           { index: true, element: <Navigate to="/dashboard" replace /> },
 
           { path: "dashboard", element: <Dashboard /> },
@@ -79,6 +77,10 @@ const router = createBrowserRouter([
           // Configuración
           { path: "configuracion/joyeria", element: <PerfilJoyeria /> },
           { path: "configuracion/cuenta", element: <Cuenta /> },
+
+          // 👉 NUEVO: Usuarios
+          { path: "configuracion/usuarios", element: <Usuarios /> },
+
           { path: "configuracion", element: <Placeholder title="Configuración" /> },
 
           // Inventario

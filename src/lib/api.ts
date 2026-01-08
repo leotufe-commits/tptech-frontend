@@ -5,7 +5,12 @@ const RAW_API_URL = (import.meta.env.VITE_API_URL as string) || "http://localhos
 // normaliza: sin slash final
 const API_URL = RAW_API_URL.replace(/\/+$/, "");
 
+// ✅ legacy (si ya venías guardando token ahí)
 export const LS_TOKEN_KEY = "tptech_token";
+
+// ✅ NUEVO: token para DEV (Bearer) en sessionStorage (más seguro que localStorage)
+export const SS_TOKEN_KEY = "tptech_access_token";
+
 export const LS_LOGOUT_KEY = "tptech_logout";
 export const LS_AUTH_EVENT_KEY = "tptech_auth_event";
 
@@ -30,8 +35,28 @@ function emitAuthEvent(ev: AuthEvent) {
   }
 }
 
+function getToken(): string | null {
+  // 1) DEV: sessionStorage
+  try {
+    const t = sessionStorage.getItem(SS_TOKEN_KEY);
+    if (t) return t;
+  } catch {}
+
+  // 2) legacy: localStorage
+  try {
+    const t = localStorage.getItem(LS_TOKEN_KEY);
+    if (t) return t;
+  } catch {}
+
+  return null;
+}
+
 export function forceLogout() {
-  // si ya está deslogueado, igual emito evento para sincronizar pestañas
+  // limpiamos tokens en ambos storage (DEV + legacy)
+  try {
+    sessionStorage.removeItem(SS_TOKEN_KEY);
+  } catch {}
+
   try {
     localStorage.removeItem(LS_TOKEN_KEY);
   } catch {}
@@ -44,27 +69,89 @@ function joinUrl(base: string, path: string) {
   return `${base}${p}`;
 }
 
-export async function apiFetch<T>(path: string, options: RequestInit = {}): Promise<T> {
-  const token = (() => {
-    try {
-      return localStorage.getItem(LS_TOKEN_KEY);
-    } catch {
-      return null;
-    }
-  })();
+/**
+ * Extensión de RequestInit que permite:
+ * - body como objeto (lo serializa a JSON)
+ * - body como string/FormData/etc (lo manda tal cual)
+ */
+export type ApiFetchOptions = Omit<RequestInit, "body"> & {
+  body?: any;
+};
+
+function isFormData(body: any): body is FormData {
+  return typeof FormData !== "undefined" && body instanceof FormData;
+}
+
+function isURLSearchParams(body: any): body is URLSearchParams {
+  return typeof URLSearchParams !== "undefined" && body instanceof URLSearchParams;
+}
+
+function isBlob(body: any): body is Blob {
+  return typeof Blob !== "undefined" && body instanceof Blob;
+}
+
+function isArrayBuffer(body: any): body is ArrayBuffer {
+  return typeof ArrayBuffer !== "undefined" && body instanceof ArrayBuffer;
+}
+
+function isPlainObject(body: any) {
+  if (!body) return false;
+  if (typeof body !== "object") return false;
+  if (Array.isArray(body)) return true; // arrays también se serializan
+  // evita serializar cosas raras
+  if (isFormData(body) || isURLSearchParams(body) || isBlob(body) || isArrayBuffer(body)) return false;
+  return true;
+}
+
+/**
+ * apiFetch
+ * - default T = any (para que no te devuelva unknown)
+ * - si options.body es objeto/array -> JSON.stringify
+ * - si 401 -> forceLogout (multi-tab) + throw
+ */
+export async function apiFetch<T = any>(path: string, options: ApiFetchOptions = {}): Promise<T> {
+  const token = getToken();
 
   const headers = new Headers(options.headers || {});
-  if (!headers.has("Content-Type")) headers.set("Content-Type", "application/json");
 
-  // ✅ Bearer token (fallback/robusto)
+  // ✅ Bearer token (robusto)
   if (token && !headers.has("Authorization")) {
     headers.set("Authorization", `Bearer ${token}`);
+  }
+
+  // Body: si es objeto/array lo mandamos como JSON
+  let bodyToSend: BodyInit | undefined = undefined;
+
+  if (options.body !== undefined) {
+    if (isFormData(options.body) || isURLSearchParams(options.body)) {
+      bodyToSend = options.body;
+      // no seteamos content-type: el browser lo hace solo
+    } else if (typeof options.body === "string") {
+      bodyToSend = options.body;
+      if (!headers.has("Content-Type")) headers.set("Content-Type", "text/plain;charset=UTF-8");
+    } else if (isBlob(options.body)) {
+      bodyToSend = options.body;
+      // no forzamos content-type
+    } else if (isArrayBuffer(options.body)) {
+      bodyToSend = options.body as any;
+      // no forzamos content-type
+    } else if (isPlainObject(options.body)) {
+      bodyToSend = JSON.stringify(options.body);
+      if (!headers.has("Content-Type")) headers.set("Content-Type", "application/json");
+    } else {
+      // fallback: intentamos mandarlo tal cual
+      bodyToSend = options.body as any;
+      if (!headers.has("Content-Type")) headers.set("Content-Type", "application/json");
+    }
+  } else {
+    // ✅ si no hay body y no hay content-type, NO lo forzamos.
   }
 
   const res = await fetch(joinUrl(API_URL, path), {
     ...options,
     headers,
-    credentials: "include",
+    body: bodyToSend,
+    credentials: "include", // ✅ prod cookie; local no molesta
   });
 
   // ✅ sesión inválida → logout global (multi-tab)
@@ -81,11 +168,15 @@ export async function apiFetch<T>(path: string, options: RequestInit = {}): Prom
   if (ct.includes("application/json")) {
     try {
       payload = await res.json();
-    } catch {}
+    } catch {
+      payload = null;
+    }
   } else {
     try {
       payload = await res.text();
-    } catch {}
+    } catch {
+      payload = null;
+    }
   }
 
   if (!res.ok) {

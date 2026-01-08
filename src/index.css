@@ -195,3 +195,29 @@ body,
   scrollbar-width: thin;
   scrollbar-color: color-mix(in oklab, var(--primary) 40%, transparent) transparent;
 }
+
+.tp-btn {
+  background: var(--card);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 0.75rem;
+  padding: 0.55rem 0.9rem;
+  font-weight: 800;
+  font-size: 0.9rem;
+  line-height: 1;
+  transition: opacity 160ms ease, box-shadow 160ms ease, transform 160ms ease;
+}
+
+.tp-btn:hover {
+  opacity: 0.92;
+}
+
+.tp-btn:active {
+  transform: translateY(0.5px);
+}
+
+.tp-btn:focus {
+  outline: none;
+  box-shadow: 0 0 0 4px color-mix(in oklab, var(--primary) 18%, transparent);
+}
+
