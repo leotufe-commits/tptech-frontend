@@ -9,6 +9,8 @@ import {
   removeUserOverride,
   setUserOverride,
   updateUserStatus,
+  updateUserAvatarForUser,
+  removeAvatarForUser,
   type Role,
   type UserListItem,
   type Override,
@@ -55,6 +57,19 @@ function Modal({
   );
 }
 
+function cn(...classes: Array<string | false | null | undefined>) {
+  return classes.filter(Boolean).join(" ");
+}
+
+function initialsFrom(label: string) {
+  const clean = (label || "").trim();
+  if (!clean) return "U";
+  const parts = clean.split(/\s+/).filter(Boolean);
+  const a = parts[0]?.[0] ?? "U";
+  const b = parts.length > 1 ? parts[parts.length - 1]?.[0] ?? "" : "";
+  return (a + b).toUpperCase();
+}
+
 /* =========================
    PAGE
 ========================= */
@@ -87,6 +102,9 @@ export default function UsersPage() {
   const [permPick, setPermPick] = useState<string>("");
   const [effectPick, setEffectPick] = useState<"ALLOW" | "DENY">("ALLOW");
   const [savingOv, setSavingOv] = useState(false);
+
+  // Avatar (admin)
+  const [avatarBusy, setAvatarBusy] = useState(false);
 
   // Create user modal
   const [createOpen, setCreateOpen] = useState(false);
@@ -175,7 +193,7 @@ export default function UsersPage() {
       await createUser({
         email,
         name: cName.trim() || null,
-        password: cPassword.trim() || undefined, // opcional
+        password: cPassword.trim() || undefined,
         roleIds: cRoleIds,
       });
 
@@ -245,7 +263,6 @@ export default function UsersPage() {
     setOvLoading(true);
 
     try {
-      // ✅ 1) catálogo de permisos (robusto: usa lista local para preselección)
       let permsList = allPerms;
 
       if (permsList.length === 0) {
@@ -254,11 +271,9 @@ export default function UsersPage() {
         setAllPerms(permsList);
       }
 
-      // 2) overrides del usuario
       const detail = await fetchUser(u.id);
       setOverrides(detail.user.permissionOverrides ?? []);
 
-      // ✅ preselección usando la lista real (no el state aún no actualizado)
       setPermPick(permsList[0]?.id || "");
       setEffectPick("ALLOW");
     } catch (e: any) {
@@ -301,6 +316,48 @@ export default function UsersPage() {
     }
   }
 
+  /* =========================
+     AVATAR (ADMIN)
+  ========================= */
+  async function adminPickAvatar(file: File) {
+    if (!canAdmin || !target) return;
+    setAvatarBusy(true);
+    setErr(null);
+    try {
+      const resp = await updateUserAvatarForUser(target.id, file);
+
+      // refrescar tabla y target (modal)
+      await load();
+
+      // si backend devuelve user/avatarUrl, actualizamos el target en el acto
+      const nextAvatarUrl =
+        (resp && typeof resp === "object" && "avatarUrl" in resp ? (resp as any).avatarUrl : null) ??
+        (resp && typeof resp === "object" && (resp as any).user?.avatarUrl) ??
+        null;
+
+      setTarget((prev) => (prev ? { ...prev, avatarUrl: nextAvatarUrl ?? prev.avatarUrl } : prev));
+    } catch (e: any) {
+      setErr(String(e?.message || "Error subiendo avatar"));
+    } finally {
+      setAvatarBusy(false);
+    }
+  }
+
+  async function adminRemoveAvatar() {
+    if (!canAdmin || !target) return;
+    setAvatarBusy(true);
+    setErr(null);
+    try {
+      await removeAvatarForUser(target.id);
+      await load();
+      setTarget((prev) => (prev ? { ...prev, avatarUrl: null } : prev));
+    } catch (e: any) {
+      setErr(String(e?.message || "Error quitando avatar"));
+    } finally {
+      setAvatarBusy(false);
+    }
+  }
+
   if (!canView) return <div className="p-6">Sin permisos para ver usuarios.</div>;
 
   return (
@@ -308,7 +365,7 @@ export default function UsersPage() {
       <div className="flex items-end justify-between gap-3">
         <div>
           <h1 className="text-2xl font-semibold">Usuarios</h1>
-          <p className="text-sm text-muted">Gestión de usuarios, roles y overrides (ALLOW/DENY).</p>
+          <p className="text-sm text-muted">Gestión de usuarios, roles, overrides y avatar.</p>
         </div>
 
         <div className="flex items-center gap-2">
@@ -358,52 +415,71 @@ export default function UsersPage() {
                 </td>
               </tr>
             ) : (
-              filtered.map((u) => (
-                <tr key={u.id} className="border-t border-border">
-                  <td className="px-4 py-3">
-                    <div className="font-semibold">{u.name || "Sin nombre"}</div>
-                    <div className="text-xs text-muted">{u.email}</div>
-                  </td>
+              filtered.map((u) => {
+                const label = u.name?.trim() || u.email || "Usuario";
+                const initials = initialsFrom(label);
 
-                  <td className="px-4 py-3">
-                    <Badge>{u.status}</Badge>
-                  </td>
+                return (
+                  <tr key={u.id} className="border-t border-border">
+                    <td className="px-4 py-3">
+                      <div className="flex items-center gap-3">
+                        <div className="h-9 w-9 overflow-hidden rounded-full border border-border bg-surface">
+                          {u.avatarUrl ? (
+                            <img src={u.avatarUrl} alt="Avatar" className="h-full w-full object-cover" />
+                          ) : (
+                            <div className="grid h-full w-full place-items-center text-xs font-bold text-primary">
+                              {initials}
+                            </div>
+                          )}
+                        </div>
 
-                  <td className="px-4 py-3">
-                    <div className="flex flex-wrap gap-2">
-                      {(u.roles || []).length ? (
-                        (u.roles || []).map((r) => (
-                          <Badge key={r.id}>
-                            {r.name}
-                            {r.isSystem ? " • sys" : ""}
-                          </Badge>
-                        ))
-                      ) : (
-                        <span className="text-muted">Sin roles</span>
+                        <div className="min-w-0">
+                          <div className="font-semibold truncate">{u.name || "Sin nombre"}</div>
+                          <div className="text-xs text-muted truncate">{u.email}</div>
+                        </div>
+                      </div>
+                    </td>
+
+                    <td className="px-4 py-3">
+                      <Badge>{u.status}</Badge>
+                    </td>
+
+                    <td className="px-4 py-3">
+                      <div className="flex flex-wrap gap-2">
+                        {(u.roles || []).length ? (
+                          (u.roles || []).map((r) => (
+                            <Badge key={r.id}>
+                              {r.name}
+                              {r.isSystem ? " • sys" : ""}
+                            </Badge>
+                          ))
+                        ) : (
+                          <span className="text-muted">Sin roles</span>
+                        )}
+                      </div>
+                    </td>
+
+                    <td className="px-4 py-3 text-right space-x-2">
+                      {canEditStatus && (
+                        <button className="tp-btn" onClick={() => toggleStatus(u)} type="button">
+                          {u.status === "ACTIVE" ? "Bloquear" : "Activar"}
+                        </button>
                       )}
-                    </div>
-                  </td>
 
-                  <td className="px-4 py-3 text-right space-x-2">
-                    {canEditStatus && (
-                      <button className="tp-btn" onClick={() => toggleStatus(u)} type="button">
-                        {u.status === "ACTIVE" ? "Bloquear" : "Activar"}
-                      </button>
-                    )}
-
-                    {canAdmin && (
-                      <>
-                        <button className="tp-btn" onClick={() => openRolesModal(u)} type="button">
-                          Roles
-                        </button>
-                        <button className="tp-btn" onClick={() => openOverridesModal(u)} type="button">
-                          Overrides
-                        </button>
-                      </>
-                    )}
-                  </td>
-                </tr>
-              ))
+                      {canAdmin && (
+                        <>
+                          <button className="tp-btn" onClick={() => openRolesModal(u)} type="button">
+                            Roles
+                          </button>
+                          <button className="tp-btn" onClick={() => openOverridesModal(u)} type="button">
+                            Overrides
+                          </button>
+                        </>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })
             )}
           </tbody>
         </table>
@@ -453,9 +529,7 @@ export default function UsersPage() {
                             type="checkbox"
                             checked={checked}
                             onChange={(e) =>
-                              setCRoleIds((prev) =>
-                                e.target.checked ? [...prev, r.id] : prev.filter((id) => id !== r.id)
-                              )
+                              setCRoleIds((prev) => (e.target.checked ? [...prev, r.id] : prev.filter((id) => id !== r.id)))
                             }
                           />
                           {r.name} {r.isSystem ? "(sys)" : ""}
@@ -465,9 +539,7 @@ export default function UsersPage() {
                   </div>
                 )}
               </div>
-              <p className="mt-2 text-xs text-muted">
-                Si no seleccionás roles, queda sin permisos hasta asignar.
-              </p>
+              <p className="mt-2 text-xs text-muted">Si no seleccionás roles, queda sin permisos hasta asignar.</p>
             </div>
           </div>
 
@@ -483,13 +555,54 @@ export default function UsersPage() {
       </Modal>
 
       {/* =========================
-          MODAL ROLES
+          MODAL ROLES (con avatar admin)
       ========================= */}
-      <Modal
-        open={rolesModalOpen}
-        title={`Roles de ${target?.email}`}
-        onClose={() => setRolesModalOpen(false)}
-      >
+      <Modal open={rolesModalOpen} title={`Roles de ${target?.email || ""}`} onClose={() => setRolesModalOpen(false)}>
+        {target && canAdmin && (
+          <div className="mb-4 flex items-center justify-between gap-3 rounded-xl border border-border bg-bg p-3">
+            <div className="flex items-center gap-3">
+              <div className="h-10 w-10 overflow-hidden rounded-full border border-border bg-surface">
+                {target.avatarUrl ? (
+                  <img src={target.avatarUrl} alt="Avatar" className="h-full w-full object-cover" />
+                ) : (
+                  <div className="grid h-full w-full place-items-center text-xs font-bold text-primary">
+                    {initialsFrom(target.name || target.email)}
+                  </div>
+                )}
+              </div>
+              <div className="min-w-0">
+                <div className="text-sm font-semibold truncate">{target.name || "Sin nombre"}</div>
+                <div className="text-xs text-muted truncate">{target.email}</div>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <label className={cn("tp-btn", avatarBusy && "pointer-events-none opacity-60")} title="Cambiar avatar">
+                {avatarBusy ? "Guardando…" : "Cambiar foto"}
+                <input
+                  type="file"
+                  accept="image/*"
+                  className="hidden"
+                  onChange={(e) => {
+                    const f = e.target.files?.[0];
+                    e.target.value = "";
+                    if (f) void adminPickAvatar(f);
+                  }}
+                />
+              </label>
+
+              <button
+                type="button"
+                className={cn("tp-btn", (avatarBusy || !target.avatarUrl) && "opacity-60")}
+                disabled={avatarBusy || !target.avatarUrl}
+                onClick={() => void adminRemoveAvatar()}
+              >
+                Quitar
+              </button>
+            </div>
+          </div>
+        )}
+
         {rolesLoading ? (
           <div>Cargando roles…</div>
         ) : (
@@ -503,9 +616,7 @@ export default function UsersPage() {
                       type="checkbox"
                       checked={checked}
                       onChange={(e) =>
-                        setSelectedRoleIds((prev) =>
-                          e.target.checked ? [...prev, r.id] : prev.filter((id) => id !== r.id)
-                        )
+                        setSelectedRoleIds((prev) => (e.target.checked ? [...prev, r.id] : prev.filter((id) => id !== r.id)))
                       }
                     />
                     {r.name} {r.isSystem ? "(sys)" : ""}
@@ -529,11 +640,7 @@ export default function UsersPage() {
       {/* =========================
           MODAL OVERRIDES
       ========================= */}
-      <Modal
-        open={ovModalOpen}
-        title={`Overrides (ALLOW/DENY) • ${target?.email}`}
-        onClose={() => setOvModalOpen(false)}
-      >
+      <Modal open={ovModalOpen} title={`Overrides (ALLOW/DENY) • ${target?.email || ""}`} onClose={() => setOvModalOpen(false)}>
         {ovLoading ? (
           <div>Cargando…</div>
         ) : (
@@ -554,23 +661,14 @@ export default function UsersPage() {
 
                 <div>
                   <label className="mb-1 block text-xs text-muted">Efecto</label>
-                  <select
-                    className="tp-input"
-                    value={effectPick}
-                    onChange={(e) => setEffectPick(e.target.value as any)}
-                  >
+                  <select className="tp-input" value={effectPick} onChange={(e) => setEffectPick(e.target.value as any)}>
                     <option value="ALLOW">ALLOW</option>
                     <option value="DENY">DENY</option>
                   </select>
                 </div>
 
                 <div className="flex items-end">
-                  <button
-                    className="tp-btn-primary w-full"
-                    onClick={addOrUpdateOverride}
-                    disabled={!permPick || savingOv}
-                    type="button"
-                  >
+                  <button className="tp-btn-primary w-full" onClick={addOrUpdateOverride} disabled={!permPick || savingOv} type="button">
                     {savingOv ? "Guardando…" : "Agregar / Actualizar"}
                   </button>
                 </div>
@@ -604,7 +702,7 @@ export default function UsersPage() {
                           <Badge>{ov.effect}</Badge>
                         </td>
                         <td className="px-4 py-3 text-right">
-                          <button className="tp-btn" onClick={() => removeOv(ov.permissionId)} disabled={savingOv} type="button">
+                          <button className={cn("tp-btn", savingOv && "opacity-60")} onClick={() => void removeOv(ov.permissionId)} disabled={savingOv} type="button">
                             Quitar
                           </button>
                         </td>

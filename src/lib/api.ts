@@ -108,11 +108,13 @@ function isPlainObject(body: any) {
  * - default T = any (para que no te devuelva unknown)
  * - si options.body es objeto/array -> JSON.stringify
  * - si 401 -> forceLogout (multi-tab) + throw
+ * - soporta FormData (avatar) sin setear Content-Type
  */
 export async function apiFetch<T = any>(path: string, options: ApiFetchOptions = {}): Promise<T> {
   const token = getToken();
 
-  const headers = new Headers(options.headers || {});
+  // robusto: soporta headers como Headers | Record<string,string> | [][]
+  const headers = new Headers(options.headers as any);
 
   // ✅ Bearer token (robusto)
   if (token && !headers.has("Authorization")) {
@@ -125,7 +127,7 @@ export async function apiFetch<T = any>(path: string, options: ApiFetchOptions =
   if (options.body !== undefined) {
     if (isFormData(options.body) || isURLSearchParams(options.body)) {
       bodyToSend = options.body;
-      // no seteamos content-type: el browser lo hace solo
+      // ✅ no seteamos content-type: el browser lo hace solo (boundary)
     } else if (typeof options.body === "string") {
       bodyToSend = options.body;
       if (!headers.has("Content-Type")) headers.set("Content-Type", "text/plain;charset=UTF-8");
@@ -143,8 +145,6 @@ export async function apiFetch<T = any>(path: string, options: ApiFetchOptions =
       bodyToSend = options.body as any;
       if (!headers.has("Content-Type")) headers.set("Content-Type", "application/json");
     }
-  } else {
-    // ✅ si no hay body y no hay content-type, NO lo forzamos.
   }
 
   const res = await fetch(joinUrl(API_URL, path), {

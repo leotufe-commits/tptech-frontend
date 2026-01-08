@@ -24,8 +24,8 @@ import PerfilJoyeria from "./pages/PerfilJoyeria";
 import Cuenta from "./pages/Cuenta";
 import Placeholder from "./pages/Placeholder";
 
-// 👉 NUEVO
-import Usuarios from "./pages/Usuarios";
+// 👉 NUEVO (alias "Usuarios", archivo real "Users.tsx")
+import Usuarios from "./pages/Users";
 
 // ✅ IMPORT DEFAULT (porque ProtectedRoute exporta default)
 import ProtectedRoute from "./components/ProtectedRoute";
@@ -78,7 +78,7 @@ const router = createBrowserRouter([
           { path: "configuracion/joyeria", element: <PerfilJoyeria /> },
           { path: "configuracion/cuenta", element: <Cuenta /> },
 
-          // 👉 NUEVO: Usuarios
+          // 👉 Usuarios
           { path: "configuracion/usuarios", element: <Usuarios /> },
 
           { path: "configuracion", element: <Placeholder title="Configuración" /> },

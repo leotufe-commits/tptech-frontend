@@ -11,11 +11,13 @@ export type Override = {
   effect: "ALLOW" | "DENY";
 };
 
+export type UserStatus = "ACTIVE" | "PENDING" | "BLOCKED";
+
 export type UserListItem = {
   id: string;
   email: string;
   name?: string | null;
-  status: "ACTIVE" | "PENDING" | "BLOCKED";
+  status: UserStatus;
   avatarUrl?: string | null;
   favoriteWarehouseId?: string | null;
   createdAt?: string;
@@ -27,7 +29,7 @@ export type UserDetail = {
   id: string;
   email: string;
   name?: string | null;
-  status: "ACTIVE" | "PENDING" | "BLOCKED";
+  status: UserStatus;
   avatarUrl?: string | null;
   favoriteWarehouseId?: string | null;
   createdAt?: string;
@@ -41,6 +43,7 @@ export type UserDetail = {
 ========================= */
 export type UsersListResponse = { users: UserListItem[] };
 export type UserDetailResponse = { user: UserDetail };
+
 export type CreateUserBody = {
   email: string;
   name?: string | null;
@@ -49,6 +52,25 @@ export type CreateUserBody = {
   status?: "ACTIVE" | "BLOCKED";
 };
 export type CreateUserResponse = { user: UserListItem };
+
+// Avatar
+export type UpdateAvatarResponse = {
+  ok: true;
+  avatarUrl: string | null;
+  user?: UserListItem;
+};
+
+/* =========================
+   Helpers
+========================= */
+function assertImageFile(file: File) {
+  if (!file) throw new Error("Seleccioná un archivo");
+  if (!file.type?.startsWith("image/")) throw new Error("El archivo debe ser una imagen");
+
+  // límite razonable (ajustable)
+  const MAX = 5 * 1024 * 1024; // 5MB
+  if (file.size > MAX) throw new Error("La imagen supera el máximo permitido (5MB)");
+}
 
 /* =========================
    API calls
@@ -120,6 +142,64 @@ export async function setUserOverride(userId: string, permissionId: string, effe
  */
 export async function removeUserOverride(userId: string, permissionId: string) {
   return apiFetch<{ ok: true }>(`/users/${userId}/overrides/${permissionId}`, {
+    method: "DELETE",
+  });
+}
+
+/* =========================
+   AVATAR (multipart/form-data)
+   Backend esperado:
+   - PUT    /users/me/avatar   (field: avatar)
+   - DELETE /users/me/avatar   (quita avatar)
+========================= */
+
+/**
+ * Subir/actualizar avatar del usuario logueado
+ * PUT /users/me/avatar
+ */
+export async function updateUserAvatar(file: File) {
+  assertImageFile(file);
+
+  const form = new FormData();
+  form.append("avatar", file);
+
+  return apiFetch<UpdateAvatarResponse>("/users/me/avatar", {
+    method: "PUT",
+    body: form,
+  });
+}
+
+/**
+ * Quitar avatar del usuario logueado
+ * DELETE /users/me/avatar
+ */
+export async function removeMyAvatar() {
+  return apiFetch<UpdateAvatarResponse>("/users/me/avatar", {
+    method: "DELETE",
+  });
+}
+
+/* =========================
+   (Opcional) Admin avatar
+   Requiere backend:
+   - PUT /users/:id/avatar (field: avatar)
+   - DELETE /users/:id/avatar
+========================= */
+
+export async function updateUserAvatarForUser(userId: string, file: File) {
+  assertImageFile(file);
+
+  const form = new FormData();
+  form.append("avatar", file);
+
+  return apiFetch<UpdateAvatarResponse>(`/users/${userId}/avatar`, {
+    method: "PUT",
+    body: form,
+  });
+}
+
+export async function removeAvatarForUser(userId: string) {
+  return apiFetch<UpdateAvatarResponse>(`/users/${userId}/avatar`, {
     method: "DELETE",
   });
 }

@@ -21,9 +21,7 @@ export type RoleDetail = {
   }>;
 };
 
-export type ListRolesResponse =
-  | { roles: RoleLite[] }
-  | RoleLite[];
+export type ListRolesResponse = { roles: RoleLite[] } | RoleLite[];
 
 /* =========================
    Helpers
@@ -41,6 +39,11 @@ export async function listRoles(): Promise<RoleLite[]> {
   const resp = await apiFetch<ListRolesResponse>("/roles", { method: "GET" });
   return normalizeRoles(resp);
 }
+
+/**
+ * ✅ Alias por compatibilidad: algunas pantallas importan fetchRoles
+ */
+export const fetchRoles = listRoles;
 
 export async function createRole(name: string): Promise<RoleLite> {
   // backend: POST /roles  body: { name }
