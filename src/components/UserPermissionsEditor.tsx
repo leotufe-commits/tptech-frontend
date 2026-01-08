@@ -60,7 +60,9 @@ export function UserPermissionsEditor({
         setLoading(true);
         setError(null);
 
-        const [uRes, pRes] = await Promise.all([fetchUser(userId), fetchPermissions()]);
+        // ✅ Evita que TS infiera `never` con Promise.all()
+        const uRes = await fetchUser(userId);
+        const pRes: any = await fetchPermissions();
 
         if (!alive) return;
 
@@ -69,7 +71,7 @@ export function UserPermissionsEditor({
         // ✅ soporta ambos formatos:
         // - Permission[]
         // - { permissions: Permission[] }
-        const perms = Array.isArray(pRes) ? pRes : (pRes?.permissions ?? []);
+        const perms: Permission[] = Array.isArray(pRes) ? pRes : (pRes?.permissions ?? []);
         setPermissions(perms);
       } catch (e: any) {
         if (!alive) return;
@@ -206,9 +208,7 @@ export function UserPermissionsEditor({
                         borderTop: "1px dashed #eee",
                       }}
                     >
-                      <div style={{ minWidth: 220, fontFamily: "monospace" }}>
-                        {permLabel(p)}
-                      </div>
+                      <div style={{ minWidth: 220, fontFamily: "monospace" }}>{permLabel(p)}</div>
 
                       <button
                         type="button"
