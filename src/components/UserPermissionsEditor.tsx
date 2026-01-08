@@ -60,15 +60,17 @@ export function UserPermissionsEditor({
         setLoading(true);
         setError(null);
 
-        const [uRes, pRes] = await Promise.all([
-          fetchUser(userId),
-          fetchPermissions(),
-        ]);
+        const [uRes, pRes] = await Promise.all([fetchUser(userId), fetchPermissions()]);
 
         if (!alive) return;
 
         setUser(uRes.user);
-        setPermissions(pRes.permissions ?? []);
+
+        // ✅ soporta ambos formatos:
+        // - Permission[]
+        // - { permissions: Permission[] }
+        const perms = Array.isArray(pRes) ? pRes : (pRes?.permissions ?? []);
+        setPermissions(perms);
       } catch (e: any) {
         if (!alive) return;
         setError(e?.message ?? "Error al cargar permisos del usuario.");
@@ -173,11 +175,7 @@ export function UserPermissionsEditor({
         <hr style={{ margin: "12px 0" }} />
 
         {loading && <div>Cargando…</div>}
-        {error && (
-          <div style={{ color: "crimson", marginBottom: 10 }}>
-            {error}
-          </div>
-        )}
+        {error && <div style={{ color: "crimson", marginBottom: 10 }}>{error}</div>}
 
         {!loading && user && (
           <div style={{ display: "grid", gap: 10 }}>
