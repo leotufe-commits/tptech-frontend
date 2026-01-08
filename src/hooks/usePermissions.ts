@@ -1,32 +1,34 @@
 // tptech-frontend/src/hooks/usePermissions.ts
-import { useMe } from "./useMe";
+import { useMemo } from "react";
+import { useAuth } from "../context/AuthContext";
 
 export function usePermissions() {
-  const { me, loading } = useMe();
+  const { permissions, loading } = useAuth();
 
-  // ✅ permisos vienen del /auth/me
-  const permissions: string[] = (me as any)?.permissions ?? [];
+  const perms = useMemo(() => {
+    return Array.isArray(permissions) ? permissions : [];
+  }, [permissions]);
 
   function can(permission: string) {
     if (loading) return false;
-    return permissions.includes(permission);
+    return perms.includes(permission);
   }
 
-  function canAny(perms: string[]) {
+  function canAny(list: string[]) {
     if (loading) return false;
-    return perms.some((p) => permissions.includes(p));
+    return list.some((p) => perms.includes(p));
   }
 
-  function canAll(perms: string[]) {
+  function canAll(list: string[]) {
     if (loading) return false;
-    return perms.every((p) => permissions.includes(p));
+    return list.every((p) => perms.includes(p));
   }
 
   return {
     can,
     canAny,
     canAll,
-    permissions,
+    permissions: perms,
     loading,
   };
 }

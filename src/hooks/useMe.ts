@@ -1,67 +1,50 @@
-import { useEffect, useState } from "react";
-import { apiFetch } from "../lib/api";
+// tptech-frontend/src/hooks/useMe.ts
+import { useCallback, useMemo } from "react";
+import { useAuth } from "../context/AuthContext";
 
-export type User = {
-  id: string;
-  email: string;
-  name?: string | null;
-  createdAt?: string;
-  updatedAt?: string;
-};
-
-export type Jewelry = {
-  id: string;
-  name: string;
-  firstName: string;
-  lastName: string;
-  phoneCountry: string;
-  phoneNumber: string;
-  street: string;
-  number: string;
-  city: string;
-  province: string;
-  postalCode: string;
-  country: string;
-  userId: string;
-  createdAt?: string;
-  updatedAt?: string;
-};
-
-type MeResponse = {
-  user: User;
-  jewelry: Jewelry | null;
-};
-
+/**
+ * Hook unificado: usa AuthContext como única fuente de verdad.
+ * - No hace fetch directo (evita duplicar /auth/me)
+ * - refresh() delega en AuthContext.refreshMe()
+ *
+ * Devuelve un "me" compatible:
+ * { user, jewelry, roles, permissions }
+ */
 export function useMe() {
-  const [me, setMe] = useState<MeResponse | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const auth = useAuth();
 
-  async function refresh() {
-    setLoading(true);
-    setError(null);
+  const roles = Array.isArray(auth.roles) ? auth.roles : [];
+  const permissions = Array.isArray(auth.permissions) ? auth.permissions : [];
 
-    try {
-      const data = await apiFetch<MeResponse>("/auth/me");
-      setMe(data);
-    } catch (e: any) {
-      setMe(null);
-      setError(e?.message || "Error");
-    } finally {
-      setLoading(false);
-    }
-  }
+  const me = useMemo(() => {
+    if (!auth.token || !auth.user) return null;
 
-  useEffect(() => {
-    // si no hay token, no tiene sentido pegarle al backend
-    const token = localStorage.getItem("tptech_token");
-    if (!token) {
-      setLoading(false);
-      setMe(null);
-      return;
-    }
-    refresh();
+    return {
+      user: auth.user,
+      jewelry: auth.jewelry ?? null,
+      roles,
+      permissions,
+    };
+  }, [auth.token, auth.user, auth.jewelry, roles, permissions]);
+
+  const error = useMemo(() => {
+    // AuthContext maneja errores internamente:
+    // si /auth/me falla => limpia sesión.
+    return null as string | null;
   }, []);
 
-  return { me, loading, error, refresh };
+  const refresh = useCallback(async () => {
+    await auth.refreshMe();
+  }, [auth]);
+
+  return {
+    me,
+    user: auth.user,
+    jewelry: auth.jewelry,
+    roles,
+    permissions,
+    loading: auth.loading,
+    error,
+    refresh,
+  };
 }

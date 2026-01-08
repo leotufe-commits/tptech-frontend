@@ -53,10 +53,10 @@ export type CreateUserBody = {
 };
 export type CreateUserResponse = { user: UserListItem };
 
-// Avatar
+// Avatar (respuestas posibles)
 export type UpdateAvatarResponse = {
-  ok: true;
-  avatarUrl: string | null;
+  ok?: true;
+  avatarUrl?: string | null;
   user?: UserListItem;
 };
 
@@ -67,9 +67,24 @@ function assertImageFile(file: File) {
   if (!file) throw new Error("Seleccioná un archivo");
   if (!file.type?.startsWith("image/")) throw new Error("El archivo debe ser una imagen");
 
-  // límite razonable (ajustable)
   const MAX = 5 * 1024 * 1024; // 5MB
   if (file.size > MAX) throw new Error("La imagen supera el máximo permitido (5MB)");
+}
+
+/**
+ * Normaliza respuestas "ok/user/avatarUrl" para que el UI tenga un contrato estable.
+ */
+function normalizeAvatarResponse(resp: any): { ok: true; avatarUrl: string | null; user?: UserListItem } {
+  const avatarUrl =
+    (resp && typeof resp === "object" && "avatarUrl" in resp ? (resp.avatarUrl as any) : undefined) ??
+    (resp && typeof resp === "object" && resp.user?.avatarUrl != null ? resp.user.avatarUrl : undefined) ??
+    null;
+
+  return {
+    ok: true,
+    avatarUrl: avatarUrl ?? null,
+    user: resp?.user,
+  };
 }
 
 /* =========================
@@ -147,10 +162,10 @@ export async function removeUserOverride(userId: string, permissionId: string) {
 }
 
 /* =========================
-   AVATAR (multipart/form-data)
+   AVATAR (ME) multipart/form-data
    Backend esperado:
    - PUT    /users/me/avatar   (field: avatar)
-   - DELETE /users/me/avatar   (quita avatar)
+   - DELETE /users/me/avatar
 ========================= */
 
 /**
@@ -163,10 +178,12 @@ export async function updateUserAvatar(file: File) {
   const form = new FormData();
   form.append("avatar", file);
 
-  return apiFetch<UpdateAvatarResponse>("/users/me/avatar", {
+  const resp = await apiFetch<UpdateAvatarResponse>("/users/me/avatar", {
     method: "PUT",
     body: form,
   });
+
+  return normalizeAvatarResponse(resp);
 }
 
 /**
@@ -174,13 +191,18 @@ export async function updateUserAvatar(file: File) {
  * DELETE /users/me/avatar
  */
 export async function removeMyAvatar() {
-  return apiFetch<UpdateAvatarResponse>("/users/me/avatar", {
+  const resp = await apiFetch<UpdateAvatarResponse>("/users/me/avatar", {
     method: "DELETE",
   });
+
+  return normalizeAvatarResponse(resp);
 }
 
+// Alias útil (por si en el UI lo importaste con otro nombre)
+export const removeUserAvatar = removeMyAvatar;
+
 /* =========================
-   (Opcional) Admin avatar
+   AVATAR (ADMIN) multipart/form-data
    Requiere backend:
    - PUT /users/:id/avatar (field: avatar)
    - DELETE /users/:id/avatar
@@ -192,14 +214,18 @@ export async function updateUserAvatarForUser(userId: string, file: File) {
   const form = new FormData();
   form.append("avatar", file);
 
-  return apiFetch<UpdateAvatarResponse>(`/users/${userId}/avatar`, {
+  const resp = await apiFetch<UpdateAvatarResponse>(`/users/${userId}/avatar`, {
     method: "PUT",
     body: form,
   });
+
+  return normalizeAvatarResponse(resp);
 }
 
 export async function removeAvatarForUser(userId: string) {
-  return apiFetch<UpdateAvatarResponse>(`/users/${userId}/avatar`, {
+  const resp = await apiFetch<UpdateAvatarResponse>(`/users/${userId}/avatar`, {
     method: "DELETE",
   });
+
+  return normalizeAvatarResponse(resp);
 }

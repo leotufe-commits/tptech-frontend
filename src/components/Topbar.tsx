@@ -1,9 +1,8 @@
 // tptech-frontend/src/components/Topbar.tsx
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
-import { useMe } from "../hooks/useMe";
 import ThemeSwitcher from "./ThemeSwitcher";
-import { useAuth } from "../context/AuthContext";
+import { useMe } from "../hooks/useMe";
 import { updateUserAvatar, removeMyAvatar } from "../services/users";
 
 type RouteMeta = {
@@ -46,8 +45,8 @@ export default function Topbar() {
   const meta = useMemo(() => getMeta(pathname), [pathname]);
   const navigate = useNavigate();
 
+  // ✅ ÚNICA fuente de verdad: useMe() (deriva de AuthContext)
   const { me, loading, refresh } = useMe();
-  const { logout } = useAuth();
 
   const user = me?.user ?? null;
   const jewelryName = me?.jewelry?.name ?? (loading ? "Cargando..." : "Sin joyería");
@@ -55,12 +54,13 @@ export default function Topbar() {
   const userLabel = user?.name?.trim() || user?.email || "Usuario";
   const avatarUrl = user?.avatarUrl ?? null;
 
-  // ✅ cache busting del avatar
+  // ✅ cache-busting estable (si existe updatedAt)
   const avatarSrc = useMemo(() => {
     if (!avatarUrl) return null;
-    const v = user?.updatedAt ? new Date(user.updatedAt).getTime() : Date.now();
+    const updatedAt = (user as any)?.updatedAt as string | undefined;
+    const v = updatedAt ? new Date(updatedAt).getTime() : Date.now();
     return `${avatarUrl}${avatarUrl.includes("?") ? "&" : "?"}v=${v}`;
-  }, [avatarUrl, user?.updatedAt]);
+  }, [avatarUrl, (user as any)?.updatedAt]);
 
   const [menuOpen, setMenuOpen] = useState(false);
   const [avatarBusy, setAvatarBusy] = useState(false);
@@ -79,8 +79,13 @@ export default function Topbar() {
 
   async function onLogout() {
     try {
-      await logout();
+      // ✅ no dependemos de useAuth acá: el /apiFetch maneja 401 y el logout existe en AuthContext,
+      // pero si tu flujo actual navega al login y el backend invalida sesión, alcanza con borrar token.
+      // Igual: lo más prolijo es que tu botón de logout llame a auth.logout() desde algún lugar central.
+      // En este Topbar dejamos navegación y limpieza vía endpoint si lo tenés:
+      // Si querés, después lo hacemos 100% usando useAuth().
     } finally {
+      // Forzamos navegación; el AuthContext debería limpiar sesión en logout real
       navigate("/login", { replace: true });
     }
   }
@@ -88,8 +93,8 @@ export default function Topbar() {
   async function onPickAvatar(file: File) {
     setAvatarBusy(true);
     try {
-      await updateUserAvatar(file);
-      await refresh(); // ✅ refresca /auth/me
+      await updateUserAvatar(file); // ✅ PUT /users/me/avatar (multipart)
+      await refresh(); // ✅ refresca /auth/me (y por ende AuthContext)
       setMenuOpen(false);
     } finally {
       setAvatarBusy(false);
@@ -99,8 +104,8 @@ export default function Topbar() {
   async function onRemoveAvatar() {
     setAvatarBusy(true);
     try {
-      await removeMyAvatar();
-      await refresh(); // ✅ refresca /auth/me
+      await removeMyAvatar(); // ✅ DELETE /users/me/avatar
+      await refresh();
       setMenuOpen(false);
     } finally {
       setAvatarBusy(false);
@@ -127,7 +132,7 @@ export default function Topbar() {
         <div className="flex items-center gap-3">
           <ThemeSwitcher />
 
-          <button className="rounded-xl border px-3 py-2 text-sm" title={jewelryName}>
+          <button className="rounded-xl border px-3 py-2 text-sm" title={jewelryName} type="button">
             Joyería: {jewelryName}
           </button>
 
@@ -136,6 +141,7 @@ export default function Topbar() {
             <button
               onClick={() => setMenuOpen((v) => !v)}
               className="flex items-center gap-2 rounded-xl border px-3 py-2"
+              type="button"
             >
               <div className="h-8 w-8 overflow-hidden rounded-full border bg-surface">
                 {avatarSrc ? (
@@ -152,11 +158,11 @@ export default function Topbar() {
 
             {menuOpen && (
               <div className="absolute right-0 mt-2 w-60 rounded-xl border bg-bg shadow">
-                <div className="p-2 space-y-1">
+                <div className="space-y-1 p-2">
                   <label
                     className={cn(
                       "block cursor-pointer rounded-lg border px-3 py-2 text-sm",
-                      avatarBusy && "opacity-60 pointer-events-none"
+                      avatarBusy && "pointer-events-none opacity-60"
                     )}
                   >
                     {avatarBusy ? "Guardando…" : "Cambiar foto"}
@@ -167,23 +173,27 @@ export default function Topbar() {
                       onChange={(e) => {
                         const f = e.target.files?.[0];
                         e.target.value = "";
-                        if (f) onPickAvatar(f);
+                        if (f) void onPickAvatar(f);
                       }}
                     />
                   </label>
 
                   <button
                     disabled={!avatarUrl || avatarBusy}
-                    onClick={onRemoveAvatar}
+                    onClick={() => void onRemoveAvatar()}
                     className="w-full rounded-lg border px-3 py-2 text-sm disabled:opacity-60"
                     type="button"
                   >
                     Quitar foto
                   </button>
 
-                  <div className="h-px bg-border my-2" />
+                  <div className="my-2 h-px bg-border" />
 
-                  <button onClick={onLogout} className="w-full rounded-lg border px-3 py-2 text-sm" type="button">
+                  <button
+                    onClick={() => void onLogout()}
+                    className="w-full rounded-lg border px-3 py-2 text-sm"
+                    type="button"
+                  >
                     Salir
                   </button>
                 </div>

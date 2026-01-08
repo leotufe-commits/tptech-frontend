@@ -1,3 +1,4 @@
+// tptech-frontend/src/services/roles.ts
 import { apiFetch } from "../lib/api";
 
 /* =========================
@@ -8,6 +9,9 @@ export type RoleLite = {
   name: string;
   isSystem?: boolean;
 };
+
+// ✅ Alias de tipo por compatibilidad (muchas pantallas usan `Role`)
+export type Role = RoleLite;
 
 export type RoleDetail = {
   id: string;
@@ -26,9 +30,11 @@ export type ListRolesResponse = { roles: RoleLite[] } | RoleLite[];
 /* =========================
    Helpers
 ========================= */
-function normalizeRoles(resp: any): RoleLite[] {
-  if (Array.isArray(resp)) return resp;
-  if (resp && Array.isArray(resp.roles)) return resp.roles;
+function normalizeRoles(resp: unknown): RoleLite[] {
+  if (Array.isArray(resp)) return resp as RoleLite[];
+  if (resp && typeof resp === "object" && Array.isArray((resp as any).roles)) {
+    return (resp as any).roles as RoleLite[];
+  }
   return [];
 }
 
@@ -53,7 +59,7 @@ export async function createRole(name: string): Promise<RoleLite> {
   });
 
   // soporte flexible
-  return resp.role ?? resp;
+  return resp.role ?? (resp as RoleLite);
 }
 
 export async function renameRole(roleId: string, name: string): Promise<RoleLite> {
@@ -63,7 +69,7 @@ export async function renameRole(roleId: string, name: string): Promise<RoleLite
     body: { name },
   });
 
-  return resp.role ?? resp;
+  return resp.role ?? (resp as RoleLite);
 }
 
 /**

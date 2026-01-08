@@ -175,7 +175,7 @@ function Group({
 export default function Sidebar() {
   const navigate = useNavigate();
   const { me, loading } = useMe();
-  const { logout } = useAuth();
+  const auth = useAuth();
 
   const storedWidth = Number(localStorage.getItem("tptech_sidebar_width")) || 300;
   const storedMini = localStorage.getItem("tptech_sidebar_mini") === "1";
@@ -204,20 +204,28 @@ export default function Sidebar() {
     };
   }, []);
 
-  const jewelryName = me?.jewelry?.name ?? (loading ? "Cargando..." : "Sin joyería");
-  const user = me?.user;
-  const avatarUrl = user?.avatarUrl ?? null;
-  const userName = user?.name || "Usuario";
-  const userEmail = user?.email || "";
-  const logoUrl = (me as any)?.jewelry?.logoUrl as string | undefined;
+  // ✅ preferimos AuthContext para user/jewelry (tipado estable)
+  const jewelryName =
+    auth.jewelry?.name ?? me?.jewelry?.name ?? (loading ? "Cargando..." : "Sin joyería");
 
-  // ✅ permisos del /auth/me (string[])
-  const perms: string[] = (me as any)?.permissions ?? [];
+  const user = auth.user ?? me?.user ?? null;
+
+  const avatarUrl: string | null = (user as any)?.avatarUrl ?? null;
+  const userName: string = (user as any)?.name || (user as any)?.email || "Usuario";
+  const userEmail: string = (user as any)?.email || "";
+
+  const logoUrl =
+    (auth.jewelry as any)?.logoUrl ??
+    (me as any)?.jewelry?.logoUrl ??
+    undefined;
+
+  // ✅ permisos del /auth/me (string[]) - si tu AuthContext también los tiene, los preferimos
+  const perms: string[] = (auth.permissions?.length ? auth.permissions : (me as any)?.permissions) ?? [];
   const canSeeUsers = perms.includes("USERS_ROLES:VIEW") || perms.includes("USERS_ROLES:ADMIN");
 
   async function onLogout() {
     try {
-      await logout();
+      await auth.logout();
     } finally {
       navigate("/login", { replace: true });
     }
@@ -289,7 +297,7 @@ export default function Sidebar() {
       <div className={cn("border-b border-border px-4 py-4", collapsed && "px-3")}>
         <div className="flex items-center justify-between gap-3">
           <div className="flex items-center gap-3">
-            <div className="h-11 w-11 rounded-xl bg-surface2 grid place-items-center overflow-hidden border border-border">
+            <div className="grid h-11 w-11 place-items-center overflow-hidden rounded-xl border border-border bg-surface2">
               {logoUrl ? (
                 <img src={logoUrl} alt="Logo" className="h-full w-full object-cover" />
               ) : (
@@ -300,7 +308,7 @@ export default function Sidebar() {
             {!headerTextHidden && (
               <div className="min-w-0">
                 <div className="text-xs font-semibold text-muted">TPTech</div>
-                <div className="truncate font-semibold text-text text-base">{jewelryName}</div>
+                <div className="truncate text-base font-semibold text-text">{jewelryName}</div>
               </div>
             )}
           </div>
@@ -308,8 +316,9 @@ export default function Sidebar() {
           {!collapsed && (
             <button
               onClick={() => setMini((m) => !m)}
-              className="h-10 w-10 grid place-items-center rounded-md border border-border bg-card text-lg font-bold text-text hover:bg-surface2 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-primary/20"
+              className="grid h-10 w-10 place-items-center rounded-md border border-border bg-card text-lg font-bold text-text hover:bg-surface2 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-primary/20"
               title={mini ? "Expandir" : "Contraer"}
+              type="button"
             >
               {mini ? ">" : "<"}
             </button>
@@ -318,7 +327,7 @@ export default function Sidebar() {
       </div>
 
       {/* NAV */}
-      <nav className="flex-1 overflow-y-auto px-3 py-4 space-y-3">
+      <nav className="flex-1 space-y-3 overflow-y-auto px-3 py-4">
         {nav.map((item, idx) => {
           if (item.kind === "divider") return <Divider key={idx} collapsed={collapsed} />;
           if (item.kind === "group")
@@ -338,7 +347,7 @@ export default function Sidebar() {
       <div className="mt-auto border-t border-border bg-bg p-4">
         {!collapsed && (
           <div className="mb-3 flex items-center gap-3">
-            <div className="h-10 w-10 rounded-full overflow-hidden border border-border bg-card">
+            <div className="h-10 w-10 overflow-hidden rounded-full border border-border bg-card">
               {avatarUrl ? (
                 <img src={avatarUrl} alt="Avatar" className="h-full w-full object-cover" />
               ) : (
@@ -349,15 +358,16 @@ export default function Sidebar() {
             </div>
 
             <div className="min-w-0">
-              <div className="text-sm font-semibold text-text truncate">{userName}</div>
-              {!mini && <div className="text-xs text-muted truncate">{userEmail}</div>}
+              <div className="truncate text-sm font-semibold text-text">{userName}</div>
+              {!mini && <div className="truncate text-xs text-muted">{userEmail}</div>}
             </div>
           </div>
         )}
 
         <button
           onClick={onLogout}
-          className="w-full min-h-[56px] rounded-lg border border-border bg-card text-sm font-semibold text-text hover:bg-surface2 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-primary/20 shadow-[0_1px_0_0_rgba(0,0,0,0.05)]"
+          className="min-h-[56px] w-full rounded-lg border border-border bg-card text-sm font-semibold text-text shadow-[0_1px_0_0_rgba(0,0,0,0.05)] hover:bg-surface2 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-primary/20"
+          type="button"
         >
           Cerrar sesión
         </button>

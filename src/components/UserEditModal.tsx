@@ -5,11 +5,11 @@ import {
   fetchUser,
   removeUserOverride,
   setUserOverride,
-  updateUserAvatar,
-  type Role,
+  updateUserAvatarForUser,
+  removeAvatarForUser,
   type UserDetail,
 } from "../services/users";
-import { fetchRoles } from "../services/roles";
+import { fetchRoles, type RoleLite } from "../services/roles";
 import { fetchPermissions } from "../services/permissions";
 import { RequirePermission } from "./RequirePermission";
 
@@ -35,15 +35,6 @@ function cn(...classes: Array<string | false | null | undefined>) {
   return classes.filter(Boolean).join(" ");
 }
 
-async function fileToDataUrl(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onerror = () => reject(new Error("No se pudo leer el archivo"));
-    reader.onload = () => resolve(String(reader.result));
-    reader.readAsDataURL(file);
-  });
-}
-
 function isPermissionsResponse(x: unknown): x is PermissionsResponse {
   return typeof x === "object" && x !== null && Array.isArray((x as any).permissions);
 }
@@ -56,11 +47,15 @@ export default function UserEditModal({ userId, open, onClose, onUpdated }: Prop
   const [busyKey, setBusyKey] = useState<string | null>(null);
 
   const [user, setUser] = useState<UserDetail | null>(null);
-  const [roles, setRoles] = useState<Role[]>([]);
+
+  // ✅ Roles vienen de services/roles (RoleLite)
+  const [roles, setRoles] = useState<RoleLite[]>([]);
+
   const [permissions, setPermissions] = useState<Permission[]>([]);
 
   // Avatar UI
   const [avatarPreview, setAvatarPreview] = useState<string | null>(null);
+  const [avatarObjectUrl, setAvatarObjectUrl] = useState<string | null>(null);
 
   const permsByModule = useMemo(() => {
     const map = new Map<string, Permission[]>();
@@ -93,9 +88,19 @@ export default function UserEditModal({ userId, open, onClose, onUpdated }: Prop
         if (cancelled) return;
 
         setUser(uRes.user);
+
+        // ✅ reset preview / objectURL (revoca seguro, sin stale)
+        setAvatarObjectUrl((prev) => {
+          if (prev) URL.revokeObjectURL(prev);
+          return null;
+        });
+
         setAvatarPreview(uRes.user.avatarUrl ?? null);
 
-        setRoles(Array.isArray(rRes) ? (rRes as Role[]) : []);
+        // roles: fetchRoles devuelve RoleLite[]
+        const rolesList = Array.isArray(rRes) ? (rRes as RoleLite[]) : [];
+        setRoles(rolesList);
+
         setPermissions(isPermissionsResponse(pRes) ? pRes.permissions : []);
       } finally {
         if (!cancelled) setLoading(false);
@@ -105,7 +110,15 @@ export default function UserEditModal({ userId, open, onClose, onUpdated }: Prop
     return () => {
       cancelled = true;
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, userId]);
+
+  // cleanup objectURL al desmontar
+  useEffect(() => {
+    return () => {
+      if (avatarObjectUrl) URL.revokeObjectURL(avatarObjectUrl);
+    };
+  }, [avatarObjectUrl]);
 
   if (!open || !userId) return null;
 
@@ -140,7 +153,13 @@ export default function UserEditModal({ userId, open, onClose, onUpdated }: Prop
         if (!prev) return prev;
         return {
           ...prev,
-          roles: roles.filter((r) => nextIds.includes(r.id)),
+          roles: roles
+            .filter((r) => nextIds.includes(r.id))
+            .map((r) => ({
+              id: r.id,
+              name: r.name,
+              isSystem: r.isSystem,
+            })),
         };
       });
 
@@ -198,12 +217,34 @@ export default function UserEditModal({ userId, open, onClose, onUpdated }: Prop
     setBusyKey(key);
 
     try {
-      const dataUrl = await fileToDataUrl(file);
-      setAvatarPreview(dataUrl);
+      // preview local con objectURL
+      setAvatarObjectUrl((prev) => {
+        if (prev) URL.revokeObjectURL(prev);
+        const objUrl = URL.createObjectURL(file);
+        setAvatarPreview(objUrl);
+        return objUrl;
+      });
 
-      await updateUserAvatar(u.id, dataUrl);
+      // ✅ Admin avatar: /users/:id/avatar (requiere backend)
+      const resp = await updateUserAvatarForUser(u.id, file);
 
-      setUser((prev) => (prev ? { ...prev, avatarUrl: dataUrl } : prev));
+      const nextUrl =
+        (resp && typeof resp === "object" && "avatarUrl" in resp ? (resp as any).avatarUrl : null) ??
+        (resp && typeof resp === "object" && (resp as any).user?.avatarUrl) ??
+        null;
+
+      setUser((prev) => (prev ? { ...prev, avatarUrl: nextUrl } : prev));
+      setAvatarPreview(nextUrl ?? null);
+
+      // si backend devolvió URL real, ya no necesitamos el objectURL
+      setAvatarObjectUrl((prev) => {
+        if (prev && nextUrl) {
+          URL.revokeObjectURL(prev);
+          return null;
+        }
+        return prev;
+      });
+
       onUpdated?.();
     } finally {
       setBusyKey(null);
@@ -215,9 +256,15 @@ export default function UserEditModal({ userId, open, onClose, onUpdated }: Prop
     setBusyKey(key);
 
     try {
+      setAvatarObjectUrl((prev) => {
+        if (prev) URL.revokeObjectURL(prev);
+        return null;
+      });
+
       setAvatarPreview(null);
 
-      await updateUserAvatar(u.id, null);
+      // ✅ Admin avatar: /users/:id/avatar (requiere backend)
+      await removeAvatarForUser(u.id);
 
       setUser((prev) => (prev ? { ...prev, avatarUrl: null } : prev));
       onUpdated?.();
@@ -296,14 +343,14 @@ export default function UserEditModal({ userId, open, onClose, onUpdated }: Prop
                         onChange={(e) => {
                           const f = e.target.files?.[0];
                           e.target.value = "";
-                          if (f) onPickAvatar(f);
+                          if (f) void onPickAvatar(f);
                         }}
                       />
                     </label>
 
                     <button
                       type="button"
-                      onClick={onRemoveAvatar}
+                      onClick={() => void onRemoveAvatar()}
                       disabled={isSavingAvatar || !avatarPreview}
                       className={cn(
                         "rounded-lg border border-border bg-bg px-3 py-2 text-xs font-semibold text-muted hover:bg-surface2",
@@ -316,7 +363,7 @@ export default function UserEditModal({ userId, open, onClose, onUpdated }: Prop
                 </div>
 
                 <div className="mt-2 text-xs text-muted">
-                  Nota: por ahora se guarda como DataURL (MVP). Luego lo migramos a storage.
+                  Nota: este modal usa endpoints admin (/users/:id/avatar). Si todavía no existen en backend, va a dar 404.
                 </div>
               </div>
             </div>
@@ -348,7 +395,7 @@ export default function UserEditModal({ userId, open, onClose, onUpdated }: Prop
                           type="checkbox"
                           checked={checked}
                           disabled={isBusy}
-                          onChange={() => toggleRole(r.id)}
+                          onChange={() => void toggleRole(r.id)}
                           className="h-5 w-5 accent-primary"
                         />
                       </label>
@@ -386,7 +433,8 @@ export default function UserEditModal({ userId, open, onClose, onUpdated }: Prop
                             <div className="min-w-0">
                               <div className="truncate text-sm font-semibold text-text">{permLabel(p)}</div>
                               <div className="text-xs text-muted">
-                                Estado: {ov ? <span className="font-semibold text-text">{ov.effect}</span> : "sin override"}
+                                Estado:{" "}
+                                {ov ? <span className="font-semibold text-text">{ov.effect}</span> : "sin override"}
                               </div>
                             </div>
 
@@ -394,7 +442,7 @@ export default function UserEditModal({ userId, open, onClose, onUpdated }: Prop
                               <button
                                 type="button"
                                 disabled={busyAllow || busyDeny}
-                                onClick={() => setOrClearOverride(p.id, "ALLOW")}
+                                onClick={() => void setOrClearOverride(p.id, "ALLOW")}
                                 className={cn(
                                   "rounded-md border px-3 py-1.5 text-xs font-semibold",
                                   ov?.effect === "ALLOW"
@@ -408,7 +456,7 @@ export default function UserEditModal({ userId, open, onClose, onUpdated }: Prop
                               <button
                                 type="button"
                                 disabled={busyAllow || busyDeny}
-                                onClick={() => setOrClearOverride(p.id, "DENY")}
+                                onClick={() => void setOrClearOverride(p.id, "DENY")}
                                 className={cn(
                                   "rounded-md border px-3 py-1.5 text-xs font-semibold",
                                   ov?.effect === "DENY"

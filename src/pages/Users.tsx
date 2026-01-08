@@ -74,7 +74,11 @@ function initialsFrom(label: string) {
    PAGE
 ========================= */
 export default function UsersPage() {
-  const { user: me, permissions } = useAuth();
+  // ✅ AuthContext: no siempre expone "permissions" tipado en el type,
+  // pero sí lo guardás en estado. Hacemos un cast seguro.
+  const auth = useAuth() as any;
+  const me = auth.user as { id: string } | null;
+  const permissions: string[] = auth.permissions ?? [];
 
   const canView = permissions.includes("USERS_ROLES:VIEW") || permissions.includes("USERS_ROLES:ADMIN");
   const canEditStatus = permissions.includes("USERS_ROLES:EDIT") || permissions.includes("USERS_ROLES:ADMIN");
@@ -150,9 +154,8 @@ export default function UsersPage() {
     if (roles.length > 0) return;
     setRolesLoading(true);
     try {
-      const resp = await fetchRoles();
-      const list = Array.isArray(resp) ? resp : (resp.roles ?? []);
-      setRoles(list);
+      const list = await fetchRoles(); // ✅ ya devuelve RoleLite[]
+      setRoles(list as Role[]);
     } catch (e: any) {
       setErr(String(e?.message || "Error cargando roles"));
     } finally {
@@ -210,6 +213,7 @@ export default function UsersPage() {
      ROLES
   ========================= */
   async function openRolesModal(u: UserListItem) {
+    setErr(null);
     setTarget(u);
     setSelectedRoleIds((u.roles || []).map((r) => r.id));
     setRolesModalOpen(true);
@@ -266,8 +270,8 @@ export default function UsersPage() {
       let permsList = allPerms;
 
       if (permsList.length === 0) {
-        const p = await fetchPermissions();
-        permsList = Array.isArray(p) ? p : (p.permissions ?? []);
+        // ✅ ahora fetchPermissions() devuelve Permission[] siempre
+        permsList = await fetchPermissions();
         setAllPerms(permsList);
       }
 
@@ -329,7 +333,6 @@ export default function UsersPage() {
       // refrescar tabla y target (modal)
       await load();
 
-      // si backend devuelve user/avatarUrl, actualizamos el target en el acto
       const nextAvatarUrl =
         (resp && typeof resp === "object" && "avatarUrl" in resp ? (resp as any).avatarUrl : null) ??
         (resp && typeof resp === "object" && (resp as any).user?.avatarUrl) ??
@@ -425,7 +428,11 @@ export default function UsersPage() {
                       <div className="flex items-center gap-3">
                         <div className="h-9 w-9 overflow-hidden rounded-full border border-border bg-surface">
                           {u.avatarUrl ? (
-                            <img src={u.avatarUrl} alt="Avatar" className="h-full w-full object-cover" />
+                            <img
+                              src={u.avatarUrl}
+                              alt="Avatar"
+                              className="h-full w-full object-cover"
+                            />
                           ) : (
                             <div className="grid h-full w-full place-items-center text-xs font-bold text-primary">
                               {initials}
@@ -468,10 +475,18 @@ export default function UsersPage() {
 
                       {canAdmin && (
                         <>
-                          <button className="tp-btn" onClick={() => openRolesModal(u)} type="button">
+                          <button
+                            className="tp-btn"
+                            onClick={() => openRolesModal(u)}
+                            type="button"
+                          >
                             Roles
                           </button>
-                          <button className="tp-btn" onClick={() => openOverridesModal(u)} type="button">
+                          <button
+                            className="tp-btn"
+                            onClick={() => openOverridesModal(u)}
+                            type="button"
+                          >
                             Overrides
                           </button>
                         </>
@@ -493,12 +508,20 @@ export default function UsersPage() {
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             <div>
               <label className="mb-1 block text-xs text-muted">Email</label>
-              <input className="tp-input" value={cEmail} onChange={(e) => setCEmail(e.target.value)} />
+              <input
+                className="tp-input"
+                value={cEmail}
+                onChange={(e) => setCEmail(e.target.value)}
+              />
             </div>
 
             <div>
               <label className="mb-1 block text-xs text-muted">Nombre (opcional)</label>
-              <input className="tp-input" value={cName} onChange={(e) => setCName(e.target.value)} />
+              <input
+                className="tp-input"
+                value={cName}
+                onChange={(e) => setCName(e.target.value)}
+              />
             </div>
 
             <div>
@@ -529,7 +552,11 @@ export default function UsersPage() {
                             type="checkbox"
                             checked={checked}
                             onChange={(e) =>
-                              setCRoleIds((prev) => (e.target.checked ? [...prev, r.id] : prev.filter((id) => id !== r.id)))
+                              setCRoleIds((prev) =>
+                                e.target.checked
+                                  ? [...prev, r.id]
+                                  : prev.filter((id) => id !== r.id)
+                              )
                             }
                           />
                           {r.name} {r.isSystem ? "(sys)" : ""}
@@ -539,7 +566,9 @@ export default function UsersPage() {
                   </div>
                 )}
               </div>
-              <p className="mt-2 text-xs text-muted">Si no seleccionás roles, queda sin permisos hasta asignar.</p>
+              <p className="mt-2 text-xs text-muted">
+                Si no seleccionás roles, queda sin permisos hasta asignar.
+              </p>
             </div>
           </div>
 
@@ -557,7 +586,11 @@ export default function UsersPage() {
       {/* =========================
           MODAL ROLES (con avatar admin)
       ========================= */}
-      <Modal open={rolesModalOpen} title={`Roles de ${target?.email || ""}`} onClose={() => setRolesModalOpen(false)}>
+      <Modal
+        open={rolesModalOpen}
+        title={`Roles de ${target?.email || ""}`}
+        onClose={() => setRolesModalOpen(false)}
+      >
         {target && canAdmin && (
           <div className="mb-4 flex items-center justify-between gap-3 rounded-xl border border-border bg-bg p-3">
             <div className="flex items-center gap-3">
@@ -616,7 +649,9 @@ export default function UsersPage() {
                       type="checkbox"
                       checked={checked}
                       onChange={(e) =>
-                        setSelectedRoleIds((prev) => (e.target.checked ? [...prev, r.id] : prev.filter((id) => id !== r.id)))
+                        setSelectedRoleIds((prev) =>
+                          e.target.checked ? [...prev, r.id] : prev.filter((id) => id !== r.id)
+                        )
                       }
                     />
                     {r.name} {r.isSystem ? "(sys)" : ""}
@@ -640,7 +675,11 @@ export default function UsersPage() {
       {/* =========================
           MODAL OVERRIDES
       ========================= */}
-      <Modal open={ovModalOpen} title={`Overrides (ALLOW/DENY) • ${target?.email || ""}`} onClose={() => setOvModalOpen(false)}>
+      <Modal
+        open={ovModalOpen}
+        title={`Overrides (ALLOW/DENY) • ${target?.email || ""}`}
+        onClose={() => setOvModalOpen(false)}
+      >
         {ovLoading ? (
           <div>Cargando…</div>
         ) : (
@@ -661,14 +700,23 @@ export default function UsersPage() {
 
                 <div>
                   <label className="mb-1 block text-xs text-muted">Efecto</label>
-                  <select className="tp-input" value={effectPick} onChange={(e) => setEffectPick(e.target.value as any)}>
+                  <select
+                    className="tp-input"
+                    value={effectPick}
+                    onChange={(e) => setEffectPick(e.target.value as "ALLOW" | "DENY")}
+                  >
                     <option value="ALLOW">ALLOW</option>
                     <option value="DENY">DENY</option>
                   </select>
                 </div>
 
                 <div className="flex items-end">
-                  <button className="tp-btn-primary w-full" onClick={addOrUpdateOverride} disabled={!permPick || savingOv} type="button">
+                  <button
+                    className="tp-btn-primary w-full"
+                    onClick={addOrUpdateOverride}
+                    disabled={!permPick || savingOv}
+                    type="button"
+                  >
                     {savingOv ? "Guardando…" : "Agregar / Actualizar"}
                   </button>
                 </div>
@@ -702,7 +750,12 @@ export default function UsersPage() {
                           <Badge>{ov.effect}</Badge>
                         </td>
                         <td className="px-4 py-3 text-right">
-                          <button className={cn("tp-btn", savingOv && "opacity-60")} onClick={() => void removeOv(ov.permissionId)} disabled={savingOv} type="button">
+                          <button
+                            className={cn("tp-btn", savingOv && "opacity-60")}
+                            onClick={() => void removeOv(ov.permissionId)}
+                            disabled={savingOv}
+                            type="button"
+                          >
                             Quitar
                           </button>
                         </td>

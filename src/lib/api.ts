@@ -11,6 +11,7 @@ export const LS_TOKEN_KEY = "tptech_token";
 // ✅ NUEVO: token para DEV (Bearer) en sessionStorage (más seguro que localStorage)
 export const SS_TOKEN_KEY = "tptech_access_token";
 
+// ✅ multi-tab events
 export const LS_LOGOUT_KEY = "tptech_logout";
 export const LS_AUTH_EVENT_KEY = "tptech_auth_event";
 
@@ -18,10 +19,10 @@ type AuthEvent = { type: "LOGIN" | "LOGOUT"; at: number };
 
 function emitAuthEvent(ev: AuthEvent) {
   try {
-    // evento legacy (storage event)
+    // legacy: marca logout (para listeners antiguos)
     if (ev.type === "LOGOUT") localStorage.setItem(LS_LOGOUT_KEY, String(ev.at));
 
-    // evento unificado (LOGIN/LOGOUT)
+    // evento unificado
     localStorage.setItem(LS_AUTH_EVENT_KEY, JSON.stringify(ev));
 
     // BroadcastChannel (si existe)
@@ -31,7 +32,7 @@ function emitAuthEvent(ev: AuthEvent) {
       bc.close();
     }
   } catch {
-    // si localStorage está bloqueado, no rompemos la app
+    // si storage está bloqueado, no rompemos la app
   }
 }
 
@@ -51,8 +52,11 @@ function getToken(): string | null {
   return null;
 }
 
+/**
+ * Limpia tokens y emite evento LOGOUT global (multi-tab).
+ * OJO: si desde AuthContext también emitís evento, vas a duplicar.
+ */
 export function forceLogout() {
-  // limpiamos tokens en ambos storage (DEV + legacy)
   try {
     sessionStorage.removeItem(SS_TOKEN_KEY);
   } catch {}
@@ -65,13 +69,16 @@ export function forceLogout() {
 }
 
 function joinUrl(base: string, path: string) {
+  // si ya viene absoluta, la dejamos
+  if (/^https?:\/\//i.test(path)) return path;
+
   const p = path.startsWith("/") ? path : `/${path}`;
   return `${base}${p}`;
 }
 
 /**
  * Extensión de RequestInit que permite:
- * - body como objeto (lo serializa a JSON)
+ * - body como objeto/array (lo serializa a JSON)
  * - body como string/FormData/etc (lo manda tal cual)
  */
 export type ApiFetchOptions = Omit<RequestInit, "body"> & {
@@ -94,18 +101,21 @@ function isArrayBuffer(body: any): body is ArrayBuffer {
   return typeof ArrayBuffer !== "undefined" && body instanceof ArrayBuffer;
 }
 
-function isPlainObject(body: any) {
-  if (!body) return false;
+/**
+ * “JSON-serializable”: objetos y arrays (pero NO FormData/Blob/etc)
+ */
+function isJsonSerializable(body: any) {
+  if (body === null || body === undefined) return false;
   if (typeof body !== "object") return false;
-  if (Array.isArray(body)) return true; // arrays también se serializan
-  // evita serializar cosas raras
+  if (Array.isArray(body)) return true;
+
   if (isFormData(body) || isURLSearchParams(body) || isBlob(body) || isArrayBuffer(body)) return false;
   return true;
 }
 
 /**
  * apiFetch
- * - default T = any (para que no te devuelva unknown)
+ * - default T = any
  * - si options.body es objeto/array -> JSON.stringify
  * - si 401 -> forceLogout (multi-tab) + throw
  * - soporta FormData (avatar) sin setear Content-Type
@@ -113,42 +123,46 @@ function isPlainObject(body: any) {
 export async function apiFetch<T = any>(path: string, options: ApiFetchOptions = {}): Promise<T> {
   const token = getToken();
 
-  // robusto: soporta headers como Headers | Record<string,string> | [][]
   const headers = new Headers(options.headers as any);
 
-  // ✅ Bearer token (robusto)
+  // ✅ Bearer token (si no está ya seteado)
   if (token && !headers.has("Authorization")) {
     headers.set("Authorization", `Bearer ${token}`);
   }
 
-  // Body: si es objeto/array lo mandamos como JSON
+  // ⚠️ GET/HEAD no deberían llevar body
+  const method = String(options.method || "GET").toUpperCase();
+  const allowBody = method !== "GET" && method !== "HEAD";
+
   let bodyToSend: BodyInit | undefined = undefined;
 
-  if (options.body !== undefined) {
-    if (isFormData(options.body) || isURLSearchParams(options.body)) {
-      bodyToSend = options.body;
-      // ✅ no seteamos content-type: el browser lo hace solo (boundary)
-    } else if (typeof options.body === "string") {
-      bodyToSend = options.body;
+  if (allowBody && options.body !== undefined) {
+    const b = options.body;
+
+    if (isFormData(b) || isURLSearchParams(b)) {
+      bodyToSend = b;
+      // ✅ NO setear Content-Type: el browser lo hace (boundary)
+    } else if (typeof b === "string") {
+      bodyToSend = b;
       if (!headers.has("Content-Type")) headers.set("Content-Type", "text/plain;charset=UTF-8");
-    } else if (isBlob(options.body)) {
-      bodyToSend = options.body;
-      // no forzamos content-type
-    } else if (isArrayBuffer(options.body)) {
-      bodyToSend = options.body as any;
-      // no forzamos content-type
-    } else if (isPlainObject(options.body)) {
-      bodyToSend = JSON.stringify(options.body);
+    } else if (isBlob(b)) {
+      bodyToSend = b;
+      // no forzar content-type
+    } else if (isArrayBuffer(b)) {
+      bodyToSend = b as any;
+      // no forzar content-type
+    } else if (isJsonSerializable(b)) {
+      bodyToSend = JSON.stringify(b);
       if (!headers.has("Content-Type")) headers.set("Content-Type", "application/json");
     } else {
-      // fallback: intentamos mandarlo tal cual
-      bodyToSend = options.body as any;
-      if (!headers.has("Content-Type")) headers.set("Content-Type", "application/json");
+      // fallback: mandarlo tal cual, PERO sin inventar content-type
+      bodyToSend = b as any;
     }
   }
 
   const res = await fetch(joinUrl(API_URL, path), {
     ...options,
+    method,
     headers,
     body: bodyToSend,
     credentials: "include", // ✅ prod cookie; local no molesta
