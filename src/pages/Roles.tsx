@@ -101,10 +101,19 @@ export default function RolesPage() {
 
   async function ensurePermissionsCatalog() {
     if (allPerms.length > 0) return allPerms;
+
     setPermsLoading(true);
     try {
-      const resp = await fetchPermissions();
-      const list = Array.isArray(resp) ? resp : (resp.permissions ?? []);
+      // ✅ Normalizamos el shape:
+      // - Permission[]
+      // - { permissions: Permission[] }
+      const resp: unknown = await fetchPermissions();
+      const anyResp = resp as any;
+
+      const list: Permission[] = Array.isArray(anyResp)
+        ? anyResp
+        : (anyResp?.permissions ?? []);
+
       setAllPerms(list);
       return list;
     } finally {
@@ -202,12 +211,13 @@ export default function RolesPage() {
 
     /**
      * ⚠️ IMPORTANTE:
-     * Hoy tu UI no puede pre-marcar permisos del rol porque el backend (según tu comentario previo)
-     * no los devuelve. Para soportarlo, necesitás algo como:
+     * Hoy tu UI no puede pre-marcar permisos del rol porque el backend
+     * no los devuelve en un endpoint de detalle.
+     * Para soportarlo, necesitás:
      *
      *   GET /roles/:id  -> { role: { id, name, permissionIds: string[] } }
      *
-     * Y acá harías:
+     * Y acá:
      *   const detail = await fetchRole(r.id)
      *   setSelectedPermIds(detail.role.permissionIds)
      */
@@ -221,8 +231,6 @@ export default function RolesPage() {
     try {
       await updateRolePermissions(target.id, selectedPermIds);
       setPermOpen(false);
-      // opcional: recargar roles si querés reflejar algo extra
-      // await load();
     } catch (e: any) {
       setErr(String(e?.message || "Error guardando permisos"));
     } finally {
@@ -343,7 +351,7 @@ export default function RolesPage() {
       {/* =========================
           MODAL PERMISSIONS
       ========================= */}
-      <Modal open={permOpen} title={`Permisos de ${target?.name}`} onClose={() => setPermOpen(false)}>
+      <Modal open={permOpen} title={`Permisos de ${target?.name ?? ""}`} onClose={() => setPermOpen(false)}>
         {permsLoading ? (
           <div>Cargando permisos…</div>
         ) : (

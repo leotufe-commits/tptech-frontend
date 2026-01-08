@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { apiFetch } from "../lib/api";
-import { useMe, type Jewelry } from "../hooks/useMe";
+import { useMe } from "../hooks/useMe";
 
 /* ================== TIPOS ================== */
 
@@ -130,7 +130,8 @@ export default function PerfilJoyeria() {
         notes: company.notes,
       };
 
-      await apiFetch<Jewelry>("/auth/me/jewelry", {
+      // ✅ No dependemos de un type exportado desde useMe
+      await apiFetch<any>("/auth/me/jewelry", {
         method: "PUT",
         body: JSON.stringify(payload),
       });
@@ -167,13 +168,21 @@ export default function PerfilJoyeria() {
 
       <div
         className="mt-6 rounded-2xl p-6"
-        style={{ border: "1px solid var(--border)", background: "var(--card)", boxShadow: "var(--shadow)" }}
+        style={{
+          border: "1px solid var(--border)",
+          background: "var(--card)",
+          boxShadow: "var(--shadow)",
+        }}
       >
         {/* HEADER */}
         <div className="flex items-center gap-5">
           <div
             className="h-20 w-20 rounded-2xl grid place-items-center text-xs"
-            style={{ border: "1px solid var(--border)", background: "color-mix(in oklab, var(--card) 80%, var(--bg))", color: "var(--muted)" }}
+            style={{
+              border: "1px solid var(--border)",
+              background: "color-mix(in oklab, var(--card) 80%, var(--bg))",
+              color: "var(--muted)",
+            }}
           >
             SIN LOGO
           </div>
@@ -382,12 +391,7 @@ export default function PerfilJoyeria() {
                 Seleccionar archivos
               </div>
 
-              <input
-                type="file"
-                multiple
-                hidden
-                onChange={(e) => onPickAttachments(e.target.files)}
-              />
+              <input type="file" multiple hidden onChange={(e) => onPickAttachments(e.target.files)} />
             </label>
 
             {/* (opcional) lista de adjuntos, si querés mostrarla después */}
