@@ -149,16 +149,13 @@ function Group({
             const isLast = idx === children.length - 1;
             return (
               <div key={c.to} className="relative">
-                {/* tramo vertical por item (corta en el último) */}
                 <div
                   className={cn(
                     "absolute left-5 top-0 w-px bg-border",
                     isLast ? "h-1/2" : "h-full"
                   )}
                 />
-                {/* conector horizontal */}
                 <div className="absolute left-5 top-1/2 h-px w-5 bg-border" />
-
                 <div className="pl-10">
                   <Leaf to={c.to} label={c.label} collapsed={false} />
                 </div>
@@ -204,7 +201,6 @@ export default function Sidebar() {
     };
   }, []);
 
-  // ✅ preferimos AuthContext para user/jewelry (tipado estable)
   const jewelryName =
     auth.jewelry?.name ?? me?.jewelry?.name ?? (loading ? "Cargando..." : "Sin joyería");
 
@@ -219,9 +215,11 @@ export default function Sidebar() {
     (me as any)?.jewelry?.logoUrl ??
     undefined;
 
-  // ✅ permisos del /auth/me (string[]) - si tu AuthContext también los tiene, los preferimos
-  const perms: string[] = (auth.permissions?.length ? auth.permissions : (me as any)?.permissions) ?? [];
+  const perms: string[] =
+    (auth.permissions?.length ? auth.permissions : (me as any)?.permissions) ?? [];
+
   const canSeeUsers = perms.includes("USERS_ROLES:VIEW") || perms.includes("USERS_ROLES:ADMIN");
+  const canSeeRoles = perms.includes("USERS_ROLES:ADMIN"); // ✅ solo admin
 
   async function onLogout() {
     try {
@@ -237,9 +235,8 @@ export default function Sidebar() {
       { label: "Cuenta", to: "/configuracion/cuenta" },
     ];
 
-    if (canSeeUsers) {
-      configChildren.push({ label: "Usuarios", to: "/configuracion/usuarios" });
-    }
+    if (canSeeUsers) configChildren.push({ label: "Usuarios", to: "/configuracion/usuarios" });
+    if (canSeeRoles) configChildren.push({ label: "Roles", to: "/configuracion/roles" }); // ✅ NUEVO
 
     return [
       { kind: "link", label: "Dashboard", to: "/dashboard" },
@@ -276,13 +273,9 @@ export default function Sidebar() {
       { kind: "divider" },
 
       { kind: "link", label: "Finanzas", to: "/finanzas" },
-      {
-        kind: "group",
-        label: "Configuración",
-        children: configChildren,
-      },
+      { kind: "group", label: "Configuración", children: configChildren },
     ];
-  }, [canSeeUsers]);
+  }, [canSeeUsers, canSeeRoles]);
 
   const actualWidth = mini ? 180 : width;
   const collapsed = !mini && actualWidth <= 92;
@@ -330,7 +323,7 @@ export default function Sidebar() {
       <nav className="flex-1 space-y-3 overflow-y-auto px-3 py-4">
         {nav.map((item, idx) => {
           if (item.kind === "divider") return <Divider key={idx} collapsed={collapsed} />;
-          if (item.kind === "group")
+          if (item.kind === "group") {
             return (
               <Group
                 key={item.label}
@@ -339,6 +332,7 @@ export default function Sidebar() {
                 collapsed={collapsed}
               />
             );
+          }
           return <Leaf key={item.to} to={item.to} label={item.label} collapsed={collapsed} />;
         })}
       </nav>

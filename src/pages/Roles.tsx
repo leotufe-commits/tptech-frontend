@@ -1,5 +1,5 @@
 // tptech-frontend/src/pages/Roles.tsx
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useAuth } from "../context/AuthContext";
 import {
   createRole,
@@ -7,9 +7,55 @@ import {
   listRoles,
   renameRole,
   updateRolePermissions,
+  fetchRole,
   type RoleLite,
 } from "../services/roles";
 import { fetchPermissions, type Permission } from "../services/permissions";
+
+/* =========================
+   Labels permisos (humanos)
+========================= */
+const MODULE_LABEL: Record<string, string> = {
+  USERS_ROLES: "Usuarios y roles",
+  INVENTORY: "Inventario",
+  MOVEMENTS: "Movimientos",
+  CLIENTS: "Clientes",
+  SALES: "Ventas",
+  SUPPLIERS: "Proveedores",
+  PURCHASES: "Compras",
+  CURRENCIES: "Monedas",
+  COMPANY_SETTINGS: "Configuración",
+  REPORTS: "Reportes",
+  WAREHOUSES: "Almacenes",
+  PROFILE: "Perfil",
+};
+
+const ACTION_LABEL: Record<string, string> = {
+  VIEW: "Ver",
+  CREATE: "Crear",
+  EDIT: "Editar",
+  DELETE: "Eliminar",
+  EXPORT: "Exportar",
+  ADMIN: "Administrar",
+};
+
+function prettyPerm(module: string, action: string) {
+  return `${ACTION_LABEL[action] ?? action} ${MODULE_LABEL[module] ?? module}`;
+}
+
+/* =========================
+   Labels roles (humanos)
+========================= */
+const ROLE_LABEL: Record<string, string> = {
+  OWNER: "Propietario",
+  ADMIN: "Administrador",
+  STAFF: "Vendedor",
+  READONLY: "Solo lectura",
+};
+
+function prettyRole(name: string) {
+  return ROLE_LABEL[name] ?? name; // roles custom quedan tal cual
+}
 
 /* =========================
    UI helpers
@@ -86,7 +132,13 @@ export default function RolesPage() {
     setLoading(true);
     try {
       const data = await listRoles();
-      setRoles(Array.isArray(data) ? data : (data as any)?.roles ?? []);
+      // listRoles() ya devuelve array normalizado
+      const list = Array.isArray(data) ? data : (data as any)?.roles ?? [];
+
+      // ✅ Defensivo: si por algún motivo llega duplicado, lo deduplicamos por id (solo UI)
+      const uniq = new Map<string, RoleLite>();
+      for (const r of list) uniq.set(r.id, r);
+      setRoles(Array.from(uniq.values()));
     } catch (e: any) {
       setErr(String(e?.message || "Error cargando roles"));
     } finally {
@@ -104,22 +156,33 @@ export default function RolesPage() {
 
     setPermsLoading(true);
     try {
-      // ✅ Normalizamos el shape:
-      // - Permission[]
-      // - { permissions: Permission[] }
       const resp: unknown = await fetchPermissions();
       const anyResp = resp as any;
-
-      const list: Permission[] = Array.isArray(anyResp)
-        ? anyResp
-        : (anyResp?.permissions ?? []);
-
+      const list: Permission[] = Array.isArray(anyResp) ? anyResp : anyResp?.permissions ?? [];
       setAllPerms(list);
       return list;
     } finally {
       setPermsLoading(false);
     }
   }
+
+  const permsByModule = useMemo(() => {
+    const map = new Map<string, Permission[]>();
+    for (const p of allPerms) {
+      const key = p.module;
+      map.set(key, [...(map.get(key) ?? []), p]);
+    }
+    const entries = Array.from(map.entries()).sort((a, b) => {
+      const la = MODULE_LABEL[a[0]] ?? a[0];
+      const lb = MODULE_LABEL[b[0]] ?? b[0];
+      return la.localeCompare(lb);
+    });
+    const order = ["VIEW", "CREATE", "EDIT", "DELETE", "EXPORT", "ADMIN"];
+    for (const [, list] of entries) {
+      list.sort((x, y) => order.indexOf(x.action) - order.indexOf(y.action));
+    }
+    return entries;
+  }, [allPerms]);
 
   /* =========================
      CREATE
@@ -185,7 +248,7 @@ export default function RolesPage() {
     if (!canAdmin) return;
     if (r.isSystem) return;
 
-    const ok = window.confirm(`¿Eliminar el rol "${r.name}"?`);
+    const ok = window.confirm(`¿Eliminar el rol "${prettyRole(r.name)}"?`);
     if (!ok) return;
 
     setErr(null);
@@ -200,27 +263,63 @@ export default function RolesPage() {
   /* =========================
      PERMISSIONS
   ========================= */
+  function extractPermissionIdsFromListRole(r: RoleLite): string[] {
+    // ✅ Si el listRoles trae permissions [{id,module,action}] lo usamos directo
+    const ids = (r.permissions ?? [])
+      .map((p: any) => p?.id)
+      .filter((x: any) => typeof x === "string" && x.length > 0);
+
+    // dedupe
+    return Array.from(new Set(ids));
+  }
+
+  function extractPermissionIdsFromFetchRoleResponse(detail: any): string[] {
+    // ✅ tolera múltiples shapes por si apiFetch transforma la respuesta
+    const role = detail?.role ?? detail;
+    const idsA = role?.permissionIds;
+    if (Array.isArray(idsA)) return idsA.filter((x: any) => typeof x === "string");
+
+    const perms = role?.permissions;
+    if (Array.isArray(perms)) {
+      const idsB = perms.map((p: any) => p?.id).filter((x: any) => typeof x === "string");
+      return Array.from(new Set(idsB));
+    }
+
+    return [];
+  }
+
   async function openPermissionsModal(r: RoleLite) {
     if (!canAdmin) return;
 
+    // OWNER no editable
+    if (r.name === "OWNER") {
+      setErr("El rol Propietario no es editable.");
+      return;
+    }
+
     setErr(null);
     setTarget(r);
+
+    // 1) Abrimos modal y mostramos catálogo
     setPermOpen(true);
-    setSelectedPermIds([]);
     await ensurePermissionsCatalog();
 
-    /**
-     * ⚠️ IMPORTANTE:
-     * Hoy tu UI no puede pre-marcar permisos del rol porque el backend
-     * no los devuelve en un endpoint de detalle.
-     * Para soportarlo, necesitás:
-     *
-     *   GET /roles/:id  -> { role: { id, name, permissionIds: string[] } }
-     *
-     * Y acá:
-     *   const detail = await fetchRole(r.id)
-     *   setSelectedPermIds(detail.role.permissionIds)
-     */
+    // 2) Precarga INMEDIATA desde la lista (evita modal “todo en blanco”)
+    const fromList = extractPermissionIdsFromListRole(r);
+    setSelectedPermIds(fromList);
+
+    // 3) Fallback: trae el detalle (por si lista no tenía permisos o estaban incompletos)
+    try {
+      const detail = await fetchRole(r.id);
+      const ids = extractPermissionIdsFromFetchRoleResponse(detail);
+      if (ids.length) setSelectedPermIds(ids);
+    } catch (e: any) {
+      // si falla, al menos dejamos lo que vino de listRoles
+      if (fromList.length === 0) {
+        setErr(String(e?.message || "No se pudieron cargar permisos del rol"));
+        setSelectedPermIds([]);
+      }
+    }
   }
 
   async function savePermissions() {
@@ -230,6 +329,10 @@ export default function RolesPage() {
     setErr(null);
     try {
       await updateRolePermissions(target.id, selectedPermIds);
+
+      // ✅ refrescar lista para que quede consistente (y que no parezca que “no guardó”)
+      await load();
+
       setPermOpen(false);
     } catch (e: any) {
       setErr(String(e?.message || "Error guardando permisos"));
@@ -297,20 +400,24 @@ export default function RolesPage() {
             ) : (
               roles.map((r) => (
                 <tr key={r.id} className="border-t border-border">
-                  <td className="px-4 py-3 font-semibold">{r.name}</td>
+                  <td className="px-4 py-3 font-semibold">{prettyRole(r.name)}</td>
                   <td className="px-4 py-3">
-                    <Badge>{r.isSystem ? "Sistema" : "Custom"}</Badge>
+                    <Badge>{r.isSystem ? "Sistema" : "Personalizado"}</Badge>
                   </td>
                   <td className="px-4 py-3 text-right space-x-2">
                     {canAdmin && (
                       <>
-                        <button className="tp-btn" onClick={() => openPermissionsModal(r)} type="button">
-                          Permisos
-                        </button>
+                        {r.name !== "OWNER" && (
+                          <button className="tp-btn" onClick={() => openPermissionsModal(r)} type="button">
+                            Permisos
+                          </button>
+                        )}
 
-                        <button className="tp-btn" onClick={() => openRenameModal(r)} type="button">
-                          Renombrar
-                        </button>
+                        {!r.isSystem && (
+                          <button className="tp-btn" onClick={() => openRenameModal(r)} type="button">
+                            Renombrar
+                          </button>
+                        )}
 
                         {!r.isSystem && (
                           <button className="tp-btn" onClick={() => onDelete(r)} type="button">
@@ -330,7 +437,7 @@ export default function RolesPage() {
       {/* =========================
           MODAL RENAME
       ========================= */}
-      <Modal open={editOpen} title={`Renombrar rol`} onClose={() => setEditOpen(false)}>
+      <Modal open={editOpen} title="Renombrar rol" onClose={() => setEditOpen(false)}>
         <div className="space-y-3">
           <div>
             <label className="mb-1 block text-xs text-muted">Nombre</label>
@@ -351,29 +458,46 @@ export default function RolesPage() {
       {/* =========================
           MODAL PERMISSIONS
       ========================= */}
-      <Modal open={permOpen} title={`Permisos de ${target?.name ?? ""}`} onClose={() => setPermOpen(false)}>
+      <Modal
+        open={permOpen}
+        title={`Permisos de ${target ? prettyRole(target.name) : ""}`}
+        onClose={() => setPermOpen(false)}
+      >
         {permsLoading ? (
           <div>Cargando permisos…</div>
         ) : (
           <>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 max-h-[60vh] overflow-auto tp-scroll">
-              {allPerms.map((p) => {
-                const checked = selectedPermIds.includes(p.id);
-                return (
-                  <label key={p.id} className="flex gap-2 text-sm">
-                    <input
-                      type="checkbox"
-                      checked={checked}
-                      onChange={(e) =>
-                        setSelectedPermIds((prev) =>
-                          e.target.checked ? [...prev, p.id] : prev.filter((id) => id !== p.id)
-                        )
-                      }
-                    />
-                    {p.module}:{p.action}
-                  </label>
-                );
-              })}
+            <div className="mb-3 text-xs text-muted">
+              Tip: “Administrar” equivale a acceso total del módulo. (Código técnico queda en tooltip)
+            </div>
+
+            <div className="space-y-4 max-h-[60vh] overflow-auto tp-scroll pr-1">
+              {permsByModule.map(([module, list]) => (
+                <div key={module} className="tp-card p-3">
+                  <div className="mb-2 text-sm font-semibold">{MODULE_LABEL[module] ?? module}</div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                    {list.map((p) => {
+                      const checked = selectedPermIds.includes(p.id);
+                      const code = `${p.module}:${p.action}`;
+                      return (
+                        <label key={p.id} className="flex gap-2 text-sm" title={code}>
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={(e) =>
+                              setSelectedPermIds((prev) =>
+                                e.target.checked ? Array.from(new Set([...prev, p.id])) : prev.filter((id) => id !== p.id)
+                              )
+                            }
+                          />
+                          {prettyPerm(p.module, p.action)}
+                        </label>
+                      );
+                    })}
+                  </div>
+                </div>
+              ))}
             </div>
 
             <div className="pt-4 flex justify-end gap-2">

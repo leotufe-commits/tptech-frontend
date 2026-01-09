@@ -8,7 +8,6 @@ import { useAuth } from "./context/AuthContext";
 import Login from "./pages/Login";
 import Register from "./pages/Register";
 import ForgotPassword from "./pages/ForgotPassword";
-// import ResetPassword from "./pages/ResetPassword";
 
 import Dashboard from "./pages/Dashboard";
 import MainLayout from "./layouts/MainLayout";
@@ -24,28 +23,17 @@ import PerfilJoyeria from "./pages/PerfilJoyeria";
 import Cuenta from "./pages/Cuenta";
 import Placeholder from "./pages/Placeholder";
 
-// 👉 NUEVO (alias "Usuarios", archivo real "Users.tsx")
 import Usuarios from "./pages/Users";
+import Roles from "./pages/Roles"; // ✅ NUEVO
 
-// ✅ IMPORT DEFAULT (porque ProtectedRoute exporta default)
 import ProtectedRoute from "./components/ProtectedRoute";
 
-/**
- * Si hay sesión => /dashboard
- * Si no hay sesión => /login
- * Esto permite que, si otra pestaña hace LOGIN, esta pestaña redirija sola.
- */
 function IndexRedirect() {
   const { token, loading } = useAuth();
   if (loading) return null;
   return token ? <Navigate to="/dashboard" replace /> : <Navigate to="/login" replace />;
 }
 
-/**
- * Wrapper para rutas públicas:
- * - Si ya está logueado => lo manda al dashboard
- * - Si no => renderiza la página pública
- */
 function PublicOnly({ children }: { children: React.ReactNode }) {
   const { token, loading } = useAuth();
   if (loading) return null;
@@ -77,9 +65,8 @@ const router = createBrowserRouter([
           // Configuración
           { path: "configuracion/joyeria", element: <PerfilJoyeria /> },
           { path: "configuracion/cuenta", element: <Cuenta /> },
-
-          // 👉 Usuarios
           { path: "configuracion/usuarios", element: <Usuarios /> },
+          { path: "configuracion/roles", element: <Roles /> }, // ✅ NUEVO
 
           { path: "configuracion", element: <Placeholder title="Configuración" /> },
 

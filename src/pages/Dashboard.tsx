@@ -1,32 +1,4 @@
-import {
-  ResponsiveContainer,
-  LineChart,
-  Line,
-  XAxis,
-  YAxis,
-  Tooltip,
-  CartesianGrid,
-} from "recharts";
-
 export default function Dashboard() {
-  const data = [
-    { day: "01", ventas: 220000 },
-    { day: "03", ventas: 180000 },
-    { day: "05", ventas: 260000 },
-    { day: "07", ventas: 210000 },
-    { day: "09", ventas: 320000 },
-    { day: "11", ventas: 280000 },
-    { day: "13", ventas: 350000 },
-    { day: "15", ventas: 300000 },
-    { day: "17", ventas: 420000 },
-    { day: "19", ventas: 390000 },
-    { day: "21", ventas: 460000 },
-    { day: "23", ventas: 410000 },
-    { day: "25", ventas: 520000 },
-    { day: "27", ventas: 480000 },
-    { day: "29", ventas: 610000 },
-  ];
-
   const activity = [
     { d: "23 dic 2025", t: "Movimiento de entrada creado" },
     { d: "23 dic 2025", t: "Movimiento de entrada creado" },
@@ -69,53 +41,14 @@ export default function Dashboard() {
         ))}
       </div>
 
-      {/* Gráfico */}
+      {/* “Chart” placeholder */}
       <div className="rounded-2xl border border-border bg-card p-6">
-        <div className="text-sm font-medium text-text">
-          Ventas últimos 30 días
-        </div>
+        <div className="text-sm font-medium text-text">Ventas últimos 30 días</div>
 
-        <div className="mt-4 h-64 w-full rounded-xl bg-surface p-2">
-          <ResponsiveContainer width="100%" height="100%">
-            <LineChart data={data}>
-              <CartesianGrid
-                stroke="var(--border)"
-                strokeDasharray="3 3"
-              />
-              <XAxis
-                dataKey="day"
-                tick={{ fontSize: 12, fill: "var(--muted)" }}
-                axisLine={{ stroke: "var(--border)" }}
-              />
-              <YAxis
-                tick={{ fontSize: 12, fill: "var(--muted)" }}
-                axisLine={{ stroke: "var(--border)" }}
-              />
-              <Tooltip
-                formatter={(v: any) =>
-                  new Intl.NumberFormat("es-AR", {
-                    style: "currency",
-                    currency: "ARS",
-                    maximumFractionDigits: 0,
-                  }).format(Number(v))
-                }
-                contentStyle={{
-                  background: "var(--card)",
-                  border: "1px solid var(--border)",
-                  borderRadius: "12px",
-                  color: "var(--text)",
-                }}
-                labelFormatter={(l) => `Día ${l}`}
-              />
-              <Line
-                type="monotone"
-                dataKey="ventas"
-                stroke="var(--primary)"
-                strokeWidth={3}
-                dot={false}
-              />
-            </LineChart>
-          </ResponsiveContainer>
+        <div className="mt-4 h-64 w-full rounded-xl bg-surface p-4 border border-border flex items-center justify-center">
+          <div className="text-sm text-muted">
+            Gráfico pendiente (recharts). Primero dejamos la navegación 100% estable.
+          </div>
         </div>
       </div>
 
@@ -124,12 +57,7 @@ export default function Dashboard() {
         <div className="text-sm font-medium text-text">Acciones rápidas</div>
 
         <div className="mt-4 flex flex-wrap gap-3">
-          {[
-            "Nueva Venta",
-            "Nueva Compra",
-            "Revisar Inventario",
-            "Generar Reportes",
-          ].map((b) => (
+          {["Nueva Venta", "Nueva Compra", "Revisar Inventario", "Generar Reportes"].map((b) => (
             <button
               key={b}
               className="rounded-xl bg-primary px-4 py-2 text-sm font-semibold text-white transition hover:opacity-90 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-primary/30"
@@ -151,9 +79,7 @@ export default function Dashboard() {
               className="flex items-start justify-between gap-4 rounded-xl border border-border bg-surface px-4 py-3 hover:bg-surface2/40"
             >
               <div className="text-sm text-text">{item.t}</div>
-              <div className="shrink-0 text-xs font-medium text-muted">
-                {item.d}
-              </div>
+              <div className="shrink-0 text-xs font-medium text-muted">{item.d}</div>
             </div>
           ))}
         </div>

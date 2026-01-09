@@ -4,25 +4,38 @@ import { apiFetch } from "../lib/api";
 /* =========================
    Types (front)
 ========================= */
+export type RolePermission = {
+  id: string; // permissionId
+  module?: string;
+  action?: string;
+  permission?: { id: string; module: string; action: string };
+};
+
 export type RoleLite = {
   id: string;
   name: string;
   isSystem?: boolean;
+  usersCount?: number;
+
+  // ✅ tu backend en GET /roles ya devuelve permissions: [{ id, module, action }]
+  permissions?: RolePermission[];
 };
 
-// ✅ Alias de tipo por compatibilidad (muchas pantallas usan `Role`)
+// ✅ Alias por compatibilidad (muchas pantallas usan `Role`)
 export type Role = RoleLite;
 
-export type RoleDetail = {
-  id: string;
-  name: string;
-  isSystem?: boolean;
-  permissions?: Array<{
-    id: string; // rolePermission id o permission id (depende backend)
-    permission?: { id: string; module: string; action: string };
-    module?: string;
-    action?: string;
-  }>;
+/**
+ * Respuesta de GET /roles/:id (backend nuevo)
+ */
+export type RoleDetailResponse = {
+  role: {
+    id: string;
+    name: string;
+    isSystem?: boolean;
+    usersCount?: number;
+    permissionIds: string[];
+    permissions?: Array<{ id: string; module: string; action: string }>;
+  };
 };
 
 export type ListRolesResponse = { roles: RoleLite[] } | RoleLite[];
@@ -51,24 +64,27 @@ export async function listRoles(): Promise<RoleLite[]> {
  */
 export const fetchRoles = listRoles;
 
+/**
+ * ✅ Detalle: GET /roles/:id
+ * Devuelve permissionIds para pre-marcar permisos en el modal.
+ */
+export async function fetchRole(roleId: string): Promise<RoleDetailResponse> {
+  return apiFetch<RoleDetailResponse>(`/roles/${roleId}`, { method: "GET" });
+}
+
 export async function createRole(name: string): Promise<RoleLite> {
-  // backend: POST /roles  body: { name }
   const resp = await apiFetch<{ role?: RoleLite } & any>("/roles", {
     method: "POST",
     body: { name },
   });
-
-  // soporte flexible
   return resp.role ?? (resp as RoleLite);
 }
 
 export async function renameRole(roleId: string, name: string): Promise<RoleLite> {
-  // backend: PATCH /roles/:id  body: { name }
   const resp = await apiFetch<{ role?: RoleLite } & any>(`/roles/${roleId}`, {
     method: "PATCH",
     body: { name },
   });
-
   return resp.role ?? (resp as RoleLite);
 }
 
