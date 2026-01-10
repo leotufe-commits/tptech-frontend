@@ -26,11 +26,22 @@ function EyeIcon({ open }: { open: boolean }) {
   );
 }
 
-type LoginResponse = {
-  // nuevo (recomendado)
-  accessToken?: string;
+function XIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path
+        d="M18 6 6 18M6 6l12 12"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
 
-  // legacy (por si queda en algún lado)
+type LoginResponse = {
+  accessToken?: string;
   token?: string;
 };
 
@@ -46,6 +57,9 @@ export default function Login() {
 
   const canSubmit = useMemo(() => Boolean(email.trim()) && Boolean(pass.trim()), [email, pass]);
 
+  const hasEmail = email.trim().length > 0;
+  const hasPass = pass.trim().length > 0;
+
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
     setError(null);
@@ -58,7 +72,6 @@ export default function Login() {
     try {
       setLoading(true);
 
-      // 1) Login (backend setea cookie httpOnly + devuelve accessToken para DEV)
       const resp = await apiFetch<LoginResponse>("/auth/login", {
         method: "POST",
         body: { email, password: pass },
@@ -67,22 +80,14 @@ export default function Login() {
       const token = resp?.accessToken || resp?.token;
       if (!token) throw new Error("No se recibió token.");
 
-      // 2) DEV: guardar token en sessionStorage (Bearer)
-      // PROD: no hace daño, pero el navegador igual usará cookie
       try {
         sessionStorage.setItem(SS_TOKEN_KEY, token);
       } catch {
-        // si sessionStorage falla por políticas del navegador, igual seguimos
+        // noop
       }
 
-      // 3) Mantengo tu sistema actual (multi-tab) con setTokenOnly
-      // (si setTokenOnly guarda en localStorage, no pasa nada: igual apiFetch prioriza sessionStorage)
       setTokenOnly(token);
-
-      // 4) Navegar inmediato
       navigate("/dashboard", { replace: true });
-
-      // 5) Cargar /me sin bloquear
       void refreshMe();
     } catch (err: any) {
       setEmail((v) => v.trim());
@@ -91,6 +96,17 @@ export default function Login() {
       setLoading(false);
     }
   }
+
+  /**
+   * Botón de icono:
+   * - SIN borde visible
+   * - color basado en tokens del theme (text-text) => se adapta a fondo claro/oscuro
+   * - visible SOLO cuando corresponde (cuando hay texto)
+   */
+  const iconBtnClass =
+    "absolute right-3 top-1/2 -translate-y-1/2 inline-flex h-8 w-8 items-center justify-center " +
+    "rounded-md bg-transparent text-text/70 hover:text-text " +
+    "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30";
 
   return (
     <div className="min-h-screen bg-surface text-text flex items-center justify-center px-4 py-10">
@@ -108,34 +124,55 @@ export default function Login() {
         <form onSubmit={onSubmit} className="mt-8 space-y-5">
           <div>
             <label className="mb-2 block text-sm text-muted">Email</label>
-            <input
-              type="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              className="tp-input"
-              autoComplete="email"
-            />
+
+            <div className="relative">
+              <input
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                className={`tp-input ${hasEmail ? "pr-11" : ""}`}
+                autoComplete="email"
+              />
+
+              {/* X visible SOLO cuando hay texto */}
+              {hasEmail && (
+                <button
+                  type="button"
+                  onClick={() => setEmail("")}
+                  className={iconBtnClass}
+                  aria-label="Limpiar email"
+                  title="Limpiar"
+                >
+                  <XIcon />
+                </button>
+              )}
+            </div>
           </div>
 
           <div>
             <label className="mb-2 block text-sm text-muted">Contraseña</label>
+
             <div className="relative">
               <input
                 type={showPass ? "text" : "password"}
                 value={pass}
                 onChange={(e) => setPass(e.target.value)}
-                className="tp-input pr-11"
+                className={`tp-input ${hasPass ? "pr-11" : ""}`}
                 autoComplete="current-password"
               />
-              <button
-                type="button"
-                onClick={() => setShowPass((s) => !s)}
-                className="absolute right-3 top-1/2 -translate-y-1/2"
-                aria-label={showPass ? "Ocultar contraseña" : "Mostrar contraseña"}
-                title={showPass ? "Ocultar" : "Mostrar"}
-              >
-                <EyeIcon open={showPass} />
-              </button>
+
+              {/* Eye visible SOLO cuando hay texto */}
+              {hasPass && (
+                <button
+                  type="button"
+                  onClick={() => setShowPass((s) => !s)}
+                  className={iconBtnClass}
+                  aria-label={showPass ? "Ocultar contraseña" : "Mostrar contraseña"}
+                  title={showPass ? "Ocultar" : "Mostrar"}
+                >
+                  <EyeIcon open={showPass} />
+                </button>
+              )}
             </div>
           </div>
 

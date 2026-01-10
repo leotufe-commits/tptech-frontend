@@ -1,4 +1,3 @@
-// tptech-frontend/src/components/Topbar.tsx
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import ThemeSwitcher from "./ThemeSwitcher";
@@ -45,7 +44,6 @@ export default function Topbar() {
   const meta = useMemo(() => getMeta(pathname), [pathname]);
   const navigate = useNavigate();
 
-  // ✅ ÚNICA fuente de verdad: useMe() (deriva de AuthContext)
   const { me, loading, refresh } = useMe();
 
   const user = me?.user ?? null;
@@ -54,7 +52,6 @@ export default function Topbar() {
   const userLabel = user?.name?.trim() || user?.email || "Usuario";
   const avatarUrl = user?.avatarUrl ?? null;
 
-  // ✅ cache-busting estable (si existe updatedAt)
   const avatarSrc = useMemo(() => {
     if (!avatarUrl) return null;
     const updatedAt = (user as any)?.updatedAt as string | undefined;
@@ -79,13 +76,8 @@ export default function Topbar() {
 
   async function onLogout() {
     try {
-      // ✅ no dependemos de useAuth acá: el /apiFetch maneja 401 y el logout existe en AuthContext,
-      // pero si tu flujo actual navega al login y el backend invalida sesión, alcanza con borrar token.
-      // Igual: lo más prolijo es que tu botón de logout llame a auth.logout() desde algún lugar central.
-      // En este Topbar dejamos navegación y limpieza vía endpoint si lo tenés:
-      // Si querés, después lo hacemos 100% usando useAuth().
+      // logout real si lo necesitás
     } finally {
-      // Forzamos navegación; el AuthContext debería limpiar sesión en logout real
       navigate("/login", { replace: true });
     }
   }
@@ -93,8 +85,8 @@ export default function Topbar() {
   async function onPickAvatar(file: File) {
     setAvatarBusy(true);
     try {
-      await updateUserAvatar(file); // ✅ PUT /users/me/avatar (multipart)
-      await refresh(); // ✅ refresca /auth/me (y por ende AuthContext)
+      await updateUserAvatar(file);
+      await refresh();
       setMenuOpen(false);
     } finally {
       setAvatarBusy(false);
@@ -104,7 +96,7 @@ export default function Topbar() {
   async function onRemoveAvatar() {
     setAvatarBusy(true);
     try {
-      await removeMyAvatar(); // ✅ DELETE /users/me/avatar
+      await removeMyAvatar();
       await refresh();
       setMenuOpen(false);
     } finally {
@@ -114,7 +106,8 @@ export default function Topbar() {
 
   return (
     <header className="sticky top-0 z-10 border-b border-border bg-bg/90 backdrop-blur">
-      <div className="mx-auto flex max-w-7xl items-center justify-between px-6 py-4">
+      {/* 🔥 FULL WIDTH */}
+      <div className="flex w-full items-center justify-between px-6 py-4">
         {/* Izquierda */}
         <div>
           <div className="flex gap-2 text-xs text-muted">

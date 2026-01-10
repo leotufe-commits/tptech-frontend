@@ -6,15 +6,31 @@ import { InventoryProvider } from "../context/InventoryContext";
 export default function MainLayout() {
   return (
     <InventoryProvider>
-      <div className="flex min-h-screen bg-bg text-text">
+      {/* 
+        Guardamos el "gap" (margen) como variable para que sea igual a ambos lados
+        y para sumarlo al ancho del sidebar en desktop.
+      */}
+      <div className="min-h-screen bg-bg text-text [--layout-gap:1.5rem]">
         <Sidebar />
 
-        <main className="flex-1" style={{ background: "var(--surface)" }}>
+        {/*
+          Queremos:
+          - En mobile: padding normal (gap)
+          - En desktop: padding-left = sidebar real + gap
+          - A la derecha: padding-right = gap
+        */}
+        <main
+          className="bg-surface pr-[var(--layout-gap)] pl-[var(--layout-gap)] lg:pl-[calc(var(--sidebar-w,280px)+var(--layout-gap))]"
+        >
           <Topbar />
-          <div className="mx-auto max-w-7xl p-6">
+
+          <div className="w-full py-[var(--layout-gap)]">
             <div
-              className="bg-card rounded-2xl p-6"
-              style={{ boxShadow: "var(--shadow)", border: "1px solid var(--border)" }}
+              className="w-full rounded-2xl bg-card p-6"
+              style={{
+                boxShadow: "var(--shadow)",
+                border: "1px solid var(--border)",
+              }}
             >
               <Outlet />
             </div>

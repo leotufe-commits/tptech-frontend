@@ -18,6 +18,8 @@
   --text-on-dark-muted: rgba(249, 250, 251, 0.72);
 
   --primary: #f97316; /* naranja TPTech */
+  --primary-foreground: #ffffff;
+
   --secondary: #fde68a;
 
   --border: rgba(2, 6, 23, 0.12);
@@ -44,6 +46,8 @@
   --text-on-dark-muted: rgba(249, 250, 251, 0.72);
 
   --primary: #60a5fa; /* azul suave */
+  --primary-foreground: #0b1220;
+
   --secondary: #93c5fd;
 
   --border: rgba(255, 255, 255, 0.22);
@@ -68,6 +72,8 @@
   --text-on-dark-muted: rgba(249, 250, 251, 0.72);
 
   --primary: #2563eb; /* blue-600 */
+  --primary-foreground: #ffffff;
+
   --secondary: #93c5fd;
 
   --border: rgba(37, 99, 235, 0.16);
@@ -92,6 +98,8 @@
   --text-on-dark-muted: rgba(249, 250, 251, 0.72);
 
   --primary: #334155; /* slate-700 */
+  --primary-foreground: #ffffff;
+
   --secondary: #94a3b8;
 
   --border: rgba(15, 23, 42, 0.18);
@@ -116,6 +124,8 @@
   --text-on-dark-muted: rgba(249, 250, 251, 0.72);
 
   --primary: #059669;
+  --primary-foreground: #ffffff;
+
   --secondary: #86efac;
 
   --border: rgba(6, 78, 59, 0.14);
