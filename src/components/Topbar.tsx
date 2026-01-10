@@ -74,6 +74,16 @@ export default function Topbar() {
     return () => document.removeEventListener("mousedown", onDocClick);
   }, [menuOpen]);
 
+  // ✅ cerrar con ESC (más pro)
+  useEffect(() => {
+    if (!menuOpen) return;
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key === "Escape") setMenuOpen(false);
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [menuOpen]);
+
   async function onLogout() {
     try {
       // logout real si lo necesitás
@@ -105,8 +115,15 @@ export default function Topbar() {
   }
 
   return (
-    <header className="sticky top-0 z-10 border-b border-border bg-bg/90 backdrop-blur">
-      {/* 🔥 FULL WIDTH */}
+    <header
+      className={cn(
+        "sticky top-0 z-10 border-b border-border bg-bg/90 backdrop-blur",
+        // ✅ ayuda a que el gesto de scroll “pase” bien por arriba en mobile
+        "[touch-action:pan-y]",
+        // ✅ evita scroll horizontal raro por sombras o bordes
+        "overflow-x-hidden"
+      )}
+    >
       <div className="flex w-full items-center justify-between px-6 py-4">
         {/* Izquierda */}
         <div>

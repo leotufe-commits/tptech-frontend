@@ -6,21 +6,32 @@ import { InventoryProvider } from "../context/InventoryContext";
 export default function MainLayout() {
   return (
     <InventoryProvider>
-      {/* 
-        Guardamos el "gap" (margen) como variable para que sea igual a ambos lados
-        y para sumarlo al ancho del sidebar en desktop.
+      {/*
+        Layout con scroll "tipo app":
+        - El scroll vive en <main> (mejor para mobile + sidebar fixed)
+        - 100dvh para evitar bugs de barra del navegador en celular
+        - overflow-x-hidden para evitar desplazamientos raros
       */}
-      <div className="min-h-screen bg-bg text-text [--layout-gap:1.5rem]">
+      <div className="h-[100dvh] bg-bg text-text [--layout-gap:1.5rem] overflow-hidden">
         <Sidebar />
 
         {/*
-          Queremos:
+          main = contenedor scrolleable
           - En mobile: padding normal (gap)
           - En desktop: padding-left = sidebar real + gap
           - A la derecha: padding-right = gap
         */}
         <main
-          className="bg-surface pr-[var(--layout-gap)] pl-[var(--layout-gap)] lg:pl-[calc(var(--sidebar-w,280px)+var(--layout-gap))]"
+          className={[
+            "bg-surface pr-[var(--layout-gap)] pl-[var(--layout-gap)]",
+            "lg:pl-[calc(var(--sidebar-w,280px)+var(--layout-gap))]",
+            // ✅ scroll principal
+            "h-full overflow-y-auto overflow-x-hidden",
+            // ✅ scroll suave en iOS
+            "[webkit-overflow-scrolling:touch]",
+            // ✅ evita “rebotes” raros
+            "overscroll-contain",
+          ].join(" ")}
         >
           <Topbar />
 
@@ -35,6 +46,9 @@ export default function MainLayout() {
               <Outlet />
             </div>
           </div>
+
+          {/* ✅ padding extra al final para que en mobile no quede pegado abajo */}
+          <div className="h-[var(--layout-gap)]" />
         </main>
       </div>
     </InventoryProvider>

@@ -19,6 +19,7 @@ import {
   type RoleLite,
 } from "../services/roles";
 import { fetchPermissions, type Permission } from "../services/permissions";
+import { Pencil, Trash2 } from "lucide-react";
 
 /* =========================
    Labels permisos (humanos)
@@ -71,35 +72,127 @@ function Badge({ children }: { children: any }) {
   );
 }
 
+/**
+ * Modal con opción draggable.
+ * - draggable: permite moverlo arrastrando el header
+ * - al reabrir, vuelve a la posición original (centrado)
+ */
 function Modal({
   open,
   title,
   children,
   onClose,
   wide,
+  draggable,
 }: {
   open: boolean;
   title: string;
   children: any;
   onClose: () => void;
   wide?: boolean;
+  draggable?: boolean;
 }) {
+  const [pos, setPos] = useState({ x: 0, y: 0 });
+  const dragging = useRef(false);
+  const start = useRef({ x: 0, y: 0 });
+  const startPos = useRef({ x: 0, y: 0 });
+
+  useEffect(() => {
+    if (!open) return;
+    // ✅ cada vez que se abre, vuelve al lugar original
+    setPos({ x: 0, y: 0 });
+  }, [open]);
+
+  useEffect(() => {
+    if (!open || !draggable) return;
+
+    function onMove(e: MouseEvent) {
+      if (!dragging.current) return;
+      const dx = e.clientX - start.current.x;
+      const dy = e.clientY - start.current.y;
+      setPos({ x: startPos.current.x + dx, y: startPos.current.y + dy });
+    }
+    function onUp() {
+      dragging.current = false;
+    }
+
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+    return () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
+  }, [open, draggable]);
+
+  // bloquear scroll del fondo
+  useEffect(() => {
+    if (!open) return;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = prev;
+    };
+  }, [open]);
+
   if (!open) return null;
+
+  const boxClass = [
+    "relative w-full rounded-2xl border border-border bg-card p-6 shadow-soft",
+    wide ? "max-w-5xl" : "max-w-3xl",
+  ].join(" ");
+
+  if (!draggable) {
+    return (
+      <div className="fixed inset-0 z-50 flex items-center justify-center px-4">
+        <div className="absolute inset-0 bg-black/40" onClick={onClose} />
+        <div className={boxClass}>
+          <div className="flex items-center justify-between gap-3">
+            <h2 className="text-lg font-semibold">{title}</h2>
+            <button className="tp-btn" onClick={onClose} type="button">
+              Cerrar
+            </button>
+          </div>
+          <div className="mt-4">{children}</div>
+        </div>
+      </div>
+    );
+  }
+
+  // draggable: lo posicionamos centrado con translate(-50%) + offset pos
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center px-4">
-      <div className="absolute inset-0 bg-black/40" onClick={onClose} />
+    <div className="fixed inset-0 z-50">
+      <div className="absolute inset-0 bg-black/40" onMouseDown={onClose} />
       <div
-        className={[
-          "relative w-full rounded-2xl border border-border bg-card p-6 shadow-soft",
-          wide ? "max-w-5xl" : "max-w-3xl",
-        ].join(" ")}
+        className={[boxClass, "absolute left-1/2 top-1/2"].join(" ")}
+        style={{
+          transform: `translate(calc(-50% + ${pos.x}px), calc(-50% + ${pos.y}px))`,
+        }}
+        onMouseDown={(e) => e.stopPropagation()}
       >
-        <div className="flex items-center justify-between gap-3">
+        {/* header draggable */}
+        <div
+          className="flex items-center justify-between gap-3 select-none"
+          onMouseDown={(e) => {
+            // solo si apretás header, empieza drag
+            dragging.current = true;
+            start.current = { x: e.clientX, y: e.clientY };
+            startPos.current = { ...pos };
+          }}
+          style={{ cursor: "move" }}
+          title="Arrastrá para mover"
+        >
           <h2 className="text-lg font-semibold">{title}</h2>
-          <button className="tp-btn" onClick={onClose} type="button">
+          <button
+            className="tp-btn"
+            onMouseDown={(e) => e.stopPropagation()}
+            onClick={onClose}
+            type="button"
+            title="Cerrar"
+          >
             Cerrar
           </button>
         </div>
+
         <div className="mt-4">{children}</div>
       </div>
     </div>
@@ -113,17 +206,13 @@ function SortTrianglesIcon({
   state: "INACTIVE" | "ASC" | "DESC";
   className?: string;
 }) {
-  // usa currentColor para que puedas controlar color con clases
   const upOpacity = state === "ASC" ? 1 : state === "DESC" ? 0.18 : 0.28;
   const downOpacity = state === "DESC" ? 1 : state === "ASC" ? 0.18 : 0.28;
 
-  // ✅ más separación entre triángulos (gap visual)
   return (
     <span className={["inline-flex items-center", className ?? ""].join(" ")}>
       <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true">
-        {/* Triángulo arriba */}
         <path d="M12 3 L21 12 H3 Z" fill="currentColor" opacity={upOpacity} />
-        {/* Triángulo abajo */}
         <path d="M3 12 H21 L12 21 Z" fill="currentColor" opacity={downOpacity} />
       </svg>
     </span>
@@ -148,18 +237,16 @@ export default function RolesPage() {
   const [sortBy, setSortBy] = useState<"ROLE" | "TYPE">("ROLE");
   const [sortDir, setSortDir] = useState<"ASC" | "DESC">("ASC");
 
-  // rename modal
+  // catalog permissions
+  const [allPerms, setAllPerms] = useState<Permission[]>([]);
+  const [permsLoading, setPermsLoading] = useState(false);
+
+  // ✅ MODAL EDIT (unificado: nombre + permisos)
   const [editOpen, setEditOpen] = useState(false);
   const [target, setTarget] = useState<RoleLite | null>(null);
   const [editName, setEditName] = useState("");
-  const [renaming, setRenaming] = useState(false);
-
-  // permissions modal
-  const [permOpen, setPermOpen] = useState(false);
-  const [allPerms, setAllPerms] = useState<Permission[]>([]);
-  const [permsLoading, setPermsLoading] = useState(false);
   const [selectedPermIds, setSelectedPermIds] = useState<string[]>([]);
-  const [savingPerms, setSavingPerms] = useState(false);
+  const [savingEdit, setSavingEdit] = useState(false);
 
   // create role modal
   const [createOpen, setCreateOpen] = useState(false);
@@ -167,9 +254,9 @@ export default function RolesPage() {
   const [createSelectedPermIds, setCreateSelectedPermIds] = useState<string[]>([]);
   const [creating, setCreating] = useState(false);
 
-  // ✅ autofocus inputs (nuevo rol / renombrar)
+  // ✅ autofocus inputs (nuevo rol / editar)
   const createNameRef = useRef<HTMLInputElement | null>(null);
-  const renameRef = useRef<HTMLInputElement | null>(null);
+  const editNameRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     if (!createOpen) return;
@@ -179,7 +266,7 @@ export default function RolesPage() {
 
   useEffect(() => {
     if (!editOpen) return;
-    const t = window.setTimeout(() => renameRef.current?.focus(), 0);
+    const t = window.setTimeout(() => editNameRef.current?.focus(), 0);
     return () => window.clearTimeout(t);
   }, [editOpen]);
 
@@ -327,7 +414,6 @@ export default function RolesPage() {
     setCreateName("");
     setCreateSelectedPermIds([]);
 
-    // ✅ primero cargamos catálogo (si falta) y recién después mostramos el modal
     await ensurePermissionsCatalog();
     setCreateOpen(true);
   }
@@ -363,38 +449,6 @@ export default function RolesPage() {
   }
 
   /* =========================
-     RENAME
-  ========================= */
-  function openRenameModal(r: RoleLite) {
-    setErr(null);
-    setTarget(r);
-    setEditName(r.name);
-    setEditOpen(true);
-  }
-
-  async function onRename() {
-    if (!canAdmin || !target) return;
-
-    const name = editName.trim();
-    if (!name) {
-      setErr("El nombre no puede estar vacío.");
-      return;
-    }
-
-    setRenaming(true);
-    setErr(null);
-    try {
-      await renameRole(target.id, name);
-      setEditOpen(false);
-      await load();
-    } catch (e: any) {
-      setErr(String(e?.message || "Error renombrando rol"));
-    } finally {
-      setRenaming(false);
-    }
-  }
-
-  /* =========================
      DELETE
   ========================= */
   async function onDelete(r: RoleLite) {
@@ -414,7 +468,7 @@ export default function RolesPage() {
   }
 
   /* =========================
-     PERMISSIONS
+     EDIT (unificado)
   ========================= */
   function extractPermissionIdsFromListRole(r: RoleLite): string[] {
     const ids = (r.permissions ?? [])
@@ -436,27 +490,29 @@ export default function RolesPage() {
     return [];
   }
 
-  async function openPermissionsModal(r: RoleLite) {
+  async function openEditModal(r: RoleLite) {
     if (!canAdmin) return;
 
-    if (getRoleCode(r) === "OWNER") {
+    const code = getRoleCode(r);
+    const isOwner = code === "OWNER";
+    if (isOwner) {
       setErr("El rol Propietario no es editable.");
       return;
     }
 
     setErr(null);
     setTarget(r);
-
+    setEditName(r.name);
     setSelectedPermIds([]);
-    setSavingPerms(false);
 
-    // ✅ aseguramos catálogo antes de abrir (evita “aparece y luego carga”)
     await ensurePermissionsCatalog();
-    setPermOpen(true);
+    setEditOpen(true);
 
+    // precarga rápida
     const fromList = extractPermissionIdsFromListRole(r);
     setSelectedPermIds(fromList);
 
+    // precarga completa
     try {
       const detail = await fetchRole(r.id);
       const ids = extractPermissionIdsFromFetchRoleResponse(detail);
@@ -469,28 +525,39 @@ export default function RolesPage() {
     }
   }
 
-  async function savePermissions() {
-    if (!target) return;
+  async function saveEdit() {
+    if (!canAdmin || !target) return;
 
-    setSavingPerms(true);
+    const nextName = editName.trim();
+    if (!nextName) {
+      setErr("El nombre no puede estar vacío.");
+      return;
+    }
+
+    setSavingEdit(true);
     setErr(null);
+
     try {
+      // guardamos nombre si cambió
+      if (nextName !== target.name) {
+        await renameRole(target.id, nextName);
+      }
+
+      // guardamos permisos (siempre, por simplicidad y consistencia)
       await updateRolePermissions(target.id, selectedPermIds);
+
+      setEditOpen(false);
       await load();
-      setPermOpen(false);
     } catch (e: any) {
-      setErr(String(e?.message || "Error guardando permisos"));
+      setErr(String(e?.message || "Error guardando cambios"));
     } finally {
-      setSavingPerms(false);
+      setSavingEdit(false);
     }
   }
 
   if (!canView) {
     return <div className="p-6">Sin permisos para ver roles.</div>;
   }
-
-  const btnW = "w-28";
-  const btnRow = "flex items-center justify-end gap-2";
 
   return (
     <div className="p-6 space-y-6">
@@ -514,112 +581,124 @@ export default function RolesPage() {
       )}
 
       <div className="tp-card overflow-hidden">
-        <table className="w-full text-sm">
-          <thead className="border-b border-border">
-            <tr>
-              <th className="px-4 py-3 text-left">
-                <button
-                  type="button"
-                  className="inline-flex items-center gap-2 hover:opacity-90"
-                  onClick={() => toggleSort("ROLE")}
-                  title="Ordenar por Rol"
-                >
-                  <span>Rol</span>
-                  {/* INACTIVO apagado / ACTIVO blanco */}
-                  <SortTrianglesIcon
-                    state={sortState("ROLE")}
-                    className={sortBy === "ROLE" ? "text-white" : "text-black opacity-70"}
-                  />
-                </button>
-              </th>
-
-              <th className="px-4 py-3 text-left">
-                <button
-                  type="button"
-                  className="inline-flex items-center gap-2 hover:opacity-90"
-                  onClick={() => toggleSort("TYPE")}
-                  title="Ordenar por Tipo"
-                >
-                  <span>Tipo</span>
-                  <SortTrianglesIcon
-                    state={sortState("TYPE")}
-                    className={sortBy === "TYPE" ? "text-white" : "text-black opacity-70"}
-                  />
-                </button>
-              </th>
-
-              <th className="px-4 py-3 text-right">Acciones</th>
-            </tr>
-          </thead>
-
-          <tbody>
-            {loading ? (
+        {/* ✅ scroll horizontal en mobile */}
+        <div className="w-full overflow-x-auto" style={{ WebkitOverflowScrolling: "touch" as any }}>
+          <table className="w-full min-w-[720px] text-sm">
+            <thead className="border-b border-border">
               <tr>
-                <td className="px-4 py-4" colSpan={3}>
-                  Cargando…
-                </td>
+                <th className="px-4 py-3 text-left">
+                  <button
+                    type="button"
+                    className="inline-flex items-center gap-2 hover:opacity-90"
+                    onClick={() => toggleSort("ROLE")}
+                    title="Ordenar por Rol"
+                  >
+                    <span>Rol</span>
+                    {/* ✅ visible en tema claro/oscuro */}
+                    <SortTrianglesIcon
+                      state={sortState("ROLE")}
+                      className={sortBy === "ROLE" ? "text-text" : "text-muted"}
+                    />
+                  </button>
+                </th>
+
+                <th className="px-4 py-3 text-left">
+                  <button
+                    type="button"
+                    className="inline-flex items-center gap-2 hover:opacity-90"
+                    onClick={() => toggleSort("TYPE")}
+                    title="Ordenar por Tipo"
+                  >
+                    <span>Tipo</span>
+                    <SortTrianglesIcon
+                      state={sortState("TYPE")}
+                      className={sortBy === "TYPE" ? "text-text" : "text-muted"}
+                    />
+                  </button>
+                </th>
+
+                <th className="px-4 py-3 text-right">Acciones</th>
               </tr>
-            ) : sortedRoles.length === 0 ? (
-              <tr>
-                <td className="px-4 py-4 text-muted" colSpan={3}>
-                  No hay roles.
-                </td>
-              </tr>
-            ) : (
-              sortedRoles.map((r) => {
-                const code = getRoleCode(r);
-                const isOwner = code === "OWNER";
+            </thead>
 
-                const canEditThis = canAdmin && !isOwner;
-                const deleteDisabled = r.isSystem;
+            <tbody>
+              {loading ? (
+                <tr>
+                  <td className="px-4 py-4" colSpan={3}>
+                    Cargando…
+                  </td>
+                </tr>
+              ) : sortedRoles.length === 0 ? (
+                <tr>
+                  <td className="px-4 py-4 text-muted" colSpan={3}>
+                    No hay roles.
+                  </td>
+                </tr>
+              ) : (
+                sortedRoles.map((r) => {
+                  const code = getRoleCode(r);
+                  const isOwner = code === "OWNER";
 
-                return (
-                  <tr key={r.id} className="border-t border-border">
-                    <td className="px-4 py-3 font-semibold">{prettyRole(r.name)}</td>
+                  const canEditThis = canAdmin && !isOwner;
+                  const deleteDisabled = r.isSystem;
 
-                    <td className="px-4 py-3">
-                      <Badge>{r.isSystem ? "Sistema" : "Personalizado"}</Badge>
-                    </td>
+                  const iconBtnBase =
+                    "inline-flex items-center justify-center rounded-lg border border-border bg-card " +
+                    "h-9 w-9 shadow-[0_1px_0_0_rgba(0,0,0,0.05)] hover:bg-surface2 " +
+                    "focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-primary/20";
 
-                    <td className="px-4 py-3">
-                      <div className={btnRow}>
-                        <button
-                          className={`tp-btn ${btnW} ${!canEditThis ? "opacity-40 cursor-not-allowed" : ""}`}
-                          onClick={() => (canEditThis ? openPermissionsModal(r) : null)}
-                          type="button"
-                          disabled={!canEditThis}
-                          title={!canEditThis && isOwner ? "Propietario no es editable" : ""}
-                        >
-                          Permisos
-                        </button>
+                  const disabledCls = "opacity-40 cursor-not-allowed hover:bg-card";
 
-                        <button
-                          className={`tp-btn ${btnW} ${!canEditThis ? "opacity-40 cursor-not-allowed" : ""}`}
-                          onClick={() => (canEditThis ? openRenameModal(r) : null)}
-                          type="button"
-                          disabled={!canEditThis}
-                          title={!canEditThis && isOwner ? "Propietario no es editable" : ""}
-                        >
-                          Renombrar
-                        </button>
+                  return (
+                    <tr key={r.id} className="border-t border-border">
+                      <td className="px-4 py-3 font-semibold">{prettyRole(r.name)}</td>
 
-                        <button
-                          className={`tp-btn ${btnW} ${deleteDisabled ? "opacity-40 cursor-not-allowed" : ""}`}
-                          onClick={() => (deleteDisabled ? null : onDelete(r))}
-                          type="button"
-                          disabled={deleteDisabled}
-                          title={deleteDisabled ? "No se puede eliminar un rol del sistema" : ""}
-                        >
-                          Eliminar
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                );
-              })
-            )}
-          </tbody>
-        </table>
+                      <td className="px-4 py-3">
+                        <Badge>{r.isSystem ? "Sistema" : "Personalizado"}</Badge>
+                      </td>
+
+                      <td className="px-4 py-3">
+                        <div className="flex items-center justify-end gap-2">
+                          {/* ✏️ EDITAR (unificado) */}
+                          <button
+                            className={[
+                              iconBtnBase,
+                              !canEditThis ? disabledCls : "",
+                            ].join(" ")}
+                            type="button"
+                            disabled={!canEditThis}
+                            onClick={() => (canEditThis ? openEditModal(r) : null)}
+                            title={!canEditThis && isOwner ? "Propietario no es editable" : "Editar rol"}
+                          >
+                            <Pencil className="h-4 w-4" />
+                          </button>
+
+                          {/* 🗑️ ELIMINAR */}
+                          <button
+                            className={[
+                              iconBtnBase,
+                              deleteDisabled ? disabledCls : "",
+                            ].join(" ")}
+                            type="button"
+                            disabled={deleteDisabled}
+                            onClick={() => (deleteDisabled ? null : onDelete(r))}
+                            title={
+                              deleteDisabled
+                                ? "No se puede eliminar un rol del sistema"
+                                : "Eliminar rol"
+                            }
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
+        </div>
 
         <div className="border-t border-border px-4 py-3 text-xs text-muted">
           {sortedRoles.length} {sortedRoles.length === 1 ? "rol" : "roles"}
@@ -627,9 +706,15 @@ export default function RolesPage() {
       </div>
 
       {/* =========================
-          MODAL NUEVO ROL
+          MODAL NUEVO ROL (draggable)
       ========================= */}
-      <Modal open={createOpen} title="Nuevo Rol" onClose={() => setCreateOpen(false)} wide>
+      <Modal
+        open={createOpen}
+        title="Nuevo Rol"
+        onClose={() => setCreateOpen(false)}
+        wide
+        draggable
+      >
         <form onSubmit={onCreate} className="space-y-4">
           <div>
             <label className="mb-1 block text-xs text-muted">Nombre del rol</label>
@@ -716,50 +801,35 @@ export default function RolesPage() {
       </Modal>
 
       {/* =========================
-          MODAL RENAME
-      ========================= */}
-      <Modal open={editOpen} title="Renombrar rol" onClose={() => setEditOpen(false)}>
-        <div className="space-y-3">
-          <div>
-            <label className="mb-1 block text-xs text-muted">Nombre</label>
-            <input
-              ref={renameRef}
-              className="tp-input"
-              value={editName}
-              onChange={(e) => setEditName(e.target.value)}
-            />
-          </div>
-
-          <div className="pt-2 flex justify-end gap-2">
-            <button className="tp-btn-secondary" onClick={() => setEditOpen(false)} type="button">
-              Cancelar
-            </button>
-            <button className="tp-btn-primary" onClick={onRename} disabled={renaming} type="button">
-              {renaming ? "Guardando…" : "Guardar"}
-            </button>
-          </div>
-        </div>
-      </Modal>
-
-      {/* =========================
-          MODAL PERMISSIONS
+          MODAL EDITAR ROL (unificado + draggable)
       ========================= */}
       <Modal
         key={target?.id ?? "no-target"}
-        open={permOpen}
-        title={`Permisos de ${target ? prettyRole(target.name) : ""}`}
-        onClose={() => setPermOpen(false)}
+        open={editOpen}
+        title={`Editar rol${target ? `: ${prettyRole(target.name)}` : ""}`}
+        onClose={() => setEditOpen(false)}
         wide
+        draggable
       >
         {permsLoading ? (
           <div>Cargando permisos…</div>
         ) : (
-          <>
-            <div className="mb-3 text-xs text-muted">
+          <div className="space-y-4">
+            <div>
+              <label className="mb-1 block text-xs text-muted">Nombre del rol</label>
+              <input
+                ref={editNameRef}
+                className="tp-input"
+                value={editName}
+                onChange={(e) => setEditName(e.target.value)}
+              />
+            </div>
+
+            <div className="text-xs text-muted">
               Tip: “Administrar” equivale a acceso total del módulo. (Código técnico queda en tooltip)
             </div>
 
-            <div className="space-y-4 max-h-[60vh] overflow-auto tp-scroll pr-1">
+            <div className="space-y-4 max-h-[55vh] overflow-auto tp-scroll pr-1">
               {permsByModule.map(([module, list]) => {
                 const ids = moduleIds(module, list);
                 const fully = isModuleFullySelected(selectedPermIds, ids);
@@ -809,19 +879,19 @@ export default function RolesPage() {
             </div>
 
             <div className="pt-4 flex justify-end gap-2">
-              <button className="tp-btn-secondary" onClick={() => setPermOpen(false)} type="button">
+              <button className="tp-btn-secondary" onClick={() => setEditOpen(false)} type="button">
                 Cancelar
               </button>
               <button
                 className="tp-btn-primary"
-                disabled={savingPerms}
-                onClick={savePermissions}
+                disabled={savingEdit}
+                onClick={saveEdit}
                 type="button"
               >
-                {savingPerms ? "Guardando…" : "Guardar"}
+                {savingEdit ? "Guardando…" : "Guardar"}
               </button>
             </div>
-          </>
+          </div>
         )}
       </Modal>
     </div>
