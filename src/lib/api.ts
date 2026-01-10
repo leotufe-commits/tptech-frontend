@@ -109,7 +109,8 @@ function isJsonSerializable(body: any) {
   if (typeof body !== "object") return false;
   if (Array.isArray(body)) return true;
 
-  if (isFormData(body) || isURLSearchParams(body) || isBlob(body) || isArrayBuffer(body)) return false;
+  if (isFormData(body) || isURLSearchParams(body) || isBlob(body) || isArrayBuffer(body))
+    return false;
   return true;
 }
 

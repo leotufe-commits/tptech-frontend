@@ -150,10 +150,7 @@ function Group({
             return (
               <div key={c.to} className="relative">
                 <div
-                  className={cn(
-                    "absolute left-5 top-0 w-px bg-border",
-                    isLast ? "h-1/2" : "h-full"
-                  )}
+                  className={cn("absolute left-5 top-0 w-px bg-border", isLast ? "h-1/2" : "h-full")}
                 />
                 <div className="absolute left-5 top-1/2 h-px w-5 bg-border" />
                 <div className="pl-10">
@@ -210,16 +207,17 @@ export default function Sidebar() {
   const userName: string = (user as any)?.name || (user as any)?.email || "Usuario";
   const userEmail: string = (user as any)?.email || "";
 
-  const logoUrl =
-    (auth.jewelry as any)?.logoUrl ??
-    (me as any)?.jewelry?.logoUrl ??
-    undefined;
+  const logoUrl = (auth.jewelry as any)?.logoUrl ?? (me as any)?.jewelry?.logoUrl ?? undefined;
 
   const perms: string[] =
     (auth.permissions?.length ? auth.permissions : (me as any)?.permissions) ?? [];
 
+  // ✅ VER: tanto VIEW como ADMIN
   const canSeeUsers = perms.includes("USERS_ROLES:VIEW") || perms.includes("USERS_ROLES:ADMIN");
-  const canSeeRoles = perms.includes("USERS_ROLES:ADMIN"); // ✅ solo admin
+
+  // ✅ ANTES estaba solo ADMIN → en web no aparecía si el usuario tenía VIEW.
+  // ✅ Ahora Roles aparece igual que Usuarios: VIEW o ADMIN.
+  const canSeeRoles = canSeeUsers;
 
   async function onLogout() {
     try {
@@ -236,7 +234,7 @@ export default function Sidebar() {
     ];
 
     if (canSeeUsers) configChildren.push({ label: "Usuarios", to: "/configuracion/usuarios" });
-    if (canSeeRoles) configChildren.push({ label: "Roles", to: "/configuracion/roles" }); // ✅ NUEVO
+    if (canSeeRoles) configChildren.push({ label: "Roles", to: "/configuracion/roles" });
 
     return [
       { kind: "link", label: "Dashboard", to: "/dashboard" },

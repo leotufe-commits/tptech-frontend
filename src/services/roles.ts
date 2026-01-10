@@ -8,29 +8,25 @@ export type RolePermission = {
   id: string; // permissionId
   module?: string;
   action?: string;
-  permission?: { id: string; module: string; action: string };
 };
 
 export type RoleLite = {
   id: string;
-  name: string;
+  name: string; // ✅ nombre visible (displayName si existe, sino name)
+  code?: string; // ✅ código técnico (OWNER/ADMIN/STAFF/READONLY o custom name)
   isSystem?: boolean;
   usersCount?: number;
-
-  // ✅ tu backend en GET /roles ya devuelve permissions: [{ id, module, action }]
   permissions?: RolePermission[];
 };
 
-// ✅ Alias por compatibilidad (muchas pantallas usan `Role`)
-export type Role = RoleLite;
-
 /**
- * Respuesta de GET /roles/:id (backend nuevo)
+ * Respuesta de GET /roles/:id
  */
 export type RoleDetailResponse = {
   role: {
     id: string;
-    name: string;
+    name: string; // ✅ nombre visible
+    code?: string; // ✅ código técnico
     isSystem?: boolean;
     usersCount?: number;
     permissionIds: string[];
@@ -38,61 +34,72 @@ export type RoleDetailResponse = {
   };
 };
 
-export type ListRolesResponse = { roles: RoleLite[] } | RoleLite[];
-
 /* =========================
    Helpers
 ========================= */
-function normalizeRoles(resp: unknown): RoleLite[] {
+function normalizeRoles(resp: any): RoleLite[] {
   if (Array.isArray(resp)) return resp as RoleLite[];
-  if (resp && typeof resp === "object" && Array.isArray((resp as any).roles)) {
-    return (resp as any).roles as RoleLite[];
-  }
+  if (resp && Array.isArray(resp.roles)) return resp.roles as RoleLite[];
   return [];
 }
 
 /* =========================
    API
 ========================= */
+
+/**
+ * Lista roles del tenant
+ */
 export async function listRoles(): Promise<RoleLite[]> {
-  const resp = await apiFetch<ListRolesResponse>("/roles", { method: "GET" });
+  const resp = await apiFetch("/roles", { method: "GET" });
   return normalizeRoles(resp);
 }
 
 /**
- * ✅ Alias por compatibilidad: algunas pantallas importan fetchRoles
+ * Alias por compatibilidad
  */
 export const fetchRoles = listRoles;
 
 /**
- * ✅ Detalle: GET /roles/:id
- * Devuelve permissionIds para pre-marcar permisos en el modal.
+ * Detalle de un rol
  */
 export async function fetchRole(roleId: string): Promise<RoleDetailResponse> {
   return apiFetch<RoleDetailResponse>(`/roles/${roleId}`, { method: "GET" });
 }
 
-export async function createRole(name: string): Promise<RoleLite> {
-  const resp = await apiFetch<{ role?: RoleLite } & any>("/roles", {
+/**
+ * Crear rol custom
+ * ✅ IMPORTANTE: tu backend actual (controller que pegaste) devuelve el rol directo,
+ * no { role: ... }. Por eso devolvemos el payload tal cual.
+ * Dejamos permissionIds opcional (no rompe aunque el backend lo ignore).
+ */
+export async function createRole(name: string, permissionIds: string[] = []): Promise<RoleLite> {
+  const resp = await apiFetch<any>("/roles", {
     method: "POST",
-    body: { name },
+    body: { name, permissionIds },
   });
-  return resp.role ?? (resp as RoleLite);
-}
 
-export async function renameRole(roleId: string, name: string): Promise<RoleLite> {
-  const resp = await apiFetch<{ role?: RoleLite } & any>(`/roles/${roleId}`, {
-    method: "PATCH",
-    body: { name },
-  });
-  return resp.role ?? (resp as RoleLite);
+  // ✅ tolera ambos formatos: {role: ...} o role directo
+  return (resp?.role ?? resp) as RoleLite;
 }
 
 /**
- * Reemplaza permisos del rol.
- * backend: PATCH /roles/:id/permissions  body: { permissionIds: string[] }
+ * Renombrar rol
+ * ✅ IMPORTANTE: igual que create, toleramos {role} o directo.
  */
-export async function updateRolePermissions(roleId: string, permissionIds: string[]) {
+export async function renameRole(roleId: string, name: string): Promise<RoleLite> {
+  const resp = await apiFetch<any>(`/roles/${roleId}`, {
+    method: "PATCH",
+    body: { name },
+  });
+
+  return (resp?.role ?? resp) as RoleLite;
+}
+
+/**
+ * Reemplazar permisos del rol
+ */
+export async function updateRolePermissions(roleId: string, permissionIds: string[]): Promise<{ ok: true }> {
   return apiFetch(`/roles/${roleId}/permissions`, {
     method: "PATCH",
     body: { permissionIds },
@@ -100,9 +107,8 @@ export async function updateRolePermissions(roleId: string, permissionIds: strin
 }
 
 /**
- * Elimina un rol (si backend permite).
- * backend: DELETE /roles/:id
+ * Eliminar rol (solo custom)
  */
-export async function deleteRole(roleId: string) {
-  return apiFetch(`/roles/${roleId}`, { method: "DELETE" });
+export async function deleteRole(roleId: string): Promise<void> {
+  await apiFetch(`/roles/${roleId}`, { method: "DELETE" });
 }
