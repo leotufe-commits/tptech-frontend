@@ -306,7 +306,10 @@ function RoleEditorModal({
   loadingPerms: boolean;
   saving: boolean;
   submitLabel: string;
-  nameInputRef?: React.RefObject<HTMLInputElement>;
+
+  // ✅ FIX: aceptar refs que pueden ser null (useRef<HTMLInputElement | null>)
+  nameInputRef?: React.RefObject<HTMLInputElement | null>;
+
   onClose: () => void;
   onSubmit: (name: string, selectedIds: string[]) => Promise<void>;
 }) {

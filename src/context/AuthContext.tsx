@@ -26,7 +26,8 @@ export type User = {
   avatarUrl?: string | null;
 };
 
-export type Jewelry = any;
+// ✅ mejor que `any` (evita implicit any en callbacks)
+export type Jewelry = Record<string, any>;
 
 export type Role = { id: string; name: string; isSystem?: boolean };
 
@@ -220,7 +221,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   // ✅ NUEVO: patch seguro (útil para logoUrl)
   const patchJewelryLocal = (partial: Partial<Jewelry>) => {
-    setJewelry((prev) => ({ ...(prev ?? {}), ...(partial ?? {}) }));
+    setJewelry((prev: Jewelry | null) => ({
+      ...(prev ?? {}),
+      ...(partial ?? {}),
+    }));
   };
 
   const logout = async () => {

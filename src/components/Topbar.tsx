@@ -1,5 +1,5 @@
 // tptech-frontend/src/components/Topbar.tsx
-import { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { createPortal } from "react-dom";
 import { Menu, Settings } from "lucide-react";
@@ -22,7 +22,10 @@ function getMeta(pathname: string): RouteMeta {
   if (p.startsWith("/configuracion")) {
     return {
       title: "Configuración",
-      crumbs: [{ label: "Dashboard", to: "/dashboard" }, { label: "Configuración" }],
+      crumbs: [
+        { label: "Dashboard", to: "/dashboard" },
+        { label: "Configuración" },
+      ],
     };
   }
 
@@ -57,7 +60,7 @@ function useEscapeToClose(open: boolean, onClose: () => void) {
 
 function useOutsideClickToClose(
   open: boolean,
-  containerRef: React.RefObject<HTMLElement>,
+  containerRef: React.RefObject<HTMLElement | null>,
   onClose: () => void
 ) {
   useEffect(() => {
@@ -86,7 +89,7 @@ function PortalMenu({
   width = 340,
 }: {
   open: boolean;
-  anchorRef: React.RefObject<HTMLElement>;
+  anchorRef: React.RefObject<HTMLElement | null>;
   onClose: () => void;
   children: React.ReactNode;
   width?: number;
@@ -95,11 +98,11 @@ function PortalMenu({
   const [, forceTick] = useState(0);
 
   useEscapeToClose(open, onClose);
-  useOutsideClickToClose(open, menuRef as any, onClose);
+  useOutsideClickToClose(open, menuRef, onClose);
 
   useEffect(() => {
     if (!open) return;
-    const onRecalc = () => forceTick((t) => t + 1);
+    const onRecalc = () => forceTick((t: number) => t + 1);
     window.addEventListener("resize", onRecalc);
     window.addEventListener("scroll", onRecalc, true);
     return () => {
@@ -182,7 +185,19 @@ export default function Topbar({
   }, [themes, theme]);
 
   const [settingsOpen, setSettingsOpen] = useState(false);
+
+  // ✅ ref REAL del botón
   const settingsBtnRef = useRef<HTMLButtonElement | null>(null);
+
+  // ✅ “adapter” tipado como HTMLElement | null para PortalMenu (sin casts feos en JSX)
+  const settingsAnchorRef = useMemo<React.RefObject<HTMLElement | null>>(
+    () => ({
+      get current() {
+        return settingsBtnRef.current;
+      },
+    }),
+    []
+  );
 
   // cerrar menú al navegar y cerrar drawer (si existe)
   useEffect(() => {
@@ -196,9 +211,7 @@ export default function Topbar({
       className={cn(
         "sticky top-0 z-[999] border-b border-border bg-bg/90 backdrop-blur",
         "[touch-action:pan-y]",
-        // evita scrollbars en el header
         "overflow-hidden",
-        // stacking context limpio
         "[isolation:isolate]"
       )}
     >
@@ -252,7 +265,7 @@ export default function Topbar({
 
             <PortalMenu
               open={settingsOpen}
-              anchorRef={settingsBtnRef}
+              anchorRef={settingsAnchorRef}
               onClose={() => setSettingsOpen(false)}
               width={360}
             >
@@ -262,16 +275,14 @@ export default function Topbar({
                   <div className="text-xs text-muted">Preferencias del sistema</div>
                 </div>
 
-                {/* ✅ Tema (custom combo: color depende del theme, NO azul nativo) */}
+                {/* ✅ Tema */}
                 <div className="tp-card p-3 space-y-2">
                   <div className="text-xs font-semibold text-muted">Tema</div>
 
-                  {/* Reemplaza select nativo por ThemeSwitcher */}
                   <ThemeSwitcher variant="menu" />
 
                   <div className="text-[11px] text-muted">
-                    Actual:{" "}
-                    <span className="font-semibold text-text">{currentThemeLabel}</span>
+                    Actual: <span className="font-semibold text-text">{currentThemeLabel}</span>
                   </div>
                 </div>
 
