@@ -8,7 +8,6 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import { NavLink, useLocation, useNavigate } from "react-router-dom";
-import { useMe } from "../hooks/useMe";
 import { useAuth } from "../context/AuthContext";
 import {
   LayoutDashboard,
@@ -26,6 +25,22 @@ import {
 /* ---------------- utils ---------------- */
 function cn(...classes: Array<string | false | null | undefined>) {
   return classes.filter(Boolean).join(" ");
+}
+
+/**
+ * Convierte URLs relativas ("/uploads/...") en absolutas hacia el backend.
+ * Si ya es "http/https", la deja igual.
+ */
+function absUrl(u: string) {
+  const raw = String(u || "").trim();
+  if (!raw) return "";
+  if (/^https?:\/\//i.test(raw)) return raw;
+
+  const base =
+    (import.meta.env.VITE_API_URL as string) || "http://localhost:3001";
+  const API = base.replace(/\/+$/, "");
+  const p = raw.startsWith("/") ? raw : `/${raw}`;
+  return `${API}${p}`;
 }
 
 /* ---------------- types ---------------- */
@@ -133,7 +148,9 @@ function Leaf({
               )}
             />
           ) : (
-            <span className={cn("shrink-0", isActive ? "text-primary" : "text-muted")}>
+            <span
+              className={cn("shrink-0", isActive ? "text-primary" : "text-muted")}
+            >
               •
             </span>
           )}
@@ -188,7 +205,9 @@ function Group({
   onNavigate?: () => void;
 }) {
   const { pathname } = useLocation();
-  const active = children.some((c) => pathname === c.to || pathname.startsWith(c.to + "/"));
+  const active = children.some(
+    (c) => pathname === c.to || pathname.startsWith(c.to + "/")
+  );
 
   // botón referencia para posicionar el popover flotante
   const btnRef = useRef<HTMLButtonElement | null>(null);
@@ -225,7 +244,10 @@ function Group({
     const W = 320;
 
     const viewportPad = 12;
-    const maxH = Math.min(560, Math.max(320, window.innerHeight - viewportPad * 2));
+    const maxH = Math.min(
+      560,
+      Math.max(320, window.innerHeight - viewportPad * 2)
+    );
 
     const btnRight = r?.right ?? 0;
     const btnLeft = r?.left ?? 0;
@@ -233,11 +255,16 @@ function Group({
 
     // preferimos abrir a la derecha; si no entra, a la izquierda
     const canRight = btnRight + gap + W <= window.innerWidth - viewportPad;
-    const left = canRight ? btnRight + gap : Math.max(viewportPad, btnLeft - gap - W);
+    const left = canRight
+      ? btnRight + gap
+      : Math.max(viewportPad, btnLeft - gap - W);
 
     // alineado al TOP del botón + clamp
     const desiredTop = btnTop;
-    const top = Math.max(viewportPad, Math.min(window.innerHeight - viewportPad - maxH, desiredTop));
+    const top = Math.max(
+      viewportPad,
+      Math.min(window.innerHeight - viewportPad - maxH, desiredTop)
+    );
 
     return {
       position: "fixed" as const,
@@ -274,7 +301,9 @@ function Group({
               active ? "bg-primary" : "bg-transparent"
             )}
           />
-          {Icon ? <Icon size={20} className={cn(active ? "text-primary" : "text-muted")} /> : null}
+          {Icon ? (
+            <Icon size={20} className={cn(active ? "text-primary" : "text-muted")} />
+          ) : null}
 
           <span
             className={cn(
@@ -373,11 +402,17 @@ function Group({
         />
 
         <div className="flex items-center gap-3 min-w-0">
-          {Icon ? <Icon size={20} className={cn(active ? "text-primary" : "text-muted")} /> : null}
-          <span className={cn("truncate", active ? "text-text" : "text-muted")}>{label}</span>
+          {Icon ? (
+            <Icon size={20} className={cn(active ? "text-primary" : "text-muted")} />
+          ) : null}
+          <span className={cn("truncate", active ? "text-text" : "text-muted")}>
+            {label}
+          </span>
         </div>
 
-        <ChevronDown className={cn("h-4 w-4 text-muted transition", expandedOpen && "rotate-180")} />
+        <ChevronDown
+          className={cn("h-4 w-4 text-muted transition", expandedOpen && "rotate-180")}
+        />
       </button>
 
       {expandedOpen && (
@@ -386,7 +421,12 @@ function Group({
             const isLast = idx === children.length - 1;
             return (
               <div key={c.to} className="relative">
-                <div className={cn("absolute left-5 top-0 w-px bg-border", isLast ? "h-1/2" : "h-full")} />
+                <div
+                  className={cn(
+                    "absolute left-5 top-0 w-px bg-border",
+                    isLast ? "h-1/2" : "h-full"
+                  )}
+                />
                 <div className="absolute left-5 top-1/2 h-px w-5 bg-border" />
                 <div className="pl-10">
                   <Leaf to={c.to} label={c.label} collapsed={false} onNavigate={onNavigate} />
@@ -409,15 +449,17 @@ export default function Sidebar({
   setDrawerOpen: (v: boolean) => void;
 }) {
   const navigate = useNavigate();
-  const { me, loading } = useMe();
   const auth = useAuth();
   const { pathname } = useLocation();
 
   const COLLAPSED_W = 84;
 
-  const storedExpanded = Number(localStorage.getItem("tptech_sidebar_last_expanded_width")) || 300;
+  const storedExpanded =
+    Number(localStorage.getItem("tptech_sidebar_last_expanded_width")) || 300;
   const storedMini = localStorage.getItem("tptech_sidebar_mini") === "1";
-  const hasStored = Boolean(localStorage.getItem("tptech_sidebar_last_expanded_width"));
+  const hasStored = Boolean(
+    localStorage.getItem("tptech_sidebar_last_expanded_width")
+  );
 
   const [width, setWidth] = useState(hasStored ? storedExpanded : COLLAPSED_W);
   const [mini, setMini] = useState(hasStored ? storedMini : false);
@@ -478,7 +520,10 @@ export default function Sidebar({
     }
   }, [width, mini]);
 
-  useEffect(() => localStorage.setItem("tptech_sidebar_mini", mini ? "1" : "0"), [mini]);
+  useEffect(
+    () => localStorage.setItem("tptech_sidebar_mini", mini ? "1" : "0"),
+    [mini]
+  );
 
   useEffect(() => {
     function onMouseMove(e: MouseEvent) {
@@ -503,20 +548,25 @@ export default function Sidebar({
     document.documentElement.style.setProperty("--sidebar-w", `${actualWidth}px`);
   }, [actualWidth]);
 
+  // ✅ Sidebar ahora se alimenta SOLO de AuthContext
   const jewelryName =
-    auth.jewelry?.name ?? me?.jewelry?.name ?? (loading ? "Cargando..." : "Sin joyería");
+    auth.jewelry?.name ?? (auth.loading ? "Cargando..." : "Sin joyería");
 
-  const user = auth.user ?? me?.user ?? null;
+  const user = auth.user ?? null;
 
   const avatarUrl: string | null = (user as any)?.avatarUrl ?? null;
-  const userName: string = (user as any)?.name || (user as any)?.email || "Usuario";
+  const userName: string =
+    (user as any)?.name || (user as any)?.email || "Usuario";
   const userEmail: string = (user as any)?.email || "";
 
-  const logoUrl = (auth.jewelry as any)?.logoUrl ?? (me as any)?.jewelry?.logoUrl ?? undefined;
+  // ✅ FIX: soportar logoUrl relativo (/uploads/...)
+  const logoUrlRaw = (auth.jewelry as any)?.logoUrl ?? "";
+  const logoUrl = absUrl(logoUrlRaw);
 
-  const perms: string[] = (auth.permissions?.length ? auth.permissions : (me as any)?.permissions) ?? [];
+  const perms: string[] = auth.permissions ?? [];
 
-  const canSeeUsers = perms.includes("USERS_ROLES:VIEW") || perms.includes("USERS_ROLES:ADMIN");
+  const canSeeUsers =
+    perms.includes("USERS_ROLES:VIEW") || perms.includes("USERS_ROLES:ADMIN");
   const canSeeRoles = canSeeUsers;
 
   async function onLogout() {
@@ -529,8 +579,10 @@ export default function Sidebar({
 
   const nav: NavItem[] = useMemo(() => {
     const configChildren: GroupItem[] = [];
-    if (canSeeUsers) configChildren.push({ label: "Usuarios", to: "/configuracion/usuarios" });
-    if (canSeeRoles) configChildren.push({ label: "Roles", to: "/configuracion/roles" });
+    if (canSeeUsers)
+      configChildren.push({ label: "Usuarios", to: "/configuracion/usuarios" });
+    if (canSeeRoles)
+      configChildren.push({ label: "Roles", to: "/configuracion/roles" });
     configChildren.push({ label: "Datos de la Empresa", to: "/configuracion/joyeria" });
 
     return [
@@ -608,7 +660,9 @@ export default function Sidebar({
   useEffect(() => {
     const firstMatch = nav.find((it) => {
       if (it.kind !== "group") return false;
-      return it.children.some((c) => pathname === c.to || pathname.startsWith(c.to + "/"));
+      return it.children.some(
+        (c) => pathname === c.to || pathname.startsWith(c.to + "/")
+      );
     });
     if (firstMatch?.kind === "group") setOpenGroup(firstMatch.label);
   }, [pathname, nav]);
@@ -621,7 +675,8 @@ export default function Sidebar({
   }
 
   function expandFromMobile() {
-    const expanded = Number(localStorage.getItem("tptech_sidebar_last_expanded_width")) || 300;
+    const expanded =
+      Number(localStorage.getItem("tptech_sidebar_last_expanded_width")) || 300;
     setMini(false);
     setWidth(expanded);
   }
@@ -659,7 +714,12 @@ export default function Sidebar({
         style={{ width: asideWidth }}
       >
         {/* HEADER */}
-        <div className={cn("border-b border-border px-4 py-4", collapsed && !isMobile && "px-3")}>
+        <div
+          className={cn(
+            "border-b border-border px-4 py-4",
+            collapsed && !isMobile && "px-3"
+          )}
+        >
           <div className="flex items-center justify-between gap-3">
             <div className="flex items-center gap-3 min-w-0">
               <div className="grid h-11 w-11 place-items-center overflow-hidden rounded-xl border border-border bg-surface2">
@@ -674,7 +734,9 @@ export default function Sidebar({
               {(!headerTextHidden || isMobile) && (
                 <div className="min-w-0">
                   <div className="text-xs font-semibold text-muted">TPTech</div>
-                  <div className="truncate text-base font-semibold text-text">{jewelryName}</div>
+                  <div className="truncate text-base font-semibold text-text">
+                    {jewelryName}
+                  </div>
                 </div>
               )}
             </div>
@@ -699,7 +761,8 @@ export default function Sidebar({
           {nav.map((item, idx) => {
             const effectiveCollapsed = collapsed && !isMobile;
 
-            if (item.kind === "divider") return <Divider key={idx} collapsed={effectiveCollapsed} />;
+            if (item.kind === "divider")
+              return <Divider key={idx} collapsed={effectiveCollapsed} />;
 
             if (item.kind === "group") {
               const isOpen = openGroup === item.label;
@@ -774,7 +837,9 @@ export default function Sidebar({
               resizing.current = true;
               setIsResizing(true);
             }}
-            className={cn("hidden lg:block absolute right-0 top-0 h-full w-3 cursor-ew-resize select-none group")}
+            className={cn(
+              "hidden lg:block absolute right-0 top-0 h-full w-3 cursor-ew-resize select-none group"
+            )}
             title="Ajustar ancho"
           >
             <div

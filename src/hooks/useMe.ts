@@ -33,8 +33,12 @@ export function useMe() {
     return null as string | null;
   }, []);
 
+  /**
+   * refresh(): fuerza /auth/me para traer datos actuales (empresa/logo/permisos)
+   * ✅ silent: true evita que se prenda el loading global y la pantalla parpadee
+   */
   const refresh = useCallback(async () => {
-    await auth.refreshMe();
+    await auth.refreshMe({ force: true, silent: true });
   }, [auth]);
 
   return {

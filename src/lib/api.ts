@@ -1,6 +1,7 @@
 // tptech-frontend/src/lib/api.ts
 
-const RAW_API_URL = (import.meta.env.VITE_API_URL as string) || "http://localhost:3001";
+const RAW_API_URL =
+  (import.meta.env.VITE_API_URL as string) || "http://localhost:3001";
 
 // normaliza: sin slash final
 const API_URL = RAW_API_URL.replace(/\/+$/, "");
@@ -120,8 +121,14 @@ function isJsonSerializable(body: any) {
  * - si options.body es objeto/array -> JSON.stringify
  * - si 401 -> forceLogout (multi-tab) + throw
  * - soporta FormData (avatar) sin setear Content-Type
+ *
+ * ✅ IMPORTANTÍSIMO: GET por defecto va con cache:"no-store"
+ * para evitar pantallas con datos viejos al navegar.
  */
-export async function apiFetch<T = any>(path: string, options: ApiFetchOptions = {}): Promise<T> {
+export async function apiFetch<T = any>(
+  path: string,
+  options: ApiFetchOptions = {}
+): Promise<T> {
   const token = getToken();
 
   const headers = new Headers(options.headers as any);
@@ -161,11 +168,16 @@ export async function apiFetch<T = any>(path: string, options: ApiFetchOptions =
     }
   }
 
+  // ✅ Evitar datos viejos al navegar: GET sin cache por defecto
+  const cacheOpt: RequestCache | undefined =
+    options.cache !== undefined ? options.cache : method === "GET" ? "no-store" : undefined;
+
   const res = await fetch(joinUrl(API_URL, path), {
     ...options,
     method,
     headers,
     body: bodyToSend,
+    cache: cacheOpt,
     credentials: "include", // ✅ prod cookie; local no molesta
   });
 

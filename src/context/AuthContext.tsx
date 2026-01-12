@@ -1,5 +1,12 @@
 // tptech-frontend/src/context/AuthContext.tsx
-import React, { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
+import React, {
+  createContext,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   apiFetch,
   LS_TOKEN_KEY,
@@ -17,7 +24,6 @@ export type User = {
   email: string;
   name?: string | null;
   avatarUrl?: string | null;
-  // updatedAt?: string;
 };
 
 export type Jewelry = any;
@@ -55,7 +61,12 @@ export type AuthState = {
     permissions?: string[];
   }) => void;
 
-  refreshMe: () => Promise<void>;
+  // ✅ NUEVO: actualizar joyería en memoria (sin /auth/me)
+  setJewelryLocal: (next: Jewelry | null) => void;
+  patchJewelryLocal: (partial: Partial<Jewelry>) => void;
+
+  // ✅ ahora acepta force + silent
+  refreshMe: (opts?: { force?: boolean; silent?: boolean }) => Promise<void>;
   logout: () => Promise<void>;
   clearSession: () => void;
 };
@@ -134,7 +145,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   const resetStateAndCancelInFlight = () => {
-    // no podemos cancelar fetch, pero limpiamos el "single-flight"
     refreshPromiseRef.current = null;
     resetStateOnly();
   };
@@ -143,14 +153,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
      Session helpers (con eventos)
   ------------------------- */
   const clearSession = () => {
-    // ✅ fuerza logout global (multi-tab) y limpia storages
-    // forceLogout() YA emite eventos (storage + broadcast)
     try {
       forceLogout();
     } catch {
       clearStoredTokenOnly();
     }
-
     resetStateAndCancelInFlight();
   };
 
@@ -163,11 +170,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     storeTokenEverywhere(newToken);
     setToken(newToken);
 
-    // ✅ emitimos LOGIN usando el mismo mecanismo que el resto:
-    // guardando en localStorage dispara "storage" en otras tabs.
-    // (api.ts no tiene "forceLogin", así que lo hacemos aquí simple)
     try {
-      localStorage.setItem(LS_AUTH_EVENT_KEY, JSON.stringify({ type: "LOGIN", at: Date.now() } satisfies AuthEvent));
+      localStorage.setItem(
+        LS_AUTH_EVENT_KEY,
+        JSON.stringify({ type: "LOGIN", at: Date.now() } satisfies AuthEvent)
+      );
       if ("BroadcastChannel" in window) {
         const bc = new BroadcastChannel("tptech_auth");
         bc.postMessage({ type: "LOGIN", at: Date.now() } satisfies AuthEvent);
@@ -194,13 +201,26 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     lastTokenLoadedRef.current = payload.token;
 
     try {
-      localStorage.setItem(LS_AUTH_EVENT_KEY, JSON.stringify({ type: "LOGIN", at: Date.now() } satisfies AuthEvent));
+      localStorage.setItem(
+        LS_AUTH_EVENT_KEY,
+        JSON.stringify({ type: "LOGIN", at: Date.now() } satisfies AuthEvent)
+      );
       if ("BroadcastChannel" in window) {
         const bc = new BroadcastChannel("tptech_auth");
         bc.postMessage({ type: "LOGIN", at: Date.now() } satisfies AuthEvent);
         bc.close();
       }
     } catch {}
+  };
+
+  // ✅ NUEVO: actualización inmediata del estado de joyería en memoria
+  const setJewelryLocal = (next: Jewelry | null) => {
+    setJewelry(next ?? null);
+  };
+
+  // ✅ NUEVO: patch seguro (útil para logoUrl)
+  const patchJewelryLocal = (partial: Partial<Jewelry>) => {
+    setJewelry((prev) => ({ ...(prev ?? {}), ...(partial ?? {}) }));
   };
 
   const logout = async () => {
@@ -214,9 +234,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   /* -------------------------
-     /auth/me loader (anti-spam)
+     /auth/me loader (anti-spam + force)
   ------------------------- */
-  const refreshMe = async () => {
+  const refreshMe = async (opts?: { force?: boolean; silent?: boolean }) => {
     const currentToken = readStoredToken();
 
     if (!currentToken) {
@@ -224,8 +244,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       return;
     }
 
-    // si ya cargamos /me para este token y tenemos user => no re-spamear
-    if (lastTokenLoadedRef.current === currentToken && user) {
+    const force = Boolean(opts?.force);
+    const silent = Boolean(opts?.silent);
+
+    // ✅ si no es force, mantenemos el cache anti-spam
+    if (!force && lastTokenLoadedRef.current === currentToken && user) {
       setLoading(false);
       return;
     }
@@ -233,11 +256,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     // single-flight
     if (refreshPromiseRef.current) return refreshPromiseRef.current;
 
-    setLoading(true);
+    // ✅ si ya tengo data y es silent, no hagas “pantalla cargando”
+    if (!silent) setLoading(true);
 
     const p = (async () => {
       try {
-        const data = await apiFetch<MeResponse>("/auth/me", { method: "GET" });
+        // ✅ cache-bust real + GET no-store
+        const bust = force ? `?__t=${Date.now()}` : "";
+        const data = await apiFetch<MeResponse>(`/auth/me${bust}`, {
+          method: "GET",
+          cache: "no-store",
+        });
 
         lastTokenLoadedRef.current = currentToken;
 
@@ -246,7 +275,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setRoles(data.roles ?? []);
         setPermissions(data.permissions ?? []);
       } catch {
-        // si falla (401) apiFetch ya hace forceLogout()
         clearSession();
       } finally {
         setLoading(false);
@@ -260,11 +288,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   /* -------------------------
      Multi-tab sync (storage events)
-     (IMPORTANTE: acá NO emitimos eventos, solo reflejamos estado)
   ------------------------- */
   useEffect(() => {
     const onStorage = (e: StorageEvent) => {
-      // token cambiado (otra pestaña)
       if (e.key === LS_TOKEN_KEY) {
         const newToken = readStoredToken();
         setToken(newToken);
@@ -272,16 +298,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         if (!newToken) {
           resetStateAndCancelInFlight();
         } else {
-          refreshMe().catch(() => {});
+          refreshMe({ force: true }).catch(() => {});
         }
       }
 
-      // legacy logout (por compatibilidad)
       if (e.key === LS_LOGOUT_KEY) {
         resetStateAndCancelInFlight();
       }
 
-      // evento unificado
       if (e.key === LS_AUTH_EVENT_KEY && e.newValue) {
         try {
           const ev = JSON.parse(e.newValue) as AuthEvent;
@@ -294,11 +318,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           if (ev?.type === "LOGIN") {
             const newToken = readStoredToken();
             setToken(newToken);
-            refreshMe().catch(() => {});
+            refreshMe({ force: true }).catch(() => {});
           }
-        } catch {
-          // ignore
-        }
+        } catch {}
       }
     };
 
@@ -309,7 +331,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   /* -------------------------
      Multi-tab sync (BroadcastChannel)
-     (IMPORTANTE: acá NO emitimos eventos, solo reflejamos estado)
   ------------------------- */
   useEffect(() => {
     if (!("BroadcastChannel" in window)) return;
@@ -327,7 +348,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       if (ev.type === "LOGIN") {
         const newToken = readStoredToken();
         setToken(newToken);
-        refreshMe().catch(() => {});
+        refreshMe({ force: true }).catch(() => {});
       }
     };
 
@@ -351,6 +372,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       loading,
       setTokenOnly,
       setSession,
+
+      // ✅ NUEVO
+      setJewelryLocal,
+      patchJewelryLocal,
+
       refreshMe,
       logout,
       clearSession,

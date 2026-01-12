@@ -1,3 +1,4 @@
+// tptech-frontend/src/pages/PerfilJoyeria.tsx
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { apiFetch } from "../lib/api";
@@ -6,8 +7,7 @@ import { useMe } from "../hooks/useMe";
 /* ================== TIPOS ================== */
 
 type ExistingBody = {
-  name: string; // Nombre de Fantasía
-
+  name: string;
   phoneCountry: string;
   phoneNumber: string;
 
@@ -22,14 +22,22 @@ type ExistingBody = {
 type CompanyBody = {
   logoUrl: string;
 
-  legalName: string; // Razón social
+  legalName: string;
   cuit: string;
   ivaCondition: string;
   email: string;
   website: string;
 
   notes: string;
-  attachments: File[];
+};
+
+type JewelryAttachment = {
+  id: string;
+  url: string;
+  filename: string;
+  mimeType: string;
+  size: number;
+  createdAt?: string;
 };
 
 type UpdatePayload = ExistingBody & {
@@ -68,7 +76,70 @@ function formatBytes(bytes: number) {
   return `${n.toFixed(i === 0 ? 0 : 1)} ${units[i]}`;
 }
 
-/* ================== SELECT (idéntico a ThemeSwitcher) ================== */
+function safeFileLabel(name: string) {
+  return String(name || "").trim() || "Archivo";
+}
+
+/** Convierte URLs relativas ("/uploads/...") en absolutas hacia el backend. */
+function absUrl(u: string) {
+  const raw = String(u || "").trim();
+  if (!raw) return "";
+  if (/^https?:\/\//i.test(raw)) return raw;
+
+  const base = (import.meta.env.VITE_API_URL as string) || "http://localhost:3001";
+  const API = base.replace(/\/+$/, "");
+  const p = raw.startsWith("/") ? raw : `/${raw}`;
+  return `${API}${p}`;
+}
+
+function pickJewelryFromMe(me: any) {
+  return (me as any)?.jewelry ?? null;
+}
+
+function jewelryToDraft(j: any): { existing: ExistingBody; company: CompanyBody } {
+  return {
+    existing: {
+      name: j?.name || "",
+      phoneCountry: j?.phoneCountry || "",
+      phoneNumber: j?.phoneNumber || "",
+      street: j?.street || "",
+      number: j?.number || "",
+      city: j?.city || "",
+      province: j?.province || "",
+      postalCode: j?.postalCode || "",
+      country: j?.country || "",
+    },
+    company: {
+      logoUrl: j?.logoUrl || "",
+      legalName: j?.legalName || "",
+      cuit: j?.cuit || "",
+      ivaCondition: j?.ivaCondition || "",
+      email: j?.email || "",
+      website: j?.website || "",
+      notes: j?.notes || "",
+    },
+  };
+}
+
+function buildPayload(existing: ExistingBody, company: CompanyBody): UpdatePayload {
+  return {
+    ...existing,
+    logoUrl: company.logoUrl?.trim() || "",
+    legalName: company.legalName?.trim() || "",
+    cuit: company.cuit?.trim() || "",
+    ivaCondition: company.ivaCondition?.trim() || "",
+    email: company.email?.trim() || "",
+    website: company.website?.trim() || "",
+    notes: company.notes ?? "",
+  };
+}
+
+/** ✅ Normaliza respuesta backend: puede venir { jewelry: {...} } o directo {...} */
+function normalizeJewelryResponse(resp: any) {
+  return resp?.jewelry ?? resp;
+}
+
+/* ================== SELECT ================== */
 
 type SelectOption = { value: string; label: string };
 
@@ -91,7 +162,6 @@ function TpSelect({
 
   const current = useMemo(() => options.find((o) => o.value === value), [options, value]);
 
-  // Cerrar al click fuera
   useEffect(() => {
     function onDoc(e: MouseEvent) {
       if (!open) return;
@@ -104,7 +174,6 @@ function TpSelect({
     return () => document.removeEventListener("mousedown", onDoc);
   }, [open]);
 
-  // ESC cierra
   useEffect(() => {
     if (!open) return;
     function onKeyDown(e: KeyboardEvent) {
@@ -125,7 +194,6 @@ function TpSelect({
     }
   }
 
-  // ---- Portal positioning ----
   const r = btnRef.current?.getBoundingClientRect();
   const viewportPad = 10;
   const gap = 8;
@@ -158,7 +226,6 @@ function TpSelect({
         onMouseDown={() => setOpen(false)}
         aria-hidden="true"
       />
-
       <div
         ref={menuRef}
         role="listbox"
@@ -234,7 +301,6 @@ function TpSelect({
         title={current?.label ?? placeholder}
       >
         <span className="text-sm">{current?.label ?? placeholder}</span>
-
         <span
           className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-muted"
           aria-hidden="true"
@@ -251,82 +317,82 @@ function TpSelect({
 /* ================== COMPONENTE ================== */
 
 export default function PerfilJoyeria() {
+  // ✅ agregamos refresh para actualizar AuthContext (sidebar)
   const { me, loading, error, refresh } = useMe();
-  const jewelry = me?.jewelry ?? null;
+  const jewelryFromContext = pickJewelryFromMe(me);
 
+  // Última verdad confirmada por backend (evita flickers)
+  const [serverJewelry, setServerJewelry] = useState<any>(null);
+
+  // Draft editable
   const [existing, setExisting] = useState<ExistingBody | null>(null);
   const [company, setCompany] = useState<CompanyBody | null>(null);
 
-  // ✅ Logo real (archivo + preview)
-  const [logoFile, setLogoFile] = useState<File | null>(null);
-  const [logoPreview, setLogoPreview] = useState<string>("");
-
+  const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
 
+  const [uploadingLogo, setUploadingLogo] = useState(false);
+  const [deletingLogo, setDeletingLogo] = useState(false);
+
+  const [uploadingAttachments, setUploadingAttachments] = useState(false);
+  const [deletingAttId, setDeletingAttId] = useState<string | null>(null);
+
+  const logoInputRef = useRef<HTMLInputElement | null>(null);
+  const [logoPreview, setLogoPreview] = useState<string>("");
+  const [logoImgLoading, setLogoImgLoading] = useState(false);
+
+  // ✅ Adjuntos: input controlado por ref (evita problemas de click del label)
+  const attInputRef = useRef<HTMLInputElement | null>(null);
+
+  // Inicialización / actualización desde contexto
   useEffect(() => {
-    if (!jewelry) return;
-    const j: any = jewelry;
+    if (!jewelryFromContext) return;
 
-    setExisting({
-      name: j.name || "",
-      phoneCountry: j.phoneCountry || "",
-      phoneNumber: j.phoneNumber || "",
-      street: j.street || "",
-      number: j.number || "",
-      city: j.city || "",
-      province: j.province || "",
-      postalCode: j.postalCode || "",
-      country: j.country || "",
-    });
+    setServerJewelry(jewelryFromContext);
 
-    setCompany({
-      logoUrl: j.logoUrl || "",
-      legalName: j.legalName || "",
-      cuit: j.cuit || "",
-      ivaCondition: j.ivaCondition || "",
-      email: j.email || "",
-      website: j.website || "",
-      notes: j.notes || "",
-      attachments: [],
-    });
+    if (!existing || !company || !dirty) {
+      const d = jewelryToDraft(jewelryFromContext);
+      setExisting(d.existing);
+      setCompany(d.company);
+      if (!dirty) setMsg(null);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [jewelryFromContext?.id, jewelryFromContext?.updatedAt]);
 
-    // Reset logo local cuando cambia joyería
-    setLogoFile(null);
-    setLogoPreview("");
-  }, [jewelry?.id]);
-
-  // Cleanup preview url
   useEffect(() => {
     return () => {
       if (logoPreview?.startsWith("blob:")) URL.revokeObjectURL(logoPreview);
     };
   }, [logoPreview]);
 
-  const canSave = useMemo(
-    () => !!existing && !!company && existing.name.trim().length > 0,
-    [existing, company]
-  );
+  const savedAttachments: JewelryAttachment[] = useMemo(() => {
+    const arr = (serverJewelry?.attachments ?? []) as JewelryAttachment[];
+    return Array.isArray(arr) ? arr : [];
+  }, [serverJewelry?.attachments]);
+
+  const canSave = useMemo(() => {
+    return !!existing && !!company && existing.name.trim().length > 0;
+  }, [existing, company]);
 
   function setExistingField<K extends keyof ExistingBody>(key: K, value: ExistingBody[K]) {
+    setDirty(true);
     setExisting((p) => (p ? { ...p, [key]: value } : p));
   }
 
   function setCompanyField<K extends keyof CompanyBody>(key: K, value: CompanyBody[K]) {
+    if (key !== "logoUrl") setDirty(true);
     setCompany((p) => (p ? { ...p, [key]: value } : p));
   }
 
-  function onPickLogo(file: File | null) {
-    if (!file) return;
+  async function uploadLogoInstant(file: File) {
+    if (!existing || !company) return;
 
-    // Validación básica (ajustable)
     const okType = /^image\/(png|jpeg|jpg|webp|gif|svg\+xml)$/i.test(file.type);
     if (!okType) {
       setMsg("El logo debe ser una imagen (png/jpg/webp/gif/svg).");
       return;
     }
-
-    // 5MB (ajustable)
     if (file.size > 5 * 1024 * 1024) {
       setMsg("El logo no puede superar 5MB.");
       return;
@@ -334,73 +400,159 @@ export default function PerfilJoyeria() {
 
     setMsg(null);
 
-    // revoke anterior
     if (logoPreview?.startsWith("blob:")) URL.revokeObjectURL(logoPreview);
+    const localPreview = URL.createObjectURL(file);
+    setLogoPreview(localPreview);
 
-    setLogoFile(file);
-    setLogoPreview(URL.createObjectURL(file));
+    try {
+      setUploadingLogo(true);
+
+      const fd = new FormData();
+      fd.append("data", JSON.stringify(buildPayload(existing, company)));
+      fd.append("logo", file);
+
+      const resp = await apiFetch<any>("/auth/me/jewelry", {
+        method: "PUT",
+        body: fd as any,
+      });
+
+      const updated = normalizeJewelryResponse(resp);
+
+      setServerJewelry(updated);
+
+      const newLogo = updated?.logoUrl || "";
+      setCompany((p) => (p ? { ...p, logoUrl: newLogo } : p));
+
+      if (localPreview?.startsWith("blob:")) URL.revokeObjectURL(localPreview);
+      setLogoPreview("");
+
+      setMsg("Logo actualizado ✅");
+
+      // ✅ refresca AuthContext para que el Sidebar muestre el logo nuevo
+      await refresh();
+    } catch (e: any) {
+      setMsg(e?.message || "No se pudo subir el logo.");
+    } finally {
+      setUploadingLogo(false);
+    }
   }
 
-  function onPickAttachments(files: FileList | null) {
-    if (!files) return;
+  async function deleteLogoInstant() {
+    try {
+      setMsg(null);
+      setDeletingLogo(true);
+
+      await apiFetch("/auth/me/jewelry/logo", { method: "DELETE" });
+
+      setCompany((p) => (p ? { ...p, logoUrl: "" } : p));
+      setServerJewelry((p: any) => (p ? { ...p, logoUrl: "" } : p));
+
+      if (logoPreview?.startsWith("blob:")) URL.revokeObjectURL(logoPreview);
+      setLogoPreview("");
+
+      setMsg("Logo eliminado ✅");
+
+      // ✅ refresca AuthContext
+      await refresh();
+    } catch (e: any) {
+      setMsg(e?.message || "No se pudo eliminar el logo.");
+    } finally {
+      setDeletingLogo(false);
+    }
+  }
+
+  async function uploadAttachmentsInstant(files: FileList | null) {
+    if (!files || !existing || !company) return;
+
     const arr = Array.from(files);
+    const filtered = arr.filter((f) => f.size <= 20 * 1024 * 1024);
 
-    // (opcional) limitar tamaño / tipos
-    const filtered = arr.filter((f) => f.size <= 20 * 1024 * 1024); // 20MB
-    setCompany((p) => (p ? { ...p, attachments: [...p.attachments, ...filtered] } : p));
+    if (filtered.length === 0) {
+      setMsg("No se seleccionaron archivos válidos (máx 20MB).");
+      return;
+    }
+
+    try {
+      setMsg(null);
+      setUploadingAttachments(true);
+
+      const fd = new FormData();
+      fd.append("data", JSON.stringify(buildPayload(existing, company)));
+      filtered.forEach((f) => fd.append("attachments", f));
+
+      const resp = await apiFetch<any>("/auth/me/jewelry", {
+        method: "PUT",
+        body: fd as any,
+      });
+
+      const updated = normalizeJewelryResponse(resp);
+
+      // ✅ ahora serverJewelry SI tiene attachments
+      setServerJewelry(updated);
+
+      setMsg("Adjuntos cargados ✅");
+
+      // ✅ opcional: refresca AuthContext (por si /auth/me usa otra forma)
+      await refresh();
+    } catch (e: any) {
+      setMsg(e?.message || "No se pudieron subir los adjuntos.");
+    } finally {
+      setUploadingAttachments(false);
+    }
   }
 
-  function removeAttachment(i: number) {
-    setCompany((p) =>
-      p ? { ...p, attachments: p.attachments.filter((_, idx) => idx !== i) } : p
-    );
+  async function deleteSavedAttachment(id: string) {
+    try {
+      setMsg(null);
+      setDeletingAttId(id);
+
+      await apiFetch(`/auth/me/jewelry/attachments/${id}`, { method: "DELETE" });
+
+      setServerJewelry((p: any) =>
+        p
+          ? {
+              ...p,
+              attachments: (p.attachments ?? []).filter((a: any) => a.id !== id),
+            }
+          : p
+      );
+
+      setMsg("Adjunto eliminado ✅");
+
+      await refresh();
+    } catch (e: any) {
+      setMsg(e?.message || "No se pudo eliminar el adjunto.");
+    } finally {
+      setDeletingAttId(null);
+    }
   }
 
   async function onSave() {
     if (!existing || !company) return;
-    setMsg(null);
 
     try {
+      setMsg(null);
       setSaving(true);
 
-      const payload: UpdatePayload = {
-        ...existing,
-        // ⚠️ dejamos esto por compatibilidad con tu backend actual
-        logoUrl: company.logoUrl.trim(),
-        legalName: company.legalName.trim(),
-        cuit: company.cuit.trim(),
-        ivaCondition: company.ivaCondition.trim(),
-        email: company.email.trim(),
-        website: company.website.trim(),
-        notes: company.notes,
-      };
+      const payload = buildPayload(existing, company);
 
-      const hasFiles = !!logoFile || (company.attachments?.length ?? 0) > 0;
+      const resp = await apiFetch<any>("/auth/me/jewelry", {
+        method: "PUT",
+        body: payload,
+      });
 
-      if (hasFiles) {
-        // ✅ multipart/form-data (requiere backend + apiFetch compatible)
-        const fd = new FormData();
-        fd.append("data", JSON.stringify(payload));
-        if (logoFile) fd.append("logo", logoFile);
-        company.attachments.forEach((f) => fd.append("attachments", f));
+      const updated = normalizeJewelryResponse(resp);
 
-        await apiFetch<any>("/auth/me/jewelry", {
-          method: "PUT",
-          body: fd as any,
-        });
-      } else {
-        // ✅ JSON (como hoy)
-        await apiFetch<any>("/auth/me/jewelry", {
-          method: "PUT",
-          body: JSON.stringify(payload),
-        });
-      }
+      setServerJewelry(updated);
 
+      const d = jewelryToDraft(updated);
+      setExisting(d.existing);
+      setCompany(d.company);
+
+      setDirty(false);
       setMsg("Guardado correctamente ✅");
-      await refresh();
 
-      // limpiar adjuntos locales después de guardar
-      setCompany((p) => (p ? { ...p, attachments: [] } : p));
+      await refresh();
     } catch (e: any) {
       setMsg(e?.message || "Error al guardar.");
     } finally {
@@ -408,9 +560,29 @@ export default function PerfilJoyeria() {
     }
   }
 
-  if (loading) return <div className="p-6 text-sm text-[color:var(--muted)]">Cargando...</div>;
-  if (error) return <div className="p-6 text-sm text-red-600">Error: {error}</div>;
-  if (!jewelry || !existing || !company) return null;
+  if (loading) {
+    return (
+      <div className="mx-auto max-w-6xl p-4 sm:p-6">
+        <div className="text-sm text-[color:var(--muted)]">Cargando...</div>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="mx-auto max-w-6xl p-4 sm:p-6">
+        <div className="text-sm text-red-600">Error: {error}</div>
+      </div>
+    );
+  }
+
+  if (!serverJewelry || !existing || !company) {
+    return (
+      <div className="mx-auto max-w-6xl p-4 sm:p-6">
+        <div className="text-sm text-[color:var(--muted)]">Cargando datos de la empresa...</div>
+      </div>
+    );
+  }
 
   const ivaOptions: SelectOption[] = [
     { value: "Responsable Inscripto", label: "Responsable Inscripto" },
@@ -419,7 +591,8 @@ export default function PerfilJoyeria() {
     { value: "Consumidor Final", label: "Consumidor Final" },
   ];
 
-  const headerLogoSrc = logoPreview || company.logoUrl || "";
+  const headerLogoSrc = logoPreview || absUrl(company.logoUrl || "");
+  const hasLogo = !!headerLogoSrc;
 
   return (
     <div className="mx-auto max-w-6xl p-4 sm:p-6">
@@ -450,70 +623,110 @@ export default function PerfilJoyeria() {
         <div className="flex flex-col sm:flex-row sm:items-center gap-4 sm:gap-5">
           {/* LOGO */}
           <div className="flex items-center gap-3">
-            <div
-              className="h-20 w-20 rounded-2xl grid place-items-center overflow-hidden"
-              style={{
-                border: "1px solid var(--border)",
-                background: "color-mix(in oklab, var(--card) 80%, var(--bg))",
-                color: "var(--muted)",
+            <input
+              ref={logoInputRef}
+              type="file"
+              accept="image/*"
+              hidden
+              onChange={(e) => {
+                const f = e.target.files?.[0] ?? null;
+                e.currentTarget.value = "";
+                if (f) uploadLogoInstant(f);
               }}
-            >
-              {headerLogoSrc ? (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img
-                  src={headerLogoSrc}
-                  alt="Logo"
-                  className="h-full w-full object-cover"
-                />
-              ) : (
-                <span className="text-xs">SIN LOGO</span>
-              )}
-            </div>
+            />
 
-            <div className="flex flex-col gap-2">
-              <label className="inline-flex">
-                <span className="sr-only">Subir logo</span>
-                <input
-                  type="file"
-                  accept="image/*"
-                  hidden
-                  onChange={(e) => onPickLogo(e.target.files?.[0] ?? null)}
-                />
-                <span className="tp-btn-primary px-4 py-2 text-sm cursor-pointer select-none">
-                  {headerLogoSrc ? "Cambiar logo" : "Subir logo"}
-                </span>
-              </label>
+            <div className="relative group">
+              <button
+                type="button"
+                className={cn(
+                  "h-20 w-20 rounded-2xl grid place-items-center relative overflow-hidden",
+                  "focus:outline-none focus:ring-2 focus:ring-[color:var(--primary)]"
+                )}
+                style={{
+                  border: "1px solid var(--border)",
+                  background: "color-mix(in oklab, var(--card) 80%, var(--bg))",
+                  color: "var(--muted)",
+                }}
+                title={hasLogo ? "Editar logo" : "Agregar logo"}
+                onClick={() => logoInputRef.current?.click()}
+                disabled={uploadingLogo || deletingLogo}
+              >
+                {hasLogo ? (
+                  <>
+                    {(uploadingLogo || logoImgLoading) && (
+                      <div
+                        className="absolute inset-0 grid place-items-center"
+                        style={{ background: "rgba(0,0,0,0.22)" }}
+                      >
+                        <div
+                          className="h-7 w-7 rounded-full border-2 border-white/40 border-t-white animate-spin"
+                          aria-label="Cargando logo"
+                        />
+                      </div>
+                    )}
 
-              {(logoFile || company.logoUrl) && (
+                    <img
+                      src={headerLogoSrc}
+                      alt="Logo"
+                      className="h-full w-full object-cover"
+                      onLoad={() => setLogoImgLoading(false)}
+                      onError={() => setLogoImgLoading(false)}
+                      onLoadStart={() => setLogoImgLoading(true)}
+                    />
+                  </>
+                ) : (
+                  <span className="text-2xl leading-none select-none">+</span>
+                )}
+
+                <div
+                  className={cn(
+                    "absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity",
+                    "grid place-items-center"
+                  )}
+                  style={{ background: "rgba(0,0,0,0.28)" }}
+                  aria-hidden="true"
+                >
+                  <span className="text-white text-[11px] px-2 text-center leading-tight">
+                    {uploadingLogo ? "SUBIENDO…" : hasLogo ? "EDITAR" : "AGREGAR"}
+                  </span>
+                </div>
+              </button>
+
+              {hasLogo && (
                 <button
                   type="button"
-                  className="text-xs text-muted underline underline-offset-2 self-start"
                   onClick={() => {
-                    if (logoPreview?.startsWith("blob:")) URL.revokeObjectURL(logoPreview);
-                    setLogoFile(null);
-                    setLogoPreview("");
-                    // si querés “quitar” en backend, lo resolvemos cuando veamos el controller
-                    // por ahora solo limpiamos el preview local
+                    if (!deletingLogo && !uploadingLogo) deleteLogoInstant();
                   }}
+                  className={cn(
+                    "absolute top-2 right-2 h-6 w-6 rounded-full grid place-items-center",
+                    "opacity-0 group-hover:opacity-100 transition-opacity"
+                  )}
+                  style={{
+                    background: "rgba(255,255,255,0.75)",
+                    border: "1px solid rgba(0,0,0,0.08)",
+                    backdropFilter: "blur(6px)",
+                  }}
+                  title="Eliminar logo"
+                  aria-label="Eliminar logo"
+                  disabled={deletingLogo || uploadingLogo}
                 >
-                  Quitar (local)
+                  <span className="text-[11px] leading-none">{deletingLogo ? "…" : "✕"}</span>
                 </button>
               )}
             </div>
-          </div>
 
-          {/* TITULOS */}
-          <div className="min-w-0">
-            <div className="text-2xl font-semibold text-text truncate">{existing.name}</div>
-            {company.legalName && (
-              <div className="text-sm text-[color:var(--muted)] truncate">{company.legalName}</div>
-            )}
+            <div className="min-w-0">
+              <div className="text-2xl font-semibold text-text truncate">{existing.name}</div>
+              {company.legalName && (
+                <div className="text-sm text-[color:var(--muted)] truncate">{company.legalName}</div>
+              )}
+            </div>
           </div>
         </div>
 
         {/* COLUMNAS */}
         <div className="mt-6 grid grid-cols-1 gap-8 lg:grid-cols-2">
-          {/* IZQUIERDA */}
           <div className="space-y-4">
             <Field label="Razón social">
               <input
@@ -555,7 +768,6 @@ export default function PerfilJoyeria() {
             </Field>
           </div>
 
-          {/* DERECHA */}
           <div className="space-y-4">
             <Field label="Nombre de Fantasía">
               <input
@@ -688,9 +900,18 @@ export default function PerfilJoyeria() {
             className="rounded-2xl p-4 sm:p-5"
             style={{ border: "1px solid var(--border)", background: "var(--card)" }}
           >
-            <div className="font-semibold text-sm mb-3 text-text">Adjuntos</div>
+            <div className="font-semibold text-sm mb-3 text-text flex items-center justify-between">
+              <span>Adjuntos</span>
+              {uploadingAttachments && <span className="text-xs text-muted">Subiendo…</span>}
+            </div>
 
-            <label className="block cursor-pointer">
+            {/* ✅ Click confiable (sin label): botón abre el input */}
+            <button
+              type="button"
+              className="block w-full cursor-pointer"
+              onClick={() => attInputRef.current?.click()}
+              disabled={uploadingAttachments}
+            >
               <div
                 className="min-h-[120px] sm:min-h-[160px] flex items-center justify-center border border-dashed rounded-2xl"
                 style={{
@@ -699,60 +920,121 @@ export default function PerfilJoyeria() {
                   color: "var(--muted)",
                 }}
               >
-                Seleccionar archivos
+                {uploadingAttachments ? "Subiendo…" : "Click para agregar archivos +"}
               </div>
+            </button>
 
-              <input
-                type="file"
-                multiple
-                hidden
-                onChange={(e) => onPickAttachments(e.target.files)}
-              />
-            </label>
+            <input
+              ref={attInputRef}
+              type="file"
+              multiple
+              hidden
+              onChange={(e) => {
+                const list = e.target.files;
+                e.currentTarget.value = "";
+                uploadAttachmentsInstant(list);
+              }}
+            />
 
-            {/* ✅ lista */}
-            {company.attachments.length > 0 && (
-              <div className="mt-3 space-y-2">
-                {company.attachments.map((f, idx) => (
-                  <div
-                    key={`${f.name}-${idx}`}
-                    className="flex items-center justify-between gap-3 rounded-xl px-3 py-2"
-                    style={{
-                      border: "1px solid var(--border)",
-                      background: "color-mix(in oklab, var(--card) 90%, var(--bg))",
-                    }}
-                  >
-                    <div className="min-w-0">
-                      <div className="text-sm text-text truncate">{f.name}</div>
-                      <div className="text-xs text-muted">{formatBytes(f.size)}</div>
-                    </div>
+            {savedAttachments.length > 0 && (
+              <div className="mt-4">
+                <div className="text-xs text-[color:var(--muted)] mb-2">Guardados</div>
+                <div className="space-y-2">
+                  {savedAttachments.map((a) => {
+                    const busy = deletingAttId === a.id;
+                    const url = absUrl(a.url || "");
+                    const isImg = String(a.mimeType || "").startsWith("image/");
+                    return (
+                      <div
+                        key={a.id}
+                        className="group flex items-center justify-between gap-3 rounded-xl px-3 py-2"
+                        style={{
+                          border: "1px solid var(--border)",
+                          background: "color-mix(in oklab, var(--card) 90%, var(--bg))",
+                        }}
+                      >
+                        <div className="flex items-center gap-3 min-w-0">
+                          {isImg && url ? (
+                            <img
+                              src={url}
+                              alt={safeFileLabel(a.filename)}
+                              className="h-10 w-10 rounded-lg object-cover border"
+                              style={{ borderColor: "var(--border)" }}
+                              loading="lazy"
+                            />
+                          ) : (
+                            <div
+                              className="h-10 w-10 rounded-lg grid place-items-center border text-xs"
+                              style={{
+                                borderColor: "var(--border)",
+                                color: "var(--muted)",
+                                background: "color-mix(in oklab, var(--card) 85%, var(--bg))",
+                              }}
+                            >
+                              DOC
+                            </div>
+                          )}
 
-                    <button
-                      type="button"
-                      className="text-xs text-muted underline underline-offset-2 shrink-0"
-                      onClick={() => removeAttachment(idx)}
-                    >
-                      Quitar
-                    </button>
-                  </div>
-                ))}
+                          <div className="min-w-0">
+                            <div className="text-sm text-text truncate">{safeFileLabel(a.filename)}</div>
+                            <div className="text-xs text-muted flex gap-2">
+                              <span className="truncate">{formatBytes(a.size)}</span>
+                              {url && (
+                                <a
+                                  className="underline underline-offset-2"
+                                  href={url}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  onClick={(e) => e.stopPropagation()}
+                                >
+                                  Abrir
+                                </a>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+
+                        <button
+                          type="button"
+                          className={cn(
+                            "h-8 w-8 rounded-full grid place-items-center",
+                            "opacity-0 group-hover:opacity-100 transition-opacity"
+                          )}
+                          style={{
+                            background: "var(--card)",
+                            border: "1px solid var(--border)",
+                          }}
+                          title="Eliminar adjunto"
+                          aria-label="Eliminar adjunto"
+                          disabled={busy}
+                          onClick={() => {
+                            if (!busy) deleteSavedAttachment(a.id);
+                          }}
+                        >
+                          <span className="text-xs">{busy ? "…" : "✕"}</span>
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
               </div>
+            )}
+
+            {savedAttachments.length === 0 && !uploadingAttachments && (
+              <div className="mt-3 text-xs text-muted">Todavía no hay adjuntos.</div>
             )}
           </div>
         </div>
       </div>
 
-      {/* BOTÓN */}
       <div className="mt-8 flex justify-center">
         <button onClick={onSave} disabled={!canSave || saving} className="tp-btn-primary px-10 py-4">
-          {saving ? "Guardando..." : "Guardar"}
+          {saving ? "Guardando..." : dirty ? "Guardar cambios" : "Guardar"}
         </button>
       </div>
     </div>
   );
 }
-
-/* ================== FIELD ================== */
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
