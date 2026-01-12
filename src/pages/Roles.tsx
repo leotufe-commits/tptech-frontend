@@ -1,25 +1,27 @@
 // tptech-frontend/src/pages/Roles.tsx
-import {
+import React, {
+  useCallback,
   useEffect,
   useMemo,
   useRef,
   useState,
   type FormEvent,
-  type Dispatch,
-  type SetStateAction,
 } from "react";
+import { Pencil, Trash2, Loader2 } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
 import {
   createRole,
   deleteRole,
+  fetchRole,
   listRoles,
   renameRole,
   updateRolePermissions,
-  fetchRole,
+  extractPermissionIdsFromRoleDetail,
   type RoleLite,
 } from "../services/roles";
 import { fetchPermissions, type Permission } from "../services/permissions";
-import { Pencil, Trash2 } from "lucide-react";
+import ConfirmDeleteDialog from "../components/ui/ConfirmDeleteDialog";
+import { useConfirmDelete } from "../hooks/useConfirmDelete";
 
 /* =========================
    Labels permisos (humanos)
@@ -48,6 +50,8 @@ const ACTION_LABEL: Record<string, string> = {
   ADMIN: "Administrar",
 };
 
+const ACTION_ORDER = ["VIEW", "CREATE", "EDIT", "DELETE", "EXPORT", "ADMIN"] as const;
+
 function prettyPerm(module: string, action: string) {
   return `${ACTION_LABEL[action] ?? action} ${MODULE_LABEL[module] ?? module}`;
 }
@@ -56,7 +60,6 @@ function prettyRole(name: string) {
   return name;
 }
 
-// tolera que RoleLite no tenga "code" tipado
 function getRoleCode(r: RoleLite): string | undefined {
   return (r as any)?.code;
 }
@@ -64,6 +67,10 @@ function getRoleCode(r: RoleLite): string | undefined {
 /* =========================
    UI helpers
 ========================= */
+function cn(...classes: Array<string | false | null | undefined>) {
+  return classes.filter(Boolean).join(" ");
+}
+
 function Badge({ children }: { children: any }) {
   return (
     <span className="inline-flex items-center rounded-full border border-border px-2 py-0.5 text-xs">
@@ -74,8 +81,6 @@ function Badge({ children }: { children: any }) {
 
 /**
  * Modal con opción draggable.
- * - draggable: permite moverlo arrastrando el header
- * - al reabrir, vuelve a la posición original (centrado)
  */
 function Modal({
   open,
@@ -99,7 +104,6 @@ function Modal({
 
   useEffect(() => {
     if (!open) return;
-    // ✅ cada vez que se abre, vuelve al lugar original
     setPos({ x: 0, y: 0 });
   }, [open]);
 
@@ -158,7 +162,6 @@ function Modal({
     );
   }
 
-  // draggable: lo posicionamos centrado con translate(-50%) + offset pos
   return (
     <div className="fixed inset-0 z-50">
       <div className="absolute inset-0 bg-black/40" onMouseDown={onClose} />
@@ -169,11 +172,9 @@ function Modal({
         }}
         onMouseDown={(e) => e.stopPropagation()}
       >
-        {/* header draggable */}
         <div
-          className="flex items-center justify-between gap-3 select-none"
+          className="flex select-none items-center justify-between gap-3"
           onMouseDown={(e) => {
-            // solo si apretás header, empieza drag
             dragging.current = true;
             start.current = { x: e.clientX, y: e.clientY };
             startPos.current = { ...pos };
@@ -220,6 +221,235 @@ function SortTrianglesIcon({
 }
 
 /* =========================
+   Permission helpers
+========================= */
+function groupPermsByModule(all: Permission[]) {
+  const map = new Map<string, Permission[]>();
+  for (const p of all) {
+    map.set(p.module, [...(map.get(p.module) ?? []), p]);
+  }
+
+  const entries = Array.from(map.entries()).sort((a, b) => {
+    const la = MODULE_LABEL[a[0]] ?? a[0];
+    const lb = MODULE_LABEL[b[0]] ?? b[0];
+    return la.localeCompare(lb, "es", { sensitivity: "base" });
+  });
+
+  for (const [, list] of entries) {
+    list.sort(
+      (x, y) =>
+        ACTION_ORDER.indexOf(x.action as any) - ACTION_ORDER.indexOf(y.action as any)
+    );
+  }
+
+  return entries;
+}
+
+function asSet(ids: string[]) {
+  return new Set(ids);
+}
+
+/**
+ * Checkbox con indeterminate (parcialmente seleccionado)
+ */
+function ModuleCheckbox({
+  checked,
+  indeterminate,
+  onChange,
+  label,
+}: {
+  checked: boolean;
+  indeterminate: boolean;
+  onChange: (checked: boolean) => void;
+  label: string;
+}) {
+  const ref = useRef<HTMLInputElement | null>(null);
+
+  useEffect(() => {
+    if (ref.current) ref.current.indeterminate = indeterminate;
+  }, [indeterminate]);
+
+  return (
+    <label className="flex items-center gap-2">
+      <input
+        ref={ref}
+        type="checkbox"
+        checked={checked}
+        onChange={(e) => onChange(e.target.checked)}
+      />
+      <span className="text-sm font-semibold underline underline-offset-4">{label}</span>
+    </label>
+  );
+}
+
+/* =========================
+   Shared editor modal
+========================= */
+function RoleEditorModal({
+  open,
+  title,
+  initialName,
+  permsByModule,
+  initialSelectedIds,
+  loadingPerms,
+  saving,
+  submitLabel,
+  nameInputRef,
+  onClose,
+  onSubmit,
+}: {
+  open: boolean;
+  title: string;
+  initialName: string;
+  permsByModule: Array<[string, Permission[]]>;
+  initialSelectedIds: string[];
+  loadingPerms: boolean;
+  saving: boolean;
+  submitLabel: string;
+  nameInputRef?: React.RefObject<HTMLInputElement>;
+  onClose: () => void;
+  onSubmit: (name: string, selectedIds: string[]) => Promise<void>;
+}) {
+  const [name, setName] = useState(initialName);
+  const [selected, setSelected] = useState<string[]>(initialSelectedIds);
+
+  const initializedRef = useRef(false);
+  useEffect(() => {
+    if (!open) {
+      initializedRef.current = false;
+      return;
+    }
+    if (initializedRef.current) return;
+
+    setName(initialName);
+    setSelected(initialSelectedIds);
+    initializedRef.current = true;
+  }, [open, initialName, initialSelectedIds]);
+
+  const selectedSet = useMemo(() => asSet(selected), [selected]);
+
+  const toggleOne = useCallback((permId: string, checked: boolean) => {
+    setSelected((prev) => {
+      const s = new Set(prev);
+      if (checked) s.add(permId);
+      else s.delete(permId);
+      return Array.from(s);
+    });
+  }, []);
+
+  const toggleModule = useCallback((modulePerms: Permission[], checked: boolean) => {
+    setSelected((prev) => {
+      const s = new Set(prev);
+      if (checked) {
+        for (const p of modulePerms) s.add(p.id);
+      } else {
+        for (const p of modulePerms) s.delete(p.id);
+      }
+      return Array.from(s);
+    });
+  }, []);
+
+  async function submit(e: FormEvent) {
+    e.preventDefault();
+    await onSubmit(name, selected);
+  }
+
+  return (
+    <Modal open={open} title={title} onClose={onClose} wide draggable>
+      {loadingPerms ? (
+        <div className="flex items-center gap-2 text-sm">
+          <Loader2 className="h-4 w-4 animate-spin" />
+          Cargando permisos…
+        </div>
+      ) : (
+        <form onSubmit={submit} className="space-y-4">
+          <div>
+            <label className="mb-1 block text-xs text-muted">Nombre del rol</label>
+            <input
+              ref={nameInputRef}
+              className="tp-input"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="Ej: Caja, Depósito, Ventas…"
+            />
+          </div>
+
+          <div className="text-xs text-muted">
+            Tip: el checkbox del título del módulo selecciona/deselecciona todo el módulo.
+          </div>
+
+          <div className="space-y-4 max-h-[55vh] overflow-auto tp-scroll pr-1">
+            {permsByModule.map(([module, listRaw]) => {
+              // ✅ Quitamos ADMIN del listado
+              const list = listRaw.filter((p) => p.action !== "ADMIN");
+
+              const ids = list.map((p) => p.id);
+              const total = ids.length;
+
+              const selectedCount = ids.reduce(
+                (acc, id) => acc + (selectedSet.has(id) ? 1 : 0),
+                0
+              );
+
+              const fully = total > 0 && selectedCount === total;
+              const indeterminate = selectedCount > 0 && selectedCount < total;
+
+              return (
+                <div key={module} className="tp-card p-3">
+                  <div className="pb-4 flex items-start justify-between gap-3">
+                    <ModuleCheckbox
+                      checked={fully}
+                      indeterminate={indeterminate}
+                      onChange={(checked) => toggleModule(list, checked)}
+                      label={MODULE_LABEL[module] ?? module}
+                    />
+                    <div className="text-xs text-muted">
+                      {selectedCount}/{total}
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                    {list.map((p) => {
+                      const checked = selectedSet.has(p.id);
+                      const techCode = `${p.module}:${p.action}`;
+
+                      return (
+                        <label key={p.id} className="flex gap-2 text-sm" title={techCode}>
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={(e) => toggleOne(p.id, e.target.checked)}
+                          />
+                          {prettyPerm(p.module, p.action)}
+                        </label>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          <div className="pt-2 flex justify-end gap-2">
+            <button
+              className="tp-btn-secondary"
+              onClick={onClose}
+              type="button"
+              disabled={saving}
+            >
+              Cancelar
+            </button>
+            <button className="tp-btn-primary" type="submit" disabled={saving}>
+              {saving ? "Guardando…" : submitLabel}
+            </button>
+          </div>
+        </form>
+      )}
+    </Modal>
+  );
+}
+
+/* =========================
    PAGE
 ========================= */
 export default function RolesPage() {
@@ -241,22 +471,30 @@ export default function RolesPage() {
   const [allPerms, setAllPerms] = useState<Permission[]>([]);
   const [permsLoading, setPermsLoading] = useState(false);
 
-  // ✅ MODAL EDIT (unificado: nombre + permisos)
-  const [editOpen, setEditOpen] = useState(false);
-  const [target, setTarget] = useState<RoleLite | null>(null);
-  const [editName, setEditName] = useState("");
-  const [selectedPermIds, setSelectedPermIds] = useState<string[]>([]);
-  const [savingEdit, setSavingEdit] = useState(false);
-
-  // create role modal
+  // create/edit modals
   const [createOpen, setCreateOpen] = useState(false);
-  const [createName, setCreateName] = useState("");
-  const [createSelectedPermIds, setCreateSelectedPermIds] = useState<string[]>([]);
-  const [creating, setCreating] = useState(false);
+  const [editOpen, setEditOpen] = useState(false);
 
-  // ✅ autofocus inputs (nuevo rol / editar)
+  const [createSaving, setCreateSaving] = useState(false);
+  const [editSaving, setEditSaving] = useState(false);
+
+  // payload modal
+  const [target, setTarget] = useState<RoleLite | null>(null);
+  const [editInitialName, setEditInitialName] = useState("");
+  const [editInitialPermIds, setEditInitialPermIds] = useState<string[]>([]);
+
   const createNameRef = useRef<HTMLInputElement | null>(null);
   const editNameRef = useRef<HTMLInputElement | null>(null);
+
+  const editReqRef = useRef(0);
+
+  // ✅ loader en el botón editar
+  const [editingRoleId, setEditingRoleId] = useState<string | null>(null);
+
+  // ✅ loader en el botón "Nuevo Rol"
+  const [creatingOpenLoading, setCreatingOpenLoading] = useState(false);
+
+  const { askDelete, dialogProps } = useConfirmDelete();
 
   useEffect(() => {
     if (!createOpen) return;
@@ -270,68 +508,7 @@ export default function RolesPage() {
     return () => window.clearTimeout(t);
   }, [editOpen]);
 
-  async function load() {
-    setErr(null);
-    setLoading(true);
-    try {
-      const data = await listRoles();
-      const list = Array.isArray(data) ? data : (data as any)?.roles ?? [];
-
-      // dedupe por id (solo UI)
-      const uniq = new Map<string, RoleLite>();
-      for (const r of list) uniq.set(r.id, r);
-      setRoles(Array.from(uniq.values()));
-    } catch (e: any) {
-      setErr(String(e?.message || "Error cargando roles"));
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  useEffect(() => {
-    if (canView) void load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [canView]);
-
-  async function ensurePermissionsCatalog() {
-    if (allPerms.length > 0) return allPerms;
-
-    setPermsLoading(true);
-    try {
-      const resp: unknown = await fetchPermissions();
-      const anyResp = resp as any;
-      const list: Permission[] = Array.isArray(anyResp) ? anyResp : anyResp?.permissions ?? [];
-      setAllPerms(list);
-      return list;
-    } finally {
-      setPermsLoading(false);
-    }
-  }
-
-  // ✅ PRECARGA: si sos admin, empezamos a traer el catálogo al entrar a la pantalla
-  useEffect(() => {
-    if (!canAdmin) return;
-    void ensurePermissionsCatalog();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [canAdmin]);
-
-  const permsByModule = useMemo(() => {
-    const map = new Map<string, Permission[]>();
-    for (const p of allPerms) {
-      const key = p.module;
-      map.set(key, [...(map.get(key) ?? []), p]);
-    }
-    const entries = Array.from(map.entries()).sort((a, b) => {
-      const la = MODULE_LABEL[a[0]] ?? a[0];
-      const lb = MODULE_LABEL[b[0]] ?? b[0];
-      return la.localeCompare(lb, "es", { sensitivity: "base" });
-    });
-    const order = ["VIEW", "CREATE", "EDIT", "DELETE", "EXPORT", "ADMIN"];
-    for (const [, list] of entries) {
-      list.sort((x, y) => order.indexOf(x.action) - order.indexOf(y.action));
-    }
-    return entries;
-  }, [allPerms]);
+  const permsByModule = useMemo(() => groupPermsByModule(allPerms), [allPerms]);
 
   const sortedRoles = useMemo(() => {
     const dir = sortDir === "ASC" ? 1 : -1;
@@ -344,7 +521,9 @@ export default function RolesPage() {
     arr.sort((a, b) => {
       if (sortBy === "ROLE") {
         return (
-          prettyRole(a.name).localeCompare(prettyRole(b.name), "es", { sensitivity: "base" }) * dir
+          prettyRole(a.name).localeCompare(prettyRole(b.name), "es", {
+            sensitivity: "base",
+          }) * dir
         );
       }
 
@@ -355,12 +534,53 @@ export default function RolesPage() {
       if (byType !== 0) return byType;
 
       return (
-        prettyRole(a.name).localeCompare(prettyRole(b.name), "es", { sensitivity: "base" }) * dir
+        prettyRole(a.name).localeCompare(prettyRole(b.name), "es", {
+          sensitivity: "base",
+        }) * dir
       );
     });
 
     return arr;
   }, [roles, sortBy, sortDir]);
+
+  const loadRoles = useCallback(async () => {
+    setErr(null);
+    setLoading(true);
+    try {
+      const data = await listRoles();
+      const list = Array.isArray(data) ? data : (data as any)?.roles ?? [];
+
+      const uniq = new Map<string, RoleLite>();
+      for (const r of list) uniq.set(r.id, r);
+      setRoles(Array.from(uniq.values()));
+    } catch (e: any) {
+      setErr(String(e?.message || "Error cargando roles"));
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  const ensurePermissionsCatalog = useCallback(async () => {
+    if (allPerms.length > 0) return allPerms;
+
+    setPermsLoading(true);
+    try {
+      const list = await fetchPermissions();
+      setAllPerms(list);
+      return list;
+    } finally {
+      setPermsLoading(false);
+    }
+  }, [allPerms.length, allPerms]);
+
+  useEffect(() => {
+    if (canView) void loadRoles();
+  }, [canView, loadRoles]);
+
+  useEffect(() => {
+    if (!canAdmin) return;
+    void ensurePermissionsCatalog();
+  }, [canAdmin, ensurePermissionsCatalog]);
 
   function toggleSort(nextBy: "ROLE" | "TYPE") {
     if (sortBy !== nextBy) {
@@ -377,199 +597,191 @@ export default function RolesPage() {
   }
 
   /* =========================
-     Helpers selección por módulo
+     CREATE
   ========================= */
-  function moduleIds(module: string, list: Permission[]) {
-    return list.filter((p) => p.module === module).map((p) => p.id);
-  }
-
-  function isModuleFullySelected(current: string[], ids: string[]) {
-    if (ids.length === 0) return false;
-    const set = new Set(current);
-    return ids.every((id) => set.has(id));
-  }
-
-  function toggleModuleSelection(
-    modulePermIds: string[],
-    checked: boolean,
-    setter: Dispatch<SetStateAction<string[]>>
-  ) {
-    setter((prev) => {
-      const set = new Set(prev);
-      if (checked) {
-        for (const id of modulePermIds) set.add(id);
-      } else {
-        for (const id of modulePermIds) set.delete(id);
-      }
-      return Array.from(set);
-    });
-  }
-
-  /* =========================
-     CREATE (Nuevo Rol)
-  ========================= */
-  async function openCreateModal() {
-    if (!canAdmin) return;
-    setErr(null);
-    setCreateName("");
-    setCreateSelectedPermIds([]);
-
-    await ensurePermissionsCatalog();
-    setCreateOpen(true);
-  }
-
-  async function onCreate(e: FormEvent) {
-    e.preventDefault();
+  const openCreateModal = useCallback(async () => {
     if (!canAdmin) return;
 
-    const name = createName.trim();
-    if (!name) {
-      setErr("Escribí el nombre del rol.");
-      return;
-    }
-
-    setCreating(true);
     setErr(null);
+    setCreatingOpenLoading(true);
+
     try {
-      const created: any = await createRole(name);
+      await ensurePermissionsCatalog();
+      setCreateOpen(true);
+    } catch (e: any) {
+      setErr(String(e?.message || "No se pudieron cargar permisos"));
+    } finally {
+      setCreatingOpenLoading(false);
+    }
+  }, [canAdmin, ensurePermissionsCatalog]);
 
-      if (createSelectedPermIds.length > 0) {
+  const onCreateSubmit = useCallback(
+    async (name: string, selectedPermIds: string[]) => {
+      if (!canAdmin) return;
+
+      const clean = name.trim();
+      if (!clean) {
+        setErr("Escribí el nombre del rol.");
+        return;
+      }
+
+      setCreateSaving(true);
+      setErr(null);
+      try {
+        const created: any = await createRole(clean);
         const roleId = created?.id ?? created?.role?.id;
         if (!roleId) throw new Error("No se recibió el ID del rol creado.");
-        await updateRolePermissions(roleId, createSelectedPermIds);
-      }
 
-      setCreateOpen(false);
-      await load();
-    } catch (e: any) {
-      setErr(String(e?.message || "Error creando rol"));
-    } finally {
-      setCreating(false);
-    }
-  }
+        if (selectedPermIds.length > 0) {
+          await updateRolePermissions(roleId, selectedPermIds);
+        }
+
+        setCreateOpen(false);
+        await loadRoles();
+      } catch (e: any) {
+        setErr(String(e?.message || "Error creando rol"));
+      } finally {
+        setCreateSaving(false);
+      }
+    },
+    [canAdmin, loadRoles]
+  );
 
   /* =========================
      DELETE
   ========================= */
-  async function onDelete(r: RoleLite) {
-    if (!canAdmin) return;
-    if (r.isSystem) return;
+  const onDelete = useCallback(
+    (r: RoleLite) => {
+      if (!canAdmin) return;
+      if (r.isSystem) return;
 
-    const ok = window.confirm(`¿Eliminar el rol "${prettyRole(r.name)}"?`);
-    if (!ok) return;
-
-    setErr(null);
-    try {
-      await deleteRole(r.id);
-      await load();
-    } catch (e: any) {
-      setErr(String(e?.message || "Error eliminando rol"));
-    }
-  }
+      askDelete({
+        entityName: "rol",
+        entityLabel: prettyRole(r.name),
+        onDelete: () => deleteRole(r.id),
+        onAfterSuccess: loadRoles,
+        confirmTitle: `Eliminar rol: ${prettyRole(r.name)}`,
+        confirmDescription: "Esta acción no se puede deshacer.",
+        dangerHint:
+          "Si este rol está asignado a usuarios o asociado a operaciones, puede que no se permita eliminarlo.",
+      });
+    },
+    [askDelete, canAdmin, loadRoles]
+  );
 
   /* =========================
-     EDIT (unificado)
+     EDIT
   ========================= */
-  function extractPermissionIdsFromListRole(r: RoleLite): string[] {
-    const ids = (r.permissions ?? [])
-      .map((p: any) => p?.id)
-      .filter((x: any) => typeof x === "string" && x.length > 0);
-    return Array.from(new Set(ids));
-  }
+  const openEditModal = useCallback(
+    async (r: RoleLite) => {
+      if (!canAdmin) return;
 
-  function extractPermissionIdsFromFetchRoleResponse(detail: any): string[] {
-    const role = detail?.role ?? detail;
-    const idsA = role?.permissionIds;
-    if (Array.isArray(idsA)) return idsA.filter((x: any) => typeof x === "string");
+      const code = getRoleCode(r);
+      if (code === "OWNER") {
+        setErr("El rol Propietario no es editable.");
+        return;
+      }
 
-    const perms = role?.permissions;
-    if (Array.isArray(perms)) {
-      const idsB = perms.map((p: any) => p?.id).filter((x: any) => typeof x === "string");
-      return Array.from(new Set(idsB));
-    }
-    return [];
-  }
+      setErr(null);
 
-  async function openEditModal(r: RoleLite) {
-    if (!canAdmin) return;
+      const reqId = ++editReqRef.current;
+      setEditingRoleId(r.id);
 
-    const code = getRoleCode(r);
-    const isOwner = code === "OWNER";
-    if (isOwner) {
-      setErr("El rol Propietario no es editable.");
-      return;
-    }
+      setEditInitialName(r.name);
+      setEditInitialPermIds([]);
+      setTarget(r);
 
-    setErr(null);
-    setTarget(r);
-    setEditName(r.name);
-    setSelectedPermIds([]);
+      setPermsLoading(true);
+      try {
+        await ensurePermissionsCatalog();
 
-    await ensurePermissionsCatalog();
-    setEditOpen(true);
+        const detail = await fetchRole(r.id);
+        if (editReqRef.current !== reqId) return;
 
-    // precarga rápida
-    const fromList = extractPermissionIdsFromListRole(r);
-    setSelectedPermIds(fromList);
+        const ids = extractPermissionIdsFromRoleDetail(detail);
+        setEditInitialPermIds(ids);
 
-    // precarga completa
-    try {
-      const detail = await fetchRole(r.id);
-      const ids = extractPermissionIdsFromFetchRoleResponse(detail);
-      if (ids.length) setSelectedPermIds(ids);
-    } catch (e: any) {
-      if (fromList.length === 0) {
+        setEditOpen(true);
+      } catch (e: any) {
+        if (editReqRef.current !== reqId) return;
         setErr(String(e?.message || "No se pudieron cargar permisos del rol"));
-        setSelectedPermIds([]);
+      } finally {
+        if (editReqRef.current === reqId) {
+          setPermsLoading(false);
+          setEditingRoleId(null);
+        }
       }
-    }
-  }
+    },
+    [canAdmin, ensurePermissionsCatalog]
+  );
 
-  async function saveEdit() {
-    if (!canAdmin || !target) return;
+  const onEditSubmit = useCallback(
+    async (name: string, selectedPermIds: string[]) => {
+      if (!canAdmin || !target) return;
 
-    const nextName = editName.trim();
-    if (!nextName) {
-      setErr("El nombre no puede estar vacío.");
-      return;
-    }
-
-    setSavingEdit(true);
-    setErr(null);
-
-    try {
-      // guardamos nombre si cambió
-      if (nextName !== target.name) {
-        await renameRole(target.id, nextName);
+      const clean = name.trim();
+      if (!clean) {
+        setErr("El nombre no puede estar vacío.");
+        return;
       }
 
-      // guardamos permisos (siempre, por simplicidad y consistencia)
-      await updateRolePermissions(target.id, selectedPermIds);
+      setEditSaving(true);
+      setErr(null);
 
-      setEditOpen(false);
-      await load();
-    } catch (e: any) {
-      setErr(String(e?.message || "Error guardando cambios"));
-    } finally {
-      setSavingEdit(false);
-    }
-  }
+      try {
+        if (clean !== target.name) {
+          await renameRole(target.id, clean);
+        }
 
-  if (!canView) {
-    return <div className="p-6">Sin permisos para ver roles.</div>;
-  }
+        await updateRolePermissions(target.id, selectedPermIds);
+
+        setEditOpen(false);
+        await loadRoles();
+      } catch (e: any) {
+        setErr(String(e?.message || "Error guardando cambios"));
+      } finally {
+        setEditSaving(false);
+      }
+    },
+    [canAdmin, target, loadRoles]
+  );
+
+  if (!canView) return <div className="p-6">Sin permisos para ver roles.</div>;
+
+  const iconBtnBase =
+    "inline-flex items-center justify-center rounded-lg border border-border bg-card " +
+    "h-9 w-9 shadow-[0_1px_0_0_rgba(0,0,0,0.05)] hover:bg-surface2 " +
+    "focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-primary/20";
+
+  const disabledCls = "opacity-40 cursor-not-allowed hover:bg-card";
 
   return (
-    <div className="p-6 space-y-6">
-      <div className="flex items-end justify-between gap-3">
+    <div className="px-4 py-4 sm:p-6 space-y-6">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <h1 className="text-2xl font-semibold">Roles</h1>
           <p className="text-sm text-muted">Gestión de roles y permisos.</p>
         </div>
 
         {canAdmin && (
-          <button className="tp-btn-primary md:w-44" onClick={openCreateModal} type="button">
-            Nuevo Rol
+          <button
+            className={cn(
+              "tp-btn-primary w-full sm:w-auto sm:min-w-[176px] inline-flex items-center justify-center gap-2",
+              creatingOpenLoading && "opacity-80"
+            )}
+            onClick={openCreateModal}
+            type="button"
+            disabled={creatingOpenLoading}
+            title={creatingOpenLoading ? "Cargando..." : "Nuevo Rol"}
+          >
+            {creatingOpenLoading ? (
+              <>
+                <Loader2 className="h-4 w-4 animate-spin" />
+                Cargando…
+              </>
+            ) : (
+              "Nuevo Rol"
+            )}
           </button>
         )}
       </div>
@@ -580,320 +792,159 @@ export default function RolesPage() {
         </div>
       )}
 
-      <div className="tp-card overflow-hidden">
-        {/* ✅ scroll horizontal en mobile */}
-        <div className="w-full overflow-x-auto" style={{ WebkitOverflowScrolling: "touch" as any }}>
-          <table className="w-full min-w-[720px] text-sm">
-            <thead className="border-b border-border">
+      <div className="tp-card overflow-hidden w-full">
+        <table className="w-full text-sm">
+          <thead className="border-b border-border">
+            <tr>
+              <th className="px-4 py-3 text-left">
+                <button
+                  type="button"
+                  className="inline-flex items-center gap-2 hover:opacity-90"
+                  onClick={() => toggleSort("ROLE")}
+                  title="Ordenar por Rol"
+                >
+                  <span>Rol</span>
+                  <SortTrianglesIcon
+                    state={sortState("ROLE")}
+                    className={sortBy === "ROLE" ? "text-text" : "text-muted"}
+                  />
+                </button>
+              </th>
+
+              <th className="hidden sm:table-cell px-4 py-3 text-left">
+                <button
+                  type="button"
+                  className="inline-flex items-center gap-2 hover:opacity-90"
+                  onClick={() => toggleSort("TYPE")}
+                  title="Ordenar por Tipo"
+                >
+                  <span>Tipo</span>
+                  <SortTrianglesIcon
+                    state={sortState("TYPE")}
+                    className={sortBy === "TYPE" ? "text-text" : "text-muted"}
+                  />
+                </button>
+              </th>
+
+              <th className="px-4 py-3 text-right">Acciones</th>
+            </tr>
+          </thead>
+
+          <tbody>
+            {loading ? (
               <tr>
-                <th className="px-4 py-3 text-left">
-                  <button
-                    type="button"
-                    className="inline-flex items-center gap-2 hover:opacity-90"
-                    onClick={() => toggleSort("ROLE")}
-                    title="Ordenar por Rol"
-                  >
-                    <span>Rol</span>
-                    {/* ✅ visible en tema claro/oscuro */}
-                    <SortTrianglesIcon
-                      state={sortState("ROLE")}
-                      className={sortBy === "ROLE" ? "text-text" : "text-muted"}
-                    />
-                  </button>
-                </th>
-
-                <th className="px-4 py-3 text-left">
-                  <button
-                    type="button"
-                    className="inline-flex items-center gap-2 hover:opacity-90"
-                    onClick={() => toggleSort("TYPE")}
-                    title="Ordenar por Tipo"
-                  >
-                    <span>Tipo</span>
-                    <SortTrianglesIcon
-                      state={sortState("TYPE")}
-                      className={sortBy === "TYPE" ? "text-text" : "text-muted"}
-                    />
-                  </button>
-                </th>
-
-                <th className="px-4 py-3 text-right">Acciones</th>
+                <td className="px-4 py-4" colSpan={3}>
+                  Cargando…
+                </td>
               </tr>
-            </thead>
+            ) : sortedRoles.length === 0 ? (
+              <tr>
+                <td className="px-4 py-4 text-muted" colSpan={3}>
+                  No hay roles.
+                </td>
+              </tr>
+            ) : (
+              sortedRoles.map((r) => {
+                const code = getRoleCode(r);
+                const isOwner = code === "OWNER";
+                const canEditThis = canAdmin && !isOwner;
+                const deleteDisabled = r.isSystem;
 
-            <tbody>
-              {loading ? (
-                <tr>
-                  <td className="px-4 py-4" colSpan={3}>
-                    Cargando…
-                  </td>
-                </tr>
-              ) : sortedRoles.length === 0 ? (
-                <tr>
-                  <td className="px-4 py-4 text-muted" colSpan={3}>
-                    No hay roles.
-                  </td>
-                </tr>
-              ) : (
-                sortedRoles.map((r) => {
-                  const code = getRoleCode(r);
-                  const isOwner = code === "OWNER";
+                const isEditingThis = editingRoleId === r.id;
 
-                  const canEditThis = canAdmin && !isOwner;
-                  const deleteDisabled = r.isSystem;
+                return (
+                  <tr key={r.id} className="border-t border-border">
+                    <td className="px-4 py-3 font-semibold">{prettyRole(r.name)}</td>
 
-                  const iconBtnBase =
-                    "inline-flex items-center justify-center rounded-lg border border-border bg-card " +
-                    "h-9 w-9 shadow-[0_1px_0_0_rgba(0,0,0,0.05)] hover:bg-surface2 " +
-                    "focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-primary/20";
+                    <td className="hidden sm:table-cell px-4 py-3">
+                      <Badge>{r.isSystem ? "Sistema" : "Personalizado"}</Badge>
+                    </td>
 
-                  const disabledCls = "opacity-40 cursor-not-allowed hover:bg-card";
-
-                  return (
-                    <tr key={r.id} className="border-t border-border">
-                      <td className="px-4 py-3 font-semibold">{prettyRole(r.name)}</td>
-
-                      <td className="px-4 py-3">
-                        <Badge>{r.isSystem ? "Sistema" : "Personalizado"}</Badge>
-                      </td>
-
-                      <td className="px-4 py-3">
-                        <div className="flex items-center justify-end gap-2">
-                          {/* ✏️ EDITAR (unificado) */}
-                          <button
-                            className={[
-                              iconBtnBase,
-                              !canEditThis ? disabledCls : "",
-                            ].join(" ")}
-                            type="button"
-                            disabled={!canEditThis}
-                            onClick={() => (canEditThis ? openEditModal(r) : null)}
-                            title={!canEditThis && isOwner ? "Propietario no es editable" : "Editar rol"}
-                          >
+                    <td className="px-4 py-3">
+                      <div className="flex items-center justify-end gap-2">
+                        <button
+                          className={cn(
+                            iconBtnBase,
+                            (!canEditThis || isEditingThis) && disabledCls
+                          )}
+                          type="button"
+                          disabled={!canEditThis || isEditingThis}
+                          onClick={() => (canEditThis ? openEditModal(r) : null)}
+                          title={
+                            isOwner
+                              ? "Propietario no es editable"
+                              : isEditingThis
+                              ? "Cargando..."
+                              : "Editar rol"
+                          }
+                        >
+                          {isEditingThis ? (
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                          ) : (
                             <Pencil className="h-4 w-4" />
-                          </button>
+                          )}
+                        </button>
 
-                          {/* 🗑️ ELIMINAR */}
-                          <button
-                            className={[
-                              iconBtnBase,
-                              deleteDisabled ? disabledCls : "",
-                            ].join(" ")}
-                            type="button"
-                            disabled={deleteDisabled}
-                            onClick={() => (deleteDisabled ? null : onDelete(r))}
-                            title={
-                              deleteDisabled
-                                ? "No se puede eliminar un rol del sistema"
-                                : "Eliminar rol"
-                            }
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })
-              )}
-            </tbody>
-          </table>
-        </div>
+                        <button
+                          className={cn(iconBtnBase, (deleteDisabled || isEditingThis) && disabledCls)}
+                          type="button"
+                          disabled={deleteDisabled || isEditingThis}
+                          onClick={() => (deleteDisabled || isEditingThis ? null : onDelete(r))}
+                          title={
+                            deleteDisabled
+                              ? "No se puede eliminar un rol del sistema"
+                              : isEditingThis
+                              ? "Cargando..."
+                              : "Eliminar rol"
+                          }
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })
+            )}
+          </tbody>
+        </table>
 
         <div className="border-t border-border px-4 py-3 text-xs text-muted">
           {sortedRoles.length} {sortedRoles.length === 1 ? "rol" : "roles"}
         </div>
       </div>
 
-      {/* =========================
-          MODAL NUEVO ROL (draggable)
-      ========================= */}
-      <Modal
+      {/* CREATE */}
+      <RoleEditorModal
         open={createOpen}
         title="Nuevo Rol"
+        initialName=""
+        permsByModule={permsByModule}
+        initialSelectedIds={[]}
+        loadingPerms={permsLoading}
+        saving={createSaving}
+        submitLabel="Crear"
+        nameInputRef={createNameRef}
         onClose={() => setCreateOpen(false)}
-        wide
-        draggable
-      >
-        <form onSubmit={onCreate} className="space-y-4">
-          <div>
-            <label className="mb-1 block text-xs text-muted">Nombre del rol</label>
-            <input
-              ref={createNameRef}
-              className="tp-input"
-              placeholder="Ej: Caja, Depósito, Ventas…"
-              value={createName}
-              onChange={(e) => setCreateName(e.target.value)}
-            />
-          </div>
+        onSubmit={onCreateSubmit}
+      />
 
-          {permsLoading ? (
-            <div>Cargando permisos…</div>
-          ) : (
-            <>
-              <div className="text-xs text-muted">Seleccioná los permisos para este rol.</div>
-
-              <div className="space-y-4 max-h-[55vh] overflow-auto tp-scroll pr-1">
-                {permsByModule.map(([module, list]) => {
-                  const ids = moduleIds(module, list);
-                  const fully = isModuleFullySelected(createSelectedPermIds, ids);
-
-                  return (
-                    <div key={module} className="tp-card p-3">
-                      <div className="pb-4">
-                        <label className="flex items-center gap-2">
-                          <input
-                            type="checkbox"
-                            checked={fully}
-                            onChange={(e) =>
-                              toggleModuleSelection(ids, e.target.checked, setCreateSelectedPermIds)
-                            }
-                          />
-                          <span className="text-sm font-semibold underline underline-offset-4">
-                            {MODULE_LABEL[module] ?? module}
-                          </span>
-                        </label>
-                      </div>
-
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                        {list.map((p) => {
-                          const checked = createSelectedPermIds.includes(p.id);
-                          const code = `${p.module}:${p.action}`;
-                          return (
-                            <label key={p.id} className="flex gap-2 text-sm" title={code}>
-                              <input
-                                type="checkbox"
-                                checked={checked}
-                                onChange={(e) =>
-                                  setCreateSelectedPermIds((prev) =>
-                                    e.target.checked
-                                      ? Array.from(new Set([...prev, p.id]))
-                                      : prev.filter((id) => id !== p.id)
-                                  )
-                                }
-                              />
-                              {prettyPerm(p.module, p.action)}
-                            </label>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-
-              <div className="pt-2 flex justify-end gap-2">
-                <button
-                  className="tp-btn-secondary"
-                  onClick={() => setCreateOpen(false)}
-                  type="button"
-                  disabled={creating}
-                >
-                  Cancelar
-                </button>
-                <button className="tp-btn-primary" type="submit" disabled={creating}>
-                  {creating ? "Creando…" : "Crear"}
-                </button>
-              </div>
-            </>
-          )}
-        </form>
-      </Modal>
-
-      {/* =========================
-          MODAL EDITAR ROL (unificado + draggable)
-      ========================= */}
-      <Modal
-        key={target?.id ?? "no-target"}
+      {/* EDIT */}
+      <RoleEditorModal
         open={editOpen}
         title={`Editar rol${target ? `: ${prettyRole(target.name)}` : ""}`}
+        initialName={editInitialName}
+        permsByModule={permsByModule}
+        initialSelectedIds={editInitialPermIds}
+        loadingPerms={permsLoading}
+        saving={editSaving}
+        submitLabel="Guardar"
+        nameInputRef={editNameRef}
         onClose={() => setEditOpen(false)}
-        wide
-        draggable
-      >
-        {permsLoading ? (
-          <div>Cargando permisos…</div>
-        ) : (
-          <div className="space-y-4">
-            <div>
-              <label className="mb-1 block text-xs text-muted">Nombre del rol</label>
-              <input
-                ref={editNameRef}
-                className="tp-input"
-                value={editName}
-                onChange={(e) => setEditName(e.target.value)}
-              />
-            </div>
+        onSubmit={onEditSubmit}
+      />
 
-            <div className="text-xs text-muted">
-              Tip: “Administrar” equivale a acceso total del módulo. (Código técnico queda en tooltip)
-            </div>
-
-            <div className="space-y-4 max-h-[55vh] overflow-auto tp-scroll pr-1">
-              {permsByModule.map(([module, list]) => {
-                const ids = moduleIds(module, list);
-                const fully = isModuleFullySelected(selectedPermIds, ids);
-
-                return (
-                  <div key={module} className="tp-card p-3">
-                    <div className="pb-4">
-                      <label className="flex items-center gap-2">
-                        <input
-                          type="checkbox"
-                          checked={fully}
-                          onChange={(e) =>
-                            toggleModuleSelection(ids, e.target.checked, setSelectedPermIds)
-                          }
-                        />
-                        <span className="text-sm font-semibold underline underline-offset-4">
-                          {MODULE_LABEL[module] ?? module}
-                        </span>
-                      </label>
-                    </div>
-
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                      {list.map((p) => {
-                        const checked = selectedPermIds.includes(p.id);
-                        const code = `${p.module}:${p.action}`;
-                        return (
-                          <label key={p.id} className="flex gap-2 text-sm" title={code}>
-                            <input
-                              type="checkbox"
-                              checked={checked}
-                              onChange={(e) =>
-                                setSelectedPermIds((prev) =>
-                                  e.target.checked
-                                    ? Array.from(new Set([...prev, p.id]))
-                                    : prev.filter((id) => id !== p.id)
-                                )
-                              }
-                            />
-                            {prettyPerm(p.module, p.action)}
-                          </label>
-                        );
-                      })}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-
-            <div className="pt-4 flex justify-end gap-2">
-              <button className="tp-btn-secondary" onClick={() => setEditOpen(false)} type="button">
-                Cancelar
-              </button>
-              <button
-                className="tp-btn-primary"
-                disabled={savingEdit}
-                onClick={saveEdit}
-                type="button"
-              >
-                {savingEdit ? "Guardando…" : "Guardar"}
-              </button>
-            </div>
-          </div>
-        )}
-      </Modal>
+      <ConfirmDeleteDialog {...dialogProps} />
     </div>
   );
 }

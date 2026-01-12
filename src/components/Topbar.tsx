@@ -1,8 +1,11 @@
+// tptech-frontend/src/components/Topbar.tsx
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Link, useLocation, useNavigate } from "react-router-dom";
-import ThemeSwitcher from "./ThemeSwitcher";
+import { Link, useLocation } from "react-router-dom";
+import { createPortal } from "react-dom";
+import { Menu, Settings } from "lucide-react";
+import { useTheme } from "../context/ThemeContext";
 import { useMe } from "../hooks/useMe";
-import { updateUserAvatar, removeMyAvatar } from "../services/users";
+import ThemeSwitcher from "./ThemeSwitcher";
 
 type RouteMeta = {
   title: string;
@@ -23,6 +26,13 @@ function getMeta(pathname: string): RouteMeta {
     };
   }
 
+  if (p.startsWith("/divisas")) {
+    return {
+      title: "Divisas",
+      crumbs: [{ label: "Dashboard", to: "/dashboard" }, { label: "Divisas" }],
+    };
+  }
+
   return { title: "TPTech", crumbs: [{ label: "Dashboard", to: "/dashboard" }] };
 }
 
@@ -30,185 +40,250 @@ function cn(...classes: Array<string | false | null | undefined>) {
   return classes.filter(Boolean).join(" ");
 }
 
-function initialsFrom(label: string) {
-  const clean = (label || "").trim();
-  if (!clean) return "U";
-  const parts = clean.split(/\s+/).filter(Boolean);
-  const a = parts[0]?.[0] ?? "U";
-  const b = parts.length > 1 ? parts[parts.length - 1]?.[0] ?? "" : "";
-  return (a + b).toUpperCase();
+function clamp(n: number, min: number, max: number) {
+  return Math.max(min, Math.min(max, n));
 }
 
-export default function Topbar() {
-  const { pathname } = useLocation();
-  const meta = useMemo(() => getMeta(pathname), [pathname]);
-  const navigate = useNavigate();
-
-  const { me, loading, refresh } = useMe();
-
-  const user = me?.user ?? null;
-  const jewelryName = me?.jewelry?.name ?? (loading ? "Cargando..." : "Sin joyería");
-
-  const userLabel = user?.name?.trim() || user?.email || "Usuario";
-  const avatarUrl = user?.avatarUrl ?? null;
-
-  const avatarSrc = useMemo(() => {
-    if (!avatarUrl) return null;
-    const updatedAt = (user as any)?.updatedAt as string | undefined;
-    const v = updatedAt ? new Date(updatedAt).getTime() : Date.now();
-    return `${avatarUrl}${avatarUrl.includes("?") ? "&" : "?"}v=${v}`;
-  }, [avatarUrl, (user as any)?.updatedAt]);
-
-  const [menuOpen, setMenuOpen] = useState(false);
-  const [avatarBusy, setAvatarBusy] = useState(false);
-  const menuRef = useRef<HTMLDivElement | null>(null);
-
+function useEscapeToClose(open: boolean, onClose: () => void) {
   useEffect(() => {
-    function onDocClick(e: MouseEvent) {
-      if (!menuOpen) return;
-      if (menuRef.current && e.target instanceof Node && !menuRef.current.contains(e.target)) {
-        setMenuOpen(false);
-      }
-    }
-    document.addEventListener("mousedown", onDocClick);
-    return () => document.removeEventListener("mousedown", onDocClick);
-  }, [menuOpen]);
-
-  // ✅ cerrar con ESC (más pro)
-  useEffect(() => {
-    if (!menuOpen) return;
+    if (!open) return;
     function onKeyDown(e: KeyboardEvent) {
-      if (e.key === "Escape") setMenuOpen(false);
+      if (e.key === "Escape") onClose();
     }
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [menuOpen]);
+  }, [open, onClose]);
+}
 
-  async function onLogout() {
-    try {
-      // logout real si lo necesitás
-    } finally {
-      navigate("/login", { replace: true });
-    }
-  }
+function useOutsideClickToClose(
+  open: boolean,
+  containerRef: React.RefObject<HTMLElement>,
+  onClose: () => void
+) {
+  useEffect(() => {
+    if (!open) return;
 
-  async function onPickAvatar(file: File) {
-    setAvatarBusy(true);
-    try {
-      await updateUserAvatar(file);
-      await refresh();
-      setMenuOpen(false);
-    } finally {
-      setAvatarBusy(false);
+    function onDown(e: MouseEvent) {
+      const el = containerRef.current;
+      if (!el) return;
+      if (e.target instanceof Node && !el.contains(e.target)) onClose();
     }
-  }
 
-  async function onRemoveAvatar() {
-    setAvatarBusy(true);
-    try {
-      await removeMyAvatar();
-      await refresh();
-      setMenuOpen(false);
-    } finally {
-      setAvatarBusy(false);
-    }
-  }
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, [open, containerRef, onClose]);
+}
+
+/**
+ * Menú flotante en Portal (no se corta por overflow del layout).
+ * Posiciona debajo del botón, y si no entra, abre hacia arriba.
+ */
+function PortalMenu({
+  open,
+  anchorRef,
+  onClose,
+  children,
+  width = 340,
+}: {
+  open: boolean;
+  anchorRef: React.RefObject<HTMLElement>;
+  onClose: () => void;
+  children: React.ReactNode;
+  width?: number;
+}) {
+  const menuRef = useRef<HTMLDivElement | null>(null);
+  const [, forceTick] = useState(0);
+
+  useEscapeToClose(open, onClose);
+  useOutsideClickToClose(open, menuRef as any, onClose);
+
+  useEffect(() => {
+    if (!open) return;
+    const onRecalc = () => forceTick((t) => t + 1);
+    window.addEventListener("resize", onRecalc);
+    window.addEventListener("scroll", onRecalc, true);
+    return () => {
+      window.removeEventListener("resize", onRecalc);
+      window.removeEventListener("scroll", onRecalc, true);
+    };
+  }, [open]);
+
+  if (!open) return null;
+
+  const r = anchorRef.current?.getBoundingClientRect();
+  const viewportPad = 10;
+  const gap = 10;
+
+  const maxH = Math.min(560, Math.max(280, window.innerHeight - viewportPad * 2));
+
+  const anchorRight = r?.right ?? 0;
+  const anchorTop = r?.top ?? 0;
+  const anchorBottom = r?.bottom ?? 0;
+
+  // align right edge of menu with right edge of anchor
+  const leftWanted = anchorRight - width;
+  const left = clamp(leftWanted, viewportPad, window.innerWidth - viewportPad - width);
+
+  // choose direction
+  const spaceBelow = window.innerHeight - viewportPad - anchorBottom;
+  const spaceAbove = anchorTop - viewportPad;
+
+  const openDown = spaceBelow >= 240 || spaceBelow >= spaceAbove;
+  const topDown = clamp(anchorBottom + gap, viewportPad, window.innerHeight - viewportPad - maxH);
+  const topUp = clamp(anchorTop - gap - maxH, viewportPad, window.innerHeight - viewportPad - maxH);
+  const top = openDown ? topDown : topUp;
+
+  return createPortal(
+    <>
+      <div
+        style={{ position: "fixed", inset: 0, zIndex: 9998 }}
+        onMouseDown={onClose}
+        aria-hidden="true"
+      />
+      <div
+        ref={menuRef}
+        style={{
+          position: "fixed",
+          left,
+          top,
+          width,
+          maxHeight: maxH,
+          zIndex: 9999,
+        }}
+        className="rounded-2xl border border-border bg-bg shadow-[0_18px_40px_rgba(0,0,0,0.18)] overflow-hidden"
+        onMouseDown={(e) => e.stopPropagation()}
+      >
+        <div className="tp-scroll overflow-auto" style={{ maxHeight: maxH }}>
+          {children}
+        </div>
+      </div>
+    </>,
+    document.body
+  );
+}
+
+export default function Topbar({
+  onToggleSidebar,
+  onCloseSidebar,
+}: {
+  onToggleSidebar?: () => void;
+  onCloseSidebar?: () => void;
+}) {
+  const { pathname } = useLocation();
+  const meta = useMemo(() => getMeta(pathname), [pathname]);
+
+  const { theme, themes } = useTheme();
+  const { me, loading } = useMe();
+
+  const jewelryName = me?.jewelry?.name ?? (loading ? "Cargando..." : "Sin joyería");
+
+  const currentThemeLabel = useMemo(() => {
+    return themes.find((t) => t.value === theme)?.label ?? "Tema";
+  }, [themes, theme]);
+
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const settingsBtnRef = useRef<HTMLButtonElement | null>(null);
+
+  // cerrar menú al navegar y cerrar drawer (si existe)
+  useEffect(() => {
+    setSettingsOpen(false);
+    onCloseSidebar?.();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pathname]);
 
   return (
     <header
       className={cn(
-        "sticky top-0 z-10 border-b border-border bg-bg/90 backdrop-blur",
-        // ✅ ayuda a que el gesto de scroll “pase” bien por arriba en mobile
+        "sticky top-0 z-[999] border-b border-border bg-bg/90 backdrop-blur",
         "[touch-action:pan-y]",
-        // ✅ evita scroll horizontal raro por sombras o bordes
-        "overflow-x-hidden"
+        // evita scrollbars en el header
+        "overflow-hidden",
+        // stacking context limpio
+        "[isolation:isolate]"
       )}
     >
-      <div className="flex w-full items-center justify-between px-6 py-4">
-        {/* Izquierda */}
-        <div>
-          <div className="flex gap-2 text-xs text-muted">
-            {meta.crumbs.map((c, i) => (
-              <span key={i}>
-                {c.to ? <Link to={c.to}>{c.label}</Link> : c.label}
-                {i < meta.crumbs.length - 1 && " / "}
-              </span>
-            ))}
-          </div>
-          <h1 className="text-lg font-semibold">{meta.title}</h1>
-        </div>
-
-        {/* Derecha */}
-        <div className="flex items-center gap-3">
-          <ThemeSwitcher />
-
-          <button className="rounded-xl border px-3 py-2 text-sm" title={jewelryName} type="button">
-            Joyería: {jewelryName}
-          </button>
-
-          {/* Usuario */}
-          <div ref={menuRef} className="relative">
+      <div className="w-full px-4 py-3 sm:px-6 sm:py-4">
+        <div className="flex items-center justify-between gap-3">
+          {/* IZQ: menú + título */}
+          <div className="flex min-w-0 items-center gap-3">
+            {/* ☰ solo mobile */}
             <button
-              onClick={() => setMenuOpen((v) => !v)}
-              className="flex items-center gap-2 rounded-xl border px-3 py-2"
               type="button"
+              onClick={onToggleSidebar}
+              className={cn(
+                "grid h-10 w-10 shrink-0 place-items-center rounded-xl border border-border bg-card",
+                "lg:hidden",
+                "focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-primary/20"
+              )}
+              aria-label="Abrir menú"
+              title="Menú"
             >
-              <div className="h-8 w-8 overflow-hidden rounded-full border bg-surface">
-                {avatarSrc ? (
-                  <img src={avatarSrc} alt="Avatar" className="h-full w-full object-cover" />
-                ) : (
-                  <div className="grid h-full w-full place-items-center text-xs font-bold text-primary">
-                    {initialsFrom(userLabel)}
-                  </div>
-                )}
-              </div>
-              <span className="text-sm">{userLabel}</span>
-              <span className="text-xs text-muted">▾</span>
+              <Menu className="h-5 w-5" />
             </button>
 
-            {menuOpen && (
-              <div className="absolute right-0 mt-2 w-60 rounded-xl border bg-bg shadow">
-                <div className="space-y-1 p-2">
-                  <label
-                    className={cn(
-                      "block cursor-pointer rounded-lg border px-3 py-2 text-sm",
-                      avatarBusy && "pointer-events-none opacity-60"
-                    )}
-                  >
-                    {avatarBusy ? "Guardando…" : "Cambiar foto"}
-                    <input
-                      type="file"
-                      accept="image/*"
-                      hidden
-                      onChange={(e) => {
-                        const f = e.target.files?.[0];
-                        e.target.value = "";
-                        if (f) void onPickAvatar(f);
-                      }}
-                    />
-                  </label>
+            <div className="min-w-0">
+              <div className="hidden sm:flex gap-2 text-xs text-muted">
+                {meta.crumbs.map((c, i) => (
+                  <span key={i} className="truncate">
+                    {c.to ? <Link to={c.to}>{c.label}</Link> : c.label}
+                    {i < meta.crumbs.length - 1 && " / "}
+                  </span>
+                ))}
+              </div>
+              <h1 className="truncate text-lg font-semibold sm:text-xl">{meta.title}</h1>
+            </div>
+          </div>
 
-                  <button
-                    disabled={!avatarUrl || avatarBusy}
-                    onClick={() => void onRemoveAvatar()}
-                    className="w-full rounded-lg border px-3 py-2 text-sm disabled:opacity-60"
-                    type="button"
-                  >
-                    Quitar foto
-                  </button>
+          {/* DER: ⚙️ arriba a la derecha */}
+          <div className="flex shrink-0 items-center gap-2">
+            <button
+              ref={settingsBtnRef}
+              type="button"
+              onClick={() => setSettingsOpen((v) => !v)}
+              className={cn(
+                "grid h-10 w-10 place-items-center rounded-xl border border-border bg-card",
+                "focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-primary/20"
+              )}
+              aria-label="Configuración"
+              title="Configuración"
+            >
+              <Settings className="h-5 w-5" />
+            </button>
 
-                  <div className="my-2 h-px bg-border" />
+            <PortalMenu
+              open={settingsOpen}
+              anchorRef={settingsBtnRef}
+              onClose={() => setSettingsOpen(false)}
+              width={360}
+            >
+              <div className="p-3 space-y-3">
+                <div className="px-1">
+                  <div className="text-sm font-semibold text-text">Configuración</div>
+                  <div className="text-xs text-muted">Preferencias del sistema</div>
+                </div>
 
-                  <button
-                    onClick={() => void onLogout()}
-                    className="w-full rounded-lg border px-3 py-2 text-sm"
-                    type="button"
-                  >
-                    Salir
-                  </button>
+                {/* ✅ Tema (custom combo: color depende del theme, NO azul nativo) */}
+                <div className="tp-card p-3 space-y-2">
+                  <div className="text-xs font-semibold text-muted">Tema</div>
+
+                  {/* Reemplaza select nativo por ThemeSwitcher */}
+                  <ThemeSwitcher variant="menu" />
+
+                  <div className="text-[11px] text-muted">
+                    Actual:{" "}
+                    <span className="font-semibold text-text">{currentThemeLabel}</span>
+                  </div>
+                </div>
+
+                {/* Joyería */}
+                <div className="tp-card p-3">
+                  <div className="text-xs font-semibold text-muted">Joyería</div>
+                  <div className="mt-1 text-sm font-semibold text-text truncate" title={jewelryName}>
+                    {jewelryName}
+                  </div>
                 </div>
               </div>
-            )}
+            </PortalMenu>
           </div>
         </div>
       </div>

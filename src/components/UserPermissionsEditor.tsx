@@ -1,16 +1,21 @@
-import { useEffect, useMemo, useState } from "react";
-import { fetchUser, setUserOverride, removeUserOverride } from "../services/users";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { fetchUser, removeUserOverride, setUserOverride } from "../services/users";
 import { fetchPermissions } from "../services/permissions";
 
+/* =========================
+   Types
+========================= */
 type Permission = {
   id: string;
   module: string;
   action: string;
 };
 
+type OverrideEffect = "ALLOW" | "DENY";
+
 type Override = {
   permissionId: string;
-  effect: "ALLOW" | "DENY";
+  effect: OverrideEffect;
 };
 
 type UserDetail = {
@@ -21,10 +26,40 @@ type UserDetail = {
   permissionOverrides?: Override[];
 };
 
+type FetchUserResult = {
+  user: UserDetail;
+};
+
+type FetchPermissionsResult =
+  | Permission[]
+  | { permissions: Permission[] }
+  | { data: Permission[] }
+  | unknown;
+
+/* =========================
+   Helpers
+========================= */
+function normalizePermissions(resp: FetchPermissionsResult): Permission[] {
+  if (Array.isArray(resp)) return resp as Permission[];
+  if (resp && typeof resp === "object") {
+    const anyResp = resp as any;
+    if (Array.isArray(anyResp.permissions)) return anyResp.permissions as Permission[];
+    if (Array.isArray(anyResp.data)) return anyResp.data as Permission[];
+  }
+  return [];
+}
+
 function permLabel(p: Permission) {
   return `${p.module}:${p.action}`;
 }
 
+function cn(...classes: Array<string | false | null | undefined>) {
+  return classes.filter(Boolean).join(" ");
+}
+
+/* =========================
+   Component
+========================= */
 export function UserPermissionsEditor({
   userId,
   onClose,
@@ -33,10 +68,12 @@ export function UserPermissionsEditor({
   onClose: () => void;
 }) {
   const [loading, setLoading] = useState(true);
-  const [savingKey, setSavingKey] = useState<string | null>(null);
   const [user, setUser] = useState<UserDetail | null>(null);
   const [permissions, setPermissions] = useState<Permission[]>([]);
   const [error, setError] = useState<string | null>(null);
+
+  // saving por permiso (no bloquea todo el modal)
+  const [saving, setSaving] = useState<Record<string, OverrideEffect | null>>({});
 
   const permsByModule = useMemo(() => {
     const map = new Map<string, Permission[]>();
@@ -45,12 +82,29 @@ export function UserPermissionsEditor({
       arr.push(p);
       map.set(p.module, arr);
     }
+
+    // orden dentro de cada módulo
     for (const [k, arr] of map.entries()) {
       arr.sort((a, b) => a.action.localeCompare(b.action));
       map.set(k, arr);
     }
+
+    // orden de módulos
     return Array.from(map.entries()).sort((a, b) => a[0].localeCompare(b[0]));
   }, [permissions]);
+
+  const overridesMap = useMemo(() => {
+    const m = new Map<string, OverrideEffect>();
+    for (const ov of user?.permissionOverrides ?? []) {
+      m.set(ov.permissionId, ov.effect);
+    }
+    return m;
+  }, [user?.permissionOverrides]);
+
+  const getOverrideEffect = useCallback(
+    (permissionId: string): OverrideEffect | null => overridesMap.get(permissionId) ?? null,
+    [overridesMap]
+  );
 
   useEffect(() => {
     let alive = true;
@@ -60,19 +114,16 @@ export function UserPermissionsEditor({
         setLoading(true);
         setError(null);
 
-        // ✅ Evita que TS infiera `never` con Promise.all()
-        const uRes = await fetchUser(userId);
-        const pRes: any = await fetchPermissions();
+        // paralelo (más rápido)
+        const [uRes, pRes] = await Promise.all([
+          fetchUser(userId) as Promise<FetchUserResult>,
+          fetchPermissions() as Promise<FetchPermissionsResult>,
+        ]);
 
         if (!alive) return;
 
         setUser(uRes.user);
-
-        // ✅ soporta ambos formatos:
-        // - Permission[]
-        // - { permissions: Permission[] }
-        const perms: Permission[] = Array.isArray(pRes) ? pRes : (pRes?.permissions ?? []);
-        setPermissions(perms);
+        setPermissions(normalizePermissions(pRes));
       } catch (e: any) {
         if (!alive) return;
         setError(e?.message ?? "Error al cargar permisos del usuario.");
@@ -86,82 +137,72 @@ export function UserPermissionsEditor({
     };
   }, [userId]);
 
-  function getOverride(permissionId: string) {
-    return user?.permissionOverrides?.find((o) => o.permissionId === permissionId) ?? null;
-  }
+  const setSavingFor = useCallback((permissionId: string, effect: OverrideEffect | null) => {
+    setSaving((prev) => ({ ...prev, [permissionId]: effect }));
+  }, []);
 
-  async function setOrClearOverride(permissionId: string, effect: "ALLOW" | "DENY") {
-    if (!user) return;
+  const applyLocalOverride = useCallback((permissionId: string, effect: OverrideEffect | null) => {
+    setUser((prev) => {
+      if (!prev) return prev;
 
-    const key = `${permissionId}:${effect}`;
-    setSavingKey(key);
+      const current = prev.permissionOverrides ?? [];
+      const filtered = current.filter((o) => o.permissionId !== permissionId);
 
-    try {
-      const existing = getOverride(permissionId);
+      const nextOverrides =
+        effect === null ? filtered : [...filtered, { permissionId, effect } as Override];
 
-      // click al mismo effect => borrar
-      if (existing && existing.effect === effect) {
-        await removeUserOverride(user.id, permissionId);
+      return { ...prev, permissionOverrides: nextOverrides };
+    });
+  }, []);
 
-        const nextOverrides = (user.permissionOverrides ?? []).filter(
-          (o) => o.permissionId !== permissionId
-        );
+  const toggleOverride = useCallback(
+    async (permissionId: string, effect: OverrideEffect) => {
+      if (!user) return;
 
-        setUser({ ...user, permissionOverrides: nextOverrides });
-        return;
+      const current = getOverrideEffect(permissionId); // ALLOW | DENY | null
+      const willClear = current === effect;
+
+      // optimistic UI
+      setSavingFor(permissionId, effect);
+      applyLocalOverride(permissionId, willClear ? null : effect);
+
+      try {
+        if (willClear) {
+          await removeUserOverride(user.id, permissionId);
+        } else {
+          await setUserOverride(user.id, permissionId, effect);
+        }
+      } catch (e: any) {
+        // rollback si falla
+        applyLocalOverride(permissionId, current);
+        setError(e?.message ?? "No se pudo guardar el override. Intentá de nuevo.");
+      } finally {
+        setSavingFor(permissionId, null);
       }
-
-      // set / update
-      await setUserOverride(user.id, permissionId, effect);
-
-      const nextOverrides: Override[] = [
-        ...(user.permissionOverrides ?? []).filter((o) => o.permissionId !== permissionId),
-        { permissionId, effect },
-      ];
-
-      setUser({ ...user, permissionOverrides: nextOverrides });
-    } finally {
-      setSavingKey(null);
-    }
-  }
+    },
+    [user, getOverrideEffect, setSavingFor, applyLocalOverride]
+  );
 
   return (
     <div
       role="dialog"
       aria-modal="true"
-      style={{
-        position: "fixed",
-        inset: 0,
-        background: "rgba(0,0,0,0.35)",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        padding: 16,
-        zIndex: 50,
-      }}
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4"
       onMouseDown={(e) => {
-        // click afuera cierra
         if (e.target === e.currentTarget) onClose();
       }}
     >
-      <div
-        style={{
-          width: "min(980px, 100%)",
-          maxHeight: "85vh",
-          overflow: "auto",
-          background: "#fff",
-          borderRadius: 12,
-          padding: 16,
-          boxShadow: "0 10px 30px rgba(0,0,0,0.25)",
-        }}
-      >
-        <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
-          <div>
-            <h2 style={{ margin: 0 }}>Permisos por usuario</h2>
-            <div style={{ opacity: 0.75, marginTop: 4 }}>
+      <div className="w-full max-w-5xl overflow-hidden rounded-2xl bg-surface text-text shadow-2xl">
+        {/* Header */}
+        <div className="flex items-start justify-between gap-4 border-b border-border p-4">
+          <div className="min-w-0">
+            <h2 className="m-0 text-lg font-semibold">Permisos por usuario</h2>
+            <div className="mt-1 truncate text-sm text-text/70">
               {user ? (
                 <>
-                  {user.email} {user.name ? `— ${user.name}` : ""} ({user.status})
+                  {user.email}
+                  {user.name ? ` — ${user.name}` : ""}{" "}
+                  <span className="text-text/60">({user.status})</span>
                 </>
               ) : (
                 "—"
@@ -169,81 +210,119 @@ export function UserPermissionsEditor({
             </div>
           </div>
 
-          <button type="button" onClick={onClose}>
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-lg border border-border bg-transparent px-3 py-1.5 text-sm hover:bg-bg"
+          >
             Cerrar
           </button>
         </div>
 
-        <hr style={{ margin: "12px 0" }} />
+        {/* Body */}
+        <div className="max-h-[80vh] overflow-auto p-4">
+          {loading && <div className="text-sm text-text/70">Cargando…</div>}
 
-        {loading && <div>Cargando…</div>}
-        {error && <div style={{ color: "crimson", marginBottom: 10 }}>{error}</div>}
+          {error && (
+            <div className="mb-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+              {error}
+            </div>
+          )}
 
-        {!loading && user && (
-          <div style={{ display: "grid", gap: 10 }}>
-            {permsByModule.map(([module, perms]) => (
-              <div
-                key={module}
-                style={{
-                  border: "1px solid #e5e5e5",
-                  borderRadius: 10,
-                  padding: 12,
-                }}
-              >
-                <div style={{ fontWeight: 700, marginBottom: 8 }}>{module}</div>
-
-                {perms.map((p) => {
-                  const ov = getOverride(p.id);
-                  const allowActive = ov?.effect === "ALLOW";
-                  const denyActive = ov?.effect === "DENY";
-
-                  return (
-                    <div
-                      key={p.id}
-                      style={{
-                        display: "flex",
-                        gap: 10,
-                        alignItems: "center",
-                        padding: "6px 0",
-                        borderTop: "1px dashed #eee",
-                      }}
-                    >
-                      <div style={{ minWidth: 220, fontFamily: "monospace" }}>{permLabel(p)}</div>
-
-                      <button
-                        type="button"
-                        onClick={() => setOrClearOverride(p.id, "ALLOW")}
-                        disabled={savingKey !== null}
-                        style={{
-                          fontWeight: allowActive ? "bold" : "normal",
-                          opacity: savingKey && savingKey !== `${p.id}:ALLOW` ? 0.6 : 1,
-                        }}
-                      >
-                        ALLOW
-                      </button>
-
-                      <button
-                        type="button"
-                        onClick={() => setOrClearOverride(p.id, "DENY")}
-                        disabled={savingKey !== null}
-                        style={{
-                          fontWeight: denyActive ? "bold" : "normal",
-                          opacity: savingKey && savingKey !== `${p.id}:DENY` ? 0.6 : 1,
-                        }}
-                      >
-                        DENY
-                      </button>
-
-                      <div style={{ marginLeft: "auto", opacity: 0.75 }}>
-                        {ov ? <em>override: {ov.effect}</em> : <span>sin override</span>}
-                      </div>
+          {!loading && user && (
+            <div className="grid gap-3">
+              {permsByModule.map(([module, perms]) => (
+                <section
+                  key={module}
+                  className="rounded-xl border border-border bg-bg/40 p-3"
+                >
+                  <div className="mb-2 flex items-center justify-between gap-3">
+                    <div className="font-semibold">{module}</div>
+                    <div className="text-xs text-text/60">
+                      Click en <b>ALLOW</b> o <b>DENY</b> para setear override. Repetir click
+                      lo borra.
                     </div>
-                  );
-                })}
-              </div>
-            ))}
-          </div>
-        )}
+                  </div>
+
+                  <div className="divide-y divide-border">
+                    {perms.map((p) => {
+                      const current = getOverrideEffect(p.id);
+                      const rowSaving = saving[p.id] ?? null;
+
+                      const allowActive = current === "ALLOW";
+                      const denyActive = current === "DENY";
+
+                      const allowBusy = rowSaving === "ALLOW";
+                      const denyBusy = rowSaving === "DENY";
+                      const disabled = rowSaving !== null;
+
+                      return (
+                        <div key={p.id} className="flex flex-wrap items-center gap-2 py-2">
+                          <div className="min-w-[240px] font-mono text-xs text-text/80">
+                            {permLabel(p)}
+                          </div>
+
+                          <button
+                            type="button"
+                            onClick={() => toggleOverride(p.id, "ALLOW")}
+                            disabled={disabled}
+                            className={cn(
+                              "rounded-lg border px-3 py-1.5 text-sm",
+                              allowActive
+                                ? "border-emerald-300 bg-emerald-50 text-emerald-700"
+                                : "border-border bg-surface hover:bg-bg",
+                              allowBusy && "opacity-70"
+                            )}
+                            title="Forzar permitir (override)"
+                          >
+                            {allowBusy ? "Guardando…" : "ALLOW"}
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => toggleOverride(p.id, "DENY")}
+                            disabled={disabled}
+                            className={cn(
+                              "rounded-lg border px-3 py-1.5 text-sm",
+                              denyActive
+                                ? "border-rose-300 bg-rose-50 text-rose-700"
+                                : "border-border bg-surface hover:bg-bg",
+                              denyBusy && "opacity-70"
+                            )}
+                            title="Forzar denegar (override)"
+                          >
+                            {denyBusy ? "Guardando…" : "DENY"}
+                          </button>
+
+                          <div className="ml-auto text-xs text-text/60">
+                            {current ? (
+                              <span>
+                                Override: <b>{current}</b>
+                              </span>
+                            ) : (
+                              <span>Sin override</span>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </section>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Footer */}
+        <div className="flex items-center justify-end gap-2 border-t border-border p-4">
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-lg border border-border bg-transparent px-4 py-2 text-sm hover:bg-bg"
+          >
+            Cerrar
+          </button>
+        </div>
       </div>
     </div>
   );

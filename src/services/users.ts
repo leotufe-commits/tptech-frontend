@@ -6,9 +6,11 @@ import { apiFetch } from "../lib/api";
 ========================= */
 export type Role = { id: string; name: string; isSystem?: boolean };
 
+export type OverrideEffect = "ALLOW" | "DENY";
+
 export type Override = {
   permissionId: string;
-  effect: "ALLOW" | "DENY";
+  effect: OverrideEffect;
 };
 
 export type UserStatus = "ACTIVE" | "PENDING" | "BLOCKED";
@@ -49,9 +51,11 @@ export type CreateUserBody = {
   name?: string | null;
   password?: string;
   roleIds?: string[];
-  status?: "ACTIVE" | "BLOCKED";
+  status?: Extract<UserStatus, "ACTIVE" | "BLOCKED">;
 };
 export type CreateUserResponse = { user: UserListItem };
+
+export type OkResponse<T extends object = {}> = { ok?: true } & T;
 
 // Avatar (respuestas posibles)
 export type UpdateAvatarResponse = {
@@ -71,19 +75,20 @@ function assertImageFile(file: File) {
   if (file.size > MAX) throw new Error("La imagen supera el máximo permitido (5MB)");
 }
 
-/**
- * Normaliza respuestas "ok/user/avatarUrl" para que el UI tenga un contrato estable.
- */
-function normalizeAvatarResponse(resp: any): { ok: true; avatarUrl: string | null; user?: UserListItem } {
+function normalizeAvatarResponse(
+  resp: unknown
+): { ok: true; avatarUrl: string | null; user?: UserListItem } {
+  const r = (resp && typeof resp === "object" ? (resp as any) : null) as any;
+
   const avatarUrl =
-    (resp && typeof resp === "object" && "avatarUrl" in resp ? (resp.avatarUrl as any) : undefined) ??
-    (resp && typeof resp === "object" && resp.user?.avatarUrl != null ? resp.user.avatarUrl : undefined) ??
+    (r && "avatarUrl" in r ? r.avatarUrl : undefined) ??
+    (r?.user?.avatarUrl != null ? r.user.avatarUrl : undefined) ??
     null;
 
   return {
     ok: true,
     avatarUrl: avatarUrl ?? null,
-    user: resp?.user,
+    user: r?.user,
   };
 }
 
@@ -95,35 +100,35 @@ function normalizeAvatarResponse(resp: any): { ok: true; avatarUrl: string | nul
  * Crear usuario
  * POST /users
  */
-export async function createUser(body: CreateUserBody) {
-  return apiFetch<CreateUserResponse>("/users", {
-    method: "POST",
-    body,
-  });
+export async function createUser(body: CreateUserBody): Promise<CreateUserResponse> {
+  return apiFetch<CreateUserResponse>("/users", { method: "POST", body });
 }
 
 /**
  * Lista de usuarios (tabla)
  * GET /users
  */
-export async function fetchUsers() {
-  return apiFetch<UsersListResponse>("/users");
+export async function fetchUsers(): Promise<UsersListResponse> {
+  return apiFetch<UsersListResponse>("/users", { method: "GET" });
 }
 
 /**
  * Detalle de un usuario (modal editor)
  * GET /users/:id
  */
-export async function fetchUser(userId: string) {
-  return apiFetch<UserDetailResponse>(`/users/${userId}`);
+export async function fetchUser(userId: string): Promise<UserDetailResponse> {
+  return apiFetch<UserDetailResponse>(`/users/${userId}`, { method: "GET" });
 }
 
 /**
  * Cambiar estado (activar / bloquear)
  * PATCH /users/:id/status
  */
-export async function updateUserStatus(userId: string, status: "ACTIVE" | "BLOCKED") {
-  return apiFetch<{ ok?: true; user?: UserListItem }>(`/users/${userId}/status`, {
+export async function updateUserStatus(
+  userId: string,
+  status: Extract<UserStatus, "ACTIVE" | "BLOCKED">
+): Promise<OkResponse<{ user?: UserListItem }>> {
+  return apiFetch<OkResponse<{ user?: UserListItem }>>(`/users/${userId}/status`, {
     method: "PATCH",
     body: { status },
   });
@@ -133,46 +138,64 @@ export async function updateUserStatus(userId: string, status: "ACTIVE" | "BLOCK
  * Asignar roles
  * PUT /users/:id/roles
  */
-export async function assignRolesToUser(userId: string, roleIds: string[]) {
-  return apiFetch<{ ok: true }>(`/users/${userId}/roles`, {
-    method: "PUT",
-    body: { roleIds },
-  });
+export async function assignRolesToUser(userId: string, roleIds: string[]): Promise<OkResponse> {
+  return apiFetch<OkResponse>(`/users/${userId}/roles`, { method: "PUT", body: { roleIds } });
 }
 
 /**
- * Crear / actualizar override
+ * Crear / actualizar override (uno)
  * POST /users/:id/overrides
  */
-export async function setUserOverride(userId: string, permissionId: string, effect: "ALLOW" | "DENY") {
-  return apiFetch<{ ok?: true; override?: Override }>(`/users/${userId}/overrides`, {
+export async function setUserOverride(
+  userId: string,
+  permissionId: string,
+  effect: OverrideEffect
+): Promise<OkResponse<{ override?: Override }>> {
+  return apiFetch<OkResponse<{ override?: Override }>>(`/users/${userId}/overrides`, {
     method: "POST",
     body: { permissionId, effect },
   });
 }
 
 /**
- * Eliminar override
+ * Eliminar override (uno)
  * DELETE /users/:id/overrides/:permissionId
  */
-export async function removeUserOverride(userId: string, permissionId: string) {
-  return apiFetch<{ ok: true }>(`/users/${userId}/overrides/${permissionId}`, {
-    method: "DELETE",
-  });
+export async function removeUserOverride(
+  userId: string,
+  permissionId: string
+): Promise<OkResponse> {
+  return apiFetch<OkResponse>(`/users/${userId}/overrides/${permissionId}`, { method: "DELETE" });
 }
+
+/**
+ * (Opcional futuro) Setear overrides en lote
+ * POST /users/:id/overrides/bulk
+ *
+ * Backend sugerido:
+ * body: { overrides: Array<{ permissionId: string; effect: "ALLOW"|"DENY" | null }> }
+ */
+// export async function setUserOverridesBulk(
+//   userId: string,
+//   overrides: Array<{ permissionId: string; effect: OverrideEffect | null }>
+// ): Promise<OkResponse<{ overrides?: Override[] }>> {
+//   return apiFetch(`/users/${userId}/overrides/bulk`, {
+//     method: "POST",
+//     body: { overrides },
+//   });
+// }
 
 /* =========================
    AVATAR (ME) multipart/form-data
-   Backend esperado:
-   - PUT    /users/me/avatar   (field: avatar)
-   - DELETE /users/me/avatar
 ========================= */
 
 /**
  * Subir/actualizar avatar del usuario logueado
  * PUT /users/me/avatar
  */
-export async function updateUserAvatar(file: File) {
+export async function updateUserAvatar(
+  file: File
+): Promise<{ ok: true; avatarUrl: string | null; user?: UserListItem }> {
   assertImageFile(file);
 
   const form = new FormData();
@@ -190,11 +213,12 @@ export async function updateUserAvatar(file: File) {
  * Quitar avatar del usuario logueado
  * DELETE /users/me/avatar
  */
-export async function removeMyAvatar() {
-  const resp = await apiFetch<UpdateAvatarResponse>("/users/me/avatar", {
-    method: "DELETE",
-  });
-
+export async function removeMyAvatar(): Promise<{
+  ok: true;
+  avatarUrl: string | null;
+  user?: UserListItem;
+}> {
+  const resp = await apiFetch<UpdateAvatarResponse>("/users/me/avatar", { method: "DELETE" });
   return normalizeAvatarResponse(resp);
 }
 
@@ -203,12 +227,12 @@ export const removeUserAvatar = removeMyAvatar;
 
 /* =========================
    AVATAR (ADMIN) multipart/form-data
-   Requiere backend:
-   - PUT /users/:id/avatar (field: avatar)
-   - DELETE /users/:id/avatar
 ========================= */
 
-export async function updateUserAvatarForUser(userId: string, file: File) {
+export async function updateUserAvatarForUser(
+  userId: string,
+  file: File
+): Promise<{ ok: true; avatarUrl: string | null; user?: UserListItem }> {
   assertImageFile(file);
 
   const form = new FormData();
@@ -222,7 +246,9 @@ export async function updateUserAvatarForUser(userId: string, file: File) {
   return normalizeAvatarResponse(resp);
 }
 
-export async function removeAvatarForUser(userId: string) {
+export async function removeAvatarForUser(
+  userId: string
+): Promise<{ ok: true; avatarUrl: string | null; user?: UserListItem }> {
   const resp = await apiFetch<UpdateAvatarResponse>(`/users/${userId}/avatar`, {
     method: "DELETE",
   });

@@ -11,17 +11,22 @@ export type Permission = {
 };
 
 export type PermissionsResponse =
+  | Permission[]
   | { permissions: Permission[] }
-  | Permission[];
+  | { data: Permission[] };
 
 /* =========================
    Helpers
 ========================= */
-function normalizePermissions(resp: unknown): Permission[] {
+export function normalizePermissions(resp: unknown): Permission[] {
   if (Array.isArray(resp)) return resp as Permission[];
-  if (resp && typeof resp === "object" && Array.isArray((resp as any).permissions)) {
-    return (resp as any).permissions as Permission[];
+
+  if (resp && typeof resp === "object") {
+    const anyResp = resp as any;
+    if (Array.isArray(anyResp.permissions)) return anyResp.permissions as Permission[];
+    if (Array.isArray(anyResp.data)) return anyResp.data as Permission[];
   }
+
   return [];
 }
 
@@ -29,6 +34,6 @@ function normalizePermissions(resp: unknown): Permission[] {
    API
 ========================= */
 export async function fetchPermissions(): Promise<Permission[]> {
-  const resp = await apiFetch<PermissionsResponse>("/permissions");
+  const resp = await apiFetch<PermissionsResponse>("/permissions", { method: "GET" });
   return normalizePermissions(resp);
 }
