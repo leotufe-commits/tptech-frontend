@@ -61,7 +61,7 @@ function prettyRole(name: string) {
 }
 
 function getRoleCode(r: RoleLite): string | undefined {
-  return (r as any)?.code;
+  return r.code;
 }
 
 /* =========================
@@ -245,10 +245,6 @@ function groupPermsByModule(all: Permission[]) {
   return entries;
 }
 
-function asSet(ids: string[]) {
-  return new Set(ids);
-}
-
 /**
  * Checkbox con indeterminate (parcialmente seleccionado)
  */
@@ -283,7 +279,7 @@ function ModuleCheckbox({
 }
 
 /* =========================
-   Shared editor modal
+   Shared editor modal (optimizado)
 ========================= */
 function RoleEditorModal({
   open,
@@ -306,15 +302,16 @@ function RoleEditorModal({
   loadingPerms: boolean;
   saving: boolean;
   submitLabel: string;
-
-  // ✅ FIX: aceptar refs que pueden ser null (useRef<HTMLInputElement | null>)
   nameInputRef?: React.RefObject<HTMLInputElement | null>;
-
   onClose: () => void;
   onSubmit: (name: string, selectedIds: string[]) => Promise<void>;
 }) {
   const [name, setName] = useState(initialName);
-  const [selected, setSelected] = useState<string[]>(initialSelectedIds);
+
+  // ✅ PERFORMANCE: Set en estado (tildar/destildar es mucho más rápido)
+  const [selectedSet, setSelectedSet] = useState<Set<string>>(
+    () => new Set(initialSelectedIds)
+  );
 
   const initializedRef = useRef(false);
   useEffect(() => {
@@ -325,36 +322,34 @@ function RoleEditorModal({
     if (initializedRef.current) return;
 
     setName(initialName);
-    setSelected(initialSelectedIds);
+    setSelectedSet(new Set(initialSelectedIds));
     initializedRef.current = true;
   }, [open, initialName, initialSelectedIds]);
 
-  const selectedSet = useMemo(() => asSet(selected), [selected]);
-
   const toggleOne = useCallback((permId: string, checked: boolean) => {
-    setSelected((prev) => {
-      const s = new Set(prev);
-      if (checked) s.add(permId);
-      else s.delete(permId);
-      return Array.from(s);
+    setSelectedSet((prev) => {
+      const next = new Set(prev);
+      if (checked) next.add(permId);
+      else next.delete(permId);
+      return next;
     });
   }, []);
 
   const toggleModule = useCallback((modulePerms: Permission[], checked: boolean) => {
-    setSelected((prev) => {
-      const s = new Set(prev);
+    setSelectedSet((prev) => {
+      const next = new Set(prev);
       if (checked) {
-        for (const p of modulePerms) s.add(p.id);
+        for (const p of modulePerms) next.add(p.id);
       } else {
-        for (const p of modulePerms) s.delete(p.id);
+        for (const p of modulePerms) next.delete(p.id);
       }
-      return Array.from(s);
+      return next;
     });
   }, []);
 
   async function submit(e: FormEvent) {
     e.preventDefault();
-    await onSubmit(name, selected);
+    await onSubmit(name, Array.from(selectedSet));
   }
 
   return (
@@ -389,10 +384,8 @@ function RoleEditorModal({
               const ids = list.map((p) => p.id);
               const total = ids.length;
 
-              const selectedCount = ids.reduce(
-                (acc, id) => acc + (selectedSet.has(id) ? 1 : 0),
-                0
-              );
+              let selectedCount = 0;
+              for (const id of ids) if (selectedSet.has(id)) selectedCount++;
 
               const fully = total > 0 && selectedCount === total;
               const indeterminate = selectedCount > 0 && selectedCount < total;
@@ -453,14 +446,94 @@ function RoleEditorModal({
 }
 
 /* =========================
+   Row (memo) para evitar rerenders
+========================= */
+const RoleRow = React.memo(function RoleRow({
+  r,
+  canAdmin,
+  editingRoleId,
+  onOpenEdit,
+  onDelete,
+  iconBtnBase,
+  disabledCls,
+}: {
+  r: RoleLite;
+  canAdmin: boolean;
+  editingRoleId: string | null;
+  onOpenEdit: (r: RoleLite) => void;
+  onDelete: (r: RoleLite) => void;
+  iconBtnBase: string;
+  disabledCls: string;
+}) {
+  const code = getRoleCode(r);
+  const isOwner = code === "OWNER";
+  const canEditThis = canAdmin && !isOwner;
+  const deleteDisabled = Boolean(r.isSystem);
+
+  const isEditingThis = editingRoleId === r.id;
+
+  return (
+    <tr className="border-t border-border">
+      <td className="px-4 py-3 font-semibold">{prettyRole(r.name)}</td>
+
+      <td className="hidden sm:table-cell px-4 py-3">
+        <Badge>{r.isSystem ? "Sistema" : "Personalizado"}</Badge>
+      </td>
+
+      <td className="px-4 py-3">
+        <div className="flex items-center justify-end gap-2">
+          <button
+            className={cn(iconBtnBase, (!canEditThis || isEditingThis) && disabledCls)}
+            type="button"
+            disabled={!canEditThis || isEditingThis}
+            onClick={() => (canEditThis ? onOpenEdit(r) : null)}
+            title={
+              isOwner
+                ? "Propietario no es editable"
+                : isEditingThis
+                ? "Cargando..."
+                : "Editar rol"
+            }
+          >
+            {isEditingThis ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <Pencil className="h-4 w-4" />
+            )}
+          </button>
+
+          <button
+            className={cn(iconBtnBase, (deleteDisabled || isEditingThis) && disabledCls)}
+            type="button"
+            disabled={deleteDisabled || isEditingThis}
+            onClick={() => (deleteDisabled || isEditingThis ? null : onDelete(r))}
+            title={
+              deleteDisabled
+                ? "No se puede eliminar un rol del sistema"
+                : isEditingThis
+                ? "Cargando..."
+                : "Eliminar rol"
+            }
+          >
+            <Trash2 className="h-4 w-4" />
+          </button>
+        </div>
+      </td>
+    </tr>
+  );
+});
+
+/* =========================
    PAGE
 ========================= */
 export default function RolesPage() {
   const { permissions } = useAuth();
 
-  const canView =
-    permissions.includes("USERS_ROLES:VIEW") || permissions.includes("USERS_ROLES:ADMIN");
-  const canAdmin = permissions.includes("USERS_ROLES:ADMIN");
+  // ✅ PERFORMANCE: set para includes O(1)
+  const permSet = useMemo(() => new Set(permissions), [permissions]);
+
+  const canView = permSet.has("USERS_ROLES:VIEW") || permSet.has("USERS_ROLES:ADMIN");
+  const canAdmin = permSet.has("USERS_ROLES:ADMIN");
 
   const [roles, setRoles] = useState<RoleLite[]>([]);
   const [loading, setLoading] = useState(true);
@@ -470,7 +543,7 @@ export default function RolesPage() {
   const [sortBy, setSortBy] = useState<"ROLE" | "TYPE">("ROLE");
   const [sortDir, setSortDir] = useState<"ASC" | "DESC">("ASC");
 
-  // catalog permissions
+  // catalog permissions (lazy)
   const [allPerms, setAllPerms] = useState<Permission[]>([]);
   const [permsLoading, setPermsLoading] = useState(false);
 
@@ -489,12 +562,16 @@ export default function RolesPage() {
   const createNameRef = useRef<HTMLInputElement | null>(null);
   const editNameRef = useRef<HTMLInputElement | null>(null);
 
+  // para ignorar respuestas viejas (navegación rápida / strict mode)
+  const loadReqRef = useRef(0);
+  const didInitLoadRef = useRef(false);
+
   const editReqRef = useRef(0);
 
-  // ✅ loader en el botón editar
+  // loader en el botón editar
   const [editingRoleId, setEditingRoleId] = useState<string | null>(null);
 
-  // ✅ loader en el botón "Nuevo Rol"
+  // loader en el botón "Nuevo Rol"
   const [creatingOpenLoading, setCreatingOpenLoading] = useState(false);
 
   const { askDelete, dialogProps } = useConfirmDelete();
@@ -547,22 +624,30 @@ export default function RolesPage() {
   }, [roles, sortBy, sortDir]);
 
   const loadRoles = useCallback(async () => {
+    const reqId = ++loadReqRef.current;
+
     setErr(null);
     setLoading(true);
+
     try {
-      const data = await listRoles();
-      const list = Array.isArray(data) ? data : (data as any)?.roles ?? [];
+      // ✅ listRoles() ya retorna RoleLite[]
+      const list = await listRoles();
+
+      // si hubo otro load después, ignoro
+      if (loadReqRef.current !== reqId) return;
 
       const uniq = new Map<string, RoleLite>();
       for (const r of list) uniq.set(r.id, r);
       setRoles(Array.from(uniq.values()));
     } catch (e: any) {
+      if (loadReqRef.current !== reqId) return;
       setErr(String(e?.message || "Error cargando roles"));
     } finally {
-      setLoading(false);
+      if (loadReqRef.current === reqId) setLoading(false);
     }
   }, []);
 
+  // ✅ LAZY: solo cargar permisos cuando se necesiten (modal)
   const ensurePermissionsCatalog = useCallback(async () => {
     if (allPerms.length > 0) return allPerms;
 
@@ -576,14 +661,24 @@ export default function RolesPage() {
     }
   }, [allPerms.length, allPerms]);
 
+  // ✅ Anti doble fetch (StrictMode dev): correr solo 1 vez por “entrada” real
   useEffect(() => {
-    if (canView) void loadRoles();
+    if (!canView) return;
+
+    // cuando cambia canView de false->true, permitimos cargar de nuevo
+    if (!didInitLoadRef.current) {
+      didInitLoadRef.current = true;
+      void loadRoles();
+    }
   }, [canView, loadRoles]);
 
+  // si perdés permisos (logout o cambio), resetea guard
   useEffect(() => {
-    if (!canAdmin) return;
-    void ensurePermissionsCatalog();
-  }, [canAdmin, ensurePermissionsCatalog]);
+    if (canView) return;
+    didInitLoadRef.current = false;
+    setRoles([]);
+    setLoading(false);
+  }, [canView]);
 
   function toggleSort(nextBy: "ROLE" | "TYPE") {
     if (sortBy !== nextBy) {
@@ -631,8 +726,8 @@ export default function RolesPage() {
       setCreateSaving(true);
       setErr(null);
       try {
-        const created: any = await createRole(clean);
-        const roleId = created?.id ?? created?.role?.id;
+        const created = await createRole(clean);
+        const roleId = created?.id;
         if (!roleId) throw new Error("No se recibió el ID del rol creado.");
 
         if (selectedPermIds.length > 0) {
@@ -739,6 +834,7 @@ export default function RolesPage() {
         await updateRolePermissions(target.id, selectedPermIds);
 
         setEditOpen(false);
+        setTarget(null);
         await loadRoles();
       } catch (e: any) {
         setErr(String(e?.message || "Error guardando cambios"));
@@ -847,67 +943,18 @@ export default function RolesPage() {
                 </td>
               </tr>
             ) : (
-              sortedRoles.map((r) => {
-                const code = getRoleCode(r);
-                const isOwner = code === "OWNER";
-                const canEditThis = canAdmin && !isOwner;
-                const deleteDisabled = r.isSystem;
-
-                const isEditingThis = editingRoleId === r.id;
-
-                return (
-                  <tr key={r.id} className="border-t border-border">
-                    <td className="px-4 py-3 font-semibold">{prettyRole(r.name)}</td>
-
-                    <td className="hidden sm:table-cell px-4 py-3">
-                      <Badge>{r.isSystem ? "Sistema" : "Personalizado"}</Badge>
-                    </td>
-
-                    <td className="px-4 py-3">
-                      <div className="flex items-center justify-end gap-2">
-                        <button
-                          className={cn(
-                            iconBtnBase,
-                            (!canEditThis || isEditingThis) && disabledCls
-                          )}
-                          type="button"
-                          disabled={!canEditThis || isEditingThis}
-                          onClick={() => (canEditThis ? openEditModal(r) : null)}
-                          title={
-                            isOwner
-                              ? "Propietario no es editable"
-                              : isEditingThis
-                              ? "Cargando..."
-                              : "Editar rol"
-                          }
-                        >
-                          {isEditingThis ? (
-                            <Loader2 className="h-4 w-4 animate-spin" />
-                          ) : (
-                            <Pencil className="h-4 w-4" />
-                          )}
-                        </button>
-
-                        <button
-                          className={cn(iconBtnBase, (deleteDisabled || isEditingThis) && disabledCls)}
-                          type="button"
-                          disabled={deleteDisabled || isEditingThis}
-                          onClick={() => (deleteDisabled || isEditingThis ? null : onDelete(r))}
-                          title={
-                            deleteDisabled
-                              ? "No se puede eliminar un rol del sistema"
-                              : isEditingThis
-                              ? "Cargando..."
-                              : "Eliminar rol"
-                          }
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                );
-              })
+              sortedRoles.map((r) => (
+                <RoleRow
+                  key={r.id}
+                  r={r}
+                  canAdmin={canAdmin}
+                  editingRoleId={editingRoleId}
+                  onOpenEdit={openEditModal}
+                  onDelete={onDelete}
+                  iconBtnBase={iconBtnBase}
+                  disabledCls={disabledCls}
+                />
+              ))
             )}
           </tbody>
         </table>
@@ -943,7 +990,10 @@ export default function RolesPage() {
         saving={editSaving}
         submitLabel="Guardar"
         nameInputRef={editNameRef}
-        onClose={() => setEditOpen(false)}
+        onClose={() => {
+          setEditOpen(false);
+          setTarget(null);
+        }}
         onSubmit={onEditSubmit}
       />
 

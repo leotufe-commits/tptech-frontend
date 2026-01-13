@@ -1,5 +1,5 @@
 // tptech-frontend/src/pages/Users.tsx
-import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { useAuth } from "../context/AuthContext";
 import {
   assignRolesToUser,
@@ -70,25 +70,63 @@ function initialsFrom(label: string) {
   return (a + b).toUpperCase();
 }
 
+/** Normaliza respuesta nueva/legacy */
+function normalizeUsersResponse(resp: any): {
+  users: UserListItem[];
+  total: number;
+  page: number;
+  limit: number;
+} {
+  // backend nuevo: { page, limit, total, users }
+  if (resp && typeof resp === "object" && Array.isArray(resp.users)) {
+    return {
+      users: resp.users,
+      total: Number(resp.total ?? resp.users.length ?? 0),
+      page: Number(resp.page ?? 1),
+      limit: Number(resp.limit ?? resp.users.length ?? 30),
+    };
+  }
+
+  // legacy: { users }
+  if (resp && typeof resp === "object" && Array.isArray(resp.users)) {
+    return { users: resp.users, total: resp.users.length, page: 1, limit: resp.users.length };
+  }
+
+  // ultra legacy: array
+  if (Array.isArray(resp)) {
+    return { users: resp, total: resp.length, page: 1, limit: resp.length };
+  }
+
+  return { users: [], total: 0, page: 1, limit: 30 };
+}
+
 /* =========================
    PAGE
 ========================= */
 export default function UsersPage() {
-  // ✅ AuthContext: no siempre expone "permissions" tipado en el type,
-  // pero sí lo guardás en estado. Hacemos un cast seguro.
   const auth = useAuth() as any;
   const me = auth.user as { id: string } | null;
   const permissions: string[] = auth.permissions ?? [];
 
-  const canView = permissions.includes("USERS_ROLES:VIEW") || permissions.includes("USERS_ROLES:ADMIN");
-  const canEditStatus = permissions.includes("USERS_ROLES:EDIT") || permissions.includes("USERS_ROLES:ADMIN");
+  const canView =
+    permissions.includes("USERS_ROLES:VIEW") || permissions.includes("USERS_ROLES:ADMIN");
+  const canEditStatus =
+    permissions.includes("USERS_ROLES:EDIT") || permissions.includes("USERS_ROLES:ADMIN");
   const canAdmin = permissions.includes("USERS_ROLES:ADMIN");
 
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
 
   const [users, setUsers] = useState<UserListItem[]>([]);
-  const [q, setQ] = useState("");
+  const [qUI, setQUI] = useState(""); // input
+  const [q, setQ] = useState(""); // debounced
+
+  // pagination (server)
+  const [page, setPage] = useState(1);
+  const [limit] = useState(30);
+  const [total, setTotal] = useState(0);
+
+  const totalPages = useMemo(() => Math.max(1, Math.ceil(total / limit)), [total, limit]);
 
   // Roles modal
   const [roles, setRoles] = useState<Role[]>([]);
@@ -118,12 +156,32 @@ export default function UsersPage() {
   const [cRoleIds, setCRoleIds] = useState<string[]>([]);
   const [creating, setCreating] = useState(false);
 
-  async function load() {
+  // debounce search input → q
+  const debounceRef = useRef<number | null>(null);
+  useEffect(() => {
+    if (debounceRef.current) window.clearTimeout(debounceRef.current);
+    debounceRef.current = window.setTimeout(() => {
+      setQ(qUI.trim());
+      setPage(1); // reset página al buscar
+    }, 300);
+    return () => {
+      if (debounceRef.current) window.clearTimeout(debounceRef.current);
+    };
+  }, [qUI]);
+
+  async function load(next?: { q?: string; page?: number }) {
     setErr(null);
     setLoading(true);
     try {
-      const data = await fetchUsers();
-      setUsers(data.users ?? []);
+      const resp = await fetchUsers({
+        q: next?.q ?? q,
+        page: next?.page ?? page,
+        limit,
+      } as any);
+
+      const norm = normalizeUsersResponse(resp);
+      setUsers(norm.users ?? []);
+      setTotal(norm.total ?? 0);
     } catch (e: any) {
       setErr(String(e?.message || "Error cargando usuarios"));
     } finally {
@@ -135,26 +193,13 @@ export default function UsersPage() {
     if (!canView) return;
     void load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [canView]);
-
-  const filtered = useMemo(() => {
-    const s = q.trim().toLowerCase();
-    if (!s) return users;
-    return users.filter((u) => {
-      const rolesStr = (u.roles || []).map((r) => r.name).join(" ").toLowerCase();
-      return (
-        (u.email || "").toLowerCase().includes(s) ||
-        (u.name || "").toLowerCase().includes(s) ||
-        rolesStr.includes(s)
-      );
-    });
-  }, [users, q]);
+  }, [canView, q, page]);
 
   async function ensureRolesLoaded() {
     if (roles.length > 0) return;
     setRolesLoading(true);
     try {
-      const list = await fetchRoles(); // ✅ ya devuelve RoleLite[]
+      const list = await fetchRoles();
       setRoles(list as Role[]);
     } catch (e: any) {
       setErr(String(e?.message || "Error cargando roles"));
@@ -201,7 +246,7 @@ export default function UsersPage() {
       });
 
       setCreateOpen(false);
-      await load();
+      await load({ page: 1 });
     } catch (e: any) {
       setErr(String(e?.message || "Error creando usuario"));
     } finally {
@@ -217,7 +262,6 @@ export default function UsersPage() {
     setTarget(u);
     setSelectedRoleIds((u.roles || []).map((r) => r.id));
     setRolesModalOpen(true);
-
     await ensureRolesLoaded();
   }
 
@@ -270,7 +314,6 @@ export default function UsersPage() {
       let permsList = allPerms;
 
       if (permsList.length === 0) {
-        // ✅ ahora fetchPermissions() devuelve Permission[] siempre
         permsList = await fetchPermissions();
         setAllPerms(permsList);
       }
@@ -330,7 +373,6 @@ export default function UsersPage() {
     try {
       const resp = await updateUserAvatarForUser(target.id, file);
 
-      // refrescar tabla y target (modal)
       await load();
 
       const nextAvatarUrl =
@@ -363,20 +405,23 @@ export default function UsersPage() {
 
   if (!canView) return <div className="p-6">Sin permisos para ver usuarios.</div>;
 
+  const canPrev = page > 1;
+  const canNext = page < totalPages;
+
   return (
     <div className="p-6 space-y-4">
-      <div className="flex items-end justify-between gap-3">
+      <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
         <div>
           <h1 className="text-2xl font-semibold">Usuarios</h1>
           <p className="text-sm text-muted">Gestión de usuarios, roles, overrides y avatar.</p>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex flex-col md:flex-row md:items-center gap-2">
           <input
-            className="tp-input max-w-sm"
-            placeholder="Buscar por email / nombre / rol…"
-            value={q}
-            onChange={(e) => setQ(e.target.value)}
+            className="tp-input md:max-w-sm"
+            placeholder="Buscar por email / nombre…"
+            value={qUI}
+            onChange={(e) => setQUI(e.target.value)}
           />
 
           {canAdmin && (
@@ -411,14 +456,14 @@ export default function UsersPage() {
                   Cargando…
                 </td>
               </tr>
-            ) : filtered.length === 0 ? (
+            ) : users.length === 0 ? (
               <tr>
                 <td className="px-4 py-4" colSpan={4}>
                   Sin resultados.
                 </td>
               </tr>
             ) : (
-              filtered.map((u) => {
+              users.map((u) => {
                 const label = u.name?.trim() || u.email || "Usuario";
                 const initials = initialsFrom(label);
 
@@ -428,11 +473,7 @@ export default function UsersPage() {
                       <div className="flex items-center gap-3">
                         <div className="h-9 w-9 overflow-hidden rounded-full border border-border bg-surface">
                           {u.avatarUrl ? (
-                            <img
-                              src={u.avatarUrl}
-                              alt="Avatar"
-                              className="h-full w-full object-cover"
-                            />
+                            <img src={u.avatarUrl} alt="Avatar" className="h-full w-full object-cover" />
                           ) : (
                             <div className="grid h-full w-full place-items-center text-xs font-bold text-primary">
                               {initials}
@@ -475,18 +516,10 @@ export default function UsersPage() {
 
                       {canAdmin && (
                         <>
-                          <button
-                            className="tp-btn"
-                            onClick={() => openRolesModal(u)}
-                            type="button"
-                          >
+                          <button className="tp-btn" onClick={() => openRolesModal(u)} type="button">
                             Roles
                           </button>
-                          <button
-                            className="tp-btn"
-                            onClick={() => openOverridesModal(u)}
-                            type="button"
-                          >
+                          <button className="tp-btn" onClick={() => openOverridesModal(u)} type="button">
                             Overrides
                           </button>
                         </>
@@ -498,6 +531,26 @@ export default function UsersPage() {
             )}
           </tbody>
         </table>
+
+        <div className="border-t border-border px-4 py-3 flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+          <div className="text-xs text-muted">
+            {total === 0 ? "0 usuarios" : `Mostrando ${(page - 1) * limit + 1}-${Math.min(page * limit, total)} de ${total}`}
+          </div>
+
+          <div className="flex items-center justify-end gap-2">
+            <button className={cn("tp-btn", !canPrev && "opacity-50 cursor-not-allowed")} type="button" disabled={!canPrev} onClick={() => setPage((p) => Math.max(1, p - 1))}>
+              Anterior
+            </button>
+
+            <div className="text-xs text-muted">
+              Página <span className="font-semibold text-text">{page}</span> / {totalPages}
+            </div>
+
+            <button className={cn("tp-btn", !canNext && "opacity-50 cursor-not-allowed")} type="button" disabled={!canNext} onClick={() => setPage((p) => Math.min(totalPages, p + 1))}>
+              Siguiente
+            </button>
+          </div>
+        </div>
       </div>
 
       {/* =========================
@@ -508,20 +561,12 @@ export default function UsersPage() {
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             <div>
               <label className="mb-1 block text-xs text-muted">Email</label>
-              <input
-                className="tp-input"
-                value={cEmail}
-                onChange={(e) => setCEmail(e.target.value)}
-              />
+              <input className="tp-input" value={cEmail} onChange={(e) => setCEmail(e.target.value)} />
             </div>
 
             <div>
               <label className="mb-1 block text-xs text-muted">Nombre (opcional)</label>
-              <input
-                className="tp-input"
-                value={cName}
-                onChange={(e) => setCName(e.target.value)}
-              />
+              <input className="tp-input" value={cName} onChange={(e) => setCName(e.target.value)} />
             </div>
 
             <div>
@@ -553,9 +598,7 @@ export default function UsersPage() {
                             checked={checked}
                             onChange={(e) =>
                               setCRoleIds((prev) =>
-                                e.target.checked
-                                  ? [...prev, r.id]
-                                  : prev.filter((id) => id !== r.id)
+                                e.target.checked ? [...prev, r.id] : prev.filter((id) => id !== r.id)
                               )
                             }
                           />
@@ -566,9 +609,7 @@ export default function UsersPage() {
                   </div>
                 )}
               </div>
-              <p className="mt-2 text-xs text-muted">
-                Si no seleccionás roles, queda sin permisos hasta asignar.
-              </p>
+              <p className="mt-2 text-xs text-muted">Si no seleccionás roles, queda sin permisos hasta asignar.</p>
             </div>
           </div>
 
@@ -586,11 +627,7 @@ export default function UsersPage() {
       {/* =========================
           MODAL ROLES (con avatar admin)
       ========================= */}
-      <Modal
-        open={rolesModalOpen}
-        title={`Roles de ${target?.email || ""}`}
-        onClose={() => setRolesModalOpen(false)}
-      >
+      <Modal open={rolesModalOpen} title={`Roles de ${target?.email || ""}`} onClose={() => setRolesModalOpen(false)}>
         {target && canAdmin && (
           <div className="mb-4 flex items-center justify-between gap-3 rounded-xl border border-border bg-bg p-3">
             <div className="flex items-center gap-3">
@@ -675,11 +712,7 @@ export default function UsersPage() {
       {/* =========================
           MODAL OVERRIDES
       ========================= */}
-      <Modal
-        open={ovModalOpen}
-        title={`Overrides (ALLOW/DENY) • ${target?.email || ""}`}
-        onClose={() => setOvModalOpen(false)}
-      >
+      <Modal open={ovModalOpen} title={`Overrides (ALLOW/DENY) • ${target?.email || ""}`} onClose={() => setOvModalOpen(false)}>
         {ovLoading ? (
           <div>Cargando…</div>
         ) : (
@@ -700,23 +733,14 @@ export default function UsersPage() {
 
                 <div>
                   <label className="mb-1 block text-xs text-muted">Efecto</label>
-                  <select
-                    className="tp-input"
-                    value={effectPick}
-                    onChange={(e) => setEffectPick(e.target.value as "ALLOW" | "DENY")}
-                  >
+                  <select className="tp-input" value={effectPick} onChange={(e) => setEffectPick(e.target.value as any)}>
                     <option value="ALLOW">ALLOW</option>
                     <option value="DENY">DENY</option>
                   </select>
                 </div>
 
                 <div className="flex items-end">
-                  <button
-                    className="tp-btn-primary w-full"
-                    onClick={addOrUpdateOverride}
-                    disabled={!permPick || savingOv}
-                    type="button"
-                  >
+                  <button className="tp-btn-primary w-full" onClick={addOrUpdateOverride} disabled={!permPick || savingOv} type="button">
                     {savingOv ? "Guardando…" : "Agregar / Actualizar"}
                   </button>
                 </div>
@@ -750,12 +774,7 @@ export default function UsersPage() {
                           <Badge>{ov.effect}</Badge>
                         </td>
                         <td className="px-4 py-3 text-right">
-                          <button
-                            className={cn("tp-btn", savingOv && "opacity-60")}
-                            onClick={() => void removeOv(ov.permissionId)}
-                            disabled={savingOv}
-                            type="button"
-                          >
+                          <button className={cn("tp-btn", savingOv && "opacity-60")} onClick={() => void removeOv(ov.permissionId)} disabled={savingOv} type="button">
                             Quitar
                           </button>
                         </td>

@@ -278,8 +278,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setJewelry(data.jewelry ?? null);
         setRoles(data.roles ?? []);
         setPermissions(data.permissions ?? []);
-      } catch {
-        clearSession();
+      } catch (err: any) {
+        /**
+         * ✅ CAMBIO IMPORTANTE (auditoría)
+         * NO desloguear por errores de red / 5xx.
+         * - Si la sesión expira, apiFetch ya ejecuta forceLogout() en 401
+         *   y los listeners multi-tab van a limpiar el estado.
+         * - Acá solo registramos y mantenemos la sesión.
+         */
+        // eslint-disable-next-line no-console
+        console.warn("[Auth] refreshMe falló; se mantiene la sesión:", err);
       } finally {
         setLoading(false);
         refreshPromiseRef.current = null;

@@ -161,29 +161,9 @@ export async function setUserOverride(
  * Eliminar override (uno)
  * DELETE /users/:id/overrides/:permissionId
  */
-export async function removeUserOverride(
-  userId: string,
-  permissionId: string
-): Promise<OkResponse> {
+export async function removeUserOverride(userId: string, permissionId: string): Promise<OkResponse> {
   return apiFetch<OkResponse>(`/users/${userId}/overrides/${permissionId}`, { method: "DELETE" });
 }
-
-/**
- * (Opcional futuro) Setear overrides en lote
- * POST /users/:id/overrides/bulk
- *
- * Backend sugerido:
- * body: { overrides: Array<{ permissionId: string; effect: "ALLOW"|"DENY" | null }> }
- */
-// export async function setUserOverridesBulk(
-//   userId: string,
-//   overrides: Array<{ permissionId: string; effect: OverrideEffect | null }>
-// ): Promise<OkResponse<{ overrides?: Override[] }>> {
-//   return apiFetch(`/users/${userId}/overrides/bulk`, {
-//     method: "POST",
-//     body: { overrides },
-//   });
-// }
 
 /* =========================
    AVATAR (ME) multipart/form-data
@@ -213,11 +193,7 @@ export async function updateUserAvatar(
  * Quitar avatar del usuario logueado
  * DELETE /users/me/avatar
  */
-export async function removeMyAvatar(): Promise<{
-  ok: true;
-  avatarUrl: string | null;
-  user?: UserListItem;
-}> {
+export async function removeMyAvatar(): Promise<{ ok: true; avatarUrl: string | null; user?: UserListItem }> {
   const resp = await apiFetch<UpdateAvatarResponse>("/users/me/avatar", { method: "DELETE" });
   return normalizeAvatarResponse(resp);
 }

@@ -139,6 +139,13 @@ function normalizeJewelryResponse(resp: any) {
   return resp?.jewelry ?? resp;
 }
 
+/** ✅ logs solo en dev */
+function devLog(...args: any[]) {
+  try {
+    if (import.meta.env.DEV) console.log(...args);
+  } catch {}
+}
+
 /* ================== SELECT ================== */
 
 type SelectOption = { value: string; label: string };
@@ -207,16 +214,8 @@ function TpSelect({
   const spaceAbove = (r?.top ?? 0) - viewportPad;
   const openDown = spaceBelow >= 200 || spaceBelow >= spaceAbove;
 
-  const topDown = clamp(
-    (r?.bottom ?? 0) + gap,
-    viewportPad,
-    window.innerHeight - viewportPad - maxH
-  );
-  const topUp = clamp(
-    (r?.top ?? 0) - gap - maxH,
-    viewportPad,
-    window.innerHeight - viewportPad - maxH
-  );
+  const topDown = clamp((r?.bottom ?? 0) + gap, viewportPad, window.innerHeight - viewportPad - maxH);
+  const topUp = clamp((r?.top ?? 0) - gap - maxH, viewportPad, window.innerHeight - viewportPad - maxH);
   const top = openDown ? topDown : topUp;
 
   const menu = open ? (
@@ -230,14 +229,7 @@ function TpSelect({
         ref={menuRef}
         role="listbox"
         aria-label="Selector"
-        style={{
-          position: "fixed",
-          left,
-          top,
-          width,
-          maxHeight: maxH,
-          zIndex: 10001,
-        }}
+        style={{ position: "fixed", left, top, width, maxHeight: maxH, zIndex: 10001 }}
         className="overflow-hidden rounded-xl border border-border bg-card shadow-soft"
         onMouseDown={(e) => e.stopPropagation()}
       >
@@ -301,10 +293,7 @@ function TpSelect({
         title={current?.label ?? placeholder}
       >
         <span className="text-sm">{current?.label ?? placeholder}</span>
-        <span
-          className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-muted"
-          aria-hidden="true"
-        >
+        <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-muted" aria-hidden="true">
           ▾
         </span>
       </button>
@@ -317,14 +306,11 @@ function TpSelect({
 /* ================== COMPONENTE ================== */
 
 export default function PerfilJoyeria() {
-  // ✅ agregamos refresh para actualizar AuthContext (sidebar)
   const { me, loading, error, refresh } = useMe();
   const jewelryFromContext = pickJewelryFromMe(me);
 
-  // Última verdad confirmada por backend (evita flickers)
   const [serverJewelry, setServerJewelry] = useState<any>(null);
 
-  // Draft editable
   const [existing, setExisting] = useState<ExistingBody | null>(null);
   const [company, setCompany] = useState<CompanyBody | null>(null);
 
@@ -342,10 +328,8 @@ export default function PerfilJoyeria() {
   const [logoPreview, setLogoPreview] = useState<string>("");
   const [logoImgLoading, setLogoImgLoading] = useState(false);
 
-  // ✅ Adjuntos: input controlado por ref (evita problemas de click del label)
   const attInputRef = useRef<HTMLInputElement | null>(null);
 
-  // Inicialización / actualización desde contexto
   useEffect(() => {
     if (!jewelryFromContext) return;
 
@@ -427,8 +411,6 @@ export default function PerfilJoyeria() {
       setLogoPreview("");
 
       setMsg("Logo actualizado ✅");
-
-      // ✅ refresca AuthContext para que el Sidebar muestre el logo nuevo
       await refresh();
     } catch (e: any) {
       setMsg(e?.message || "No se pudo subir el logo.");
@@ -451,8 +433,6 @@ export default function PerfilJoyeria() {
       setLogoPreview("");
 
       setMsg("Logo eliminado ✅");
-
-      // ✅ refresca AuthContext
       await refresh();
     } catch (e: any) {
       setMsg(e?.message || "No se pudo eliminar el logo.");
@@ -461,14 +441,42 @@ export default function PerfilJoyeria() {
     }
   }
 
-  async function uploadAttachmentsInstant(files: FileList | null) {
-    if (!files || !existing || !company) return;
+  // ✅ FIX PROFESIONAL:
+  // - Recibe File[] (snapshot) para evitar FileList "live" que se vacía al limpiar el input
+  async function uploadAttachmentsInstant(files: File[]) {
+    if (!files.length || !existing || !company) return;
 
-    const arr = Array.from(files);
-    const filtered = arr.filter((f) => f.size <= 20 * 1024 * 1024);
+    const arr = files;
+
+    // ✅ Diagnóstico (solo dev): evidencia de qué llegó del input
+    devLog("[ATTACH] received count:", arr.length);
+    try {
+      if (import.meta.env.DEV) {
+        console.table(
+          arr.map((f) => ({
+            name: f.name,
+            type: f.type,
+            sizeBytes: f.size,
+            sizeMB: Number((f.size / 1024 / 1024).toFixed(2)),
+          }))
+        );
+      }
+    } catch {}
+
+    const MAX = 20 * 1024 * 1024;
+
+    const rejected = arr.filter((f) => f.size > MAX);
+    const filtered = arr.filter((f) => f.size <= MAX);
 
     if (filtered.length === 0) {
-      setMsg("No se seleccionaron archivos válidos (máx 20MB).");
+      if (rejected.length > 0) {
+        const detail = rejected
+          .map((f) => `${f.name} (${(f.size / 1024 / 1024).toFixed(2)} MB)`)
+          .join(", ");
+        setMsg(`No se pudieron adjuntar los archivos: ${detail}. Máximo permitido: 20 MB por archivo.`);
+      } else {
+        setMsg("No se recibió ningún archivo desde el selector. Volvé a intentar y revisá la consola.");
+      }
       return;
     }
 
@@ -480,6 +488,8 @@ export default function PerfilJoyeria() {
       fd.append("data", JSON.stringify(buildPayload(existing, company)));
       filtered.forEach((f) => fd.append("attachments", f));
 
+      devLog("[ATTACH] uploading:", filtered.map((f) => f.name));
+
       const resp = await apiFetch<any>("/auth/me/jewelry", {
         method: "PUT",
         body: fd as any,
@@ -487,12 +497,14 @@ export default function PerfilJoyeria() {
 
       const updated = normalizeJewelryResponse(resp);
 
-      // ✅ ahora serverJewelry SI tiene attachments
       setServerJewelry(updated);
 
-      setMsg("Adjuntos cargados ✅");
+      setMsg(
+        rejected.length > 0
+          ? `Adjuntos cargados ✅ (Se omitieron: ${rejected.map((f) => f.name).join(", ")} por superar 20 MB).`
+          : "Adjuntos cargados ✅"
+      );
 
-      // ✅ opcional: refresca AuthContext (por si /auth/me usa otra forma)
       await refresh();
     } catch (e: any) {
       setMsg(e?.message || "No se pudieron subir los adjuntos.");
@@ -509,16 +521,10 @@ export default function PerfilJoyeria() {
       await apiFetch(`/auth/me/jewelry/attachments/${id}`, { method: "DELETE" });
 
       setServerJewelry((p: any) =>
-        p
-          ? {
-              ...p,
-              attachments: (p.attachments ?? []).filter((a: any) => a.id !== id),
-            }
-          : p
+        p ? { ...p, attachments: (p.attachments ?? []).filter((a: any) => a.id !== id) } : p
       );
 
       setMsg("Adjunto eliminado ✅");
-
       await refresh();
     } catch (e: any) {
       setMsg(e?.message || "No se pudo eliminar el adjunto.");
@@ -654,10 +660,7 @@ export default function PerfilJoyeria() {
                 {hasLogo ? (
                   <>
                     {(uploadingLogo || logoImgLoading) && (
-                      <div
-                        className="absolute inset-0 grid place-items-center"
-                        style={{ background: "rgba(0,0,0,0.22)" }}
-                      >
+                      <div className="absolute inset-0 grid place-items-center" style={{ background: "rgba(0,0,0,0.22)" }}>
                         <div
                           className="h-7 w-7 rounded-full border-2 border-white/40 border-t-white animate-spin"
                           aria-label="Cargando logo"
@@ -729,11 +732,7 @@ export default function PerfilJoyeria() {
         <div className="mt-6 grid grid-cols-1 gap-8 lg:grid-cols-2">
           <div className="space-y-4">
             <Field label="Razón social">
-              <input
-                className="tp-input"
-                value={company.legalName}
-                onChange={(e) => setCompanyField("legalName", e.target.value)}
-              />
+              <input className="tp-input" value={company.legalName} onChange={(e) => setCompanyField("legalName", e.target.value)} />
             </Field>
 
             <div className="grid grid-cols-1 sm:grid-cols-12 gap-3">
@@ -750,61 +749,37 @@ export default function PerfilJoyeria() {
 
               <div className="sm:col-span-7">
                 <Field label="CUIT">
-                  <input
-                    className="tp-input"
-                    value={company.cuit}
-                    onChange={(e) => setCompanyField("cuit", onlyDigits(e.target.value))}
-                  />
+                  <input className="tp-input" value={company.cuit} onChange={(e) => setCompanyField("cuit", onlyDigits(e.target.value))} />
                 </Field>
               </div>
             </div>
 
             <Field label="Sitio web">
-              <input
-                className="tp-input"
-                value={company.website}
-                onChange={(e) => setCompanyField("website", e.target.value)}
-              />
+              <input className="tp-input" value={company.website} onChange={(e) => setCompanyField("website", e.target.value)} />
             </Field>
           </div>
 
           <div className="space-y-4">
             <Field label="Nombre de Fantasía">
-              <input
-                className="tp-input"
-                value={existing.name}
-                onChange={(e) => setExistingField("name", e.target.value)}
-              />
+              <input className="tp-input" value={existing.name} onChange={(e) => setExistingField("name", e.target.value)} />
             </Field>
 
             <div className="grid grid-cols-1 sm:grid-cols-12 gap-3">
               <div className="sm:col-span-4">
                 <Field label="Prefijo">
-                  <input
-                    className="tp-input"
-                    value={existing.phoneCountry}
-                    onChange={(e) => setExistingField("phoneCountry", e.target.value)}
-                  />
+                  <input className="tp-input" value={existing.phoneCountry} onChange={(e) => setExistingField("phoneCountry", e.target.value)} />
                 </Field>
               </div>
 
               <div className="sm:col-span-8">
                 <Field label="Teléfono">
-                  <input
-                    className="tp-input"
-                    value={existing.phoneNumber}
-                    onChange={(e) => setExistingField("phoneNumber", e.target.value)}
-                  />
+                  <input className="tp-input" value={existing.phoneNumber} onChange={(e) => setExistingField("phoneNumber", e.target.value)} />
                 </Field>
               </div>
             </div>
 
             <Field label="Correo electrónico">
-              <input
-                className="tp-input"
-                value={company.email}
-                onChange={(e) => setCompanyField("email", e.target.value)}
-              />
+              <input className="tp-input" value={company.email} onChange={(e) => setCompanyField("email", e.target.value)} />
             </Field>
           </div>
         </div>
@@ -822,61 +797,37 @@ export default function PerfilJoyeria() {
           <div className="grid grid-cols-1 md:grid-cols-12 gap-4">
             <div className="md:col-span-5">
               <Field label="Calle">
-                <input
-                  className="tp-input"
-                  value={existing.street}
-                  onChange={(e) => setExistingField("street", e.target.value)}
-                />
+                <input className="tp-input" value={existing.street} onChange={(e) => setExistingField("street", e.target.value)} />
               </Field>
             </div>
 
             <div className="md:col-span-2">
               <Field label="Número">
-                <input
-                  className="tp-input"
-                  value={existing.number}
-                  onChange={(e) => setExistingField("number", e.target.value)}
-                />
+                <input className="tp-input" value={existing.number} onChange={(e) => setExistingField("number", e.target.value)} />
               </Field>
             </div>
 
             <div className="md:col-span-5">
               <Field label="Ciudad">
-                <input
-                  className="tp-input"
-                  value={existing.city}
-                  onChange={(e) => setExistingField("city", e.target.value)}
-                />
+                <input className="tp-input" value={existing.city} onChange={(e) => setExistingField("city", e.target.value)} />
               </Field>
             </div>
 
             <div className="md:col-span-4">
               <Field label="Provincia">
-                <input
-                  className="tp-input"
-                  value={existing.province}
-                  onChange={(e) => setExistingField("province", e.target.value)}
-                />
+                <input className="tp-input" value={existing.province} onChange={(e) => setExistingField("province", e.target.value)} />
               </Field>
             </div>
 
             <div className="md:col-span-3">
               <Field label="Código Postal">
-                <input
-                  className="tp-input"
-                  value={existing.postalCode}
-                  onChange={(e) => setExistingField("postalCode", e.target.value)}
-                />
+                <input className="tp-input" value={existing.postalCode} onChange={(e) => setExistingField("postalCode", e.target.value)} />
               </Field>
             </div>
 
             <div className="md:col-span-5">
               <Field label="País">
-                <input
-                  className="tp-input"
-                  value={existing.country}
-                  onChange={(e) => setExistingField("country", e.target.value)}
-                />
+                <input className="tp-input" value={existing.country} onChange={(e) => setExistingField("country", e.target.value)} />
               </Field>
             </div>
           </div>
@@ -884,28 +835,17 @@ export default function PerfilJoyeria() {
 
         {/* NOTAS + ADJUNTOS */}
         <div className="mt-6 grid grid-cols-1 lg:grid-cols-2 gap-6">
-          <div
-            className="rounded-2xl p-4 sm:p-5"
-            style={{ border: "1px solid var(--border)", background: "var(--card)" }}
-          >
+          <div className="rounded-2xl p-4 sm:p-5" style={{ border: "1px solid var(--border)", background: "var(--card)" }}>
             <div className="font-semibold text-sm mb-3 text-text">Notas</div>
-            <textarea
-              className="tp-input min-h-[160px]"
-              value={company.notes}
-              onChange={(e) => setCompanyField("notes", e.target.value)}
-            />
+            <textarea className="tp-input min-h-[160px]" value={company.notes} onChange={(e) => setCompanyField("notes", e.target.value)} />
           </div>
 
-          <div
-            className="rounded-2xl p-4 sm:p-5"
-            style={{ border: "1px solid var(--border)", background: "var(--card)" }}
-          >
+          <div className="rounded-2xl p-4 sm:p-5" style={{ border: "1px solid var(--border)", background: "var(--card)" }}>
             <div className="font-semibold text-sm mb-3 text-text flex items-center justify-between">
               <span>Adjuntos</span>
               {uploadingAttachments && <span className="text-xs text-muted">Subiendo…</span>}
             </div>
 
-            {/* ✅ Click confiable (sin label): botón abre el input */}
             <button
               type="button"
               className="block w-full cursor-pointer"
@@ -930,9 +870,10 @@ export default function PerfilJoyeria() {
               multiple
               hidden
               onChange={(e) => {
-                const list = e.target.files;
+                // ✅ snapshot ANTES de limpiar el input (FileList puede ser "live")
+                const picked = Array.from(e.currentTarget.files ?? []);
                 e.currentTarget.value = "";
-                uploadAttachmentsInstant(list);
+                uploadAttachmentsInstant(picked);
               }}
             />
 
@@ -996,14 +937,8 @@ export default function PerfilJoyeria() {
 
                         <button
                           type="button"
-                          className={cn(
-                            "h-8 w-8 rounded-full grid place-items-center",
-                            "opacity-0 group-hover:opacity-100 transition-opacity"
-                          )}
-                          style={{
-                            background: "var(--card)",
-                            border: "1px solid var(--border)",
-                          }}
+                          className={cn("h-8 w-8 rounded-full grid place-items-center", "opacity-0 group-hover:opacity-100 transition-opacity")}
+                          style={{ background: "var(--card)", border: "1px solid var(--border)" }}
                           title="Eliminar adjunto"
                           aria-label="Eliminar adjunto"
                           disabled={busy}

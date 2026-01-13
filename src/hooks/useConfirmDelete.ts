@@ -1,5 +1,5 @@
 // src/hooks/useConfirmDelete.ts
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "../lib/toast";
 import { mapDeleteError } from "../lib/deleteErrorMapper";
 
@@ -26,37 +26,51 @@ export function useConfirmDelete() {
   const [loading, setLoading] = useState(false);
   const [req, setReq] = useState<DeleteRequest | null>(null);
 
+  // ✅ Ref para evitar closures viejos y reducir dependencias
+  const reqRef = useRef<DeleteRequest | null>(null);
+
+  useEffect(() => {
+    reqRef.current = req;
+  }, [req]);
+
   const close = useCallback(() => {
     if (loading) return;
     setOpen(false);
     setReq(null);
+    reqRef.current = null;
   }, [loading]);
 
   const askDelete = useCallback((request: DeleteRequest) => {
     setReq(request);
+    reqRef.current = request;
     setOpen(true);
   }, []);
 
   const confirm = useCallback(async () => {
-    if (!req) return;
+    const current = reqRef.current;
+    if (!current) return;
 
     try {
       setLoading(true);
-      await req.onDelete();
+      await current.onDelete();
 
       toast({
         variant: "success",
         title: "Eliminado",
         message:
-          req.successMessage ??
-          `${req.entityName}${req.entityLabel ? ` "${req.entityLabel}"` : ""} eliminado correctamente.`,
+          current.successMessage ??
+          `${current.entityName}${
+            current.entityLabel ? ` "${current.entityLabel}"` : ""
+          } eliminado correctamente.`,
       });
 
+      // ✅ cerrar antes de refrescar (UX más rápida)
       setOpen(false);
       setReq(null);
+      reqRef.current = null;
 
-      if (req.onAfterSuccess) {
-        await req.onAfterSuccess();
+      if (current.onAfterSuccess) {
+        await current.onAfterSuccess();
       }
     } catch (err) {
       const mapped = mapDeleteError(err);
@@ -68,7 +82,7 @@ export function useConfirmDelete() {
     } finally {
       setLoading(false);
     }
-  }, [req]);
+  }, []);
 
   const dialogProps = useMemo(() => {
     const label = req?.entityLabel ? `: ${req.entityLabel}` : "";
@@ -85,8 +99,8 @@ export function useConfirmDelete() {
   }, [open, loading, req, close, confirm]);
 
   return {
-    askDelete,      // lo llamás cuando el usuario toca “Eliminar”
-    dialogProps,    // lo pasás al <ConfirmDeleteDialog />
+    askDelete, // lo llamás cuando el usuario toca “Eliminar”
+    dialogProps, // lo pasás al <ConfirmDeleteDialog />
     isDeleteOpen: open,
     isDeleting: loading,
     closeDelete: close,

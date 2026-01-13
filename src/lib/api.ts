@@ -18,6 +18,15 @@ export const LS_AUTH_EVENT_KEY = "tptech_auth_event";
 
 type AuthEvent = { type: "LOGIN" | "LOGOUT"; at: number };
 
+/**
+ * ✅ Dedupe de requests GET/HEAD en vuelo
+ * Evita duplicados (muy común en dev por StrictMode o renders dobles).
+ */
+const inFlight = new Map<string, Promise<any>>();
+
+/** Timeout default (ms) */
+const DEFAULT_TIMEOUT_MS = 25_000;
+
 function emitAuthEvent(ev: AuthEvent) {
   try {
     // legacy: marca logout (para listeners antiguos)
@@ -82,8 +91,26 @@ function joinUrl(base: string, path: string) {
  * - body como objeto/array (lo serializa a JSON)
  * - body como string/FormData/etc (lo manda tal cual)
  */
-export type ApiFetchOptions = Omit<RequestInit, "body"> & {
+export type ApiFetchOptions = Omit<RequestInit, "body" | "signal"> & {
   body?: any;
+
+  /**
+   * ✅ Timeout por request (ms)
+   * - si no se pasa, usa DEFAULT_TIMEOUT_MS
+   * - si querés desactivar, pasá timeoutMs: 0
+   */
+  timeoutMs?: number;
+
+  /**
+   * ✅ Deduplicación (solo aplica a GET/HEAD).
+   * Default: true
+   */
+  dedupe?: boolean;
+
+  /**
+   * ✅ AbortSignal opcional (se combina con timeout)
+   */
+  signal?: AbortSignal;
 };
 
 function isFormData(body: any): body is FormData {
@@ -115,6 +142,55 @@ function isJsonSerializable(body: any) {
   return true;
 }
 
+function mergeSignals(a?: AbortSignal, b?: AbortSignal): AbortSignal | undefined {
+  if (!a) return b;
+  if (!b) return a;
+
+  // ✅ merge básico: aborta si cualquiera aborta
+  const ctrl = new AbortController();
+  const onAbort = () => {
+    try {
+      ctrl.abort();
+    } catch {}
+  };
+
+  if (a.aborted || b.aborted) {
+    onAbort();
+    return ctrl.signal;
+  }
+
+  a.addEventListener("abort", onAbort, { once: true });
+  b.addEventListener("abort", onAbort, { once: true });
+
+  return ctrl.signal;
+}
+
+function makeTimeoutSignal(timeoutMs: number): AbortSignal | undefined {
+  if (!timeoutMs || timeoutMs <= 0) return undefined;
+
+  const ctrl = new AbortController();
+  const t = window.setTimeout(() => {
+    try {
+      ctrl.abort();
+    } catch {}
+  }, timeoutMs);
+
+  // limpiar timer cuando se aborte por cualquier razón
+  ctrl.signal.addEventListener(
+    "abort",
+    () => {
+      window.clearTimeout(t);
+    },
+    { once: true }
+  );
+
+  return ctrl.signal;
+}
+
+function isAbortError(err: any) {
+  return err?.name === "AbortError";
+}
+
 /**
  * apiFetch
  * - default T = any
@@ -124,6 +200,10 @@ function isJsonSerializable(body: any) {
  *
  * ✅ IMPORTANTÍSIMO: GET por defecto va con cache:"no-store"
  * para evitar pantallas con datos viejos al navegar.
+ *
+ * ✅ Performance:
+ * - dedupe GET/HEAD en vuelo (evita duplicados)
+ * - timeout (AbortController)
  */
 export async function apiFetch<T = any>(
   path: string,
@@ -152,7 +232,8 @@ export async function apiFetch<T = any>(
       // ✅ NO setear Content-Type: el browser lo hace (boundary)
     } else if (typeof b === "string") {
       bodyToSend = b;
-      if (!headers.has("Content-Type")) headers.set("Content-Type", "text/plain;charset=UTF-8");
+      if (!headers.has("Content-Type"))
+        headers.set("Content-Type", "text/plain;charset=UTF-8");
     } else if (isBlob(b)) {
       bodyToSend = b;
       // no forzar content-type
@@ -172,47 +253,88 @@ export async function apiFetch<T = any>(
   const cacheOpt: RequestCache | undefined =
     options.cache !== undefined ? options.cache : method === "GET" ? "no-store" : undefined;
 
-  const res = await fetch(joinUrl(API_URL, path), {
-    ...options,
-    method,
-    headers,
-    body: bodyToSend,
-    cache: cacheOpt,
-    credentials: "include", // ✅ prod cookie; local no molesta
-  });
+  const url = joinUrl(API_URL, path);
 
-  // ✅ sesión inválida → logout global (multi-tab)
-  if (res.status === 401) {
-    forceLogout();
-    throw new Error("Sesión expirada");
+  // ✅ timeout + signal
+  const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const timeoutSignal = makeTimeoutSignal(timeoutMs);
+  const signal = mergeSignals(options.signal, timeoutSignal);
+
+  // ✅ dedupe (solo GET/HEAD, y solo si no hay body)
+  const canDedupe =
+    (options.dedupe ?? true) &&
+    (method === "GET" || method === "HEAD") &&
+    bodyToSend === undefined;
+
+  const key = canDedupe ? `${method}:${url}` : "";
+
+  if (canDedupe) {
+    const existing = inFlight.get(key);
+    if (existing) return existing as Promise<T>;
   }
 
-  if (res.status === 204) return undefined as T;
+  const run = (async () => {
+    let res: Response;
 
-  let payload: any = null;
-  const ct = res.headers.get("content-type") || "";
-
-  if (ct.includes("application/json")) {
     try {
-      payload = await res.json();
-    } catch {
-      payload = null;
+      res = await fetch(url, {
+        ...options,
+        method,
+        headers,
+        body: bodyToSend,
+        cache: cacheOpt,
+        credentials: "include", // ✅ prod cookie; local no molesta
+        signal,
+      });
+    } catch (err: any) {
+      // ✅ timeout / abort
+      if (isAbortError(err)) {
+        throw new Error("Tiempo de espera agotado. Revisá tu conexión e intentá de nuevo.");
+      }
+      // ✅ error de red (no hay response)
+      throw new Error("Error de red. Revisá tu conexión e intentá de nuevo.");
     }
-  } else {
-    try {
-      payload = await res.text();
-    } catch {
-      payload = null;
+
+    // ✅ sesión inválida → logout global (multi-tab)
+    if (res.status === 401) {
+      forceLogout();
+      throw new Error("Sesión expirada");
     }
+
+    if (res.status === 204) return undefined as T;
+
+    let payload: any = null;
+    const ct = res.headers.get("content-type") || "";
+
+    if (ct.includes("application/json")) {
+      try {
+        payload = await res.json();
+      } catch {
+        payload = null;
+      }
+    } else {
+      try {
+        payload = await res.text();
+      } catch {
+        payload = null;
+      }
+    }
+
+    if (!res.ok) {
+      const msg =
+        (payload && typeof payload === "object" && payload.message) ||
+        (typeof payload === "string" && payload) ||
+        `HTTP ${res.status}`;
+      throw new Error(msg);
+    }
+
+    return payload as T;
+  })();
+
+  if (canDedupe) {
+    inFlight.set(key, run);
+    run.finally(() => inFlight.delete(key));
   }
 
-  if (!res.ok) {
-    const msg =
-      (payload && typeof payload === "object" && payload.message) ||
-      (typeof payload === "string" && payload) ||
-      `HTTP ${res.status}`;
-    throw new Error(msg);
-  }
-
-  return payload as T;
+  return run;
 }
