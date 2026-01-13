@@ -43,7 +43,11 @@ export type UserDetail = {
 /* =========================
    RESPONSES
 ========================= */
-export type UsersListResponse = { users: UserListItem[] };
+// ✅ soporta backend viejo y nuevo (paginado)
+export type UsersListResponse =
+  | { users: UserListItem[] }
+  | { users: UserListItem[]; total?: number; page?: number; limit?: number };
+
 export type UserDetailResponse = { user: UserDetail };
 
 export type CreateUserBody = {
@@ -92,6 +96,21 @@ function normalizeAvatarResponse(
   };
 }
 
+function buildUsersQuery(params?: { q?: string; page?: number; limit?: number }) {
+  const q = params?.q?.trim();
+  const page = params?.page;
+  const limit = params?.limit;
+
+  const sp = new URLSearchParams();
+
+  if (q) sp.set("q", q);
+  if (typeof page === "number" && Number.isFinite(page) && page > 0) sp.set("page", String(page));
+  if (typeof limit === "number" && Number.isFinite(limit) && limit > 0) sp.set("limit", String(limit));
+
+  const qs = sp.toString();
+  return qs ? `/users?${qs}` : "/users";
+}
+
 /* =========================
    API calls
 ========================= */
@@ -106,10 +125,18 @@ export async function createUser(body: CreateUserBody): Promise<CreateUserRespon
 
 /**
  * Lista de usuarios (tabla)
- * GET /users
+ * GET /users?q=&page=&limit=
+ *
+ * ✅ ahora acepta params opcionales (para Users.tsx)
+ * ✅ mantiene compatibilidad con llamadas sin argumentos
  */
-export async function fetchUsers(): Promise<UsersListResponse> {
-  return apiFetch<UsersListResponse>("/users", { method: "GET" });
+export async function fetchUsers(params?: {
+  q?: string;
+  page?: number;
+  limit?: number;
+}): Promise<UsersListResponse> {
+  const url = buildUsersQuery(params);
+  return apiFetch<UsersListResponse>(url, { method: "GET" });
 }
 
 /**
