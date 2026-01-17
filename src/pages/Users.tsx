@@ -1512,16 +1512,16 @@ export default function UsersPage() {
                           </button>
 
                           <button
-                            className={cn(iconBtnBase, (!canAdmin || (me?.id && u.id === me.id)) && disabledCls)}
-                            type="button"
-                            disabled={!canAdmin || (me?.id && u.id === me.id)}
-                            onClick={() => (canAdmin ? askDelete(u) : null)}
-                            title={
-                              !canAdmin
-                                ? "Sin permisos de administrador"
-                                : me?.id && u.id === me.id
-                                ? "No podés eliminar tu propio usuario"
-                                : "Eliminar usuario"
+                            className={cn(iconBtnBase, (!canAdmin || me?.id === u.id) && disabledCls)}
+  type="button"
+  disabled={!canAdmin || me?.id === u.id}
+  onClick={() => (canAdmin ? askDelete(u) : null)}
+  title={
+    !canAdmin
+      ? "Sin permisos de administrador"
+      : me?.id === u.id
+      ? "No podés eliminar tu propio usuario"
+      : "Eliminar usuario"
                             }
                           >
                             <Trash2 className="h-4 w-4" />
