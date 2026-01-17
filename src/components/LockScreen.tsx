@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+// tptech-frontend/src/components/LockScreen.tsx
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Loader2, Lock, User2 } from "lucide-react";
 import { useAuth, type QuickUser } from "../context/AuthContext";
 
@@ -12,6 +13,15 @@ function maskEmail(email: string) {
   if (!d) return e;
   if (u.length <= 2) return `${u[0] ?? ""}*@${d}`;
   return `${u.slice(0, 2)}***@${d}`;
+}
+
+function getErrorMessage(e: unknown, fallback = "PIN incorrecto.") {
+  if (!e) return fallback;
+  if (typeof e === "string") return e;
+  if (e instanceof Error) return e.message || fallback;
+  const maybe = e as { message?: unknown };
+  if (typeof maybe?.message === "string") return maybe.message;
+  return fallback;
 }
 
 export default function LockScreen() {
@@ -79,9 +89,10 @@ export default function LockScreen() {
         const data = await auth.pinQuickUsers();
 
         if (data.enabled) {
-          setUsers(data.users ?? []);
-          const mine = (data.users ?? []).find((u) => u.id === meId);
-          setSelectedUserId(mine ? mine.id : (data.users?.[0]?.id ?? null));
+          const list = data.users ?? [];
+          setUsers(list);
+          const mine = list.find((u) => u.id === meId);
+          setSelectedUserId(mine ? mine.id : (list[0]?.id ?? null));
         } else {
           setUsers(
             user
@@ -120,51 +131,31 @@ export default function LockScreen() {
       }
     };
 
-    run();
+    void run();
   }, [locked, quickSwitchEnabled, auth, user, meId]);
 
-  useEffect(() => {
-    if (!locked) return;
+  const addDigit = useCallback(
+    (d: string) => {
+      if (submitting) return;
+      setError(null);
+      setPin((p) => (p.length < 4 ? p + d : p));
+    },
+    [submitting]
+  );
 
-    const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Enter") {
-        e.preventDefault();
-        void submit();
-      }
-      if (e.key === "Backspace") {
-        e.preventDefault();
-        setPin((p) => p.slice(0, -1));
-      }
-      if (/^\d$/.test(e.key)) {
-        e.preventDefault();
-        setPin((p) => (p.length < 4 ? p + e.key : p));
-      }
-    };
-
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [locked, selectedUserId, users]);
-
-  const addDigit = (d: string) => {
-    if (submitting) return;
-    setError(null);
-    setPin((p) => (p.length < 4 ? p + d : p));
-  };
-
-  const delDigit = () => {
+  const delDigit = useCallback(() => {
     if (submitting) return;
     setError(null);
     setPin((p) => p.slice(0, -1));
-  };
+  }, [submitting]);
 
-  const clearPin = () => {
+  const clearPin = useCallback(() => {
     if (submitting) return;
     setError(null);
     setPin("");
-  };
+  }, [submitting]);
 
-  const submit = async () => {
+  const submit = useCallback(async () => {
     if (submitting) return;
 
     setError(null);
@@ -188,15 +179,40 @@ export default function LockScreen() {
         return;
       }
 
-      await auth.pinSwitchUser({ targetUserId: targetId, pin }); // ✅ pin (no pin4)
+      // ✅ backend espera pin4
+      await auth.pinSwitchUser({ targetUserId: targetId, pin4: pin });
       setLocked(false);
-    } catch (e: any) {
-      setError(e?.message || "PIN incorrecto.");
+    } catch (e: unknown) {
+      setError(getErrorMessage(e, "PIN incorrecto."));
       setPin("");
     } finally {
       setSubmitting(false);
     }
-  };
+  }, [auth, effectiveSelectedUserId, meId, pin, setLocked, submitting]);
+
+  useEffect(() => {
+    if (!locked) return;
+
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        void submit();
+        return;
+      }
+      if (e.key === "Backspace") {
+        e.preventDefault();
+        delDigit();
+        return;
+      }
+      if (/^\d$/.test(e.key)) {
+        e.preventDefault();
+        addDigit(e.key);
+      }
+    };
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [locked, submit, delDigit, addDigit]);
 
   if (!locked) return null;
 
@@ -263,7 +279,11 @@ export default function LockScreen() {
                           >
                             <div className="h-11 w-11 overflow-hidden rounded-full border border-border bg-card">
                               {u.avatarUrl ? (
-                                <img src={u.avatarUrl} alt="Avatar" className="h-full w-full object-cover" />
+                                <img
+                                  src={u.avatarUrl}
+                                  alt="Avatar"
+                                  className="h-full w-full object-cover"
+                                />
                               ) : (
                                 <div className="grid h-full w-full place-items-center text-sm font-bold text-primary">
                                   {(u.name || u.email || "U").charAt(0).toUpperCase()}
@@ -357,7 +377,7 @@ export default function LockScreen() {
 
                 <button
                   type="button"
-                  onClick={() => delDigit()}
+                  onClick={delDigit}
                   disabled={submitting}
                   className="h-14 rounded-2xl border border-border bg-card text-sm font-semibold text-muted hover:bg-surface2 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-primary/20"
                 >

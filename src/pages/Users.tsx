@@ -1,5 +1,5 @@
 // tptech-frontend/src/pages/Users.tsx
-import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import React, { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import {
   Loader2,
   Pencil,
@@ -61,7 +61,7 @@ function cn(...classes: Array<string | false | null | undefined>) {
   return classes.filter(Boolean).join(" ");
 }
 
-function Badge({ children }: { children: any }) {
+function Badge({ children }: { children: React.ReactNode }) {
   return (
     <span className="inline-flex items-center rounded-full border border-border px-2 py-0.5 text-xs">
       {children}
@@ -76,7 +76,7 @@ function Section({
 }: {
   title: string;
   desc?: string;
-  children: any;
+  children: React.ReactNode;
 }) {
   return (
     <div className="tp-card p-4 w-full">
@@ -101,7 +101,7 @@ function Modal({
 }: {
   open: boolean;
   title: string;
-  children: any;
+  children: React.ReactNode;
   onClose: () => void;
   wide?: boolean;
 }) {
@@ -143,29 +143,37 @@ function initialsFrom(label: string) {
 /* =========================
    Helpers data
 ========================= */
-function normalizeUsersResponse(resp: any) {
-  if (resp && typeof resp === "object" && Array.isArray(resp.users)) {
+function normalizeUsersResponse(resp: unknown) {
+  const r = resp as any;
+  if (r && typeof r === "object" && Array.isArray(r.users)) {
     return {
-      users: resp.users,
-      total: Number(resp.total ?? resp.users.length ?? 0),
-      page: Number(resp.page ?? 1),
-      limit: Number(resp.limit ?? resp.users.length ?? 30),
+      users: r.users,
+      total: Number(r.total ?? r.users.length ?? 0),
+      page: Number(r.page ?? 1),
+      limit: Number(r.limit ?? r.users.length ?? 30),
     };
   }
-  if (Array.isArray(resp))
-    return { users: resp, total: resp.length, page: 1, limit: resp.length };
+  if (Array.isArray(r)) return { users: r, total: r.length, page: 1, limit: r.length };
   return { users: [], total: 0, page: 1, limit: 30 };
 }
 
 function assertImageFile(file: File) {
   if (!file) throw new Error("Seleccioná un archivo");
-  if (!file.type?.startsWith("image/"))
-    throw new Error("El archivo debe ser una imagen");
+  if (!file.type?.startsWith("image/")) throw new Error("El archivo debe ser una imagen");
 
   const MAX = 5 * 1024 * 1024;
-  if (file.size > MAX)
-    throw new Error("La imagen supera el máximo permitido (5MB)");
+  if (file.size > MAX) throw new Error("La imagen supera el máximo permitido (5MB)");
 }
+
+function getErrorMessage(e: unknown, fallback: string) {
+  if (!e) return fallback;
+  if (typeof e === "string") return e;
+  if (e instanceof Error) return e.message || fallback;
+  const maybe = e as { message?: unknown };
+  if (typeof maybe?.message === "string") return maybe.message;
+  return fallback;
+}
+
 /* =========================
    Labels
 ========================= */
@@ -251,9 +259,7 @@ async function uploadUserAttachmentsInstant(userId: string, files: File[]) {
   const rejected = arr.filter((f) => f.size > MAX);
 
   if (filtered.length === 0) {
-    const detail = rejected
-      .map((f) => `${f.name} (${(f.size / 1024 / 1024).toFixed(2)} MB)`)
-      .join(", ");
+    const detail = rejected.map((f) => `${f.name} (${(f.size / 1024 / 1024).toFixed(2)} MB)`).join(", ");
     throw new Error(
       rejected.length
         ? `No se pudieron adjuntar los archivos: ${detail}. Máximo permitido: 20 MB por archivo.`
@@ -401,9 +407,9 @@ async function prefetchUserDetail(userId: string) {
    PAGE
 ========================= */
 export default function UsersPage() {
-  const auth = useAuth() as any;
-  const me = auth.user as { id: string } | null;
-  const permissions: string[] = auth.permissions ?? [];
+  const auth = useAuth();
+  const me = (auth.user ?? null) as { id: string } | null;
+  const permissions: string[] = (auth.permissions ?? []) as string[];
 
   const canView =
     permissions.includes("USERS_ROLES:VIEW") || permissions.includes("USERS_ROLES:ADMIN");
@@ -411,7 +417,7 @@ export default function UsersPage() {
     permissions.includes("USERS_ROLES:EDIT") || permissions.includes("USERS_ROLES:ADMIN");
   const canAdmin = permissions.includes("USERS_ROLES:ADMIN");
 
-  const inv = useInventory() as any;
+  const inv = useInventory();
   const almacenes = (inv?.almacenes ?? []) as Array<{
     id: string;
     nombre: string;
@@ -464,15 +470,15 @@ export default function UsersPage() {
 
   // mapa roles por id para labels consistentes
   const roleById = useMemo(() => {
-    const m = new Map<string, any>();
-    for (const r of roles as any[]) m.set(String(r.id), r);
+    const m = new Map<string, Role>();
+    for (const r of roles) m.set(String(r.id), r);
     return m;
   }, [roles]);
 
   // roleLabel final: prioriza nombre editable (name)
-  function roleLabel(r: any) {
-    const fromCatalog = r?.id ? roleById.get(String(r.id)) : null;
-    const base = fromCatalog ?? r;
+  function roleLabel(r: Partial<Role> & { code?: string }) {
+    const fromCatalog = (r as any)?.id ? roleById.get(String((r as any).id)) : null;
+    const base: any = fromCatalog ?? r;
 
     const name = String(base?.name || "").trim();
     if (name) return name;
@@ -486,10 +492,7 @@ export default function UsersPage() {
 
   // acciones masivas
   const [selectedIds, setSelectedIds] = useState<Record<string, boolean>>({});
-  const selectedCount = useMemo(
-    () => Object.values(selectedIds).filter(Boolean).length,
-    [selectedIds]
-  );
+  const selectedCount = useMemo(() => Object.values(selectedIds).filter(Boolean).length, [selectedIds]);
   const selectedList = useMemo(
     () => Object.entries(selectedIds).filter(([, v]) => v).map(([k]) => k),
     [selectedIds]
@@ -582,19 +585,19 @@ export default function UsersPage() {
     try {
       const resp = await fetchUsers({ q: next?.q ?? q, page: next?.page ?? page, limit } as any);
       const norm = normalizeUsersResponse(resp);
-      setUsers(norm.users ?? []);
-      setTotal(norm.total ?? 0);
+      setUsers((norm.users ?? []) as UserListItem[]);
+      setTotal(Number(norm.total ?? 0));
 
       setSelectedIds((prev) => {
         const keep: Record<string, boolean> = {};
-        const ids = new Set((norm.users ?? []).map((u) => u.id));
+        const ids = new Set((norm.users ?? []).map((u: UserListItem) => u.id));
         for (const [k, v] of Object.entries(prev)) {
           if (v && ids.has(k)) keep[k] = true;
         }
         return keep;
       });
-    } catch (e: any) {
-      setErr(String(e?.message || "Error cargando usuarios"));
+    } catch (e: unknown) {
+      setErr(getErrorMessage(e, "Error cargando usuarios"));
     } finally {
       setLoading(false);
     }
@@ -612,8 +615,8 @@ export default function UsersPage() {
     try {
       const list = await getRolesCached();
       setRoles(list as Role[]);
-    } catch (e: any) {
-      setErr(String(e?.message || "Error cargando roles"));
+    } catch (e: unknown) {
+      setErr(getErrorMessage(e, "Error cargando roles"));
     } finally {
       setRolesLoading(false);
     }
@@ -633,8 +636,8 @@ export default function UsersPage() {
       const list = await getPermsCached();
       setAllPerms(list);
       return list;
-    } catch (e: any) {
-      setErr(String(e?.message || "Error cargando permisos"));
+    } catch (e: unknown) {
+      setErr(getErrorMessage(e, "Error cargando permisos"));
       return [];
     } finally {
       setPermsLoading(false);
@@ -665,6 +668,7 @@ export default function UsersPage() {
     setFEmail("");
     setFName("");
     setFPassword("");
+    setFPin4("");
     setFRoleIds([]);
     setFFavWarehouseId("");
 
@@ -705,19 +709,19 @@ export default function UsersPage() {
     setFRoleIds((d.roles ?? []).map((r) => r.id));
     setFFavWarehouseId(d.favoriteWarehouseId ? String(d.favoriteWarehouseId) : "");
 
-    setFPhoneCountry(d.phoneCountry ?? "");
-    setFPhoneNumber(d.phoneNumber ?? "");
-    setFDocType(d.documentType ?? "");
-    setFDocNumber(d.documentNumber ?? "");
+    setFPhoneCountry((d as any).phoneCountry ?? "");
+    setFPhoneNumber((d as any).phoneNumber ?? "");
+    setFDocType((d as any).documentType ?? "");
+    setFDocNumber((d as any).documentNumber ?? "");
 
-    setFStreet(d.street ?? "");
-    setFNumber(d.number ?? "");
-    setFCity(d.city ?? "");
-    setFProvince(d.province ?? "");
-    setFPostalCode(d.postalCode ?? "");
-    setFCountry(d.country ?? "");
+    setFStreet((d as any).street ?? "");
+    setFNumber((d as any).number ?? "");
+    setFCity((d as any).city ?? "");
+    setFProvince((d as any).province ?? "");
+    setFPostalCode((d as any).postalCode ?? "");
+    setFCountry((d as any).country ?? "");
 
-    setFNotes(d.notes ?? "");
+    setFNotes((d as any).notes ?? "");
 
     setSpecialList(d.permissionOverrides ?? []);
   }
@@ -763,8 +767,8 @@ export default function UsersPage() {
       setSpecialPermPick(perms[0]?.id || "");
       setSpecialEffectPick("ALLOW");
       setTab("DATA");
-    } catch (e: any) {
-      setErr(String(e?.message || "Error cargando usuario"));
+    } catch (e: unknown) {
+      setErr(getErrorMessage(e, "Error cargando usuario"));
       setModalOpen(false);
     } finally {
       setModalLoading(false);
@@ -796,6 +800,13 @@ export default function UsersPage() {
       return;
     }
 
+    // pin simple: solo validar formato (backend se conecta después)
+    if (fPin4 && !/^\d{4}$/.test(fPin4)) {
+      setErr("La clave debe tener exactamente 4 dígitos.");
+      setTab("DATA");
+      return;
+    }
+
     setModalBusy(true);
 
     try {
@@ -805,7 +816,8 @@ export default function UsersPage() {
           name: cleanName,
           password: fPassword.trim() || undefined,
           roleIds: fRoleIds,
-        });
+          // pin4: fPin4 || undefined, // 🔌 cuando conectemos backend
+        } as any);
 
         const createdUserId = (created as any)?.user?.id;
         if (!createdUserId) throw new Error("No se recibió el ID del usuario creado.");
@@ -832,7 +844,7 @@ export default function UsersPage() {
           postalCode: fPostalCode,
           country: fCountry,
           notes: fNotes,
-        });
+        } as any);
 
         if (attachmentsDraft.length) {
           setUploadingAttachments(true);
@@ -868,7 +880,7 @@ export default function UsersPage() {
           postalCode: fPostalCode,
           country: fCountry,
           notes: fNotes,
-        });
+        } as any);
 
         await assignRolesToUser(targetId, fRoleIds);
         await updateFavoriteWarehouseForUser(targetId, fFavWarehouseId ? fFavWarehouseId : null);
@@ -896,12 +908,13 @@ export default function UsersPage() {
 
         setModalOpen(false);
       }
-    } catch (e2: any) {
-      setErr(String(e2?.message || "Error guardando usuario"));
+    } catch (e2: unknown) {
+      setErr(getErrorMessage(e2, "Error guardando usuario"));
     } finally {
       setModalBusy(false);
     }
   }
+
   async function toggleStatus(u: UserListItem) {
     if (!canEditStatus) return;
 
@@ -914,8 +927,8 @@ export default function UsersPage() {
     try {
       await updateUserStatus(u.id, next);
       await load();
-    } catch (e: any) {
-      setErr(String(e?.message || "Error actualizando estado"));
+    } catch (e: unknown) {
+      setErr(getErrorMessage(e, "Error actualizando estado"));
     }
   }
 
@@ -956,8 +969,8 @@ export default function UsersPage() {
       }
       clearSelection();
       await load();
-    } catch (e: any) {
-      setErr(String(e?.message || "Error aplicando acción masiva"));
+    } catch (e: unknown) {
+      setErr(getErrorMessage(e, "Error aplicando acción masiva"));
     } finally {
       setBulkBusy(false);
     }
@@ -977,8 +990,8 @@ export default function UsersPage() {
       clearSelection();
       setBulkConfirmOpen(false);
       await load();
-    } catch (e: any) {
-      setErr(String(e?.message || "Error eliminando usuarios"));
+    } catch (e: unknown) {
+      setErr(getErrorMessage(e, "Error eliminando usuarios"));
     } finally {
       setBulkBusy(false);
     }
@@ -1004,8 +1017,8 @@ export default function UsersPage() {
       setConfirmOpen(false);
       setDeleteTarget(null);
       await load();
-    } catch (e: any) {
-      setErr(String(e?.message || "Error eliminando usuario"));
+    } catch (e: unknown) {
+      setErr(getErrorMessage(e, "Error eliminando usuario"));
     } finally {
       setDeleteBusy(false);
     }
@@ -1019,8 +1032,8 @@ export default function UsersPage() {
       assertImageFile(file);
       await updateUserAvatarForUser(userId, file);
       await load();
-    } catch (e: any) {
-      setErr(String(e?.message || "Error subiendo avatar"));
+    } catch (e: unknown) {
+      setErr(getErrorMessage(e, "Error subiendo avatar"));
     } finally {
       setAvatarQuickBusyId(null);
     }
@@ -1068,8 +1081,8 @@ export default function UsersPage() {
       });
 
       await load();
-    } catch (e: any) {
-      setErr(String(e?.message || "Error subiendo avatar"));
+    } catch (e: unknown) {
+      setErr(getErrorMessage(e, "Error subiendo avatar"));
     } finally {
       setAvatarBusy(false);
     }
@@ -1104,8 +1117,8 @@ export default function UsersPage() {
       if (refreshed) hydrateFromDetail(refreshed);
 
       await load();
-    } catch (e: any) {
-      setErr(String(e?.message || "Error subiendo avatar"));
+    } catch (e: unknown) {
+      setErr(getErrorMessage(e, "Error subiendo avatar"));
     } finally {
       setAvatarBusy(false);
     }
@@ -1125,8 +1138,8 @@ export default function UsersPage() {
       if (refreshed) hydrateFromDetail(refreshed);
 
       await load();
-    } catch (e: any) {
-      setErr(String(e?.message || "Error quitando avatar"));
+    } catch (e: unknown) {
+      setErr(getErrorMessage(e, "Error quitando avatar"));
     } finally {
       setAvatarBusy(false);
     }
@@ -1154,8 +1167,8 @@ export default function UsersPage() {
       const refreshed = await prefetchUserDetail(targetId);
       if (refreshed) hydrateFromDetail(refreshed);
       await load();
-    } catch (e: any) {
-      setErr(String(e?.message || "Error guardando permiso especial"));
+    } catch (e: unknown) {
+      setErr(getErrorMessage(e, "Error guardando permiso especial"));
     } finally {
       setSpecialSaving(false);
     }
@@ -1178,8 +1191,8 @@ export default function UsersPage() {
       const refreshed = await prefetchUserDetail(targetId);
       if (refreshed) hydrateFromDetail(refreshed);
       await load();
-    } catch (e: any) {
-      setErr(String(e?.message || "Error quitando permiso especial"));
+    } catch (e: unknown) {
+      setErr(getErrorMessage(e, "Error quitando permiso especial"));
     } finally {
       setSpecialSaving(false);
     }
@@ -1207,8 +1220,8 @@ export default function UsersPage() {
       if (refreshed) hydrateFromDetail(refreshed);
 
       await load();
-    } catch (e: any) {
-      setErr(String(e?.message || "No se pudieron subir los adjuntos."));
+    } catch (e: unknown) {
+      setErr(getErrorMessage(e, "No se pudieron subir los adjuntos."));
     } finally {
       setUploadingAttachments(false);
     }
@@ -1228,8 +1241,8 @@ export default function UsersPage() {
       if (refreshed) hydrateFromDetail(refreshed);
 
       await load();
-    } catch (e: any) {
-      setErr(String(e?.message || "No se pudo eliminar el adjunto."));
+    } catch (e: unknown) {
+      setErr(getErrorMessage(e, "No se pudo eliminar el adjunto."));
     } finally {
       setDeletingAttId(null);
     }
@@ -1256,6 +1269,7 @@ export default function UsersPage() {
   const someOnPageSelected =
     selectableIdsOnPage.length > 0 && selectableIdsOnPage.some((id) => !!selectedIds[id]);
 
+  // ⬇️ PARTE 3 arranca en el return()
   return (
     <div className="p-4 md:p-6 space-y-4 min-h-0">
       <div className="space-y-2">
@@ -1323,6 +1337,7 @@ export default function UsersPage() {
           </div>
         )}
       </div>
+
       {err && (
         <div className="rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm">
           {err}
@@ -1340,8 +1355,7 @@ export default function UsersPage() {
                     type="button"
                     className={cn(
                       "h-9 w-9 inline-flex items-center justify-center rounded-lg border border-border bg-card hover:bg-surface2",
-                      (loading || selectableIdsOnPage.length === 0) &&
-                        "opacity-50 cursor-not-allowed"
+                      (loading || selectableIdsOnPage.length === 0) && "opacity-50 cursor-not-allowed"
                     )}
                     disabled={loading || selectableIdsOnPage.length === 0}
                     onClick={toggleAllOnPage}
@@ -1382,8 +1396,7 @@ export default function UsersPage() {
                   const busy = avatarQuickBusyId === u.id;
 
                   const isActive = u.status === "ACTIVE";
-                  const canToggleThis =
-                    canEditStatus && !(me?.id && u.id === me.id);
+                  const canToggleThis = canEditStatus && !(me?.id && u.id === me.id);
 
                   const checked = !!selectedIds[u.id];
                   const selectable = isSelectableUserId(u.id);
@@ -1395,18 +1408,13 @@ export default function UsersPage() {
                           type="button"
                           className={cn(
                             "h-9 w-9 inline-flex items-center justify-center rounded-lg border border-border bg-card hover:bg-surface2",
-                            (!selectable || loading) &&
-                              "opacity-50 cursor-not-allowed"
+                            (!selectable || loading) && "opacity-50 cursor-not-allowed"
                           )}
                           disabled={!selectable || loading}
                           onClick={() => toggleOne(u.id)}
                           title={!selectable ? "No disponible" : "Seleccionar"}
                         >
-                          {checked ? (
-                            <CheckSquare className="h-4 w-4" />
-                          ) : (
-                            <Square className="h-4 w-4" />
-                          )}
+                          {checked ? <CheckSquare className="h-4 w-4" /> : <Square className="h-4 w-4" />}
                         </button>
                       </TPTd>
 
@@ -1414,11 +1422,7 @@ export default function UsersPage() {
                         <div className="flex items-center gap-3">
                           <div className="relative h-10 w-10 overflow-hidden rounded-full border border-border bg-surface">
                             {u.avatarUrl ? (
-                              <img
-                                src={u.avatarUrl}
-                                alt="Avatar"
-                                className="h-full w-full object-cover"
-                              />
+                              <img src={u.avatarUrl} alt="Avatar" className="h-full w-full object-cover" />
                             ) : (
                               <div className="grid h-full w-full place-items-center text-xs font-bold text-primary">
                                 {initials}
@@ -1435,50 +1439,33 @@ export default function UsersPage() {
                                 )}
                                 title="Click para cambiar avatar"
                                 onClick={() => {
-                                  (avatarInputRef.current as any)?.setAttribute(
-                                    "data-userid",
-                                    u.id
-                                  );
+                                  avatarInputRef.current?.setAttribute("data-userid", u.id);
                                   avatarInputRef.current?.click();
                                 }}
                               >
                                 <span className="sr-only">Cambiar avatar</span>
                                 <div className="h-full w-full grid place-items-center text-white text-xs">
-                                  {busy ? (
-                                    <Loader2 className="h-4 w-4 animate-spin" />
-                                  ) : (
-                                    "Cambiar"
-                                  )}
+                                  {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : "Cambiar"}
                                 </div>
                               </button>
                             )}
                           </div>
 
                           <div className="min-w-0">
-                            <div className="font-semibold truncate">
-                              {u.name || "Sin nombre"}
-                            </div>
-                            <div className="text-xs text-muted truncate">
-                              {u.email}
-                            </div>
+                            <div className="font-semibold truncate">{u.name || "Sin nombre"}</div>
+                            <div className="text-xs text-muted truncate">{u.email}</div>
                           </div>
                         </div>
                       </TPTd>
 
                       <TPTd>
-                        {u.status === "ACTIVE" ? (
-                          <TPUserStatusBadge status={u.status} />
-                        ) : (
-                          <Badge>Inactivo</Badge>
-                        )}
+                        {u.status === "ACTIVE" ? <TPUserStatusBadge status={u.status} /> : <Badge>Inactivo</Badge>}
                       </TPTd>
 
                       <TPTd>
                         <div className="flex flex-wrap gap-2">
                           {(u.roles || []).length ? (
-                            (u.roles || []).map((r: any) => (
-                              <Badge key={r.id}>{roleLabel(r)}</Badge>
-                            ))
+                            (u.roles || []).map((r) => <Badge key={(r as any).id}>{roleLabel(r as any)}</Badge>)
                           ) : (
                             <span className="text-muted">Sin roles</span>
                           )}
@@ -1487,9 +1474,7 @@ export default function UsersPage() {
 
                       <TPTd>
                         {u.favoriteWarehouseId ? (
-                          <Badge>
-                            ⭐ {favLabel ? favLabel : u.favoriteWarehouseId}
-                          </Badge>
+                          <Badge>⭐ {favLabel ? favLabel : u.favoriteWarehouseId}</Badge>
                         ) : (
                           <span className="text-muted">—</span>
                         )}
@@ -1498,13 +1483,10 @@ export default function UsersPage() {
                       <TPTd className="text-right">
                         <div className="flex items-center justify-end gap-2">
                           <button
-                            className={cn(
-                              iconBtnBase,
-                              !canToggleThis && disabledCls
-                            )}
+                            className={cn(iconBtnBase, !canToggleThis && disabledCls)}
                             type="button"
                             disabled={!canToggleThis}
-                            onClick={() => (canToggleThis ? toggleStatus(u) : null)}
+                            onClick={() => (canToggleThis ? void toggleStatus(u) : null)}
                             title={
                               !canEditStatus
                                 ? "Sin permisos para cambiar estado"
@@ -1515,34 +1497,22 @@ export default function UsersPage() {
                                 : "Activar usuario"
                             }
                           >
-                            {isActive ? (
-                              <ShieldBan className="h-4 w-4" />
-                            ) : (
-                              <ShieldCheck className="h-4 w-4" />
-                            )}
+                            {isActive ? <ShieldBan className="h-4 w-4" /> : <ShieldCheck className="h-4 w-4" />}
                           </button>
 
                           <button
                             className={cn(iconBtnBase, !canAdmin && disabledCls)}
                             type="button"
                             disabled={!canAdmin}
-                            onClick={() => (canAdmin ? openEdit(u) : null)}
+                            onClick={() => (canAdmin ? void openEdit(u) : null)}
                             onMouseEnter={() => void prefetchUserDetail(u.id)}
-                            title={
-                              !canAdmin
-                                ? "Sin permisos de administrador"
-                                : "Editar usuario"
-                            }
+                            title={!canAdmin ? "Sin permisos de administrador" : "Editar usuario"}
                           >
                             <Pencil className="h-4 w-4" />
                           </button>
 
                           <button
-                            className={cn(
-                              iconBtnBase,
-                              (!canAdmin || (me?.id && u.id === me.id)) &&
-                                disabledCls
-                            )}
+                            className={cn(iconBtnBase, (!canAdmin || (me?.id && u.id === me.id)) && disabledCls)}
                             type="button"
                             disabled={!canAdmin || (me?.id && u.id === me.id)}
                             onClick={() => (canAdmin ? askDelete(u) : null)}
@@ -1573,9 +1543,7 @@ export default function UsersPage() {
             onChange={(e) => {
               const f = e.target.files?.[0];
               e.target.value = "";
-              const uid = (avatarInputRef.current as any)?.getAttribute(
-                "data-userid"
-              ) as string | null;
+              const uid = avatarInputRef.current?.getAttribute("data-userid");
               if (f && uid) void quickChangeAvatar(uid, f);
             }}
           />
@@ -1595,16 +1563,11 @@ export default function UsersPage() {
             </button>
 
             <div className="text-xs text-muted">
-              Página{" "}
-              <span className="font-semibold text-text">{page}</span> /{" "}
-              {totalPages}
+              Página <span className="font-semibold text-text">{page}</span> / {totalPages}
             </div>
 
             <button
-              className={cn(
-                "tp-btn",
-                page >= totalPages && "opacity-50 cursor-not-allowed"
-              )}
+              className={cn("tp-btn", page >= totalPages && "opacity-50 cursor-not-allowed")}
               type="button"
               disabled={page >= totalPages}
               onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
@@ -1619,13 +1582,10 @@ export default function UsersPage() {
       <Modal
         open={modalOpen}
         wide
-        title={
-          modalMode === "CREATE"
-            ? "Crear usuario"
-            : `Editar usuario • ${detail?.email ?? ""}`
-        }
+        title={modalMode === "CREATE" ? "Crear usuario" : `Editar usuario • ${detail?.email ?? ""}`}
         onClose={closeModal}
       >
+        {/* ⬇️ PARTE 4 sigue acá */}
         {modalLoading ? (
           <div className="tp-card p-4 text-sm text-muted flex items-center gap-2">
             <Loader2 className="h-4 w-4 animate-spin" />
@@ -1643,23 +1603,16 @@ export default function UsersPage() {
                       className={cn(
                         "h-16 w-16 rounded-2xl grid place-items-center relative overflow-hidden",
                         "focus:outline-none focus:ring-2 focus:ring-[color:var(--primary)]",
-                        (avatarBusy || modalBusy) &&
-                          "opacity-60 cursor-not-allowed"
+                        (avatarBusy || modalBusy) && "opacity-60 cursor-not-allowed"
                       )}
                       style={{
                         border: "1px solid var(--border)",
-                        background:
-                          "color-mix(in oklab, var(--card) 80%, var(--bg))",
+                        background: "color-mix(in oklab, var(--card) 80%, var(--bg))",
                         color: "var(--muted)",
                       }}
-                      title={
-                        detail?.avatarUrl || avatarPreview
-                          ? "Editar avatar"
-                          : "Agregar avatar"
-                      }
+                      title={detail?.avatarUrl || avatarPreview ? "Editar avatar" : "Agregar avatar"}
                       onClick={() => {
-                        if (!avatarBusy && !modalBusy)
-                          avatarInputModalRef.current?.click();
+                        if (!avatarBusy && !modalBusy) avatarInputModalRef.current?.click();
                       }}
                       disabled={avatarBusy || modalBusy}
                     >
@@ -1705,8 +1658,7 @@ export default function UsersPage() {
                       </div>
                     </button>
 
-                    {(avatarPreview ||
-                      (modalMode === "EDIT" && detail?.avatarUrl)) && (
+                    {(avatarPreview || (modalMode === "EDIT" && detail?.avatarUrl)) && (
                       <button
                         type="button"
                         onClick={() => {
@@ -1715,8 +1667,7 @@ export default function UsersPage() {
                           // si hay preview (CREATE o EDIT), descartarlo
                           if (avatarPreview) {
                             setAvatarPreview((prev) => {
-                              if (prev?.startsWith("blob:"))
-                                URL.revokeObjectURL(prev);
+                              if (prev?.startsWith("blob:")) URL.revokeObjectURL(prev);
                               return "";
                             });
                             setAvatarFileDraft(null);
@@ -1724,8 +1675,7 @@ export default function UsersPage() {
                           }
 
                           // si es EDIT y hay avatar guardado, eliminarlo
-                          if (modalMode === "EDIT" && detail?.avatarUrl)
-                            void modalRemoveAvatar();
+                          if (modalMode === "EDIT" && detail?.avatarUrl) void modalRemoveAvatar();
                         }}
                         className={cn(
                           "absolute top-2 right-2 h-6 w-6 rounded-full grid place-items-center",
@@ -1773,8 +1723,7 @@ export default function UsersPage() {
                     type="button"
                     onClick={() => {
                       setAvatarPreview((prev) => {
-                        if (prev?.startsWith("blob:"))
-                          URL.revokeObjectURL(prev);
+                        if (prev?.startsWith("blob:")) URL.revokeObjectURL(prev);
                         return "";
                       });
                       setAvatarFileDraft(null);
@@ -1792,15 +1741,10 @@ export default function UsersPage() {
             {/* TAB DATA */}
             {tab === "DATA" ? (
               <div className="space-y-4">
-                <Section
-                  title="Cuenta"
-                  desc="Email, contraseña inicial y clave de 4 dígitos."
-                >
+                <Section title="Cuenta" desc="Email, contraseña inicial y clave de 4 dígitos.">
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                     <div className="md:col-span-1">
-                      <label className="mb-1 block text-xs text-muted">
-                        Email
-                      </label>
+                      <label className="mb-1 block text-xs text-muted">Email</label>
                       <input
                         className="tp-input"
                         value={fEmail}
@@ -1809,16 +1753,12 @@ export default function UsersPage() {
                         disabled={modalMode === "EDIT"}
                       />
                       {modalMode === "EDIT" ? (
-                        <p className="mt-1 text-[11px] text-muted">
-                          (El email no se edita desde aquí)
-                        </p>
+                        <p className="mt-1 text-[11px] text-muted">(El email no se edita desde aquí)</p>
                       ) : null}
                     </div>
 
                     <div className="md:col-span-1">
-                      <label className="mb-1 block text-xs text-muted">
-                        Contraseña (opcional)
-                      </label>
+                      <label className="mb-1 block text-xs text-muted">Contraseña (opcional)</label>
                       <input
                         className="tp-input"
                         type="password"
@@ -1832,51 +1772,35 @@ export default function UsersPage() {
                       />
                       {modalMode === "CREATE" ? (
                         <p className="mt-1 text-[11px] text-muted">
-                          Si la contraseña está vacía, el usuario queda{" "}
-                          <b>Inactivo</b> (PENDING en backend).
+                          Si la contraseña está vacía, el usuario queda <b>Inactivo</b> (PENDING en backend).
                         </p>
                       ) : (
-                        <p className="mt-1 text-[11px] text-muted">
-                          (Solo se cambia si escribís una nueva)
-                        </p>
+                        <p className="mt-1 text-[11px] text-muted">(Solo se cambia si escribís una nueva)</p>
                       )}
                     </div>
 
                     <div className="md:col-span-1">
-                      <label className="mb-1 block text-xs text-muted">
-                        Clave 4 dígitos
-                      </label>
+                      <label className="mb-1 block text-xs text-muted">Clave 4 dígitos</label>
                       <input
                         className="tp-input"
                         inputMode="numeric"
                         value={fPin4}
                         onChange={(e) => {
-                          // solo números, máx 4
-                          const next = e.target.value
-                            .replace(/\D/g, "")
-                            .slice(0, 4);
+                          const next = e.target.value.replace(/\D/g, "").slice(0, 4);
                           setFPin4(next);
                         }}
                         placeholder="0000"
                         maxLength={4}
                       />
-                      <p className="mt-1 text-[11px] text-muted">
-                        Solo números (4). Luego lo conectamos a backend.
-                      </p>
+                      <p className="mt-1 text-[11px] text-muted">Solo números (4). Luego lo conectamos a backend.</p>
                     </div>
                   </div>
                 </Section>
 
-                <Section
-                  title="Datos personales"
-                  desc="Nombre, documento y dirección (como Empresa)."
-                >
+                <Section title="Datos personales" desc="Nombre, documento y dirección (como Empresa).">
                   <div className="grid grid-cols-1 md:grid-cols-12 gap-3">
-                    {/* Nombre (full width) */}
                     <div className="md:col-span-12">
-                      <label className="mb-1 block text-xs text-muted">
-                        Nombre y apellido *
-                      </label>
+                      <label className="mb-1 block text-xs text-muted">Nombre y apellido *</label>
                       <input
                         className="tp-input"
                         value={fName}
@@ -1885,11 +1809,8 @@ export default function UsersPage() {
                       />
                     </div>
 
-                    {/* Doc + Tel (misma fila) */}
                     <div className="md:col-span-2">
-                      <label className="mb-1 block text-xs text-muted">
-                        Tipo doc.
-                      </label>
+                      <label className="mb-1 block text-xs text-muted">Tipo doc.</label>
                       <input
                         className="tp-input"
                         value={fDocType}
@@ -1899,9 +1820,7 @@ export default function UsersPage() {
                     </div>
 
                     <div className="md:col-span-4">
-                      <label className="mb-1 block text-xs text-muted">
-                        Nro. doc.
-                      </label>
+                      <label className="mb-1 block text-xs text-muted">Nro. doc.</label>
                       <input
                         className="tp-input"
                         value={fDocNumber}
@@ -1911,9 +1830,7 @@ export default function UsersPage() {
                     </div>
 
                     <div className="md:col-span-2">
-                      <label className="mb-1 block text-xs text-muted">
-                        Tel. país
-                      </label>
+                      <label className="mb-1 block text-xs text-muted">Tel. país</label>
                       <input
                         className="tp-input"
                         value={fPhoneCountry}
@@ -1923,9 +1840,7 @@ export default function UsersPage() {
                     </div>
 
                     <div className="md:col-span-4">
-                      <label className="mb-1 block text-xs text-muted">
-                        Teléfono
-                      </label>
+                      <label className="mb-1 block text-xs text-muted">Teléfono</label>
                       <input
                         className="tp-input"
                         value={fPhoneNumber}
@@ -1934,18 +1849,13 @@ export default function UsersPage() {
                       />
                     </div>
 
-                    {/* Dirección */}
                     <div className="md:col-span-12 mt-2">
                       <div className="tp-card p-4">
-                        <div className="text-sm font-semibold mb-3">
-                          Domicilio
-                        </div>
+                        <div className="text-sm font-semibold mb-3">Domicilio</div>
 
                         <div className="grid grid-cols-1 md:grid-cols-12 gap-3">
                           <div className="md:col-span-5">
-                            <label className="mb-1 block text-xs text-muted">
-                              Calle
-                            </label>
+                            <label className="mb-1 block text-xs text-muted">Calle</label>
                             <input
                               className="tp-input"
                               value={fStreet}
@@ -1955,9 +1865,7 @@ export default function UsersPage() {
                           </div>
 
                           <div className="md:col-span-2">
-                            <label className="mb-1 block text-xs text-muted">
-                              Número
-                            </label>
+                            <label className="mb-1 block text-xs text-muted">Número</label>
                             <input
                               className="tp-input"
                               value={fNumber}
@@ -1967,9 +1875,7 @@ export default function UsersPage() {
                           </div>
 
                           <div className="md:col-span-5">
-                            <label className="mb-1 block text-xs text-muted">
-                              Ciudad
-                            </label>
+                            <label className="mb-1 block text-xs text-muted">Ciudad</label>
                             <input
                               className="tp-input"
                               value={fCity}
@@ -1979,9 +1885,7 @@ export default function UsersPage() {
                           </div>
 
                           <div className="md:col-span-4">
-                            <label className="mb-1 block text-xs text-muted">
-                              Provincia
-                            </label>
+                            <label className="mb-1 block text-xs text-muted">Provincia</label>
                             <input
                               className="tp-input"
                               value={fProvince}
@@ -1991,9 +1895,7 @@ export default function UsersPage() {
                           </div>
 
                           <div className="md:col-span-4">
-                            <label className="mb-1 block text-xs text-muted">
-                              Código postal
-                            </label>
+                            <label className="mb-1 block text-xs text-muted">Código postal</label>
                             <input
                               className="tp-input"
                               value={fPostalCode}
@@ -2003,9 +1905,7 @@ export default function UsersPage() {
                           </div>
 
                           <div className="md:col-span-4">
-                            <label className="mb-1 block text-xs text-muted">
-                              País
-                            </label>
+                            <label className="mb-1 block text-xs text-muted">País</label>
                             <input
                               className="tp-input"
                               value={fCountry}
@@ -2021,10 +1921,7 @@ export default function UsersPage() {
 
                 {/* Adjuntos draft */}
                 {attachmentsDraft.length > 0 && (
-                  <Section
-                    title="Adjuntos seleccionados"
-                    desc="Se subirán al guardar (o al crear)."
-                  >
+                  <Section title="Adjuntos seleccionados" desc="Se subirán al guardar (o al crear).">
                     <div className="space-y-2">
                       {attachmentsDraft.map((f, idx) => (
                         <div
@@ -2036,9 +1933,7 @@ export default function UsersPage() {
                               <Paperclip className="h-4 w-4" />
                               {safeFileLabel(f.name)}
                             </div>
-                            <div className="text-xs text-muted">
-                              {formatBytes(f.size)}
-                            </div>
+                            <div className="text-xs text-muted">{formatBytes(f.size)}</div>
                           </div>
 
                           <button
@@ -2066,10 +1961,7 @@ export default function UsersPage() {
                     />
                   </Section>
 
-                  <Section
-                    title="Adjuntos"
-                    desc="Archivos del usuario (PDF, imágenes, etc.)."
-                  >
+                  <Section title="Adjuntos" desc="Archivos del usuario (PDF, imágenes, etc.).">
                     <div className="space-y-3">
                       <button
                         type="button"
@@ -2081,14 +1973,11 @@ export default function UsersPage() {
                           className="min-h-[180px] flex items-center justify-center border border-dashed rounded-2xl"
                           style={{
                             borderColor: "var(--border)",
-                            background:
-                              "color-mix(in oklab, var(--card) 82%, var(--bg))",
+                            background: "color-mix(in oklab, var(--card) 82%, var(--bg))",
                             color: "var(--muted)",
                           }}
                         >
-                          {uploadingAttachments
-                            ? "Subiendo…"
-                            : "Click para agregar archivos +"}
+                          {uploadingAttachments ? "Subiendo…" : "Click para agregar archivos +"}
                         </div>
                       </button>
 
@@ -2098,53 +1987,131 @@ export default function UsersPage() {
                         multiple
                         hidden
                         onChange={(e) => {
-                          const picked = Array.from(
-                            e.currentTarget.files ?? []
-                          );
+                          const picked = Array.from(e.currentTarget.files ?? []);
                           e.currentTarget.value = "";
                           void addAttachments(picked);
                         }}
                       />
 
                       {/* CREATE: mostrar seleccionados (draft) */}
-                      {modalMode === "CREATE" &&
-                        attachmentsDraft.length > 0 && (
-                          <div>
-                            <div className="text-xs text-[color:var(--muted)] mb-2">
-                              Seleccionados
-                            </div>
-                            <div className="space-y-2">
-                              {attachmentsDraft.map((f, idx) => (
+                      {modalMode === "CREATE" && attachmentsDraft.length > 0 && (
+                        <div>
+                          <div className="text-xs text-[color:var(--muted)] mb-2">Seleccionados</div>
+                          <div className="space-y-2">
+                            {attachmentsDraft.map((f, idx) => (
+                              <div
+                                key={`${f.name}-${idx}`}
+                                className="group flex items-center justify-between gap-3 rounded-xl px-3 py-2"
+                                style={{
+                                  border: "1px solid var(--border)",
+                                  background: "color-mix(in oklab, var(--card) 90%, var(--bg))",
+                                }}
+                              >
+                                <div className="flex items-center gap-3 min-w-0">
+                                  <div
+                                    className="h-10 w-10 rounded-lg grid place-items-center border text-xs"
+                                    style={{
+                                      borderColor: "var(--border)",
+                                      color: "var(--muted)",
+                                      background: "color-mix(in oklab, var(--card) 85%, var(--bg))",
+                                    }}
+                                  >
+                                    DOC
+                                  </div>
+
+                                  <div className="min-w-0">
+                                    <div className="text-sm text-text truncate">{safeFileLabel(f.name)}</div>
+                                    <div className="text-xs text-muted flex gap-2">
+                                      <span className="truncate">{formatBytes(f.size)}</span>
+                                    </div>
+                                  </div>
+                                </div>
+
+                                <button
+                                  type="button"
+                                  className={cn(
+                                    "h-8 w-8 rounded-full grid place-items-center",
+                                    "opacity-0 group-hover:opacity-100 transition-opacity"
+                                  )}
+                                  style={{
+                                    background: "var(--card)",
+                                    border: "1px solid var(--border)",
+                                  }}
+                                  title="Quitar adjunto"
+                                  aria-label="Quitar adjunto"
+                                  onClick={() => removeDraftAttachmentByIndex(idx)}
+                                  disabled={modalBusy}
+                                >
+                                  <span className="text-xs">✕</span>
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+
+                          <div className="mt-2 text-xs text-muted">
+                            En “Crear”, los adjuntos se subirán cuando toques <b>Crear</b>.
+                          </div>
+                        </div>
+                      )}
+
+                      {/* EDIT: mostrar guardados (servidor) */}
+                      {modalMode === "EDIT" && savedAttachments.length > 0 && (
+                        <div>
+                          <div className="text-xs text-[color:var(--muted)] mb-2">Guardados</div>
+                          <div className="space-y-2">
+                            {savedAttachments.map((a) => {
+                              const busy = deletingAttId === a.id;
+                              const url = absUrl(a.url || "");
+                              const isImg = String(a.mimeType || "").startsWith("image/");
+
+                              return (
                                 <div
-                                  key={`${f.name}-${idx}`}
+                                  key={a.id}
                                   className="group flex items-center justify-between gap-3 rounded-xl px-3 py-2"
                                   style={{
                                     border: "1px solid var(--border)",
-                                    background:
-                                      "color-mix(in oklab, var(--card) 90%, var(--bg))",
+                                    background: "color-mix(in oklab, var(--card) 90%, var(--bg))",
                                   }}
                                 >
                                   <div className="flex items-center gap-3 min-w-0">
-                                    <div
-                                      className="h-10 w-10 rounded-lg grid place-items-center border text-xs"
-                                      style={{
-                                        borderColor: "var(--border)",
-                                        color: "var(--muted)",
-                                        background:
-                                          "color-mix(in oklab, var(--card) 85%, var(--bg))",
-                                      }}
-                                    >
-                                      DOC
-                                    </div>
+                                    {isImg && url ? (
+                                      <img
+                                        src={url}
+                                        alt={safeFileLabel(a.filename)}
+                                        className="h-10 w-10 rounded-lg object-cover border"
+                                        style={{ borderColor: "var(--border)" }}
+                                        loading="lazy"
+                                      />
+                                    ) : (
+                                      <div
+                                        className="h-10 w-10 rounded-lg grid place-items-center border text-xs"
+                                        style={{
+                                          borderColor: "var(--border)",
+                                          color: "var(--muted)",
+                                          background: "color-mix(in oklab, var(--card) 85%, var(--bg))",
+                                        }}
+                                      >
+                                        DOC
+                                      </div>
+                                    )}
 
                                     <div className="min-w-0">
                                       <div className="text-sm text-text truncate">
-                                        {safeFileLabel(f.name)}
+                                        {safeFileLabel(a.filename)}
                                       </div>
                                       <div className="text-xs text-muted flex gap-2">
-                                        <span className="truncate">
-                                          {formatBytes(f.size)}
-                                        </span>
+                                        <span className="truncate">{formatBytes(a.size)}</span>
+                                        {url && (
+                                          <a
+                                            className="underline underline-offset-2"
+                                            href={url}
+                                            target="_blank"
+                                            rel="noreferrer"
+                                            onClick={(e) => e.stopPropagation()}
+                                          >
+                                            Abrir
+                                          </a>
+                                        )}
                                       </div>
                                     </div>
                                   </div>
@@ -2159,136 +2126,23 @@ export default function UsersPage() {
                                       background: "var(--card)",
                                       border: "1px solid var(--border)",
                                     }}
-                                    title="Quitar adjunto"
-                                    aria-label="Quitar adjunto"
-                                    onClick={() =>
-                                      removeDraftAttachmentByIndex(idx)
-                                    }
-                                    disabled={modalBusy}
+                                    title="Eliminar adjunto"
+                                    aria-label="Eliminar adjunto"
+                                    disabled={busy}
+                                    onClick={() => void removeSavedAttachment(a.id)}
                                   >
-                                    <span className="text-xs">✕</span>
+                                    <span className="text-xs">{busy ? "…" : "✕"}</span>
                                   </button>
                                 </div>
-                              ))}
-                            </div>
-
-                            <div className="mt-2 text-xs text-muted">
-                              En “Crear”, los adjuntos se subirán cuando toques{" "}
-                              <b>Crear</b>.
-                            </div>
+                              );
+                            })}
                           </div>
-                        )}
+                        </div>
+                      )}
 
-                      {/* EDIT: mostrar guardados (servidor) */}
-                      {modalMode === "EDIT" &&
-                        savedAttachments.length > 0 && (
-                          <div>
-                            <div className="text-xs text-[color:var(--muted)] mb-2">
-                              Guardados
-                            </div>
-                            <div className="space-y-2">
-                              {savedAttachments.map((a) => {
-                                const busy = deletingAttId === a.id;
-                                const url = absUrl(a.url || "");
-                                const isImg = String(
-                                  a.mimeType || ""
-                                ).startsWith("image/");
-
-                                return (
-                                  <div
-                                    key={a.id}
-                                    className="group flex items-center justify-between gap-3 rounded-xl px-3 py-2"
-                                    style={{
-                                      border: "1px solid var(--border)",
-                                      background:
-                                        "color-mix(in oklab, var(--card) 90%, var(--bg))",
-                                    }}
-                                  >
-                                    <div className="flex items-center gap-3 min-w-0">
-                                      {isImg && url ? (
-                                        <img
-                                          src={url}
-                                          alt={safeFileLabel(a.filename)}
-                                          className="h-10 w-10 rounded-lg object-cover border"
-                                          style={{
-                                            borderColor: "var(--border)",
-                                          }}
-                                          loading="lazy"
-                                        />
-                                      ) : (
-                                        <div
-                                          className="h-10 w-10 rounded-lg grid place-items-center border text-xs"
-                                          style={{
-                                            borderColor: "var(--border)",
-                                            color: "var(--muted)",
-                                            background:
-                                              "color-mix(in oklab, var(--card) 85%, var(--bg))",
-                                          }}
-                                        >
-                                          DOC
-                                        </div>
-                                      )}
-
-                                      <div className="min-w-0">
-                                        <div className="text-sm text-text truncate">
-                                          {safeFileLabel(a.filename)}
-                                        </div>
-                                        <div className="text-xs text-muted flex gap-2">
-                                          <span className="truncate">
-                                            {formatBytes(a.size)}
-                                          </span>
-                                          {url && (
-                                            <a
-                                              className="underline underline-offset-2"
-                                              href={url}
-                                              target="_blank"
-                                              rel="noreferrer"
-                                              onClick={(e) =>
-                                                e.stopPropagation()
-                                              }
-                                            >
-                                              Abrir
-                                            </a>
-                                          )}
-                                        </div>
-                                      </div>
-                                    </div>
-
-                                    <button
-                                      type="button"
-                                      className={cn(
-                                        "h-8 w-8 rounded-full grid place-items-center",
-                                        "opacity-0 group-hover:opacity-100 transition-opacity"
-                                      )}
-                                      style={{
-                                        background: "var(--card)",
-                                        border: "1px solid var(--border)",
-                                      }}
-                                      title="Eliminar adjunto"
-                                      aria-label="Eliminar adjunto"
-                                      disabled={busy}
-                                      onClick={() =>
-                                        void removeSavedAttachment(a.id)
-                                      }
-                                    >
-                                      <span className="text-xs">
-                                        {busy ? "…" : "✕"}
-                                      </span>
-                                    </button>
-                                  </div>
-                                );
-                              })}
-                            </div>
-                          </div>
-                        )}
-
-                      {modalMode === "EDIT" &&
-                        savedAttachments.length === 0 &&
-                        !uploadingAttachments && (
-                          <div className="text-xs text-muted">
-                            Todavía no hay adjuntos.
-                          </div>
-                        )}
+                      {modalMode === "EDIT" && savedAttachments.length === 0 && !uploadingAttachments && (
+                        <div className="text-xs text-muted">Todavía no hay adjuntos.</div>
+                      )}
                     </div>
                   </Section>
                 </div>
@@ -2298,10 +2152,7 @@ export default function UsersPage() {
             {/* TAB CONFIG */}
             {tab === "CONFIG" ? (
               <div className="w-full space-y-4">
-                <Section
-                  title="Almacén favorito"
-                  desc="Se usará por defecto en operaciones."
-                >
+                <Section title="Almacén favorito" desc="Se usará por defecto en operaciones.">
                   <select
                     className="tp-input"
                     value={fFavWarehouseId}
@@ -2311,8 +2162,7 @@ export default function UsersPage() {
                     <option value="">Sin favorito</option>
 
                     {activeAlmacenes.map((a) => {
-                      const isSelected =
-                        String(fFavWarehouseId) === String(a.id);
+                      const isSelected = String(fFavWarehouseId) === String(a.id);
                       return (
                         <option key={a.id} value={a.id} disabled={isSelected}>
                           {a.nombre} {a.codigo ? `(${a.codigo})` : ""}
@@ -2324,9 +2174,7 @@ export default function UsersPage() {
 
                   <div className="mt-2 text-xs text-muted">
                     {fFavWarehouseId
-                      ? `Seleccionado: ${
-                          warehouseLabelById(fFavWarehouseId) ?? fFavWarehouseId
-                        }`
+                      ? `Seleccionado: ${warehouseLabelById(fFavWarehouseId) ?? fFavWarehouseId}`
                       : "Sin almacén favorito"}
                   </div>
                 </Section>
@@ -2342,25 +2190,22 @@ export default function UsersPage() {
                       <div className="text-sm text-muted">No hay roles.</div>
                     ) : (
                       <div className="grid grid-cols-1 gap-2">
-                        {roles.map((r: any) => {
-                          const checked = fRoleIds.includes(r.id);
+                        {roles.map((r) => {
+                          const checked = fRoleIds.includes((r as any).id);
                           return (
-                            <label
-                              key={r.id}
-                              className="flex items-center gap-2 text-sm"
-                            >
+                            <label key={(r as any).id} className="flex items-center gap-2 text-sm">
                               <input
                                 type="checkbox"
                                 checked={checked}
                                 onChange={(e) =>
                                   setFRoleIds((prev) =>
                                     e.target.checked
-                                      ? [...prev, r.id]
-                                      : prev.filter((id) => id !== r.id)
+                                      ? [...prev, (r as any).id]
+                                      : prev.filter((id) => id !== (r as any).id)
                                   )
                                 }
                               />
-                              {roleLabel(r)}
+                              {roleLabel(r as any)}
                             </label>
                           );
                         })}
@@ -2372,16 +2217,11 @@ export default function UsersPage() {
                   </p>
                 </Section>
 
-                <Section
-                  title="Permisos especiales"
-                  desc="Opcional: Permitir/Denegar por permiso."
-                >
+                <Section title="Permisos especiales" desc="Opcional: Permitir/Denegar por permiso.">
                   <div className="space-y-3">
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
                       <div className="md:col-span-2">
-                        <label className="mb-1 block text-xs text-muted">
-                          Permiso
-                        </label>
+                        <label className="mb-1 block text-xs text-muted">Permiso</label>
                         <select
                           className="tp-input"
                           value={specialPermPick}
@@ -2390,15 +2230,9 @@ export default function UsersPage() {
                         >
                           <option value="">Seleccionar…</option>
                           {allPerms.map((p) => {
-                            const alreadyAdded = specialList.some(
-                              (x) => x.permissionId === p.id
-                            );
+                            const alreadyAdded = specialList.some((x) => x.permissionId === p.id);
                             return (
-                              <option
-                                key={p.id}
-                                value={p.id}
-                                disabled={alreadyAdded}
-                              >
+                              <option key={p.id} value={p.id} disabled={alreadyAdded}>
                                 {permLabelByModuleAction(p.module, p.action)}
                                 {alreadyAdded ? " (ya agregado)" : ""}
                               </option>
@@ -2408,15 +2242,11 @@ export default function UsersPage() {
                       </div>
 
                       <div>
-                        <label className="mb-1 block text-xs text-muted">
-                          Acción
-                        </label>
+                        <label className="mb-1 block text-xs text-muted">Acción</label>
                         <select
                           className="tp-input"
                           value={specialEffectPick}
-                          onChange={(e) =>
-                            setSpecialEffectPick(e.target.value as any)
-                          }
+                          onChange={(e) => setSpecialEffectPick(e.target.value as any)}
                         >
                           <option value="ALLOW">Permitir</option>
                           <option value="DENY">Denegar</option>
@@ -2437,8 +2267,7 @@ export default function UsersPage() {
                         </button>
 
                         <p className="mt-2 text-xs text-muted">
-                          * Denegar pisa Permitir y pisa permisos heredados por
-                          roles.
+                          * Denegar pisa Permitir y pisa permisos heredados por roles.
                         </p>
                       </div>
                     </div>
@@ -2456,22 +2285,14 @@ export default function UsersPage() {
                         <tbody>
                           {specialListSorted.length === 0 ? (
                             <tr>
-                              <td
-                                className="px-3 py-3 text-muted"
-                                colSpan={3}
-                              >
+                              <td className="px-3 py-3 text-muted" colSpan={3}>
                                 Sin permisos especiales.
                               </td>
                             </tr>
                           ) : (
                             specialListSorted.map((ov) => (
-                              <tr
-                                key={ov.permissionId}
-                                className="border-t border-border"
-                              >
-                                <td className="px-3 py-2">
-                                  {labelPerm(ov.permissionId)}
-                                </td>
+                              <tr key={ov.permissionId} className="border-t border-border">
+                                <td className="px-3 py-2">{labelPerm(ov.permissionId)}</td>
 
                                 <td className="px-3 py-2">
                                   <span
@@ -2488,15 +2309,10 @@ export default function UsersPage() {
 
                                 <td className="px-3 py-2 text-right">
                                   <button
-                                    className={cn(
-                                      "tp-btn",
-                                      specialSaving && "opacity-60"
-                                    )}
+                                    className={cn("tp-btn", specialSaving && "opacity-60")}
                                     type="button"
                                     disabled={specialSaving}
-                                    onClick={() =>
-                                      void removeSpecial(ov.permissionId)
-                                    }
+                                    onClick={() => void removeSpecial(ov.permissionId)}
                                   >
                                     Quitar
                                   </button>
@@ -2526,11 +2342,7 @@ export default function UsersPage() {
                 type="submit"
                 disabled={modalBusy}
               >
-                {modalBusy
-                  ? "Guardando…"
-                  : modalMode === "CREATE"
-                  ? "Crear"
-                  : "Guardar"}
+                {modalBusy ? "Guardando…" : modalMode === "CREATE" ? "Crear" : "Guardar"}
               </button>
             </div>
           </form>
