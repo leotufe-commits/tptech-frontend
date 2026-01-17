@@ -6,10 +6,8 @@ const RAW_API_URL =
 // normaliza: sin slash final
 const API_URL = RAW_API_URL.replace(/\/+$/, "");
 
-// ✅ legacy (si ya venías guardando token ahí)
+// ✅ legacy keys (por si en algún momento guardaste tokens)
 export const LS_TOKEN_KEY = "tptech_token";
-
-// ✅ NUEVO: token para DEV (Bearer) en sessionStorage (más seguro que localStorage)
 export const SS_TOKEN_KEY = "tptech_access_token";
 
 // ✅ multi-tab events
@@ -29,42 +27,22 @@ const DEFAULT_TIMEOUT_MS = 25_000;
 
 function emitAuthEvent(ev: AuthEvent) {
   try {
-    // legacy: marca logout (para listeners antiguos)
     if (ev.type === "LOGOUT") localStorage.setItem(LS_LOGOUT_KEY, String(ev.at));
-
-    // evento unificado
     localStorage.setItem(LS_AUTH_EVENT_KEY, JSON.stringify(ev));
 
-    // BroadcastChannel (si existe)
     if ("BroadcastChannel" in window) {
       const bc = new BroadcastChannel("tptech_auth");
       bc.postMessage(ev);
       bc.close();
     }
   } catch {
-    // si storage está bloqueado, no rompemos la app
+    // si storage está bloqueado, no rompemos
   }
 }
 
-function getToken(): string | null {
-  // 1) DEV: sessionStorage
-  try {
-    const t = sessionStorage.getItem(SS_TOKEN_KEY);
-    if (t) return t;
-  } catch {}
-
-  // 2) legacy: localStorage
-  try {
-    const t = localStorage.getItem(LS_TOKEN_KEY);
-    if (t) return t;
-  } catch {}
-
-  return null;
-}
-
 /**
- * Limpia tokens y emite evento LOGOUT global (multi-tab).
- * OJO: si desde AuthContext también emitís evento, vas a duplicar.
+ * Limpia tokens legacy (si existieran) y emite evento LOGOUT global (multi-tab).
+ * ✅ Importante: aunque el backend use cookie, esto ayuda a limpiar estados viejos.
  */
 export function forceLogout() {
   try {
@@ -79,9 +57,7 @@ export function forceLogout() {
 }
 
 function joinUrl(base: string, path: string) {
-  // si ya viene absoluta, la dejamos
   if (/^https?:\/\//i.test(path)) return path;
-
   const p = path.startsWith("/") ? path : `/${path}`;
   return `${base}${p}`;
 }
@@ -139,6 +115,7 @@ function isJsonSerializable(body: any) {
 
   if (isFormData(body) || isURLSearchParams(body) || isBlob(body) || isArrayBuffer(body))
     return false;
+
   return true;
 }
 
@@ -146,7 +123,6 @@ function mergeSignals(a?: AbortSignal, b?: AbortSignal): AbortSignal | undefined
   if (!a) return b;
   if (!b) return a;
 
-  // ✅ merge básico: aborta si cualquiera aborta
   const ctrl = new AbortController();
   const onAbort = () => {
     try {
@@ -175,7 +151,6 @@ function makeTimeoutSignal(timeoutMs: number): AbortSignal | undefined {
     } catch {}
   }, timeoutMs);
 
-  // limpiar timer cuando se aborte por cualquier razón
   ctrl.signal.addEventListener(
     "abort",
     () => {
@@ -193,10 +168,11 @@ function isAbortError(err: any) {
 
 /**
  * apiFetch
- * - default T = any
+ * - ✅ Auth por COOKIE httpOnly (credentials: "include")
+ * - ❌ NO agrega Authorization Bearer
  * - si options.body es objeto/array -> JSON.stringify
  * - si 401 -> forceLogout (multi-tab) + throw
- * - soporta FormData (avatar) sin setear Content-Type
+ * - soporta FormData (avatar/logo/adjuntos) sin setear Content-Type
  *
  * ✅ IMPORTANTÍSIMO: GET por defecto va con cache:"no-store"
  * para evitar pantallas con datos viejos al navegar.
@@ -209,14 +185,7 @@ export async function apiFetch<T = any>(
   path: string,
   options: ApiFetchOptions = {}
 ): Promise<T> {
-  const token = getToken();
-
   const headers = new Headers(options.headers as any);
-
-  // ✅ Bearer token (si no está ya seteado)
-  if (token && !headers.has("Authorization")) {
-    headers.set("Authorization", `Bearer ${token}`);
-  }
 
   // ⚠️ GET/HEAD no deberían llevar body
   const method = String(options.method || "GET").toUpperCase();
@@ -236,22 +205,24 @@ export async function apiFetch<T = any>(
         headers.set("Content-Type", "text/plain;charset=UTF-8");
     } else if (isBlob(b)) {
       bodyToSend = b;
-      // no forzar content-type
     } else if (isArrayBuffer(b)) {
       bodyToSend = b as any;
-      // no forzar content-type
     } else if (isJsonSerializable(b)) {
       bodyToSend = JSON.stringify(b);
-      if (!headers.has("Content-Type")) headers.set("Content-Type", "application/json");
+      if (!headers.has("Content-Type"))
+        headers.set("Content-Type", "application/json");
     } else {
-      // fallback: mandarlo tal cual, PERO sin inventar content-type
       bodyToSend = b as any;
     }
   }
 
   // ✅ Evitar datos viejos al navegar: GET sin cache por defecto
   const cacheOpt: RequestCache | undefined =
-    options.cache !== undefined ? options.cache : method === "GET" ? "no-store" : undefined;
+    options.cache !== undefined
+      ? options.cache
+      : method === "GET"
+        ? "no-store"
+        : undefined;
 
   const url = joinUrl(API_URL, path);
 
@@ -283,15 +254,13 @@ export async function apiFetch<T = any>(
         headers,
         body: bodyToSend,
         cache: cacheOpt,
-        credentials: "include", // ✅ prod cookie; local no molesta
+        credentials: "include", // ✅ clave: manda cookie httpOnly (tptech_session)
         signal,
       });
     } catch (err: any) {
-      // ✅ timeout / abort
       if (isAbortError(err)) {
         throw new Error("Tiempo de espera agotado. Revisá tu conexión e intentá de nuevo.");
       }
-      // ✅ error de red (no hay response)
       throw new Error("Error de red. Revisá tu conexión e intentá de nuevo.");
     }
 

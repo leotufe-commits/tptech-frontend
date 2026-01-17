@@ -29,16 +29,28 @@ import Roles from "./pages/Roles";
 
 import ProtectedRoute from "./components/ProtectedRoute";
 
+/**
+ * ✅ IMPORTANTE:
+ * Tu backend autentica por COOKIE httpOnly (credentials: "include").
+ * Por eso NO podemos usar `token` como “estoy logueado”.
+ * Usamos `user` (si existe, hay sesión).
+ */
+
 function IndexRedirect() {
-  const { token, loading } = useAuth();
+  const { user, loading } = useAuth();
   if (loading) return null;
-  return token ? <Navigate to="/dashboard" replace /> : <Navigate to="/login" replace />;
+
+  const isAuthed = !!user;
+  return isAuthed ? <Navigate to="/dashboard" replace /> : <Navigate to="/login" replace />;
 }
 
 function PublicOnly({ children }: { children: React.ReactNode }) {
-  const { token, loading } = useAuth();
+  const { user, loading } = useAuth();
   if (loading) return null;
-  if (token) return <Navigate to="/dashboard" replace />;
+
+  const isAuthed = !!user;
+  if (isAuthed) return <Navigate to="/dashboard" replace />;
+
   return <>{children}</>;
 }
 
@@ -84,7 +96,6 @@ const router = createBrowserRouter([
           { path: "divisas", element: <Divisas /> },
 
           // ===== ARTÍCULOS (nuevo grupo de menú) =====
-          // Reutilizamos tu página actual de InventarioArticulos
           { path: "articulos/articulos", element: <InventarioArticulos /> },
           { path: "articulos/compuestos", element: <Placeholder title="Artículos compuestos" /> },
           { path: "articulos/grupos", element: <Placeholder title="Grupos de artículos" /> },
@@ -120,7 +131,6 @@ const router = createBrowserRouter([
           { path: "compras/ordenes", element: <Navigate to="/compras/ordenes-compra" replace /> },
 
           // ===== FINANZAS =====
-          // Si después querés separar Finanzas de Configuración, lo armamos.
           { path: "finanzas", element: <Placeholder title="Finanzas" /> },
 
           // ===== CONFIGURACIÓN =====

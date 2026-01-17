@@ -1,9 +1,27 @@
 // tptech-frontend/src/pages/Users.tsx
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import {
+  Loader2,
+  Pencil,
+  Trash2,
+  ShieldBan,
+  ShieldCheck,
+  ImageUp,
+  ImageOff,
+  X,
+  Paperclip,
+  CheckSquare,
+  Square,
+} from "lucide-react";
+
+import { apiFetch } from "../lib/api";
 import { useAuth } from "../context/AuthContext";
+import { useInventory } from "../context/InventoryContext";
+
 import {
   assignRolesToUser,
   createUser,
+  deleteUser,
   fetchUser,
   fetchUsers,
   removeUserOverride,
@@ -11,16 +29,38 @@ import {
   updateUserStatus,
   updateUserAvatarForUser,
   removeAvatarForUser,
+  updateFavoriteWarehouseForUser,
+  updateUserProfile,
   type Role,
   type UserListItem,
   type Override,
+  type UserDetail,
+  type OverrideEffect,
+  type UserAttachment,
 } from "../services/users";
+
 import { fetchRoles } from "../services/roles";
 import { fetchPermissions, type Permission } from "../services/permissions";
+
+import {
+  TPTableWrap,
+  TPTableEl,
+  TPThead,
+  TPTbody,
+  TPTr,
+  TPTh,
+  TPTd,
+  TPEmptyRow,
+} from "../components/ui/TPTable";
+import { TPUserStatusBadge } from "../components/ui/TPBadges";
 
 /* =========================
    UI helpers
 ========================= */
+function cn(...classes: Array<string | false | null | undefined>) {
+  return classes.filter(Boolean).join(" ");
+}
+
 function Badge({ children }: { children: any }) {
   return (
     <span className="inline-flex items-center rounded-full border border-border px-2 py-0.5 text-xs">
@@ -29,36 +69,66 @@ function Badge({ children }: { children: any }) {
   );
 }
 
+function Section({
+  title,
+  desc,
+  children,
+}: {
+  title: string;
+  desc?: string;
+  children: any;
+}) {
+  return (
+    <div className="tp-card p-4 w-full">
+      <div className="mb-3">
+        <div className="text-sm font-semibold">{title}</div>
+        {desc ? <div className="text-xs text-muted mt-0.5">{desc}</div> : null}
+      </div>
+      {children}
+    </div>
+  );
+}
+
+/* =========================
+   Modal (scroll)
+========================= */
 function Modal({
   open,
   title,
   children,
   onClose,
+  wide,
 }: {
   open: boolean;
   title: string;
   children: any;
   onClose: () => void;
+  wide?: boolean;
 }) {
   if (!open) return null;
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center px-4">
       <div className="absolute inset-0 bg-black/40" onClick={onClose} />
-      <div className="relative w-full max-w-3xl rounded-2xl border border-border bg-card p-6 shadow-soft">
-        <div className="flex items-center justify-between gap-3">
+
+      <div
+        className={cn(
+          "relative w-full rounded-2xl border border-border bg-card shadow-soft",
+          wide ? "max-w-6xl" : "max-w-4xl",
+          "max-h-[85vh] flex flex-col"
+        )}
+      >
+        <div className="p-6 pb-4 border-b border-border flex items-center justify-between gap-3">
           <h2 className="text-lg font-semibold">{title}</h2>
           <button className="tp-btn" onClick={onClose} type="button">
             Cerrar
           </button>
         </div>
-        <div className="mt-4">{children}</div>
+
+        <div className="p-6 pt-4 overflow-y-auto tp-scroll">{children}</div>
       </div>
     </div>
   );
-}
-
-function cn(...classes: Array<string | false | null | undefined>) {
-  return classes.filter(Boolean).join(" ");
 }
 
 function initialsFrom(label: string) {
@@ -70,14 +140,10 @@ function initialsFrom(label: string) {
   return (a + b).toUpperCase();
 }
 
-/** Normaliza respuesta nueva/legacy */
-function normalizeUsersResponse(resp: any): {
-  users: UserListItem[];
-  total: number;
-  page: number;
-  limit: number;
-} {
-  // backend nuevo: { page, limit, total, users }
+/* =========================
+   Helpers data
+========================= */
+function normalizeUsersResponse(resp: any) {
   if (resp && typeof resp === "object" && Array.isArray(resp.users)) {
     return {
       users: resp.users,
@@ -86,20 +152,251 @@ function normalizeUsersResponse(resp: any): {
       limit: Number(resp.limit ?? resp.users.length ?? 30),
     };
   }
-
-  // legacy: { users }
-  if (resp && typeof resp === "object" && Array.isArray(resp.users)) {
-    return { users: resp.users, total: resp.users.length, page: 1, limit: resp.users.length };
-  }
-
-  // ultra legacy: array
-  if (Array.isArray(resp)) {
+  if (Array.isArray(resp))
     return { users: resp, total: resp.length, page: 1, limit: resp.length };
-  }
-
   return { users: [], total: 0, page: 1, limit: 30 };
 }
 
+function assertImageFile(file: File) {
+  if (!file) throw new Error("Seleccioná un archivo");
+  if (!file.type?.startsWith("image/"))
+    throw new Error("El archivo debe ser una imagen");
+
+  const MAX = 5 * 1024 * 1024;
+  if (file.size > MAX)
+    throw new Error("La imagen supera el máximo permitido (5MB)");
+}
+/* =========================
+   Labels
+========================= */
+const ROLE_LABEL: Record<string, string> = {
+  OWNER: "Propietario",
+  ADMIN: "Administrador",
+  MANAGER: "Encargado",
+  STAFF: "Empleado",
+};
+
+const MODULE_LABEL: Record<string, string> = {
+  USERS_ROLES: "Usuarios y roles",
+  INVENTORY: "Inventario",
+  MOVEMENTS: "Movimientos",
+  CLIENTS: "Clientes",
+  SALES: "Ventas",
+  SUPPLIERS: "Proveedores",
+  PURCHASES: "Compras",
+  CURRENCIES: "Monedas",
+  COMPANY_SETTINGS: "Configuración",
+  REPORTS: "Reportes",
+  WAREHOUSES: "Almacenes",
+  PROFILE: "Perfil",
+};
+
+const ACTION_LABEL: Record<string, string> = {
+  VIEW: "Ver",
+  CREATE: "Crear",
+  EDIT: "Editar",
+  DELETE: "Eliminar",
+  EXPORT: "Exportar",
+  ADMIN: "Administrar",
+};
+
+function permLabelByModuleAction(module?: string, action?: string) {
+  const m = String(module || "");
+  const a = String(action || "");
+  const mLabel = MODULE_LABEL[m] ?? m;
+  const aLabel = ACTION_LABEL[a] ?? a;
+  return `${mLabel} • ${aLabel}`;
+}
+
+function effectLabel(e: OverrideEffect) {
+  return e === "ALLOW" ? "Permitir" : "Denegar";
+}
+
+/* =========================
+   Adjuntos helpers
+========================= */
+function formatBytes(bytes: number) {
+  if (!Number.isFinite(bytes)) return "";
+  const units = ["B", "KB", "MB", "GB"];
+  let i = 0;
+  let n = bytes;
+  while (n >= 1024 && i < units.length - 1) {
+    n /= 1024;
+    i++;
+  }
+  return `${n.toFixed(i === 0 ? 0 : 1)} ${units[i]}`;
+}
+
+function safeFileLabel(name: string) {
+  return String(name || "").trim() || "Archivo";
+}
+
+function absUrl(u: string) {
+  const raw = String(u || "").trim();
+  if (!raw) return "";
+  if (/^https?:\/\//i.test(raw)) return raw;
+
+  const base = (import.meta.env.VITE_API_URL as string) || "http://localhost:3001";
+  const API = base.replace(/\/+$/, "");
+  const p = raw.startsWith("/") ? raw : `/${raw}`;
+  return `${API}${p}`;
+}
+
+async function uploadUserAttachmentsInstant(userId: string, files: File[]) {
+  const arr = files ?? [];
+  if (!userId || arr.length === 0) return;
+
+  const MAX = 20 * 1024 * 1024; // 20MB por archivo
+  const filtered = arr.filter((f) => f.size <= MAX);
+  const rejected = arr.filter((f) => f.size > MAX);
+
+  if (filtered.length === 0) {
+    const detail = rejected
+      .map((f) => `${f.name} (${(f.size / 1024 / 1024).toFixed(2)} MB)`)
+      .join(", ");
+    throw new Error(
+      rejected.length
+        ? `No se pudieron adjuntar los archivos: ${detail}. Máximo permitido: 20 MB por archivo.`
+        : "No se recibió ningún archivo."
+    );
+  }
+
+  const fd = new FormData();
+  filtered.forEach((f) => fd.append("attachments", f));
+
+  await apiFetch(`/users/${userId}/attachments`, { method: "PUT", body: fd as any });
+
+  return { omitted: rejected.map((x) => x.name) };
+}
+
+async function deleteUserAttachmentInstant(userId: string, attachmentId: string) {
+  if (!userId || !attachmentId) return;
+  await apiFetch(`/users/${userId}/attachments/${attachmentId}`, { method: "DELETE" });
+}
+
+/* =========================
+   Tabs UI
+========================= */
+type TabKey = "DATA" | "CONFIG";
+
+function Tabs({ value, onChange }: { value: TabKey; onChange: (v: TabKey) => void }) {
+  return (
+    <div className="tp-card p-1 flex items-center gap-1">
+      <button
+        type="button"
+        onClick={() => onChange("DATA")}
+        className={cn(
+          "flex-1 rounded-xl px-3 py-2 text-sm font-semibold transition-colors",
+          value === "DATA"
+            ? "bg-[var(--primary)] text-[var(--primary-foreground,#fff)]"
+            : "hover:bg-surface2"
+        )}
+      >
+        Datos del usuario
+      </button>
+      <button
+        type="button"
+        onClick={() => onChange("CONFIG")}
+        className={cn(
+          "flex-1 rounded-xl px-3 py-2 text-sm font-semibold transition-colors",
+          value === "CONFIG"
+            ? "bg-[var(--primary)] text-[var(--primary-foreground,#fff)]"
+            : "hover:bg-surface2"
+        )}
+      >
+        Configuración del usuario
+      </button>
+    </div>
+  );
+}
+
+/* =========================
+   Cache + Prefetch
+========================= */
+type UserCacheEntry = { ts: number; data: UserDetail };
+const USER_TTL_MS = 10_000;
+
+const userDetailCache = new Map<string, UserCacheEntry>();
+const userDetailInFlight = new Map<string, Promise<UserDetail>>();
+
+let rolesCache: { ts: number; data: Role[] | null; promise: Promise<Role[]> | null } = {
+  ts: 0,
+  data: null,
+  promise: null,
+};
+let permsCache: { ts: number; data: Permission[] | null; promise: Promise<Permission[]> | null } = {
+  ts: 0,
+  data: null,
+  promise: null,
+};
+
+const ROLES_TTL_MS = 20_000;
+const PERMS_TTL_MS = 20_000;
+
+function now() {
+  return Date.now();
+}
+
+async function getRolesCached() {
+  if (rolesCache.data && now() - rolesCache.ts < ROLES_TTL_MS) return rolesCache.data;
+  if (rolesCache.promise) return rolesCache.promise;
+
+  rolesCache.promise = (async () => {
+    const list = (await fetchRoles()) as Role[];
+    rolesCache.data = list;
+    rolesCache.ts = now();
+    return list;
+  })();
+
+  try {
+    return await rolesCache.promise;
+  } finally {
+    rolesCache.promise = null;
+  }
+}
+
+async function getPermsCached() {
+  if (permsCache.data && now() - permsCache.ts < PERMS_TTL_MS) return permsCache.data;
+  if (permsCache.promise) return permsCache.promise;
+
+  permsCache.promise = (async () => {
+    const list = await fetchPermissions();
+    permsCache.data = list;
+    permsCache.ts = now();
+    return list;
+  })();
+
+  try {
+    return await permsCache.promise;
+  } finally {
+    permsCache.promise = null;
+  }
+}
+
+async function prefetchUserDetail(userId: string) {
+  if (!userId) return;
+
+  const cached = userDetailCache.get(userId);
+  if (cached && now() - cached.ts < USER_TTL_MS) return cached.data;
+
+  const inflight = userDetailInFlight.get(userId);
+  if (inflight) return inflight;
+
+  const p = (async () => {
+    const resp = await fetchUser(userId);
+    const d: UserDetail = (resp as any)?.user ?? (resp as any);
+    userDetailCache.set(userId, { ts: now(), data: d });
+    return d;
+  })();
+
+  userDetailInFlight.set(userId, p);
+
+  try {
+    return await p;
+  } finally {
+    userDetailInFlight.delete(userId);
+  }
+}
 /* =========================
    PAGE
 ========================= */
@@ -114,56 +411,166 @@ export default function UsersPage() {
     permissions.includes("USERS_ROLES:EDIT") || permissions.includes("USERS_ROLES:ADMIN");
   const canAdmin = permissions.includes("USERS_ROLES:ADMIN");
 
+  const inv = useInventory() as any;
+  const almacenes = (inv?.almacenes ?? []) as Array<{
+    id: string;
+    nombre: string;
+    codigo: string;
+    ubicacion: string;
+    isActive?: boolean;
+  }>;
+
+  const activeAlmacenes = useMemo(() => {
+    const hasIsActive = almacenes.some((a) => typeof a.isActive === "boolean");
+    return hasIsActive ? almacenes.filter((a) => a.isActive !== false) : almacenes;
+  }, [almacenes]);
+
+  function warehouseLabelById(id?: string | null) {
+    if (!id) return null;
+    const w = activeAlmacenes.find((x) => x.id === id) || almacenes.find((x) => x.id === id);
+    if (!w) return null;
+    return `${w.nombre}${w.codigo ? ` (${w.codigo})` : ""}`;
+  }
+
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
 
   const [users, setUsers] = useState<UserListItem[]>([]);
-  const [qUI, setQUI] = useState(""); // input
-  const [q, setQ] = useState(""); // debounced
+  const [qUI, setQUI] = useState("");
+  const [q, setQ] = useState("");
 
-  // pagination (server)
   const [page, setPage] = useState(1);
   const [limit] = useState(30);
   const [total, setTotal] = useState(0);
-
   const totalPages = useMemo(() => Math.max(1, Math.ceil(total / limit)), [total, limit]);
 
-  // Roles modal
+  // catalog roles/perms
   const [roles, setRoles] = useState<Role[]>([]);
   const [rolesLoading, setRolesLoading] = useState(false);
-  const [rolesModalOpen, setRolesModalOpen] = useState(false);
-  const [target, setTarget] = useState<UserListItem | null>(null);
-  const [selectedRoleIds, setSelectedRoleIds] = useState<string[]>([]);
-  const [savingRoles, setSavingRoles] = useState(false);
 
-  // Overrides modal
-  const [ovModalOpen, setOvModalOpen] = useState(false);
   const [allPerms, setAllPerms] = useState<Permission[]>([]);
-  const [ovLoading, setOvLoading] = useState(false);
-  const [overrides, setOverrides] = useState<Override[]>([]);
-  const [permPick, setPermPick] = useState<string>("");
-  const [effectPick, setEffectPick] = useState<"ALLOW" | "DENY">("ALLOW");
-  const [savingOv, setSavingOv] = useState(false);
+  const [permsLoading, setPermsLoading] = useState(false);
 
-  // Avatar (admin)
+  // avatar (modal) estilo "Datos de la empresa"
+  const avatarInputModalRef = useRef<HTMLInputElement | null>(null);
+  const [avatarPreview, setAvatarPreview] = useState<string>(""); // blob:
+  const [avatarImgLoading, setAvatarImgLoading] = useState(false);
+
+  useEffect(() => {
+    return () => {
+      if (avatarPreview?.startsWith("blob:")) URL.revokeObjectURL(avatarPreview);
+    };
+  }, [avatarPreview]);
+
+  // mapa roles por id para labels consistentes
+  const roleById = useMemo(() => {
+    const m = new Map<string, any>();
+    for (const r of roles as any[]) m.set(String(r.id), r);
+    return m;
+  }, [roles]);
+
+  // roleLabel final: prioriza nombre editable (name)
+  function roleLabel(r: any) {
+    const fromCatalog = r?.id ? roleById.get(String(r.id)) : null;
+    const base = fromCatalog ?? r;
+
+    const name = String(base?.name || "").trim();
+    if (name) return name;
+
+    const display = String(base?.displayName || "").trim();
+    if (display) return display;
+
+    const code = String(base?.code || "").toUpperCase().trim();
+    return ROLE_LABEL[code] || code || "Rol";
+  }
+
+  // acciones masivas
+  const [selectedIds, setSelectedIds] = useState<Record<string, boolean>>({});
+  const selectedCount = useMemo(
+    () => Object.values(selectedIds).filter(Boolean).length,
+    [selectedIds]
+  );
+  const selectedList = useMemo(
+    () => Object.entries(selectedIds).filter(([, v]) => v).map(([k]) => k),
+    [selectedIds]
+  );
+
+  // delete confirmation (single)
+  const [deleteBusy, setDeleteBusy] = useState(false);
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<UserListItem | null>(null);
+
+  // bulk delete confirm
+  const [bulkConfirmOpen, setBulkConfirmOpen] = useState(false);
+  const [bulkBusy, setBulkBusy] = useState(false);
+
+  // avatar quick edit (table)
+  const avatarInputRef = useRef<HTMLInputElement | null>(null);
+  const [avatarQuickBusyId, setAvatarQuickBusyId] = useState<string | null>(null);
+
+  // modal
+  const [modalOpen, setModalOpen] = useState(false);
+  const [modalMode, setModalMode] = useState<"CREATE" | "EDIT">("CREATE");
+  const [modalBusy, setModalBusy] = useState(false);
+  const [modalLoading, setModalLoading] = useState(false);
+
+  const [targetId, setTargetId] = useState<string>("");
+  const [detail, setDetail] = useState<UserDetail | null>(null);
+
+  // tabs
+  const [tab, setTab] = useState<TabKey>("DATA");
+
+  // form fields (shared)
+  const [fEmail, setFEmail] = useState("");
+  const [fName, setFName] = useState("");
+  const [fPassword, setFPassword] = useState("");
+  const [fPin4, setFPin4] = useState("");
+  const [fRoleIds, setFRoleIds] = useState<string[]>([]);
+  const [fFavWarehouseId, setFFavWarehouseId] = useState<string>("");
+
+  const [fPhoneCountry, setFPhoneCountry] = useState("");
+  const [fPhoneNumber, setFPhoneNumber] = useState("");
+  const [fDocType, setFDocType] = useState("");
+  const [fDocNumber, setFDocNumber] = useState("");
+
+  const [fStreet, setFStreet] = useState("");
+  const [fNumber, setFNumber] = useState("");
+  const [fCity, setFCity] = useState("");
+  const [fProvince, setFProvince] = useState("");
+  const [fPostalCode, setFPostalCode] = useState("");
+  const [fCountry, setFCountry] = useState("");
+
+  const [fNotes, setFNotes] = useState("");
+
+  // permisos especiales
+  const [specialPermPick, setSpecialPermPick] = useState<string>("");
+  const [specialEffectPick, setSpecialEffectPick] = useState<OverrideEffect>("ALLOW");
+  const [specialList, setSpecialList] = useState<Override[]>([]);
+  const [specialSaving, setSpecialSaving] = useState(false);
+
+  // avatar in modal
+  const [avatarFileDraft, setAvatarFileDraft] = useState<File | null>(null);
   const [avatarBusy, setAvatarBusy] = useState(false);
 
-  // Create user modal
-  const [createOpen, setCreateOpen] = useState(false);
-  const [cEmail, setCEmail] = useState("");
-  const [cName, setCName] = useState("");
-  const [cPassword, setCPassword] = useState("");
-  const [cRoleIds, setCRoleIds] = useState<string[]>([]);
-  const [creating, setCreating] = useState(false);
+  // attachments (modal)
+  const attInputRef = useRef<HTMLInputElement | null>(null);
+  const [uploadingAttachments, setUploadingAttachments] = useState(false);
+  const [deletingAttId, setDeletingAttId] = useState<string | null>(null);
+  const [attachmentsDraft, setAttachmentsDraft] = useState<File[]>([]);
 
-  // debounce search input → q
+  const savedAttachments: UserAttachment[] = useMemo(() => {
+    const arr = (detail?.attachments ?? []) as UserAttachment[];
+    return Array.isArray(arr) ? arr : [];
+  }, [detail?.attachments]);
+
+  // debounce search
   const debounceRef = useRef<number | null>(null);
   useEffect(() => {
     if (debounceRef.current) window.clearTimeout(debounceRef.current);
     debounceRef.current = window.setTimeout(() => {
       setQ(qUI.trim());
-      setPage(1); // reset página al buscar
-    }, 300);
+      setPage(1);
+    }, 250);
     return () => {
       if (debounceRef.current) window.clearTimeout(debounceRef.current);
     };
@@ -173,15 +580,19 @@ export default function UsersPage() {
     setErr(null);
     setLoading(true);
     try {
-      const resp = await fetchUsers({
-        q: next?.q ?? q,
-        page: next?.page ?? page,
-        limit,
-      } as any);
-
+      const resp = await fetchUsers({ q: next?.q ?? q, page: next?.page ?? page, limit } as any);
       const norm = normalizeUsersResponse(resp);
       setUsers(norm.users ?? []);
       setTotal(norm.total ?? 0);
+
+      setSelectedIds((prev) => {
+        const keep: Record<string, boolean> = {};
+        const ids = new Set((norm.users ?? []).map((u) => u.id));
+        for (const [k, v] of Object.entries(prev)) {
+          if (v && ids.has(k)) keep[k] = true;
+        }
+        return keep;
+      });
     } catch (e: any) {
       setErr(String(e?.message || "Error cargando usuarios"));
     } finally {
@@ -199,7 +610,7 @@ export default function UsersPage() {
     if (roles.length > 0) return;
     setRolesLoading(true);
     try {
-      const list = await fetchRoles();
+      const list = await getRolesCached();
       setRoles(list as Role[]);
     } catch (e: any) {
       setErr(String(e?.message || "Error cargando roles"));
@@ -208,80 +619,289 @@ export default function UsersPage() {
     }
   }
 
-  /* =========================
-     CREATE USER
-  ========================= */
-  async function openCreateModal() {
+  useEffect(() => {
+    if (!canView) return;
+    if (roles.length > 0) return;
+    void ensureRolesLoaded();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [canView, roles.length]);
+
+  async function ensurePermsLoaded() {
+    if (allPerms.length > 0) return allPerms;
+    setPermsLoading(true);
+    try {
+      const list = await getPermsCached();
+      setAllPerms(list);
+      return list;
+    } catch (e: any) {
+      setErr(String(e?.message || "Error cargando permisos"));
+      return [];
+    } finally {
+      setPermsLoading(false);
+    }
+  }
+
+  function labelPerm(permissionId: string) {
+    const p = allPerms.find((x) => x.id === permissionId);
+    if (!p) return permissionId;
+    return permLabelByModuleAction(p.module, p.action);
+  }
+
+  // ✅ ORDEN ALFABÉTICO DE PERMISOS ESPECIALES (hook en el lugar correcto)
+  const specialListSorted = useMemo(() => {
+    const arr = [...specialList];
+    arr.sort((a, b) => {
+      const la = labelPerm(a.permissionId).toLowerCase();
+      const lb = labelPerm(b.permissionId).toLowerCase();
+      return la.localeCompare(lb, "es");
+    });
+    return arr;
+  }, [specialList, allPerms]); // allPerms porque labelPerm depende del catálogo
+
+  function resetForm() {
+    setDetail(null);
+    setTargetId("");
+
+    setFEmail("");
+    setFName("");
+    setFPassword("");
+    setFRoleIds([]);
+    setFFavWarehouseId("");
+
+    setFPhoneCountry("");
+    setFPhoneNumber("");
+    setFDocType("");
+    setFDocNumber("");
+
+    setFStreet("");
+    setFNumber("");
+    setFCity("");
+    setFProvince("");
+    setFPostalCode("");
+    setFCountry("");
+
+    setFNotes("");
+
+    setSpecialList([]);
+    setSpecialPermPick("");
+    setSpecialEffectPick("ALLOW");
+
+    setAvatarFileDraft(null);
+
+    setUploadingAttachments(false);
+    setDeletingAttId(null);
+    setAttachmentsDraft([]);
+
+    setTab("DATA");
+  }
+
+  function hydrateFromDetail(d: UserDetail) {
+    setDetail(d);
+
+    setFEmail(d.email ?? "");
+    setFName(d.name ?? "");
+    setFPassword("");
+
+    setFRoleIds((d.roles ?? []).map((r) => r.id));
+    setFFavWarehouseId(d.favoriteWarehouseId ? String(d.favoriteWarehouseId) : "");
+
+    setFPhoneCountry(d.phoneCountry ?? "");
+    setFPhoneNumber(d.phoneNumber ?? "");
+    setFDocType(d.documentType ?? "");
+    setFDocNumber(d.documentNumber ?? "");
+
+    setFStreet(d.street ?? "");
+    setFNumber(d.number ?? "");
+    setFCity(d.city ?? "");
+    setFProvince(d.province ?? "");
+    setFPostalCode(d.postalCode ?? "");
+    setFCountry(d.country ?? "");
+
+    setFNotes(d.notes ?? "");
+
+    setSpecialList(d.permissionOverrides ?? []);
+  }
+
+  async function openCreate() {
     if (!canAdmin) return;
 
     setErr(null);
-    setCEmail("");
-    setCName("");
-    setCPassword("");
-    setCRoleIds([]);
-    setCreateOpen(true);
+    resetForm();
+    setModalMode("CREATE");
+    setModalOpen(true);
+    setModalLoading(true);
 
-    await ensureRolesLoaded();
+    try {
+      await ensureRolesLoaded();
+      const perms = await ensurePermsLoaded();
+      setSpecialPermPick(perms[0]?.id || "");
+      setSpecialEffectPick("ALLOW");
+      setTab("DATA");
+    } finally {
+      setModalLoading(false);
+    }
   }
 
-  async function submitCreate(e: FormEvent) {
-    e.preventDefault();
+  async function openEdit(u: UserListItem) {
     if (!canAdmin) return;
 
-    const email = cEmail.trim();
-    if (!email) {
+    setErr(null);
+    resetForm();
+    setModalMode("EDIT");
+    setModalOpen(true);
+    setModalLoading(true);
+
+    try {
+      await ensureRolesLoaded();
+      const perms = await ensurePermsLoaded();
+
+      setTargetId(u.id);
+
+      const d = await prefetchUserDetail(u.id);
+      if (d) hydrateFromDetail(d);
+
+      setSpecialPermPick(perms[0]?.id || "");
+      setSpecialEffectPick("ALLOW");
+      setTab("DATA");
+    } catch (e: any) {
+      setErr(String(e?.message || "Error cargando usuario"));
+      setModalOpen(false);
+    } finally {
+      setModalLoading(false);
+    }
+  }
+
+  async function closeModal() {
+    if (modalBusy || avatarBusy || specialSaving || uploadingAttachments || deletingAttId) return;
+    setModalOpen(false);
+  }
+
+  async function saveModal(e?: FormEvent) {
+    if (e) e.preventDefault();
+    if (!canAdmin) return;
+
+    setErr(null);
+
+    const cleanEmail = fEmail.trim();
+    const cleanName = fName.trim();
+
+    if (!cleanEmail) {
       setErr("Completá el email.");
+      setTab("DATA");
+      return;
+    }
+    if (!cleanName) {
+      setErr("Nombre y apellido es obligatorio.");
+      setTab("DATA");
       return;
     }
 
-    setCreating(true);
-    setErr(null);
+    setModalBusy(true);
 
     try {
-      await createUser({
-        email,
-        name: cName.trim() || null,
-        password: cPassword.trim() || undefined,
-        roleIds: cRoleIds,
-      });
+      if (modalMode === "CREATE") {
+        const created = await createUser({
+          email: cleanEmail,
+          name: cleanName,
+          password: fPassword.trim() || undefined,
+          roleIds: fRoleIds,
+        });
 
-      setCreateOpen(false);
-      await load({ page: 1 });
-    } catch (e: any) {
-      setErr(String(e?.message || "Error creando usuario"));
+        const createdUserId = (created as any)?.user?.id;
+        if (!createdUserId) throw new Error("No se recibió el ID del usuario creado.");
+
+        if (fFavWarehouseId) {
+          await updateFavoriteWarehouseForUser(createdUserId, fFavWarehouseId || null);
+        }
+
+        if (avatarFileDraft) {
+          assertImageFile(avatarFileDraft);
+          await updateUserAvatarForUser(createdUserId, avatarFileDraft);
+        }
+
+        await updateUserProfile(createdUserId, {
+          name: cleanName,
+          phoneCountry: fPhoneCountry,
+          phoneNumber: fPhoneNumber,
+          documentType: fDocType,
+          documentNumber: fDocNumber,
+          street: fStreet,
+          number: fNumber,
+          city: fCity,
+          province: fProvince,
+          postalCode: fPostalCode,
+          country: fCountry,
+          notes: fNotes,
+        });
+
+        if (attachmentsDraft.length) {
+          setUploadingAttachments(true);
+          try {
+            await uploadUserAttachmentsInstant(createdUserId, attachmentsDraft);
+            setAttachmentsDraft([]);
+          } finally {
+            setUploadingAttachments(false);
+          }
+        }
+
+        if (specialList.length) {
+          for (const ov of specialList) {
+            await setUserOverride(createdUserId, ov.permissionId, ov.effect);
+          }
+        }
+
+        setModalOpen(false);
+        await load({ page: 1 });
+      } else {
+        if (!targetId) throw new Error("Falta ID de usuario.");
+
+        await updateUserProfile(targetId, {
+          name: cleanName,
+          phoneCountry: fPhoneCountry,
+          phoneNumber: fPhoneNumber,
+          documentType: fDocType,
+          documentNumber: fDocNumber,
+          street: fStreet,
+          number: fNumber,
+          city: fCity,
+          province: fProvince,
+          postalCode: fPostalCode,
+          country: fCountry,
+          notes: fNotes,
+        });
+
+        await assignRolesToUser(targetId, fRoleIds);
+        await updateFavoriteWarehouseForUser(targetId, fFavWarehouseId ? fFavWarehouseId : null);
+
+        if (avatarFileDraft) {
+          assertImageFile(avatarFileDraft);
+          await updateUserAvatarForUser(targetId, avatarFileDraft);
+          setAvatarFileDraft(null);
+        }
+
+        if (attachmentsDraft.length) {
+          setUploadingAttachments(true);
+          try {
+            await uploadUserAttachmentsInstant(targetId, attachmentsDraft);
+            setAttachmentsDraft([]);
+          } finally {
+            setUploadingAttachments(false);
+          }
+        }
+
+        await load();
+
+        const refreshed = await prefetchUserDetail(targetId);
+        if (refreshed) hydrateFromDetail(refreshed);
+
+        setModalOpen(false);
+      }
+    } catch (e2: any) {
+      setErr(String(e2?.message || "Error guardando usuario"));
     } finally {
-      setCreating(false);
+      setModalBusy(false);
     }
   }
-
-  /* =========================
-     ROLES
-  ========================= */
-  async function openRolesModal(u: UserListItem) {
-    setErr(null);
-    setTarget(u);
-    setSelectedRoleIds((u.roles || []).map((r) => r.id));
-    setRolesModalOpen(true);
-    await ensureRolesLoaded();
-  }
-
-  async function saveRoles() {
-    if (!target) return;
-    setSavingRoles(true);
-    try {
-      await assignRolesToUser(target.id, selectedRoleIds);
-      setRolesModalOpen(false);
-      await load();
-    } catch (e: any) {
-      setErr(String(e?.message || "Error guardando roles"));
-    } finally {
-      setSavingRoles(false);
-    }
-  }
-
-  /* =========================
-     STATUS
-  ========================= */
   async function toggleStatus(u: UserListItem) {
     if (!canEditStatus) return;
 
@@ -299,88 +919,155 @@ export default function UsersPage() {
     }
   }
 
-  /* =========================
-     OVERRIDES (ALLOW/DENY)
-  ========================= */
-  async function openOverridesModal(u: UserListItem) {
+  function isSelectableUserId(id: string) {
+    if (me?.id && id === me.id) return false;
+    return true;
+  }
+
+  function toggleOne(id: string) {
+    if (!isSelectableUserId(id)) return;
+    setSelectedIds((prev) => ({ ...prev, [id]: !prev[id] }));
+  }
+
+  function toggleAllOnPage() {
+    const ids = users.map((u) => u.id).filter((id) => isSelectableUserId(id));
+    const allSelected = ids.length > 0 && ids.every((id) => selectedIds[id]);
+    setSelectedIds((prev) => {
+      const next = { ...prev };
+      for (const id of ids) next[id] = !allSelected;
+      return next;
+    });
+  }
+
+  function clearSelection() {
+    setSelectedIds({});
+  }
+
+  async function bulkSetStatus(status: "ACTIVE" | "BLOCKED") {
+    if (!canEditStatus) return;
+    if (selectedList.length === 0) return;
+
+    setBulkBusy(true);
+    setErr(null);
+    try {
+      for (const id of selectedList) {
+        if (!isSelectableUserId(id)) continue;
+        await updateUserStatus(id, status);
+      }
+      clearSelection();
+      await load();
+    } catch (e: any) {
+      setErr(String(e?.message || "Error aplicando acción masiva"));
+    } finally {
+      setBulkBusy(false);
+    }
+  }
+
+  async function bulkDelete() {
+    if (!canAdmin) return;
+    if (selectedList.length === 0) return;
+
+    setBulkBusy(true);
+    setErr(null);
+    try {
+      for (const id of selectedList) {
+        if (!isSelectableUserId(id)) continue;
+        await deleteUser(id);
+      }
+      clearSelection();
+      setBulkConfirmOpen(false);
+      await load();
+    } catch (e: any) {
+      setErr(String(e?.message || "Error eliminando usuarios"));
+    } finally {
+      setBulkBusy(false);
+    }
+  }
+
+  function askDelete(u: UserListItem) {
+    if (!canAdmin) return;
+    if (me?.id && u.id === me.id) {
+      setErr("No podés eliminar tu propio usuario.");
+      return;
+    }
+    setErr(null);
+    setDeleteTarget(u);
+    setConfirmOpen(true);
+  }
+
+  async function confirmDelete() {
+    if (!deleteTarget) return;
+    setDeleteBusy(true);
+    setErr(null);
+    try {
+      await deleteUser(deleteTarget.id);
+      setConfirmOpen(false);
+      setDeleteTarget(null);
+      await load();
+    } catch (e: any) {
+      setErr(String(e?.message || "Error eliminando usuario"));
+    } finally {
+      setDeleteBusy(false);
+    }
+  }
+
+  async function quickChangeAvatar(userId: string, file: File) {
+    if (!canAdmin) return;
+    setAvatarQuickBusyId(userId);
+    setErr(null);
+    try {
+      assertImageFile(file);
+      await updateUserAvatarForUser(userId, file);
+      await load();
+    } catch (e: any) {
+      setErr(String(e?.message || "Error subiendo avatar"));
+    } finally {
+      setAvatarQuickBusyId(null);
+    }
+  }
+
+  // ✅ Avatar como Empresa
+  // CREATE → preview + draft (se sube cuando creás)
+  // EDIT   → upload instant + refresh (sin tocar Guardar)
+  async function pickAvatarForModal(file: File) {
     if (!canAdmin) return;
 
-    setTarget(u);
-    setOvModalOpen(true);
-    setErr(null);
-    setOvLoading(true);
-
     try {
-      let permsList = allPerms;
+      assertImageFile(file);
+      setErr(null);
 
-      if (permsList.length === 0) {
-        permsList = await fetchPermissions();
-        setAllPerms(permsList);
+      // siempre genero preview (como Empresa)
+      setAvatarPreview((prev) => {
+        if (prev?.startsWith("blob:")) URL.revokeObjectURL(prev);
+        return URL.createObjectURL(file);
+      });
+
+      // CREATE → queda en draft (se sube al crear)
+      if (modalMode === "CREATE") {
+        setAvatarFileDraft(file);
+        return;
       }
 
-      const detail = await fetchUser(u.id);
-      setOverrides(detail.user.permissionOverrides ?? []);
+      // EDIT → upload inmediato
+      if (!targetId) return;
 
-      setPermPick(permsList[0]?.id || "");
-      setEffectPick("ALLOW");
-    } catch (e: any) {
-      setErr(String(e?.message || "Error cargando overrides"));
-    } finally {
-      setOvLoading(false);
-    }
-  }
+      setAvatarBusy(true);
+      await updateUserAvatarForUser(targetId, file);
 
-  function labelPerm(id: string) {
-    const p = allPerms.find((x) => x.id === id);
-    return p ? `${p.module}:${p.action}` : id;
-  }
+      // limpiamos draft porque ya está guardado
+      setAvatarFileDraft(null);
 
-  async function addOrUpdateOverride() {
-    if (!target || !permPick) return;
-    setSavingOv(true);
-    try {
-      await setUserOverride(target.id, permPick, effectPick);
-      const detail = await fetchUser(target.id);
-      setOverrides(detail.user.permissionOverrides ?? []);
-    } catch (e: any) {
-      setErr(String(e?.message || "Error guardando override"));
-    } finally {
-      setSavingOv(false);
-    }
-  }
+      // importante: refrescar detail para que traiga avatarUrl real
+      const refreshed = await prefetchUserDetail(targetId);
+      if (refreshed) hydrateFromDetail(refreshed);
 
-  async function removeOv(permissionId: string) {
-    if (!target) return;
-    setSavingOv(true);
-    try {
-      await removeUserOverride(target.id, permissionId);
-      const detail = await fetchUser(target.id);
-      setOverrides(detail.user.permissionOverrides ?? []);
-    } catch (e: any) {
-      setErr(String(e?.message || "Error eliminando override"));
-    } finally {
-      setSavingOv(false);
-    }
-  }
-
-  /* =========================
-     AVATAR (ADMIN)
-  ========================= */
-  async function adminPickAvatar(file: File) {
-    if (!canAdmin || !target) return;
-    setAvatarBusy(true);
-    setErr(null);
-    try {
-      const resp = await updateUserAvatarForUser(target.id, file);
+      // opcional: si querés que quede la url real y no el blob
+      setAvatarPreview((prev) => {
+        if (prev?.startsWith("blob:")) URL.revokeObjectURL(prev);
+        return "";
+      });
 
       await load();
-
-      const nextAvatarUrl =
-        (resp && typeof resp === "object" && "avatarUrl" in resp ? (resp as any).avatarUrl : null) ??
-        (resp && typeof resp === "object" && (resp as any).user?.avatarUrl) ??
-        null;
-
-      setTarget((prev) => (prev ? { ...prev, avatarUrl: nextAvatarUrl ?? prev.avatarUrl } : prev));
     } catch (e: any) {
       setErr(String(e?.message || "Error subiendo avatar"));
     } finally {
@@ -388,14 +1075,56 @@ export default function UsersPage() {
     }
   }
 
-  async function adminRemoveAvatar() {
-    if (!canAdmin || !target) return;
+  async function modalUploadAvatarNow() {
+    if (!canAdmin) return;
+
+    if (modalMode === "CREATE") {
+      if (!avatarFileDraft) setErr("Elegí una imagen para el avatar.");
+      return;
+    }
+
+    if (!targetId) return;
+    if (!avatarFileDraft) {
+      setErr("Elegí una imagen para el avatar.");
+      return;
+    }
+
     setAvatarBusy(true);
     setErr(null);
     try {
-      await removeAvatarForUser(target.id);
+      assertImageFile(avatarFileDraft);
+      await updateUserAvatarForUser(targetId, avatarFileDraft);
+      setAvatarFileDraft(null);
+      setAvatarPreview((prev) => {
+        if (prev?.startsWith("blob:")) URL.revokeObjectURL(prev);
+        return "";
+      });
+
+      const refreshed = await prefetchUserDetail(targetId);
+      if (refreshed) hydrateFromDetail(refreshed);
+
       await load();
-      setTarget((prev) => (prev ? { ...prev, avatarUrl: null } : prev));
+    } catch (e: any) {
+      setErr(String(e?.message || "Error subiendo avatar"));
+    } finally {
+      setAvatarBusy(false);
+    }
+  }
+
+  async function modalRemoveAvatar() {
+    if (!canAdmin) return;
+    if (modalMode !== "EDIT") return;
+    if (!targetId) return;
+
+    setAvatarBusy(true);
+    setErr(null);
+    try {
+      await removeAvatarForUser(targetId);
+
+      const refreshed = await prefetchUserDetail(targetId);
+      if (refreshed) hydrateFromDetail(refreshed);
+
+      await load();
     } catch (e: any) {
       setErr(String(e?.message || "Error quitando avatar"));
     } finally {
@@ -403,395 +1132,1493 @@ export default function UsersPage() {
     }
   }
 
+  async function addOrUpdateSpecial() {
+    if (!canAdmin) return;
+    if (!specialPermPick) return;
+
+    if (modalMode === "CREATE") {
+      setSpecialList((prev) => {
+        const next = prev.filter((x) => x.permissionId !== specialPermPick);
+        next.push({ permissionId: specialPermPick, effect: specialEffectPick });
+        return next;
+      });
+      return;
+    }
+
+    if (!targetId) return;
+
+    setSpecialSaving(true);
+    setErr(null);
+    try {
+      await setUserOverride(targetId, specialPermPick, specialEffectPick);
+      const refreshed = await prefetchUserDetail(targetId);
+      if (refreshed) hydrateFromDetail(refreshed);
+      await load();
+    } catch (e: any) {
+      setErr(String(e?.message || "Error guardando permiso especial"));
+    } finally {
+      setSpecialSaving(false);
+    }
+  }
+
+  async function removeSpecial(permissionId: string) {
+    if (!canAdmin) return;
+
+    if (modalMode === "CREATE") {
+      setSpecialList((prev) => prev.filter((x) => x.permissionId !== permissionId));
+      return;
+    }
+
+    if (!targetId) return;
+
+    setSpecialSaving(true);
+    setErr(null);
+    try {
+      await removeUserOverride(targetId, permissionId);
+      const refreshed = await prefetchUserDetail(targetId);
+      if (refreshed) hydrateFromDetail(refreshed);
+      await load();
+    } catch (e: any) {
+      setErr(String(e?.message || "Error quitando permiso especial"));
+    } finally {
+      setSpecialSaving(false);
+    }
+  }
+
+  async function addAttachments(files: File[]) {
+    if (!canAdmin) return;
+    if (!files.length) return;
+
+    // CREATE -> draft (se sube al crear)
+    if (modalMode === "CREATE") {
+      setAttachmentsDraft((prev) => [...prev, ...files]);
+      return;
+    }
+
+    // EDIT -> upload instantáneo (como Empresa)
+    if (!targetId) return;
+
+    setErr(null);
+    setUploadingAttachments(true);
+    try {
+      await uploadUserAttachmentsInstant(targetId, files);
+
+      const refreshed = await prefetchUserDetail(targetId);
+      if (refreshed) hydrateFromDetail(refreshed);
+
+      await load();
+    } catch (e: any) {
+      setErr(String(e?.message || "No se pudieron subir los adjuntos."));
+    } finally {
+      setUploadingAttachments(false);
+    }
+  }
+
+  async function removeSavedAttachment(attId: string) {
+    if (!canAdmin) return;
+    if (modalMode !== "EDIT") return;
+    if (!targetId) return;
+
+    setDeletingAttId(attId);
+    setErr(null);
+    try {
+      await deleteUserAttachmentInstant(targetId, attId);
+
+      const refreshed = await prefetchUserDetail(targetId);
+      if (refreshed) hydrateFromDetail(refreshed);
+
+      await load();
+    } catch (e: any) {
+      setErr(String(e?.message || "No se pudo eliminar el adjunto."));
+    } finally {
+      setDeletingAttId(null);
+    }
+  }
+
+  function removeDraftAttachmentByIndex(idx: number) {
+    setAttachmentsDraft((prev) => prev.filter((_, i) => i !== idx));
+  }
+
   if (!canView) return <div className="p-6">Sin permisos para ver usuarios.</div>;
 
-  const canPrev = page > 1;
-  const canNext = page < totalPages;
+  const iconBtnBase =
+    "inline-flex items-center justify-center rounded-lg border border-border bg-card " +
+    "h-9 w-9 shadow-[0_1px_0_0_rgba(0,0,0,0.05)] hover:bg-surface2 " +
+    "focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-primary/20";
+
+  const disabledCls = "opacity-40 cursor-not-allowed hover:bg-card";
+
+  const totalLabel = `${total} ${total === 1 ? "Usuario" : "Usuarios"}`;
+
+  const selectableIdsOnPage = users.map((u) => u.id).filter((id) => isSelectableUserId(id));
+  const allOnPageSelected =
+    selectableIdsOnPage.length > 0 && selectableIdsOnPage.every((id) => !!selectedIds[id]);
+  const someOnPageSelected =
+    selectableIdsOnPage.length > 0 && selectableIdsOnPage.some((id) => !!selectedIds[id]);
 
   return (
-    <div className="p-6 space-y-4">
-      <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
-        <div>
-          <h1 className="text-2xl font-semibold">Usuarios</h1>
-          <p className="text-sm text-muted">Gestión de usuarios, roles, overrides y avatar.</p>
-        </div>
+    <div className="p-4 md:p-6 space-y-4 min-h-0">
+      <div className="space-y-2">
+        <h1 className="text-2xl font-semibold">Usuarios</h1>
+        <p className="text-sm text-muted">
+          Gestión de usuarios, roles, permisos especiales, avatar, adjuntos y almacén favorito.
+        </p>
 
-        <div className="flex flex-col md:flex-row md:items-center gap-2">
+        <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
           <input
-            className="tp-input md:max-w-sm"
+            className="tp-input md:max-w-md"
             placeholder="Buscar por email / nombre…"
             value={qUI}
             onChange={(e) => setQUI(e.target.value)}
           />
 
           {canAdmin && (
-            <button className="tp-btn-primary" onClick={openCreateModal} type="button">
+            <button className="tp-btn-primary" onClick={openCreate} type="button">
               Nuevo usuario
             </button>
           )}
         </div>
-      </div>
 
+        {selectedCount > 0 && (
+          <div className="tp-card p-3 flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+            <div className="text-sm">
+              Seleccionados: <b>{selectedCount}</b>
+            </div>
+
+            <div className="flex flex-wrap gap-2">
+              <button
+                className={cn("tp-btn", (!canEditStatus || bulkBusy) && "opacity-60")}
+                type="button"
+                disabled={!canEditStatus || bulkBusy}
+                onClick={() => void bulkSetStatus("ACTIVE")}
+                title={!canEditStatus ? "Sin permisos para cambiar estado" : "Activar seleccionados"}
+              >
+                Activar
+              </button>
+
+              <button
+                className={cn("tp-btn", (!canEditStatus || bulkBusy) && "opacity-60")}
+                type="button"
+                disabled={!canEditStatus || bulkBusy}
+                onClick={() => void bulkSetStatus("BLOCKED")}
+                title={!canEditStatus ? "Sin permisos para cambiar estado" : "Inactivar seleccionados"}
+              >
+                Inactivar
+              </button>
+
+              <button
+                className={cn("tp-btn", (!canAdmin || bulkBusy) && "opacity-60")}
+                type="button"
+                disabled={!canAdmin || bulkBusy}
+                onClick={() => setBulkConfirmOpen(true)}
+                title={!canAdmin ? "Sin permisos de administrador" : "Eliminar seleccionados"}
+              >
+                Eliminar
+              </button>
+
+              <button className="tp-btn-secondary" type="button" onClick={clearSelection}>
+                Limpiar
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
       {err && (
         <div className="rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm">
           {err}
         </div>
       )}
 
-      <div className="tp-card overflow-hidden">
-        <table className="w-full text-sm">
-          <thead className="border-b border-border">
-            <tr>
-              <th className="px-4 py-3 text-left">Usuario</th>
-              <th className="px-4 py-3 text-left">Estado</th>
-              <th className="px-4 py-3 text-left">Roles</th>
-              <th className="px-4 py-3 text-right">Acciones</th>
-            </tr>
-          </thead>
+      {/* TABLE */}
+      <TPTableWrap className="w-full">
+        <TPTableEl>
+          <table className="min-w-[1020px] w-full text-sm">
+            <TPThead>
+              <tr className="border-b border-border">
+                <TPTh className="text-left w-[56px]">
+                  <button
+                    type="button"
+                    className={cn(
+                      "h-9 w-9 inline-flex items-center justify-center rounded-lg border border-border bg-card hover:bg-surface2",
+                      (loading || selectableIdsOnPage.length === 0) &&
+                        "opacity-50 cursor-not-allowed"
+                    )}
+                    disabled={loading || selectableIdsOnPage.length === 0}
+                    onClick={toggleAllOnPage}
+                    title="Seleccionar todos (página)"
+                  >
+                    {allOnPageSelected ? (
+                      <CheckSquare className="h-4 w-4" />
+                    ) : someOnPageSelected ? (
+                      <CheckSquare className="h-4 w-4 opacity-60" />
+                    ) : (
+                      <Square className="h-4 w-4" />
+                    )}
+                  </button>
+                </TPTh>
 
-          <tbody>
-            {loading ? (
-              <tr>
-                <td className="px-4 py-4" colSpan={4}>
-                  Cargando…
-                </td>
+                <TPTh className="text-left">Usuario</TPTh>
+                <TPTh className="text-left">Estado</TPTh>
+                <TPTh className="text-left">Roles</TPTh>
+                <TPTh className="text-left">Almacén favorito</TPTh>
+                <TPTh className="text-right">Acciones</TPTh>
               </tr>
-            ) : users.length === 0 ? (
-              <tr>
-                <td className="px-4 py-4" colSpan={4}>
-                  Sin resultados.
-                </td>
-              </tr>
-            ) : (
-              users.map((u) => {
-                const label = u.name?.trim() || u.email || "Usuario";
-                const initials = initialsFrom(label);
+            </TPThead>
 
-                return (
-                  <tr key={u.id} className="border-t border-border">
-                    <td className="px-4 py-3">
-                      <div className="flex items-center gap-3">
-                        <div className="h-9 w-9 overflow-hidden rounded-full border border-border bg-surface">
-                          {u.avatarUrl ? (
-                            <img src={u.avatarUrl} alt="Avatar" className="h-full w-full object-cover" />
+            <TPTbody>
+              {loading ? (
+                <tr>
+                  <td className="px-5 py-4" colSpan={6}>
+                    Cargando…
+                  </td>
+                </tr>
+              ) : users.length === 0 ? (
+                <TPEmptyRow colSpan={6} text="Sin resultados." />
+              ) : (
+                users.map((u) => {
+                  const label = u.name?.trim() || u.email || "Usuario";
+                  const initials = initialsFrom(label);
+                  const favLabel = warehouseLabelById(u.favoriteWarehouseId);
+                  const busy = avatarQuickBusyId === u.id;
+
+                  const isActive = u.status === "ACTIVE";
+                  const canToggleThis =
+                    canEditStatus && !(me?.id && u.id === me.id);
+
+                  const checked = !!selectedIds[u.id];
+                  const selectable = isSelectableUserId(u.id);
+
+                  return (
+                    <TPTr key={u.id} className="border-t border-border">
+                      <TPTd>
+                        <button
+                          type="button"
+                          className={cn(
+                            "h-9 w-9 inline-flex items-center justify-center rounded-lg border border-border bg-card hover:bg-surface2",
+                            (!selectable || loading) &&
+                              "opacity-50 cursor-not-allowed"
+                          )}
+                          disabled={!selectable || loading}
+                          onClick={() => toggleOne(u.id)}
+                          title={!selectable ? "No disponible" : "Seleccionar"}
+                        >
+                          {checked ? (
+                            <CheckSquare className="h-4 w-4" />
                           ) : (
-                            <div className="grid h-full w-full place-items-center text-xs font-bold text-primary">
-                              {initials}
+                            <Square className="h-4 w-4" />
+                          )}
+                        </button>
+                      </TPTd>
+
+                      <TPTd>
+                        <div className="flex items-center gap-3">
+                          <div className="relative h-10 w-10 overflow-hidden rounded-full border border-border bg-surface">
+                            {u.avatarUrl ? (
+                              <img
+                                src={u.avatarUrl}
+                                alt="Avatar"
+                                className="h-full w-full object-cover"
+                              />
+                            ) : (
+                              <div className="grid h-full w-full place-items-center text-xs font-bold text-primary">
+                                {initials}
+                              </div>
+                            )}
+
+                            {canAdmin && (
+                              <button
+                                type="button"
+                                className={cn(
+                                  "absolute inset-0",
+                                  "opacity-0 hover:opacity-100 transition-opacity",
+                                  "bg-black/30"
+                                )}
+                                title="Click para cambiar avatar"
+                                onClick={() => {
+                                  (avatarInputRef.current as any)?.setAttribute(
+                                    "data-userid",
+                                    u.id
+                                  );
+                                  avatarInputRef.current?.click();
+                                }}
+                              >
+                                <span className="sr-only">Cambiar avatar</span>
+                                <div className="h-full w-full grid place-items-center text-white text-xs">
+                                  {busy ? (
+                                    <Loader2 className="h-4 w-4 animate-spin" />
+                                  ) : (
+                                    "Cambiar"
+                                  )}
+                                </div>
+                              </button>
+                            )}
+                          </div>
+
+                          <div className="min-w-0">
+                            <div className="font-semibold truncate">
+                              {u.name || "Sin nombre"}
                             </div>
+                            <div className="text-xs text-muted truncate">
+                              {u.email}
+                            </div>
+                          </div>
+                        </div>
+                      </TPTd>
+
+                      <TPTd>
+                        {u.status === "ACTIVE" ? (
+                          <TPUserStatusBadge status={u.status} />
+                        ) : (
+                          <Badge>Inactivo</Badge>
+                        )}
+                      </TPTd>
+
+                      <TPTd>
+                        <div className="flex flex-wrap gap-2">
+                          {(u.roles || []).length ? (
+                            (u.roles || []).map((r: any) => (
+                              <Badge key={r.id}>{roleLabel(r)}</Badge>
+                            ))
+                          ) : (
+                            <span className="text-muted">Sin roles</span>
                           )}
                         </div>
+                      </TPTd>
 
-                        <div className="min-w-0">
-                          <div className="font-semibold truncate">{u.name || "Sin nombre"}</div>
-                          <div className="text-xs text-muted truncate">{u.email}</div>
-                        </div>
-                      </div>
-                    </td>
-
-                    <td className="px-4 py-3">
-                      <Badge>{u.status}</Badge>
-                    </td>
-
-                    <td className="px-4 py-3">
-                      <div className="flex flex-wrap gap-2">
-                        {(u.roles || []).length ? (
-                          (u.roles || []).map((r) => (
-                            <Badge key={r.id}>
-                              {r.name}
-                              {r.isSystem ? " • sys" : ""}
-                            </Badge>
-                          ))
+                      <TPTd>
+                        {u.favoriteWarehouseId ? (
+                          <Badge>
+                            ⭐ {favLabel ? favLabel : u.favoriteWarehouseId}
+                          </Badge>
                         ) : (
-                          <span className="text-muted">Sin roles</span>
+                          <span className="text-muted">—</span>
                         )}
-                      </div>
-                    </td>
+                      </TPTd>
 
-                    <td className="px-4 py-3 text-right space-x-2">
-                      {canEditStatus && (
-                        <button className="tp-btn" onClick={() => toggleStatus(u)} type="button">
-                          {u.status === "ACTIVE" ? "Bloquear" : "Activar"}
-                        </button>
-                      )}
-
-                      {canAdmin && (
-                        <>
-                          <button className="tp-btn" onClick={() => openRolesModal(u)} type="button">
-                            Roles
+                      <TPTd className="text-right">
+                        <div className="flex items-center justify-end gap-2">
+                          <button
+                            className={cn(
+                              iconBtnBase,
+                              !canToggleThis && disabledCls
+                            )}
+                            type="button"
+                            disabled={!canToggleThis}
+                            onClick={() => (canToggleThis ? toggleStatus(u) : null)}
+                            title={
+                              !canEditStatus
+                                ? "Sin permisos para cambiar estado"
+                                : me?.id && u.id === me.id
+                                ? "No podés cambiar tu propio estado"
+                                : isActive
+                                ? "Inactivar usuario"
+                                : "Activar usuario"
+                            }
+                          >
+                            {isActive ? (
+                              <ShieldBan className="h-4 w-4" />
+                            ) : (
+                              <ShieldCheck className="h-4 w-4" />
+                            )}
                           </button>
-                          <button className="tp-btn" onClick={() => openOverridesModal(u)} type="button">
-                            Overrides
-                          </button>
-                        </>
-                      )}
-                    </td>
-                  </tr>
-                );
-              })
-            )}
-          </tbody>
-        </table>
 
-        <div className="border-t border-border px-4 py-3 flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
-          <div className="text-xs text-muted">
-            {total === 0 ? "0 usuarios" : `Mostrando ${(page - 1) * limit + 1}-${Math.min(page * limit, total)} de ${total}`}
-          </div>
+                          <button
+                            className={cn(iconBtnBase, !canAdmin && disabledCls)}
+                            type="button"
+                            disabled={!canAdmin}
+                            onClick={() => (canAdmin ? openEdit(u) : null)}
+                            onMouseEnter={() => void prefetchUserDetail(u.id)}
+                            title={
+                              !canAdmin
+                                ? "Sin permisos de administrador"
+                                : "Editar usuario"
+                            }
+                          >
+                            <Pencil className="h-4 w-4" />
+                          </button>
+
+                          <button
+                            className={cn(
+                              iconBtnBase,
+                              (!canAdmin || (me?.id && u.id === me.id)) &&
+                                disabledCls
+                            )}
+                            type="button"
+                            disabled={!canAdmin || (me?.id && u.id === me.id)}
+                            onClick={() => (canAdmin ? askDelete(u) : null)}
+                            title={
+                              !canAdmin
+                                ? "Sin permisos de administrador"
+                                : me?.id && u.id === me.id
+                                ? "No podés eliminar tu propio usuario"
+                                : "Eliminar usuario"
+                            }
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </button>
+                        </div>
+                      </TPTd>
+                    </TPTr>
+                  );
+                })
+              )}
+            </TPTbody>
+          </table>
+
+          <input
+            ref={avatarInputRef}
+            type="file"
+            accept="image/*"
+            className="hidden"
+            onChange={(e) => {
+              const f = e.target.files?.[0];
+              e.target.value = "";
+              const uid = (avatarInputRef.current as any)?.getAttribute(
+                "data-userid"
+              ) as string | null;
+              if (f && uid) void quickChangeAvatar(uid, f);
+            }}
+          />
+        </TPTableEl>
+
+        <div className="border-t border-border px-4 py-3 flex items-center justify-between">
+          <div className="text-xs text-muted">{totalLabel}</div>
 
           <div className="flex items-center justify-end gap-2">
-            <button className={cn("tp-btn", !canPrev && "opacity-50 cursor-not-allowed")} type="button" disabled={!canPrev} onClick={() => setPage((p) => Math.max(1, p - 1))}>
+            <button
+              className={cn("tp-btn", page <= 1 && "opacity-50 cursor-not-allowed")}
+              type="button"
+              disabled={page <= 1}
+              onClick={() => setPage((p) => Math.max(1, p - 1))}
+            >
               Anterior
             </button>
 
             <div className="text-xs text-muted">
-              Página <span className="font-semibold text-text">{page}</span> / {totalPages}
+              Página{" "}
+              <span className="font-semibold text-text">{page}</span> /{" "}
+              {totalPages}
             </div>
 
-            <button className={cn("tp-btn", !canNext && "opacity-50 cursor-not-allowed")} type="button" disabled={!canNext} onClick={() => setPage((p) => Math.min(totalPages, p + 1))}>
+            <button
+              className={cn(
+                "tp-btn",
+                page >= totalPages && "opacity-50 cursor-not-allowed"
+              )}
+              type="button"
+              disabled={page >= totalPages}
+              onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+            >
               Siguiente
             </button>
           </div>
         </div>
-      </div>
+      </TPTableWrap>
 
-      {/* =========================
-          MODAL CREATE USER
-      ========================= */}
-      <Modal open={createOpen} title="Crear usuario" onClose={() => setCreateOpen(false)}>
-        <form onSubmit={submitCreate} className="space-y-4">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            <div>
-              <label className="mb-1 block text-xs text-muted">Email</label>
-              <input className="tp-input" value={cEmail} onChange={(e) => setCEmail(e.target.value)} />
-            </div>
-
-            <div>
-              <label className="mb-1 block text-xs text-muted">Nombre (opcional)</label>
-              <input className="tp-input" value={cName} onChange={(e) => setCName(e.target.value)} />
-            </div>
-
-            <div>
-              <label className="mb-1 block text-xs text-muted">Contraseña (opcional)</label>
-              <input
-                className="tp-input"
-                type="password"
-                value={cPassword}
-                onChange={(e) => setCPassword(e.target.value)}
-                placeholder="Si la dejás vacía, queda PENDING"
-              />
-            </div>
-
-            <div>
-              <label className="mb-1 block text-xs text-muted">Roles iniciales</label>
-              <div className="tp-card p-3 max-h-[180px] overflow-auto tp-scroll">
-                {rolesLoading ? (
-                  <div className="text-sm text-muted">Cargando roles…</div>
-                ) : roles.length === 0 ? (
-                  <div className="text-sm text-muted">No hay roles.</div>
-                ) : (
-                  <div className="grid grid-cols-1 gap-2">
-                    {roles.map((r) => {
-                      const checked = cRoleIds.includes(r.id);
-                      return (
-                        <label key={r.id} className="flex items-center gap-2 text-sm">
-                          <input
-                            type="checkbox"
-                            checked={checked}
-                            onChange={(e) =>
-                              setCRoleIds((prev) =>
-                                e.target.checked ? [...prev, r.id] : prev.filter((id) => id !== r.id)
-                              )
-                            }
-                          />
-                          {r.name} {r.isSystem ? "(sys)" : ""}
-                        </label>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-              <p className="mt-2 text-xs text-muted">Si no seleccionás roles, queda sin permisos hasta asignar.</p>
-            </div>
+      {/* MODAL CREATE / EDIT */}
+      <Modal
+        open={modalOpen}
+        wide
+        title={
+          modalMode === "CREATE"
+            ? "Crear usuario"
+            : `Editar usuario • ${detail?.email ?? ""}`
+        }
+        onClose={closeModal}
+      >
+        {modalLoading ? (
+          <div className="tp-card p-4 text-sm text-muted flex items-center gap-2">
+            <Loader2 className="h-4 w-4 animate-spin" />
+            Cargando…
           </div>
-
-          <div className="flex justify-end gap-2 pt-2">
-            <button className="tp-btn-secondary" type="button" onClick={() => setCreateOpen(false)}>
-              Cancelar
-            </button>
-            <button className="tp-btn-primary" type="submit" disabled={creating}>
-              {creating ? "Creando…" : "Crear"}
-            </button>
-          </div>
-        </form>
-      </Modal>
-
-      {/* =========================
-          MODAL ROLES (con avatar admin)
-      ========================= */}
-      <Modal open={rolesModalOpen} title={`Roles de ${target?.email || ""}`} onClose={() => setRolesModalOpen(false)}>
-        {target && canAdmin && (
-          <div className="mb-4 flex items-center justify-between gap-3 rounded-xl border border-border bg-bg p-3">
-            <div className="flex items-center gap-3">
-              <div className="h-10 w-10 overflow-hidden rounded-full border border-border bg-surface">
-                {target.avatarUrl ? (
-                  <img src={target.avatarUrl} alt="Avatar" className="h-full w-full object-cover" />
-                ) : (
-                  <div className="grid h-full w-full place-items-center text-xs font-bold text-primary">
-                    {initialsFrom(target.name || target.email)}
-                  </div>
-                )}
-              </div>
-              <div className="min-w-0">
-                <div className="text-sm font-semibold truncate">{target.name || "Sin nombre"}</div>
-                <div className="text-xs text-muted truncate">{target.email}</div>
-              </div>
-            </div>
-
-            <div className="flex items-center gap-2">
-              <label className={cn("tp-btn", avatarBusy && "pointer-events-none opacity-60")} title="Cambiar avatar">
-                {avatarBusy ? "Guardando…" : "Cambiar foto"}
-                <input
-                  type="file"
-                  accept="image/*"
-                  className="hidden"
-                  onChange={(e) => {
-                    const f = e.target.files?.[0];
-                    e.target.value = "";
-                    if (f) void adminPickAvatar(f);
-                  }}
-                />
-              </label>
-
-              <button
-                type="button"
-                className={cn("tp-btn", (avatarBusy || !target.avatarUrl) && "opacity-60")}
-                disabled={avatarBusy || !target.avatarUrl}
-                onClick={() => void adminRemoveAvatar()}
-              >
-                Quitar
-              </button>
-            </div>
-          </div>
-        )}
-
-        {rolesLoading ? (
-          <div>Cargando roles…</div>
         ) : (
-          <div className="space-y-3">
-            <div className="grid grid-cols-2 gap-3 max-h-[55vh] overflow-auto tp-scroll">
-              {roles.map((r) => {
-                const checked = selectedRoleIds.includes(r.id);
-                return (
-                  <label key={r.id} className="flex gap-2 text-sm">
-                    <input
-                      type="checkbox"
-                      checked={checked}
-                      onChange={(e) =>
-                        setSelectedRoleIds((prev) =>
-                          e.target.checked ? [...prev, r.id] : prev.filter((id) => id !== r.id)
-                        )
-                      }
-                    />
-                    {r.name} {r.isSystem ? "(sys)" : ""}
-                  </label>
-                );
-              })}
-            </div>
-
-            <div className="pt-4 flex justify-end gap-2">
-              <button className="tp-btn-secondary" onClick={() => setRolesModalOpen(false)} type="button">
-                Cancelar
-              </button>
-              <button className="tp-btn-primary" onClick={saveRoles} disabled={savingRoles} type="button">
-                {savingRoles ? "Guardando…" : "Guardar"}
-              </button>
-            </div>
-          </div>
-        )}
-      </Modal>
-
-      {/* =========================
-          MODAL OVERRIDES
-      ========================= */}
-      <Modal open={ovModalOpen} title={`Overrides (ALLOW/DENY) • ${target?.email || ""}`} onClose={() => setOvModalOpen(false)}>
-        {ovLoading ? (
-          <div>Cargando…</div>
-        ) : (
-          <div className="space-y-4">
+          <form onSubmit={saveModal} className="space-y-4">
+            {/* Avatar (estilo Empresa) */}
             <div className="tp-card p-4">
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                <div>
-                  <label className="mb-1 block text-xs text-muted">Permiso</label>
-                  <select className="tp-input" value={permPick} onChange={(e) => setPermPick(e.target.value)}>
-                    <option value="">Seleccionar…</option>
-                    {allPerms.map((p) => (
-                      <option key={p.id} value={p.id}>
-                        {p.module}:{p.action}
-                      </option>
-                    ))}
-                  </select>
+              <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+                <div className="flex items-center gap-4">
+                  <div className="relative group">
+                    <button
+                      type="button"
+                      className={cn(
+                        "h-16 w-16 rounded-2xl grid place-items-center relative overflow-hidden",
+                        "focus:outline-none focus:ring-2 focus:ring-[color:var(--primary)]",
+                        (avatarBusy || modalBusy) &&
+                          "opacity-60 cursor-not-allowed"
+                      )}
+                      style={{
+                        border: "1px solid var(--border)",
+                        background:
+                          "color-mix(in oklab, var(--card) 80%, var(--bg))",
+                        color: "var(--muted)",
+                      }}
+                      title={
+                        detail?.avatarUrl || avatarPreview
+                          ? "Editar avatar"
+                          : "Agregar avatar"
+                      }
+                      onClick={() => {
+                        if (!avatarBusy && !modalBusy)
+                          avatarInputModalRef.current?.click();
+                      }}
+                      disabled={avatarBusy || modalBusy}
+                    >
+                      {(avatarBusy || avatarImgLoading) && (
+                        <div
+                          className="absolute inset-0 grid place-items-center"
+                          style={{ background: "rgba(0,0,0,0.22)" }}
+                        >
+                          <div className="h-6 w-6 rounded-full border-2 border-white/40 border-t-white animate-spin" />
+                        </div>
+                      )}
+
+                      {avatarPreview || detail?.avatarUrl ? (
+                        <img
+                          src={avatarPreview || detail?.avatarUrl!}
+                          alt="Avatar"
+                          className="h-full w-full object-cover"
+                          onLoadStart={() => setAvatarImgLoading(true)}
+                          onLoad={() => setAvatarImgLoading(false)}
+                          onError={() => setAvatarImgLoading(false)}
+                        />
+                      ) : (
+                        <div className="grid h-full w-full place-items-center text-sm font-bold text-primary">
+                          {initialsFrom(fName || fEmail || "U")}
+                        </div>
+                      )}
+
+                      <div
+                        className={cn(
+                          "absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity",
+                          "grid place-items-center"
+                        )}
+                        style={{ background: "rgba(0,0,0,0.28)" }}
+                        aria-hidden="true"
+                      >
+                        <span className="text-white text-[11px] px-2 text-center leading-tight">
+                          {avatarBusy
+                            ? "SUBIENDO…"
+                            : avatarPreview || detail?.avatarUrl
+                            ? "EDITAR"
+                            : "AGREGAR"}
+                        </span>
+                      </div>
+                    </button>
+
+                    {(avatarPreview ||
+                      (modalMode === "EDIT" && detail?.avatarUrl)) && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (avatarBusy || modalBusy) return;
+
+                          // si hay preview (CREATE o EDIT), descartarlo
+                          if (avatarPreview) {
+                            setAvatarPreview((prev) => {
+                              if (prev?.startsWith("blob:"))
+                                URL.revokeObjectURL(prev);
+                              return "";
+                            });
+                            setAvatarFileDraft(null);
+                            return;
+                          }
+
+                          // si es EDIT y hay avatar guardado, eliminarlo
+                          if (modalMode === "EDIT" && detail?.avatarUrl)
+                            void modalRemoveAvatar();
+                        }}
+                        className={cn(
+                          "absolute top-2 right-2 h-6 w-6 rounded-full grid place-items-center",
+                          "opacity-0 group-hover:opacity-100 transition-opacity"
+                        )}
+                        style={{
+                          background: "rgba(255,255,255,0.75)",
+                          border: "1px solid rgba(0,0,0,0.08)",
+                          backdropFilter: "blur(6px)",
+                        }}
+                        title={avatarPreview ? "Descartar" : "Eliminar avatar"}
+                        aria-label={avatarPreview ? "Descartar" : "Eliminar avatar"}
+                        disabled={avatarBusy || modalBusy}
+                      >
+                        <span className="text-[11px] leading-none">✕</span>
+                      </button>
+                    )}
+
+                    <input
+                      ref={avatarInputModalRef}
+                      type="file"
+                      accept="image/*"
+                      hidden
+                      onChange={(e) => {
+                        const f = e.target.files?.[0];
+                        e.currentTarget.value = "";
+                        if (f) void pickAvatarForModal(f);
+                      }}
+                    />
+                  </div>
+
+                  <div className="min-w-0">
+                    <div className="text-sm font-semibold">Avatar</div>
+                    <div className="text-xs text-muted">
+                      {modalMode === "CREATE"
+                        ? "Podés elegirlo ahora (se sube al crear)."
+                        : "Elegí uno nuevo para actualizar al instante."}
+                    </div>
+                  </div>
                 </div>
 
-                <div>
-                  <label className="mb-1 block text-xs text-muted">Efecto</label>
-                  <select className="tp-input" value={effectPick} onChange={(e) => setEffectPick(e.target.value as any)}>
-                    <option value="ALLOW">ALLOW</option>
-                    <option value="DENY">DENY</option>
-                  </select>
-                </div>
-
-                <div className="flex items-end">
-                  <button className="tp-btn-primary w-full" onClick={addOrUpdateOverride} disabled={!permPick || savingOv} type="button">
-                    {savingOv ? "Guardando…" : "Agregar / Actualizar"}
+                {avatarPreview && (
+                  <button
+                    className="tp-btn"
+                    type="button"
+                    onClick={() => {
+                      setAvatarPreview((prev) => {
+                        if (prev?.startsWith("blob:"))
+                          URL.revokeObjectURL(prev);
+                        return "";
+                      });
+                      setAvatarFileDraft(null);
+                    }}
+                    disabled={avatarBusy || modalBusy}
+                  >
+                    Descartar
                   </button>
-                </div>
+                )}
               </div>
-              <p className="mt-2 text-xs text-muted">
-                * DENY pisa ALLOW y también pisa permisos heredados por roles (según tu lógica backend).
-              </p>
             </div>
 
-            <div className="tp-card overflow-hidden">
-              <table className="w-full text-sm">
-                <thead className="border-b border-border">
-                  <tr>
-                    <th className="px-4 py-3 text-left">Permiso</th>
-                    <th className="px-4 py-3 text-left">Efecto</th>
-                    <th className="px-4 py-3 text-right">Acciones</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {overrides.length === 0 ? (
-                    <tr>
-                      <td className="px-4 py-4 text-muted" colSpan={3}>
-                        Sin overrides.
-                      </td>
-                    </tr>
-                  ) : (
-                    overrides.map((ov) => (
-                      <tr key={ov.permissionId} className="border-t border-border">
-                        <td className="px-4 py-3">{labelPerm(ov.permissionId)}</td>
-                        <td className="px-4 py-3">
-                          <Badge>{ov.effect}</Badge>
-                        </td>
-                        <td className="px-4 py-3 text-right">
-                          <button className={cn("tp-btn", savingOv && "opacity-60")} onClick={() => void removeOv(ov.permissionId)} disabled={savingOv} type="button">
+            <Tabs value={tab} onChange={setTab} />
+
+            {/* TAB DATA */}
+            {tab === "DATA" ? (
+              <div className="space-y-4">
+                <Section
+                  title="Cuenta"
+                  desc="Email, contraseña inicial y clave de 4 dígitos."
+                >
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                    <div className="md:col-span-1">
+                      <label className="mb-1 block text-xs text-muted">
+                        Email
+                      </label>
+                      <input
+                        className="tp-input"
+                        value={fEmail}
+                        onChange={(e) => setFEmail(e.target.value)}
+                        placeholder="usuario@correo.com"
+                        disabled={modalMode === "EDIT"}
+                      />
+                      {modalMode === "EDIT" ? (
+                        <p className="mt-1 text-[11px] text-muted">
+                          (El email no se edita desde aquí)
+                        </p>
+                      ) : null}
+                    </div>
+
+                    <div className="md:col-span-1">
+                      <label className="mb-1 block text-xs text-muted">
+                        Contraseña (opcional)
+                      </label>
+                      <input
+                        className="tp-input"
+                        type="password"
+                        value={fPassword}
+                        onChange={(e) => setFPassword(e.target.value)}
+                        placeholder={
+                          modalMode === "CREATE"
+                            ? "Si la dejás vacía, queda Inactivo"
+                            : "Dejar vacía para no cambiar"
+                        }
+                      />
+                      {modalMode === "CREATE" ? (
+                        <p className="mt-1 text-[11px] text-muted">
+                          Si la contraseña está vacía, el usuario queda{" "}
+                          <b>Inactivo</b> (PENDING en backend).
+                        </p>
+                      ) : (
+                        <p className="mt-1 text-[11px] text-muted">
+                          (Solo se cambia si escribís una nueva)
+                        </p>
+                      )}
+                    </div>
+
+                    <div className="md:col-span-1">
+                      <label className="mb-1 block text-xs text-muted">
+                        Clave 4 dígitos
+                      </label>
+                      <input
+                        className="tp-input"
+                        inputMode="numeric"
+                        value={fPin4}
+                        onChange={(e) => {
+                          // solo números, máx 4
+                          const next = e.target.value
+                            .replace(/\D/g, "")
+                            .slice(0, 4);
+                          setFPin4(next);
+                        }}
+                        placeholder="0000"
+                        maxLength={4}
+                      />
+                      <p className="mt-1 text-[11px] text-muted">
+                        Solo números (4). Luego lo conectamos a backend.
+                      </p>
+                    </div>
+                  </div>
+                </Section>
+
+                <Section
+                  title="Datos personales"
+                  desc="Nombre, documento y dirección (como Empresa)."
+                >
+                  <div className="grid grid-cols-1 md:grid-cols-12 gap-3">
+                    {/* Nombre (full width) */}
+                    <div className="md:col-span-12">
+                      <label className="mb-1 block text-xs text-muted">
+                        Nombre y apellido *
+                      </label>
+                      <input
+                        className="tp-input"
+                        value={fName}
+                        onChange={(e) => setFName(e.target.value)}
+                        placeholder="Nombre Apellido"
+                      />
+                    </div>
+
+                    {/* Doc + Tel (misma fila) */}
+                    <div className="md:col-span-2">
+                      <label className="mb-1 block text-xs text-muted">
+                        Tipo doc.
+                      </label>
+                      <input
+                        className="tp-input"
+                        value={fDocType}
+                        onChange={(e) => setFDocType(e.target.value)}
+                        placeholder="DNI / PAS / CUIT"
+                      />
+                    </div>
+
+                    <div className="md:col-span-4">
+                      <label className="mb-1 block text-xs text-muted">
+                        Nro. doc.
+                      </label>
+                      <input
+                        className="tp-input"
+                        value={fDocNumber}
+                        onChange={(e) => setFDocNumber(e.target.value)}
+                        placeholder="12345678"
+                      />
+                    </div>
+
+                    <div className="md:col-span-2">
+                      <label className="mb-1 block text-xs text-muted">
+                        Tel. país
+                      </label>
+                      <input
+                        className="tp-input"
+                        value={fPhoneCountry}
+                        onChange={(e) => setFPhoneCountry(e.target.value)}
+                        placeholder="+54"
+                      />
+                    </div>
+
+                    <div className="md:col-span-4">
+                      <label className="mb-1 block text-xs text-muted">
+                        Teléfono
+                      </label>
+                      <input
+                        className="tp-input"
+                        value={fPhoneNumber}
+                        onChange={(e) => setFPhoneNumber(e.target.value)}
+                        placeholder="11 1234 5678"
+                      />
+                    </div>
+
+                    {/* Dirección */}
+                    <div className="md:col-span-12 mt-2">
+                      <div className="tp-card p-4">
+                        <div className="text-sm font-semibold mb-3">
+                          Domicilio
+                        </div>
+
+                        <div className="grid grid-cols-1 md:grid-cols-12 gap-3">
+                          <div className="md:col-span-5">
+                            <label className="mb-1 block text-xs text-muted">
+                              Calle
+                            </label>
+                            <input
+                              className="tp-input"
+                              value={fStreet}
+                              onChange={(e) => setFStreet(e.target.value)}
+                              placeholder="Calle"
+                            />
+                          </div>
+
+                          <div className="md:col-span-2">
+                            <label className="mb-1 block text-xs text-muted">
+                              Número
+                            </label>
+                            <input
+                              className="tp-input"
+                              value={fNumber}
+                              onChange={(e) => setFNumber(e.target.value)}
+                              placeholder="123"
+                            />
+                          </div>
+
+                          <div className="md:col-span-5">
+                            <label className="mb-1 block text-xs text-muted">
+                              Ciudad
+                            </label>
+                            <input
+                              className="tp-input"
+                              value={fCity}
+                              onChange={(e) => setFCity(e.target.value)}
+                              placeholder="Ciudad"
+                            />
+                          </div>
+
+                          <div className="md:col-span-4">
+                            <label className="mb-1 block text-xs text-muted">
+                              Provincia
+                            </label>
+                            <input
+                              className="tp-input"
+                              value={fProvince}
+                              onChange={(e) => setFProvince(e.target.value)}
+                              placeholder="Provincia"
+                            />
+                          </div>
+
+                          <div className="md:col-span-4">
+                            <label className="mb-1 block text-xs text-muted">
+                              Código postal
+                            </label>
+                            <input
+                              className="tp-input"
+                              value={fPostalCode}
+                              onChange={(e) => setFPostalCode(e.target.value)}
+                              placeholder="1012"
+                            />
+                          </div>
+
+                          <div className="md:col-span-4">
+                            <label className="mb-1 block text-xs text-muted">
+                              País
+                            </label>
+                            <input
+                              className="tp-input"
+                              value={fCountry}
+                              onChange={(e) => setFCountry(e.target.value)}
+                              placeholder="Argentina"
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </Section>
+
+                {/* Adjuntos draft */}
+                {attachmentsDraft.length > 0 && (
+                  <Section
+                    title="Adjuntos seleccionados"
+                    desc="Se subirán al guardar (o al crear)."
+                  >
+                    <div className="space-y-2">
+                      {attachmentsDraft.map((f, idx) => (
+                        <div
+                          key={`${f.name}-${idx}`}
+                          className="flex items-center justify-between gap-3 rounded-xl px-3 py-2 border border-border bg-bg"
+                        >
+                          <div className="min-w-0">
+                            <div className="text-sm font-semibold truncate flex items-center gap-2">
+                              <Paperclip className="h-4 w-4" />
+                              {safeFileLabel(f.name)}
+                            </div>
+                            <div className="text-xs text-muted">
+                              {formatBytes(f.size)}
+                            </div>
+                          </div>
+
+                          <button
+                            type="button"
+                            className="tp-btn"
+                            onClick={() => removeDraftAttachmentByIndex(idx)}
+                            disabled={modalBusy || uploadingAttachments}
+                            title="Quitar del borrador"
+                          >
                             Quitar
                           </button>
-                        </td>
-                      </tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
-            </div>
+                        </div>
+                      ))}
+                    </div>
+                  </Section>
+                )}
 
-            <div className="pt-2 flex justify-end">
-              <button className="tp-btn-secondary" onClick={() => setOvModalOpen(false)} type="button">
-                Listo
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                  <Section title="Notas" desc="Notas internas.">
+                    <textarea
+                      className="tp-input min-h-[180px]"
+                      value={fNotes}
+                      onChange={(e) => setFNotes(e.target.value)}
+                      placeholder="Notas internas…"
+                    />
+                  </Section>
+
+                  <Section
+                    title="Adjuntos"
+                    desc="Archivos del usuario (PDF, imágenes, etc.)."
+                  >
+                    <div className="space-y-3">
+                      <button
+                        type="button"
+                        className="block w-full cursor-pointer"
+                        onClick={() => attInputRef.current?.click()}
+                        disabled={uploadingAttachments || modalBusy}
+                      >
+                        <div
+                          className="min-h-[180px] flex items-center justify-center border border-dashed rounded-2xl"
+                          style={{
+                            borderColor: "var(--border)",
+                            background:
+                              "color-mix(in oklab, var(--card) 82%, var(--bg))",
+                            color: "var(--muted)",
+                          }}
+                        >
+                          {uploadingAttachments
+                            ? "Subiendo…"
+                            : "Click para agregar archivos +"}
+                        </div>
+                      </button>
+
+                      <input
+                        ref={attInputRef}
+                        type="file"
+                        multiple
+                        hidden
+                        onChange={(e) => {
+                          const picked = Array.from(
+                            e.currentTarget.files ?? []
+                          );
+                          e.currentTarget.value = "";
+                          void addAttachments(picked);
+                        }}
+                      />
+
+                      {/* CREATE: mostrar seleccionados (draft) */}
+                      {modalMode === "CREATE" &&
+                        attachmentsDraft.length > 0 && (
+                          <div>
+                            <div className="text-xs text-[color:var(--muted)] mb-2">
+                              Seleccionados
+                            </div>
+                            <div className="space-y-2">
+                              {attachmentsDraft.map((f, idx) => (
+                                <div
+                                  key={`${f.name}-${idx}`}
+                                  className="group flex items-center justify-between gap-3 rounded-xl px-3 py-2"
+                                  style={{
+                                    border: "1px solid var(--border)",
+                                    background:
+                                      "color-mix(in oklab, var(--card) 90%, var(--bg))",
+                                  }}
+                                >
+                                  <div className="flex items-center gap-3 min-w-0">
+                                    <div
+                                      className="h-10 w-10 rounded-lg grid place-items-center border text-xs"
+                                      style={{
+                                        borderColor: "var(--border)",
+                                        color: "var(--muted)",
+                                        background:
+                                          "color-mix(in oklab, var(--card) 85%, var(--bg))",
+                                      }}
+                                    >
+                                      DOC
+                                    </div>
+
+                                    <div className="min-w-0">
+                                      <div className="text-sm text-text truncate">
+                                        {safeFileLabel(f.name)}
+                                      </div>
+                                      <div className="text-xs text-muted flex gap-2">
+                                        <span className="truncate">
+                                          {formatBytes(f.size)}
+                                        </span>
+                                      </div>
+                                    </div>
+                                  </div>
+
+                                  <button
+                                    type="button"
+                                    className={cn(
+                                      "h-8 w-8 rounded-full grid place-items-center",
+                                      "opacity-0 group-hover:opacity-100 transition-opacity"
+                                    )}
+                                    style={{
+                                      background: "var(--card)",
+                                      border: "1px solid var(--border)",
+                                    }}
+                                    title="Quitar adjunto"
+                                    aria-label="Quitar adjunto"
+                                    onClick={() =>
+                                      removeDraftAttachmentByIndex(idx)
+                                    }
+                                    disabled={modalBusy}
+                                  >
+                                    <span className="text-xs">✕</span>
+                                  </button>
+                                </div>
+                              ))}
+                            </div>
+
+                            <div className="mt-2 text-xs text-muted">
+                              En “Crear”, los adjuntos se subirán cuando toques{" "}
+                              <b>Crear</b>.
+                            </div>
+                          </div>
+                        )}
+
+                      {/* EDIT: mostrar guardados (servidor) */}
+                      {modalMode === "EDIT" &&
+                        savedAttachments.length > 0 && (
+                          <div>
+                            <div className="text-xs text-[color:var(--muted)] mb-2">
+                              Guardados
+                            </div>
+                            <div className="space-y-2">
+                              {savedAttachments.map((a) => {
+                                const busy = deletingAttId === a.id;
+                                const url = absUrl(a.url || "");
+                                const isImg = String(
+                                  a.mimeType || ""
+                                ).startsWith("image/");
+
+                                return (
+                                  <div
+                                    key={a.id}
+                                    className="group flex items-center justify-between gap-3 rounded-xl px-3 py-2"
+                                    style={{
+                                      border: "1px solid var(--border)",
+                                      background:
+                                        "color-mix(in oklab, var(--card) 90%, var(--bg))",
+                                    }}
+                                  >
+                                    <div className="flex items-center gap-3 min-w-0">
+                                      {isImg && url ? (
+                                        <img
+                                          src={url}
+                                          alt={safeFileLabel(a.filename)}
+                                          className="h-10 w-10 rounded-lg object-cover border"
+                                          style={{
+                                            borderColor: "var(--border)",
+                                          }}
+                                          loading="lazy"
+                                        />
+                                      ) : (
+                                        <div
+                                          className="h-10 w-10 rounded-lg grid place-items-center border text-xs"
+                                          style={{
+                                            borderColor: "var(--border)",
+                                            color: "var(--muted)",
+                                            background:
+                                              "color-mix(in oklab, var(--card) 85%, var(--bg))",
+                                          }}
+                                        >
+                                          DOC
+                                        </div>
+                                      )}
+
+                                      <div className="min-w-0">
+                                        <div className="text-sm text-text truncate">
+                                          {safeFileLabel(a.filename)}
+                                        </div>
+                                        <div className="text-xs text-muted flex gap-2">
+                                          <span className="truncate">
+                                            {formatBytes(a.size)}
+                                          </span>
+                                          {url && (
+                                            <a
+                                              className="underline underline-offset-2"
+                                              href={url}
+                                              target="_blank"
+                                              rel="noreferrer"
+                                              onClick={(e) =>
+                                                e.stopPropagation()
+                                              }
+                                            >
+                                              Abrir
+                                            </a>
+                                          )}
+                                        </div>
+                                      </div>
+                                    </div>
+
+                                    <button
+                                      type="button"
+                                      className={cn(
+                                        "h-8 w-8 rounded-full grid place-items-center",
+                                        "opacity-0 group-hover:opacity-100 transition-opacity"
+                                      )}
+                                      style={{
+                                        background: "var(--card)",
+                                        border: "1px solid var(--border)",
+                                      }}
+                                      title="Eliminar adjunto"
+                                      aria-label="Eliminar adjunto"
+                                      disabled={busy}
+                                      onClick={() =>
+                                        void removeSavedAttachment(a.id)
+                                      }
+                                    >
+                                      <span className="text-xs">
+                                        {busy ? "…" : "✕"}
+                                      </span>
+                                    </button>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        )}
+
+                      {modalMode === "EDIT" &&
+                        savedAttachments.length === 0 &&
+                        !uploadingAttachments && (
+                          <div className="text-xs text-muted">
+                            Todavía no hay adjuntos.
+                          </div>
+                        )}
+                    </div>
+                  </Section>
+                </div>
+              </div>
+            ) : null}
+
+            {/* TAB CONFIG */}
+            {tab === "CONFIG" ? (
+              <div className="w-full space-y-4">
+                <Section
+                  title="Almacén favorito"
+                  desc="Se usará por defecto en operaciones."
+                >
+                  <select
+                    className="tp-input"
+                    value={fFavWarehouseId}
+                    onChange={(e) => setFFavWarehouseId(e.target.value)}
+                    disabled={!canAdmin}
+                  >
+                    <option value="">Sin favorito</option>
+
+                    {activeAlmacenes.map((a) => {
+                      const isSelected =
+                        String(fFavWarehouseId) === String(a.id);
+                      return (
+                        <option key={a.id} value={a.id} disabled={isSelected}>
+                          {a.nombre} {a.codigo ? `(${a.codigo})` : ""}
+                          {isSelected ? " (seleccionado)" : ""}
+                        </option>
+                      );
+                    })}
+                  </select>
+
+                  <div className="mt-2 text-xs text-muted">
+                    {fFavWarehouseId
+                      ? `Seleccionado: ${
+                          warehouseLabelById(fFavWarehouseId) ?? fFavWarehouseId
+                        }`
+                      : "Sin almacén favorito"}
+                  </div>
+                </Section>
+
+                <Section title="Roles del usuario" desc="Selección múltiple.">
+                  <div className="tp-card p-3 max-h-[260px] overflow-auto tp-scroll">
+                    {rolesLoading ? (
+                      <div className="text-sm text-muted flex items-center gap-2">
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                        Cargando roles…
+                      </div>
+                    ) : roles.length === 0 ? (
+                      <div className="text-sm text-muted">No hay roles.</div>
+                    ) : (
+                      <div className="grid grid-cols-1 gap-2">
+                        {roles.map((r: any) => {
+                          const checked = fRoleIds.includes(r.id);
+                          return (
+                            <label
+                              key={r.id}
+                              className="flex items-center gap-2 text-sm"
+                            >
+                              <input
+                                type="checkbox"
+                                checked={checked}
+                                onChange={(e) =>
+                                  setFRoleIds((prev) =>
+                                    e.target.checked
+                                      ? [...prev, r.id]
+                                      : prev.filter((id) => id !== r.id)
+                                  )
+                                }
+                              />
+                              {roleLabel(r)}
+                            </label>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                  <p className="mt-2 text-xs text-muted">
+                    Si no seleccionás roles, queda sin permisos hasta asignar.
+                  </p>
+                </Section>
+
+                <Section
+                  title="Permisos especiales"
+                  desc="Opcional: Permitir/Denegar por permiso."
+                >
+                  <div className="space-y-3">
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+                      <div className="md:col-span-2">
+                        <label className="mb-1 block text-xs text-muted">
+                          Permiso
+                        </label>
+                        <select
+                          className="tp-input"
+                          value={specialPermPick}
+                          onChange={(e) => setSpecialPermPick(e.target.value)}
+                          disabled={permsLoading}
+                        >
+                          <option value="">Seleccionar…</option>
+                          {allPerms.map((p) => {
+                            const alreadyAdded = specialList.some(
+                              (x) => x.permissionId === p.id
+                            );
+                            return (
+                              <option
+                                key={p.id}
+                                value={p.id}
+                                disabled={alreadyAdded}
+                              >
+                                {permLabelByModuleAction(p.module, p.action)}
+                                {alreadyAdded ? " (ya agregado)" : ""}
+                              </option>
+                            );
+                          })}
+                        </select>
+                      </div>
+
+                      <div>
+                        <label className="mb-1 block text-xs text-muted">
+                          Acción
+                        </label>
+                        <select
+                          className="tp-input"
+                          value={specialEffectPick}
+                          onChange={(e) =>
+                            setSpecialEffectPick(e.target.value as any)
+                          }
+                        >
+                          <option value="ALLOW">Permitir</option>
+                          <option value="DENY">Denegar</option>
+                        </select>
+                      </div>
+
+                      <div className="md:col-span-3">
+                        <button
+                          className={cn(
+                            "tp-btn-primary w-full",
+                            (!specialPermPick || specialSaving) && "opacity-60"
+                          )}
+                          type="button"
+                          disabled={!specialPermPick || specialSaving}
+                          onClick={() => void addOrUpdateSpecial()}
+                        >
+                          {specialSaving ? "Guardando…" : "Agregar / Actualizar"}
+                        </button>
+
+                        <p className="mt-2 text-xs text-muted">
+                          * Denegar pisa Permitir y pisa permisos heredados por
+                          roles.
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="tp-card overflow-hidden">
+                      <table className="w-full text-sm">
+                        <thead className="border-b border-border">
+                          <tr>
+                            <th className="px-3 py-2 text-left">Permiso</th>
+                            <th className="px-3 py-2 text-left">Acción</th>
+                            <th className="px-3 py-2 text-right">Quitar</th>
+                          </tr>
+                        </thead>
+
+                        <tbody>
+                          {specialListSorted.length === 0 ? (
+                            <tr>
+                              <td
+                                className="px-3 py-3 text-muted"
+                                colSpan={3}
+                              >
+                                Sin permisos especiales.
+                              </td>
+                            </tr>
+                          ) : (
+                            specialListSorted.map((ov) => (
+                              <tr
+                                key={ov.permissionId}
+                                className="border-t border-border"
+                              >
+                                <td className="px-3 py-2">
+                                  {labelPerm(ov.permissionId)}
+                                </td>
+
+                                <td className="px-3 py-2">
+                                  <span
+                                    className={cn(
+                                      "inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-semibold",
+                                      ov.effect === "ALLOW"
+                                        ? "border-emerald-500/30 bg-emerald-500/15 text-emerald-300"
+                                        : "border-red-500/30 bg-red-500/15 text-red-300"
+                                    )}
+                                  >
+                                    {effectLabel(ov.effect)}
+                                  </span>
+                                </td>
+
+                                <td className="px-3 py-2 text-right">
+                                  <button
+                                    className={cn(
+                                      "tp-btn",
+                                      specialSaving && "opacity-60"
+                                    )}
+                                    type="button"
+                                    disabled={specialSaving}
+                                    onClick={() =>
+                                      void removeSpecial(ov.permissionId)
+                                    }
+                                  >
+                                    Quitar
+                                  </button>
+                                </td>
+                              </tr>
+                            ))
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                </Section>
+              </div>
+            ) : null}
+
+            <div className="flex justify-end gap-2 pt-2">
+              <button
+                className="tp-btn-secondary"
+                type="button"
+                onClick={closeModal}
+                disabled={modalBusy}
+              >
+                Cancelar
+              </button>
+              <button
+                className={cn("tp-btn-primary", modalBusy && "opacity-60")}
+                type="submit"
+                disabled={modalBusy}
+              >
+                {modalBusy
+                  ? "Guardando…"
+                  : modalMode === "CREATE"
+                  ? "Crear"
+                  : "Guardar"}
               </button>
             </div>
-          </div>
+          </form>
         )}
+      </Modal>
+
+      {/* CONFIRM DELETE single */}
+      <Modal
+        open={confirmOpen}
+        title="Eliminar usuario"
+        onClose={() => {
+          if (deleteBusy) return;
+          setConfirmOpen(false);
+          setDeleteTarget(null);
+        }}
+      >
+        <div className="space-y-4">
+          <div className="text-sm">
+            Vas a eliminar (soft delete) a:{" "}
+            <span className="font-semibold">{deleteTarget?.email}</span>
+            <div className="mt-2 text-xs text-muted">
+              - Se bloquea el usuario y se invalida la sesión. <br />
+              - Se liberará el email para poder recrearlo. <br />
+              - Se limpian roles/permisos especiales y se quita el avatar.
+            </div>
+          </div>
+
+          <div className="flex justify-end gap-2">
+            <button
+              className="tp-btn-secondary"
+              type="button"
+              disabled={deleteBusy}
+              onClick={() => {
+                setConfirmOpen(false);
+                setDeleteTarget(null);
+              }}
+            >
+              Cancelar
+            </button>
+            <button
+              className={cn("tp-btn", deleteBusy && "opacity-60")}
+              type="button"
+              disabled={deleteBusy}
+              onClick={() => void confirmDelete()}
+            >
+              {deleteBusy ? "Eliminando…" : "Eliminar"}
+            </button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* CONFIRM DELETE bulk */}
+      <Modal
+        open={bulkConfirmOpen}
+        title="Eliminar usuarios seleccionados"
+        onClose={() => {
+          if (bulkBusy) return;
+          setBulkConfirmOpen(false);
+        }}
+      >
+        <div className="space-y-4">
+          <div className="text-sm">
+            Vas a eliminar (soft delete) <b>{selectedCount}</b> usuario(s).
+            <div className="mt-2 text-xs text-muted">
+              Esto eliminará usuarios seleccionados en esta página (según tu
+              selección actual).
+            </div>
+          </div>
+
+          <div className="flex justify-end gap-2">
+            <button
+              className="tp-btn-secondary"
+              type="button"
+              disabled={bulkBusy}
+              onClick={() => setBulkConfirmOpen(false)}
+            >
+              Cancelar
+            </button>
+            <button
+              className={cn("tp-btn", bulkBusy && "opacity-60")}
+              type="button"
+              disabled={bulkBusy}
+              onClick={() => void bulkDelete()}
+            >
+              {bulkBusy ? "Eliminando…" : "Eliminar"}
+            </button>
+          </div>
+        </div>
       </Modal>
     </div>
   );

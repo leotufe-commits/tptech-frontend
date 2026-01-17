@@ -660,7 +660,10 @@ export default function PerfilJoyeria() {
                 {hasLogo ? (
                   <>
                     {(uploadingLogo || logoImgLoading) && (
-                      <div className="absolute inset-0 grid place-items-center" style={{ background: "rgba(0,0,0,0.22)" }}>
+                      <div
+                        className="absolute inset-0 grid place-items-center"
+                        style={{ background: "rgba(0,0,0,0.22)" }}
+                      >
                         <div
                           className="h-7 w-7 rounded-full border-2 border-white/40 border-t-white animate-spin"
                           aria-label="Cargando logo"
@@ -732,7 +735,11 @@ export default function PerfilJoyeria() {
         <div className="mt-6 grid grid-cols-1 gap-8 lg:grid-cols-2">
           <div className="space-y-4">
             <Field label="Razón social">
-              <input className="tp-input" value={company.legalName} onChange={(e) => setCompanyField("legalName", e.target.value)} />
+              <input
+                className="tp-input"
+                value={company.legalName}
+                onChange={(e) => setCompanyField("legalName", e.target.value)}
+              />
             </Field>
 
             <div className="grid grid-cols-1 sm:grid-cols-12 gap-3">
@@ -749,37 +756,61 @@ export default function PerfilJoyeria() {
 
               <div className="sm:col-span-7">
                 <Field label="CUIT">
-                  <input className="tp-input" value={company.cuit} onChange={(e) => setCompanyField("cuit", onlyDigits(e.target.value))} />
+                  <input
+                    className="tp-input"
+                    value={company.cuit}
+                    onChange={(e) => setCompanyField("cuit", onlyDigits(e.target.value))}
+                  />
                 </Field>
               </div>
             </div>
 
             <Field label="Sitio web">
-              <input className="tp-input" value={company.website} onChange={(e) => setCompanyField("website", e.target.value)} />
+              <input
+                className="tp-input"
+                value={company.website}
+                onChange={(e) => setCompanyField("website", e.target.value)}
+              />
             </Field>
           </div>
 
           <div className="space-y-4">
             <Field label="Nombre de Fantasía">
-              <input className="tp-input" value={existing.name} onChange={(e) => setExistingField("name", e.target.value)} />
+              <input
+                className="tp-input"
+                value={existing.name}
+                onChange={(e) => setExistingField("name", e.target.value)}
+              />
             </Field>
 
             <div className="grid grid-cols-1 sm:grid-cols-12 gap-3">
               <div className="sm:col-span-4">
                 <Field label="Prefijo">
-                  <input className="tp-input" value={existing.phoneCountry} onChange={(e) => setExistingField("phoneCountry", e.target.value)} />
+                  <input
+                    className="tp-input"
+                    value={existing.phoneCountry}
+                    onChange={(e) => setExistingField("phoneCountry", e.target.value)}
+                  />
                 </Field>
               </div>
 
               <div className="sm:col-span-8">
                 <Field label="Teléfono">
-                  <input className="tp-input" value={existing.phoneNumber} onChange={(e) => setExistingField("phoneNumber", e.target.value)} />
+                  <input
+                    className="tp-input"
+                    value={existing.phoneNumber}
+                    onChange={(e) => setExistingField("phoneNumber", e.target.value)}
+                  />
                 </Field>
               </div>
             </div>
 
             <Field label="Correo electrónico">
-              <input className="tp-input" value={company.email} onChange={(e) => setCompanyField("email", e.target.value)} />
+              <input
+                className="tp-input"
+                value={company.email}
+                onChange={(e) => setCompanyField("email", e.target.value)}
+              />
             </Field>
           </div>
         </div>
@@ -797,37 +828,61 @@ export default function PerfilJoyeria() {
           <div className="grid grid-cols-1 md:grid-cols-12 gap-4">
             <div className="md:col-span-5">
               <Field label="Calle">
-                <input className="tp-input" value={existing.street} onChange={(e) => setExistingField("street", e.target.value)} />
+                <input
+                  className="tp-input"
+                  value={existing.street}
+                  onChange={(e) => setExistingField("street", e.target.value)}
+                />
               </Field>
             </div>
 
             <div className="md:col-span-2">
               <Field label="Número">
-                <input className="tp-input" value={existing.number} onChange={(e) => setExistingField("number", e.target.value)} />
+                <input
+                  className="tp-input"
+                  value={existing.number}
+                  onChange={(e) => setExistingField("number", e.target.value)}
+                />
               </Field>
             </div>
 
             <div className="md:col-span-5">
               <Field label="Ciudad">
-                <input className="tp-input" value={existing.city} onChange={(e) => setExistingField("city", e.target.value)} />
+                <input
+                  className="tp-input"
+                  value={existing.city}
+                  onChange={(e) => setExistingField("city", e.target.value)}
+                />
               </Field>
             </div>
 
             <div className="md:col-span-4">
               <Field label="Provincia">
-                <input className="tp-input" value={existing.province} onChange={(e) => setExistingField("province", e.target.value)} />
+                <input
+                  className="tp-input"
+                  value={existing.province}
+                  onChange={(e) => setExistingField("province", e.target.value)}
+                />
               </Field>
             </div>
 
             <div className="md:col-span-3">
               <Field label="Código Postal">
-                <input className="tp-input" value={existing.postalCode} onChange={(e) => setExistingField("postalCode", e.target.value)} />
+                <input
+                  className="tp-input"
+                  value={existing.postalCode}
+                  onChange={(e) => setExistingField("postalCode", e.target.value)}
+                />
               </Field>
             </div>
 
             <div className="md:col-span-5">
               <Field label="País">
-                <input className="tp-input" value={existing.country} onChange={(e) => setExistingField("country", e.target.value)} />
+                <input
+                  className="tp-input"
+                  value={existing.country}
+                  onChange={(e) => setExistingField("country", e.target.value)}
+                />
               </Field>
             </div>
           </div>
@@ -835,12 +890,22 @@ export default function PerfilJoyeria() {
 
         {/* NOTAS + ADJUNTOS */}
         <div className="mt-6 grid grid-cols-1 lg:grid-cols-2 gap-6">
-          <div className="rounded-2xl p-4 sm:p-5" style={{ border: "1px solid var(--border)", background: "var(--card)" }}>
+          <div
+            className="rounded-2xl p-4 sm:p-5"
+            style={{ border: "1px solid var(--border)", background: "var(--card)" }}
+          >
             <div className="font-semibold text-sm mb-3 text-text">Notas</div>
-            <textarea className="tp-input min-h-[160px]" value={company.notes} onChange={(e) => setCompanyField("notes", e.target.value)} />
+            <textarea
+              className="tp-input min-h-[160px]"
+              value={company.notes}
+              onChange={(e) => setCompanyField("notes", e.target.value)}
+            />
           </div>
 
-          <div className="rounded-2xl p-4 sm:p-5" style={{ border: "1px solid var(--border)", background: "var(--card)" }}>
+          <div
+            className="rounded-2xl p-4 sm:p-5"
+            style={{ border: "1px solid var(--border)", background: "var(--card)" }}
+          >
             <div className="font-semibold text-sm mb-3 text-text flex items-center justify-between">
               <span>Adjuntos</span>
               {uploadingAttachments && <span className="text-xs text-muted">Subiendo…</span>}
@@ -937,7 +1002,10 @@ export default function PerfilJoyeria() {
 
                         <button
                           type="button"
-                          className={cn("h-8 w-8 rounded-full grid place-items-center", "opacity-0 group-hover:opacity-100 transition-opacity")}
+                          className={cn(
+                            "h-8 w-8 rounded-full grid place-items-center",
+                            "opacity-0 group-hover:opacity-100 transition-opacity"
+                          )}
                           style={{ background: "var(--card)", border: "1px solid var(--border)" }}
                           title="Eliminar adjunto"
                           aria-label="Eliminar adjunto"

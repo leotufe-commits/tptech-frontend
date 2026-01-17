@@ -25,6 +25,20 @@ export type UserListItem = {
   createdAt?: string;
   updatedAt?: string;
   roles?: Role[];
+
+  /** ✅ para LockScreen / UX (si lo devolvés en list) */
+  pinEnabled?: boolean;
+  hasQuickPin?: boolean;
+};
+
+/** (Existe en Prisma, hoy no lo devolvés en getUser, pero queda listo) */
+export type UserAttachment = {
+  id: string;
+  url: string;
+  filename: string;
+  mimeType: string;
+  size: number;
+  createdAt?: string;
 };
 
 export type UserDetail = {
@@ -34,16 +48,42 @@ export type UserDetail = {
   status: UserStatus;
   avatarUrl?: string | null;
   favoriteWarehouseId?: string | null;
+
   createdAt?: string;
   updatedAt?: string;
+
   roles: Role[];
   permissionOverrides: Override[];
+
+  tokenVersion?: number;
+
+  phoneCountry?: string;
+  phoneNumber?: string;
+  documentType?: string;
+  documentNumber?: string;
+
+  street?: string;
+  number?: string;
+  city?: string;
+  province?: string;
+  postalCode?: string;
+  country?: string;
+
+  notes?: string;
+
+  attachments?: UserAttachment[];
+
+  /** ✅ QUICK PIN state (NO hash) */
+  hasQuickPin?: boolean;
+  quickPinUpdatedAt?: string | null;
+
+  /** ✅ NUEVO: habilitar/deshabilitar acceso por PIN (sin exponer el pin) */
+  pinEnabled?: boolean;
 };
 
 /* =========================
    RESPONSES
 ========================= */
-// ✅ soporta backend viejo y nuevo (paginado)
 export type UsersListResponse =
   | { users: UserListItem[] }
   | { users: UserListItem[]; total?: number; page?: number; limit?: number };
@@ -57,6 +97,7 @@ export type CreateUserBody = {
   roleIds?: string[];
   status?: Extract<UserStatus, "ACTIVE" | "BLOCKED">;
 };
+
 export type CreateUserResponse = { user: UserListItem };
 
 export type OkResponse<T extends object = {}> = { ok?: true } & T;
@@ -67,6 +108,50 @@ export type UpdateAvatarResponse = {
   avatarUrl?: string | null;
   user?: UserListItem;
 };
+
+// ⭐ Favorite warehouse (respuestas posibles)
+export type UpdateFavoriteWarehouseResponse = {
+  ok?: true;
+  favoriteWarehouseId?: string | null;
+  user?: UserListItem;
+};
+
+// ✅ Update profile (para modal "Editar usuario")
+export type UpdateUserProfileBody = {
+  name?: string | null;
+
+  phoneCountry?: string;
+  phoneNumber?: string;
+  documentType?: string;
+  documentNumber?: string;
+
+  street?: string;
+  number?: string;
+  city?: string;
+  province?: string;
+  postalCode?: string;
+  country?: string;
+
+  notes?: string;
+};
+
+/* =========================
+   ✅ QUICK PIN (clave rápida)
+   Alineado con backend: { ok, hasQuickPin, quickPinUpdatedAt, user? }
+========================= */
+export type QuickPinState = {
+  ok?: true;
+  hasQuickPin: boolean;
+  quickPinUpdatedAt?: string | null;
+  pinEnabled?: boolean;
+  user?: UserListItem;
+};
+
+function assertPin4(pin: string) {
+  const s = String(pin ?? "").trim();
+  if (!/^\d{4}$/.test(s)) throw new Error("El PIN debe tener 4 dígitos.");
+  return s;
+}
 
 /* =========================
    Helpers
@@ -79,9 +164,11 @@ function assertImageFile(file: File) {
   if (file.size > MAX) throw new Error("La imagen supera el máximo permitido (5MB)");
 }
 
-function normalizeAvatarResponse(
-  resp: unknown
-): { ok: true; avatarUrl: string | null; user?: UserListItem } {
+function normalizeAvatarResponse(resp: unknown): {
+  ok: true;
+  avatarUrl: string | null;
+  user?: UserListItem;
+} {
   const r = (resp && typeof resp === "object" ? (resp as any) : null) as any;
 
   const avatarUrl =
@@ -96,6 +183,25 @@ function normalizeAvatarResponse(
   };
 }
 
+function normalizeFavoriteWarehouseResponse(resp: unknown): {
+  ok: true;
+  favoriteWarehouseId: string | null;
+  user?: UserListItem;
+} {
+  const r = (resp && typeof resp === "object" ? (resp as any) : null) as any;
+
+  const favoriteWarehouseId =
+    (r && "favoriteWarehouseId" in r ? r.favoriteWarehouseId : undefined) ??
+    (r?.user?.favoriteWarehouseId != null ? r.user.favoriteWarehouseId : undefined) ??
+    null;
+
+  return {
+    ok: true,
+    favoriteWarehouseId: favoriteWarehouseId ?? null,
+    user: r?.user,
+  };
+}
+
 function buildUsersQuery(params?: { q?: string; page?: number; limit?: number }) {
   const q = params?.q?.trim();
   const page = params?.page;
@@ -105,7 +211,9 @@ function buildUsersQuery(params?: { q?: string; page?: number; limit?: number })
 
   if (q) sp.set("q", q);
   if (typeof page === "number" && Number.isFinite(page) && page > 0) sp.set("page", String(page));
-  if (typeof limit === "number" && Number.isFinite(limit) && limit > 0) sp.set("limit", String(limit));
+  if (typeof limit === "number" && Number.isFinite(limit) && limit > 0) {
+    sp.set("limit", String(limit));
+  }
 
   const qs = sp.toString();
   return qs ? `/users?${qs}` : "/users";
@@ -115,21 +223,14 @@ function buildUsersQuery(params?: { q?: string; page?: number; limit?: number })
    API calls
 ========================= */
 
-/**
- * Crear usuario
- * POST /users
- */
 export async function createUser(body: CreateUserBody): Promise<CreateUserResponse> {
   return apiFetch<CreateUserResponse>("/users", { method: "POST", body });
 }
 
-/**
- * Lista de usuarios (tabla)
- * GET /users?q=&page=&limit=
- *
- * ✅ ahora acepta params opcionales (para Users.tsx)
- * ✅ mantiene compatibilidad con llamadas sin argumentos
- */
+export async function deleteUser(userId: string): Promise<OkResponse> {
+  return apiFetch<OkResponse>(`/users/${userId}`, { method: "DELETE" });
+}
+
 export async function fetchUsers(params?: {
   q?: string;
   page?: number;
@@ -139,18 +240,20 @@ export async function fetchUsers(params?: {
   return apiFetch<UsersListResponse>(url, { method: "GET" });
 }
 
-/**
- * Detalle de un usuario (modal editor)
- * GET /users/:id
- */
 export async function fetchUser(userId: string): Promise<UserDetailResponse> {
   return apiFetch<UserDetailResponse>(`/users/${userId}`, { method: "GET" });
 }
 
-/**
- * Cambiar estado (activar / bloquear)
- * PATCH /users/:id/status
- */
+export async function updateUserProfile(
+  userId: string,
+  body: UpdateUserProfileBody
+): Promise<OkResponse<{ user?: UserDetail }>> {
+  return apiFetch<OkResponse<{ user?: UserDetail }>>(`/users/${userId}`, {
+    method: "PATCH",
+    body,
+  });
+}
+
 export async function updateUserStatus(
   userId: string,
   status: Extract<UserStatus, "ACTIVE" | "BLOCKED">
@@ -161,18 +264,10 @@ export async function updateUserStatus(
   });
 }
 
-/**
- * Asignar roles
- * PUT /users/:id/roles
- */
 export async function assignRolesToUser(userId: string, roleIds: string[]): Promise<OkResponse> {
   return apiFetch<OkResponse>(`/users/${userId}/roles`, { method: "PUT", body: { roleIds } });
 }
 
-/**
- * Crear / actualizar override (uno)
- * POST /users/:id/overrides
- */
 export async function setUserOverride(
   userId: string,
   permissionId: string,
@@ -184,22 +279,44 @@ export async function setUserOverride(
   });
 }
 
-/**
- * Eliminar override (uno)
- * DELETE /users/:id/overrides/:permissionId
- */
 export async function removeUserOverride(userId: string, permissionId: string): Promise<OkResponse> {
   return apiFetch<OkResponse>(`/users/${userId}/overrides/${permissionId}`, { method: "DELETE" });
+}
+
+/* =========================
+   ⭐ FAVORITE WAREHOUSE
+========================= */
+
+export async function updateMyFavoriteWarehouse(
+  warehouseId: string | null
+): Promise<{ ok: true; favoriteWarehouseId: string | null; user?: UserListItem }> {
+  const resp = await apiFetch<UpdateFavoriteWarehouseResponse>("/users/me/favorite-warehouse", {
+    method: "PATCH",
+    body: { warehouseId },
+  });
+
+  return normalizeFavoriteWarehouseResponse(resp);
+}
+
+export async function updateFavoriteWarehouseForUser(
+  userId: string,
+  warehouseId: string | null
+): Promise<{ ok: true; favoriteWarehouseId: string | null; user?: UserListItem }> {
+  const resp = await apiFetch<UpdateFavoriteWarehouseResponse>(
+    `/users/${userId}/favorite-warehouse`,
+    {
+      method: "PATCH",
+      body: { warehouseId },
+    }
+  );
+
+  return normalizeFavoriteWarehouseResponse(resp);
 }
 
 /* =========================
    AVATAR (ME) multipart/form-data
 ========================= */
 
-/**
- * Subir/actualizar avatar del usuario logueado
- * PUT /users/me/avatar
- */
 export async function updateUserAvatar(
   file: File
 ): Promise<{ ok: true; avatarUrl: string | null; user?: UserListItem }> {
@@ -216,11 +333,11 @@ export async function updateUserAvatar(
   return normalizeAvatarResponse(resp);
 }
 
-/**
- * Quitar avatar del usuario logueado
- * DELETE /users/me/avatar
- */
-export async function removeMyAvatar(): Promise<{ ok: true; avatarUrl: string | null; user?: UserListItem }> {
+export async function removeMyAvatar(): Promise<{
+  ok: true;
+  avatarUrl: string | null;
+  user?: UserListItem;
+}> {
   const resp = await apiFetch<UpdateAvatarResponse>("/users/me/avatar", { method: "DELETE" });
   return normalizeAvatarResponse(resp);
 }
@@ -257,4 +374,73 @@ export async function removeAvatarForUser(
   });
 
   return normalizeAvatarResponse(resp);
+}
+
+/* =========================
+   ✅ QUICK PIN (ME)
+========================= */
+
+export async function setMyQuickPin(pin: string): Promise<QuickPinState> {
+  const clean = assertPin4(pin);
+  return apiFetch<QuickPinState>("/users/me/quick-pin", {
+    method: "PUT",
+    body: { pin: clean },
+  });
+}
+
+export async function removeMyQuickPin(currentPin: string): Promise<QuickPinState> {
+  const cur = assertPin4(currentPin);
+  return apiFetch<QuickPinState>("/users/me/quick-pin", {
+    method: "DELETE",
+    body: { currentPin: cur },
+  });
+}
+
+/* =========================
+   ✅ QUICK PIN (ADMIN)
+========================= */
+
+export async function setUserQuickPin(userId: string, pin: string): Promise<QuickPinState> {
+  const clean = assertPin4(pin);
+  return apiFetch<QuickPinState>(`/users/${userId}/quick-pin`, {
+    method: "PUT",
+    body: { pin: clean },
+  });
+}
+
+/** Alias explícito para “reset” (mismo endpoint PUT, cambia el pin por uno nuevo) */
+export async function resetUserQuickPin(userId: string, pin: string): Promise<QuickPinState> {
+  return setUserQuickPin(userId, pin);
+}
+
+export async function removeUserQuickPin(userId: string): Promise<QuickPinState> {
+  return apiFetch<QuickPinState>(`/users/${userId}/quick-pin`, { method: "DELETE" });
+}
+
+/* =========================
+   ✅ PIN ENABLED (ADMIN)
+   Ruta sugerida (la armamos en backend):
+   PATCH /users/:id/quick-pin/enabled  { enabled: boolean }
+========================= */
+
+export async function setUserPinEnabled(userId: string, enabled: boolean): Promise<QuickPinState> {
+  return apiFetch<QuickPinState>(`/users/${userId}/quick-pin/enabled`, {
+    method: "PATCH",
+    body: { enabled },
+  });
+}
+
+/* =========================
+   ✅ COMPAT: nombres usados por UserEditModal (para que compile)
+========================= */
+export async function setUserPinForUser(userId: string, pin: string): Promise<QuickPinState> {
+  return setUserQuickPin(userId, pin);
+}
+
+export async function resetUserPinForUser(userId: string, pin: string): Promise<QuickPinState> {
+  return resetUserQuickPin(userId, pin);
+}
+
+export async function setUserPinEnabledForUser(userId: string, enabled: boolean): Promise<QuickPinState> {
+  return setUserPinEnabled(userId, enabled);
 }

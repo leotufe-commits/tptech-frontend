@@ -9,6 +9,9 @@ import { useAuth } from "../context/AuthContext";
  *
  * Devuelve un "me" compatible:
  * { user, jewelry, roles, permissions }
+ *
+ * ✅ Importante: NO depende de auth.token, porque en PROD la sesión
+ * real es por cookie httpOnly y puede no existir token en storage.
  */
 export function useMe() {
   const auth = useAuth();
@@ -17,7 +20,8 @@ export function useMe() {
   const permissions = Array.isArray(auth.permissions) ? auth.permissions : [];
 
   const me = useMemo(() => {
-    if (!auth.token || !auth.user) return null;
+    // ✅ cookie-first: si hay usuario, hay "me"
+    if (!auth.user) return null;
 
     return {
       user: auth.user,
@@ -25,11 +29,12 @@ export function useMe() {
       roles,
       permissions,
     };
-  }, [auth.token, auth.user, auth.jewelry, roles, permissions]);
+  }, [auth.user, auth.jewelry, roles, permissions]);
 
   const error = useMemo(() => {
-    // AuthContext maneja errores internamente:
-    // si /auth/me falla => limpia sesión.
+    // AuthContext maneja errores internamente.
+    // Si /auth/me devuelve 401, apiFetch hace forceLogout() y se limpia sesión.
+    // Para errores de red/5xx, AuthContext mantiene sesión.
     return null as string | null;
   }, []);
 

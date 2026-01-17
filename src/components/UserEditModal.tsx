@@ -8,6 +8,10 @@ import {
   updateUserAvatarForUser,
   removeAvatarForUser,
   type UserDetail,
+  // ⬇️ Estos 3 los vamos a agregar en services/users.ts en el próximo paso
+  setUserPinForUser,
+  setUserPinEnabledForUser,
+  resetUserPinForUser,
 } from "../services/users";
 import { fetchRoles, type RoleLite } from "../services/roles";
 import { fetchPermissions } from "../services/permissions";
@@ -57,6 +61,11 @@ export default function UserEditModal({ userId, open, onClose, onUpdated }: Prop
   const [avatarPreview, setAvatarPreview] = useState<string | null>(null);
   const [avatarObjectUrl, setAvatarObjectUrl] = useState<string | null>(null);
 
+  // PIN UI (no mostrar PIN guardado)
+  const [pinEditorOpen, setPinEditorOpen] = useState(false);
+  const [pinDraft, setPinDraft] = useState("");
+  const [pinError, setPinError] = useState<string | null>(null);
+
   const permsByModule = useMemo(() => {
     const map = new Map<string, Permission[]>();
     for (const p of permissions) {
@@ -102,6 +111,11 @@ export default function UserEditModal({ userId, open, onClose, onUpdated }: Prop
         setRoles(rolesList);
 
         setPermissions(isPermissionsResponse(pRes) ? pRes.permissions : []);
+
+        // reset UI de PIN
+        setPinEditorOpen(false);
+        setPinDraft("");
+        setPinError(null);
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -133,8 +147,17 @@ export default function UserEditModal({ userId, open, onClose, onUpdated }: Prop
   // ✅ TS NARROW: de acá para abajo "u" es NO-null siempre
   const u = user;
 
+  // ⚠️ Hasta que tipemos UserDetail con pinEnabled/hasPin, leemos con "any" sin romper TS hoy.
+  const pinEnabled = Boolean((u as any).pinEnabled);
+  const hasPin = Boolean((u as any).hasPin);
+
   function getOverride(permissionId: string) {
     return u.permissionOverrides?.find((o) => o.permissionId === permissionId) ?? null;
+  }
+
+  function validatePin(pin: string) {
+    if (!/^\d{4}$/.test(pin)) return "El PIN debe tener exactamente 4 dígitos.";
+    return null;
   }
 
   async function toggleRole(roleId: string) {
@@ -273,7 +296,100 @@ export default function UserEditModal({ userId, open, onClose, onUpdated }: Prop
     }
   }
 
+  async function onTogglePinEnabled(next: boolean) {
+    const key = "pin:toggle";
+    setBusyKey(key);
+    setPinError(null);
+
+    try {
+      // Si habilita y no tiene PIN, abrimos editor para definirlo (mejor UX)
+      if (next && !hasPin) {
+        setPinEditorOpen(true);
+      }
+
+      await setUserPinEnabledForUser(u.id, next);
+
+      setUser((prev) => {
+        if (!prev) return prev;
+        return { ...(prev as any), pinEnabled: next } as any;
+      });
+
+      onUpdated?.();
+    } catch (e: any) {
+      setPinError(e?.message ?? "No se pudo actualizar el estado del PIN.");
+    } finally {
+      setBusyKey(null);
+    }
+  }
+
+  async function onSavePin({ mode }: { mode: "set" | "reset" }) {
+    const key = mode === "set" ? "pin:set" : "pin:reset";
+    setBusyKey(key);
+    setPinError(null);
+
+    try {
+      const err = validatePin(pinDraft);
+      if (err) {
+        setPinError(err);
+        return;
+      }
+
+      if (mode === "set") {
+        await setUserPinForUser(u.id, pinDraft);
+      } else {
+        await resetUserPinForUser(u.id, pinDraft);
+      }
+
+      // no mostramos el PIN; limpiamos editor
+      setPinDraft("");
+      setPinEditorOpen(false);
+
+      // reflejamos estado
+      setUser((prev) => {
+        if (!prev) return prev;
+        return {
+          ...(prev as any),
+          hasPin: true,
+          pinEnabled: true,
+        } as any;
+      });
+
+      onUpdated?.();
+    } catch (e: any) {
+      setPinError(e?.message ?? "No se pudo guardar el PIN.");
+    } finally {
+      setBusyKey(null);
+    }
+  }
+
+  async function onDisablePin() {
+    const key = "pin:disable";
+    setBusyKey(key);
+    setPinError(null);
+
+    try {
+      // desactiva el acceso por PIN (no borra el hash necesariamente; eso lo decidimos en backend)
+      await setUserPinEnabledForUser(u.id, false);
+
+      setUser((prev) => {
+        if (!prev) return prev;
+        return { ...(prev as any), pinEnabled: false } as any;
+      });
+
+      setPinDraft("");
+      setPinEditorOpen(false);
+
+      onUpdated?.();
+    } catch (e: any) {
+      setPinError(e?.message ?? "No se pudo desactivar el PIN.");
+    } finally {
+      setBusyKey(null);
+    }
+  }
+
   const isSavingAvatar = busyKey === "avatar:save" || busyKey === "avatar:remove";
+  const isPinBusy =
+    busyKey === "pin:toggle" || busyKey === "pin:set" || busyKey === "pin:reset" || busyKey === "pin:disable";
 
   return (
     <div className="fixed inset-0 z-50">
@@ -366,6 +482,120 @@ export default function UserEditModal({ userId, open, onClose, onUpdated }: Prop
                   Nota: este modal usa endpoints admin (/users/:id/avatar). Si todavía no existen en backend, va a dar 404.
                 </div>
               </div>
+
+              {/* SEGURIDAD: PIN */}
+              <RequirePermission permission="USERS_ROLES:ADMIN">
+                <div className="mt-4 rounded-xl border border-border bg-bg p-3">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <div className="text-sm font-semibold text-text">Seguridad</div>
+                      <div className="text-xs text-muted">PIN (4 dígitos) para acceso rápido</div>
+                    </div>
+
+                    <label className={cn("flex items-center gap-2 text-xs font-semibold", isPinBusy && "opacity-60")}>
+                      <span className="text-muted">Habilitar PIN</span>
+                      <input
+                        type="checkbox"
+                        checked={pinEnabled}
+                        disabled={isPinBusy}
+                        onChange={(e) => void onTogglePinEnabled(e.target.checked)}
+                        className="h-5 w-5 accent-primary"
+                      />
+                    </label>
+                  </div>
+
+                  <div className="mt-3 flex flex-wrap items-center gap-2">
+                    <div className="text-xs text-muted">
+                      Estado:{" "}
+                      {pinEnabled ? (
+                        <span className="font-semibold text-text">habilitado</span>
+                      ) : (
+                        <span className="font-semibold text-text">deshabilitado</span>
+                      )}
+                      {" · "}
+                      PIN:{" "}
+                      {hasPin ? (
+                        <span className="font-semibold text-text">definido</span>
+                      ) : (
+                        <span className="font-semibold text-text">sin definir</span>
+                      )}
+                    </div>
+
+                    <div className="ml-auto flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        disabled={isPinBusy}
+                        onClick={() => {
+                          setPinError(null);
+                          setPinEditorOpen((v) => !v);
+                        }}
+                        className={cn(
+                          "rounded-lg border border-border bg-card px-3 py-2 text-xs font-semibold text-text hover:bg-surface2",
+                          isPinBusy && "opacity-60"
+                        )}
+                      >
+                        {hasPin ? "Resetear PIN" : "Definir PIN"}
+                      </button>
+
+                      <button
+                        type="button"
+                        disabled={isPinBusy || !pinEnabled}
+                        onClick={() => void onDisablePin()}
+                        className={cn(
+                          "rounded-lg border border-border bg-bg px-3 py-2 text-xs font-semibold text-muted hover:bg-surface2",
+                          (isPinBusy || !pinEnabled) && "opacity-60"
+                        )}
+                      >
+                        Desactivar PIN
+                      </button>
+                    </div>
+                  </div>
+
+                  {pinEditorOpen ? (
+                    <div className="mt-3 rounded-lg border border-border bg-card p-3">
+                      <div className="text-xs font-semibold text-text">
+                        {hasPin ? "Resetear PIN" : "Definir PIN"}
+                      </div>
+
+                      <div className="mt-2 grid gap-2 sm:grid-cols-[1fr_auto] sm:items-end">
+                        <div>
+                          <label className="block text-xs font-semibold text-muted">PIN (4 dígitos)</label>
+                          <input
+                            value={pinDraft}
+                            onChange={(e) => {
+                              setPinError(null);
+                              // solo dígitos, máximo 4
+                              const next = e.target.value.replace(/\D/g, "").slice(0, 4);
+                              setPinDraft(next);
+                            }}
+                            inputMode="numeric"
+                            autoComplete="off"
+                            type="password"
+                            placeholder="••••"
+                            className="mt-1 w-full rounded-lg border border-border bg-bg px-3 py-2 text-sm text-text outline-none focus:border-primary"
+                          />
+                          {pinError ? <div className="mt-1 text-xs font-semibold text-red-400">{pinError}</div> : null}
+                          <div className="mt-1 text-[11px] text-muted">
+                            Por seguridad, el PIN no se muestra ni se puede recuperar. Solo se puede definir o resetear.
+                          </div>
+                        </div>
+
+                        <button
+                          type="button"
+                          disabled={isPinBusy || !!validatePin(pinDraft)}
+                          onClick={() => void onSavePin({ mode: hasPin ? "reset" : "set" })}
+                          className={cn(
+                            "rounded-lg border border-primary bg-primary px-4 py-2 text-xs font-semibold text-white",
+                            (isPinBusy || !!validatePin(pinDraft)) && "opacity-60"
+                          )}
+                        >
+                          Guardar
+                        </button>
+                      </div>
+                    </div>
+                  ) : null}
+                </div>
+              </RequirePermission>
             </div>
 
             {/* ROLES */}

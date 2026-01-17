@@ -49,23 +49,30 @@ export default function Login() {
   const navigate = useNavigate();
   const { setTokenOnly, refreshMe } = useAuth();
 
+  // ✅ nuevo: tenantId / jewelryId (código de joyería)
+  const [tenantId, setTenantId] = useState("");
+
   const [email, setEmail] = useState("");
   const [pass, setPass] = useState("");
   const [showPass, setShowPass] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
-  const canSubmit = useMemo(() => Boolean(email.trim()) && Boolean(pass.trim()), [email, pass]);
-
+  const hasTenant = tenantId.trim().length > 0;
   const hasEmail = email.trim().length > 0;
   const hasPass = pass.trim().length > 0;
+
+  const canSubmit = useMemo(
+    () => Boolean(tenantId.trim()) && Boolean(email.trim()) && Boolean(pass.trim()),
+    [tenantId, email, pass]
+  );
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
     setError(null);
 
     if (!canSubmit) {
-      setError("Completá email y contraseña.");
+      setError("Completá código de joyería, email y contraseña.");
       return;
     }
 
@@ -74,7 +81,11 @@ export default function Login() {
 
       const resp = await apiFetch<LoginResponse>("/auth/login", {
         method: "POST",
-        body: { email, password: pass },
+        body: {
+          tenantId: tenantId.trim(), // ✅ el backend lo usa como jewelryId
+          email: email.trim(),
+          password: pass,
+        },
       });
 
       const token = resp?.accessToken || resp?.token;
@@ -90,6 +101,7 @@ export default function Login() {
       navigate("/dashboard", { replace: true });
       void refreshMe();
     } catch (err: any) {
+      setTenantId((v) => v.trim());
       setEmail((v) => v.trim());
       setError(String(err?.message || "Email o contraseña incorrectos."));
     } finally {
@@ -97,12 +109,6 @@ export default function Login() {
     }
   }
 
-  /**
-   * Botón de icono:
-   * - SIN borde visible
-   * - color basado en tokens del theme (text-text) => se adapta a fondo claro/oscuro
-   * - visible SOLO cuando corresponde (cuando hay texto)
-   */
   const iconBtnClass =
     "absolute right-3 top-1/2 -translate-y-1/2 inline-flex h-8 w-8 items-center justify-center " +
     "rounded-md bg-transparent text-text/70 hover:text-text " +
@@ -122,6 +128,39 @@ export default function Login() {
         )}
 
         <form onSubmit={onSubmit} className="mt-8 space-y-5">
+          {/* ✅ NUEVO: tenant / joyería */}
+          <div>
+            <label className="mb-2 block text-sm text-muted">Código de joyería</label>
+
+            <div className="relative">
+              <input
+                type="text"
+                value={tenantId}
+                onChange={(e) => setTenantId(e.target.value)}
+                className={`tp-input ${hasTenant ? "pr-11" : ""}`}
+                autoComplete="off"
+                placeholder="Ej: cmk700nve0000caekyg8uw2d6"
+              />
+
+              {hasTenant && (
+                <button
+                  type="button"
+                  onClick={() => setTenantId("")}
+                  className={iconBtnClass}
+                  aria-label="Limpiar código de joyería"
+                  title="Limpiar"
+                >
+                  <XIcon />
+                </button>
+              )}
+            </div>
+
+            <p className="mt-2 text-xs text-muted">
+              Tip: por ahora es el <span className="text-text/80">ID de la joyería</span>. Luego lo
+              cambiamos a subdominio (modo pro).
+            </p>
+          </div>
+
           <div>
             <label className="mb-2 block text-sm text-muted">Email</label>
 
@@ -134,7 +173,6 @@ export default function Login() {
                 autoComplete="email"
               />
 
-              {/* X visible SOLO cuando hay texto */}
               {hasEmail && (
                 <button
                   type="button"
@@ -161,7 +199,6 @@ export default function Login() {
                 autoComplete="current-password"
               />
 
-              {/* Eye visible SOLO cuando hay texto */}
               {hasPass && (
                 <button
                   type="button"

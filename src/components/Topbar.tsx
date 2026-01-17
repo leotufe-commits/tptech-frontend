@@ -2,9 +2,9 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { createPortal } from "react-dom";
-import { Menu, Settings } from "lucide-react";
+import { Menu, Settings, Lock } from "lucide-react";
 import { useTheme } from "../context/ThemeContext";
-import { useMe } from "../hooks/useMe";
+import { useAuth } from "../context/AuthContext";
 import ThemeSwitcher from "./ThemeSwitcher";
 
 type RouteMeta = {
@@ -22,10 +22,7 @@ function getMeta(pathname: string): RouteMeta {
   if (p.startsWith("/configuracion")) {
     return {
       title: "Configuración",
-      crumbs: [
-        { label: "Dashboard", to: "/dashboard" },
-        { label: "Configuración" },
-      ],
+      crumbs: [{ label: "Dashboard", to: "/dashboard" }, { label: "Configuración" }],
     };
   }
 
@@ -123,11 +120,9 @@ function PortalMenu({
   const anchorTop = r?.top ?? 0;
   const anchorBottom = r?.bottom ?? 0;
 
-  // align right edge of menu with right edge of anchor
   const leftWanted = anchorRight - width;
   const left = clamp(leftWanted, viewportPad, window.innerWidth - viewportPad - width);
 
-  // choose direction
   const spaceBelow = window.innerHeight - viewportPad - anchorBottom;
   const spaceAbove = anchorTop - viewportPad;
 
@@ -175,10 +170,12 @@ export default function Topbar({
   const { pathname } = useLocation();
   const meta = useMemo(() => getMeta(pathname), [pathname]);
 
-  const { theme, themes } = useTheme();
-  const { me, loading } = useMe();
+  const auth = useAuth();
+  const locked = auth.locked;
 
-  const jewelryName = me?.jewelry?.name ?? (loading ? "Cargando..." : "Sin joyería");
+  const { theme, themes } = useTheme();
+
+  const jewelryName = auth.jewelry?.name ?? (auth.loading ? "Cargando..." : "Sin joyería");
 
   const currentThemeLabel = useMemo(() => {
     return themes.find((t) => t.value === theme)?.label ?? "Tema";
@@ -186,10 +183,8 @@ export default function Topbar({
 
   const [settingsOpen, setSettingsOpen] = useState(false);
 
-  // ✅ ref REAL del botón
   const settingsBtnRef = useRef<HTMLButtonElement | null>(null);
 
-  // ✅ “adapter” tipado como HTMLElement | null para PortalMenu (sin casts feos en JSX)
   const settingsAnchorRef = useMemo<React.RefObject<HTMLElement | null>>(
     () => ({
       get current() {
@@ -205,6 +200,12 @@ export default function Topbar({
     onCloseSidebar?.();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pathname]);
+
+  // ✅ si se bloquea, cerramos settings
+  useEffect(() => {
+    if (!locked) return;
+    setSettingsOpen(false);
+  }, [locked]);
 
   return (
     <header
@@ -222,10 +223,14 @@ export default function Topbar({
             {/* ☰ solo mobile */}
             <button
               type="button"
-              onClick={onToggleSidebar}
+              onClick={() => {
+                if (locked) return;
+                onToggleSidebar?.();
+              }}
               className={cn(
                 "grid h-10 w-10 shrink-0 place-items-center rounded-xl border border-border bg-card",
                 "lg:hidden",
+                locked && "opacity-50 pointer-events-none",
                 "focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-primary/20"
               )}
               aria-label="Abrir menú"
@@ -247,14 +252,39 @@ export default function Topbar({
             </div>
           </div>
 
-          {/* DER: ⚙️ arriba a la derecha */}
+          {/* DER */}
           <div className="flex shrink-0 items-center gap-2">
+            {/* 🔒 Bloquear ahora */}
+            <button
+              type="button"
+              onClick={() => {
+                if (locked) return;
+                // ✅ ya existe en AuthContext
+                auth.setLocked(true);
+              }}
+              className={cn(
+                "grid h-10 w-10 place-items-center rounded-xl border border-border bg-card",
+                locked && "opacity-50 pointer-events-none",
+                "focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-primary/20"
+              )}
+              aria-label="Bloquear"
+              title="Bloquear"
+            >
+              <Lock className="h-5 w-5" />
+            </button>
+
+            {/* ⚙️ Configuración */}
             <button
               ref={settingsBtnRef}
               type="button"
-              onClick={() => setSettingsOpen((v) => !v)}
+              onClick={() => {
+                if (locked) return;
+                onCloseSidebar?.();
+                setSettingsOpen((v) => !v);
+              }}
               className={cn(
                 "grid h-10 w-10 place-items-center rounded-xl border border-border bg-card",
+                locked && "opacity-50 pointer-events-none",
                 "focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-primary/20"
               )}
               aria-label="Configuración"
@@ -275,14 +305,15 @@ export default function Topbar({
                   <div className="text-xs text-muted">Preferencias del sistema</div>
                 </div>
 
-                {/* ✅ Tema */}
+                {/* Tema */}
                 <div className="tp-card p-3 space-y-2">
                   <div className="text-xs font-semibold text-muted">Tema</div>
 
                   <ThemeSwitcher variant="menu" />
 
                   <div className="text-[11px] text-muted">
-                    Actual: <span className="font-semibold text-text">{currentThemeLabel}</span>
+                    Actual:{" "}
+                    <span className="font-semibold text-text">{currentThemeLabel}</span>
                   </div>
                 </div>
 
