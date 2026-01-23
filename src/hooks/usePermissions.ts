@@ -5,11 +5,41 @@ import { useAuth } from "../context/AuthContext";
 /**
  * Convenio recomendado:
  * permission string = "MODULE:ACTION" (ej: "USERS_ROLES:VIEW")
+ *
+ * ✅ Soporta permisos como:
+ * - string[]  -> ["A:B", "C:D"]
+ * - object[]  -> [{ code: "A:B" }, { name: "C:D" }]
+ * - nested    -> [{ permission: { code: "A:B" } }]
  */
 export function usePermissions() {
   const { permissions, loading } = useAuth();
 
-  const list = useMemo(() => (Array.isArray(permissions) ? permissions : []), [permissions]);
+  const list = useMemo(() => {
+    const raw: any[] = Array.isArray(permissions) ? (permissions as any[]) : [];
+
+    const normalized = raw
+      .map((p) => {
+        if (!p) return null;
+
+        // string directo
+        if (typeof p === "string") return p.trim();
+
+        // formatos comunes en APIs
+        if (typeof p?.code === "string") return p.code.trim();
+        if (typeof p?.name === "string") return p.name.trim();
+        if (typeof p?.permission === "string") return p.permission.trim();
+
+        // nested: { permission: { code: "MODULE:ACTION" } }
+        if (typeof p?.permission?.code === "string") return p.permission.code.trim();
+        if (typeof p?.permission?.name === "string") return p.permission.name.trim();
+
+        return null;
+      })
+      .filter(Boolean) as string[];
+
+    // dedupe
+    return Array.from(new Set(normalized));
+  }, [permissions]);
 
   // Lookup O(1)
   const set = useMemo(() => new Set(list), [list]);
@@ -40,10 +70,6 @@ export function usePermissions() {
     [loading, set]
   );
 
-  /**
-   * Helpers por módulo/acción para evitar concatenar strings por todos lados.
-   * Ej: canMA("CLIENTS", "EDIT")
-   */
   const canMA = useCallback(
     (module: string, action: string) => {
       if (loading) return false;
@@ -71,17 +97,12 @@ export function usePermissions() {
   );
 
   return {
-    // API original
     can,
     canAny,
     canAll,
-
-    // API extendida (más cómoda)
     canMA,
     canAnyMA,
     canAllMA,
-
-    // expose
     permissions: list,
     permissionsSet: set,
     loading,

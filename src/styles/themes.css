@@ -1,7 +1,12 @@
+/* tptech-frontend/src/styles/themes.css */
+
 /* =====================================================
    THEME: CLÁSICO (DEFAULT)
+   - Definimos en :root (fallback)
+   - y también en [data-theme="classic"] (compat con ThemeContext)
    ===================================================== */
-:root {
+:root,
+[data-theme="classic"] {
   --bg: #ffffff;
   --surface: #f4f6f8;
   --surface2: #eef2f7;
@@ -9,7 +14,7 @@
 
   --text: #0f172a;
 
-  /* ✅ Texto secundario (lo que debe usar la fecha / subtítulos) */
+  /* ✅ Texto secundario */
   --muted: rgba(15, 23, 42, 0.65);
   --text-muted: rgba(15, 23, 42, 0.65);
 
@@ -17,7 +22,9 @@
   --text-on-dark: #f9fafb;
   --text-on-dark-muted: rgba(249, 250, 251, 0.72);
 
-  --primary: #f97316; /* naranja TPTech */
+  /* ✅ Primary */
+  --primary: #f97316;              /* naranja TPTech */
+  --primary-rgb: 249 115 22;       /* ✅ NECESARIO para accent-color/caret */
   --primary-foreground: #ffffff;
 
   --secondary: #fde68a;
@@ -41,11 +48,13 @@
   --muted: rgba(249, 250, 251, 0.72);
   --text-muted: rgba(249, 250, 251, 0.72);
 
-  /* ✅ Header oscuro (mismo que text en dark) */
+  /* ✅ Header oscuro */
   --text-on-dark: #f9fafb;
   --text-on-dark-muted: rgba(249, 250, 251, 0.72);
 
-  --primary: #60a5fa; /* azul suave */
+  /* ✅ Primary */
+  --primary: #60a5fa;              /* azul suave */
+  --primary-rgb: 96 165 250;       /* ✅ */
   --primary-foreground: #0b1220;
 
   --secondary: #93c5fd;
@@ -71,7 +80,9 @@
   --text-on-dark: #f9fafb;
   --text-on-dark-muted: rgba(249, 250, 251, 0.72);
 
-  --primary: #2563eb; /* blue-600 */
+  /* ✅ Primary */
+  --primary: #2563eb;              /* blue-600 */
+  --primary-rgb: 37 99 235;        /* ✅ */
   --primary-foreground: #ffffff;
 
   --secondary: #93c5fd;
@@ -81,12 +92,12 @@
 }
 
 /* =====================================================
-   THEME: GRAY (corporativo) — más contraste / menos monótono
+   THEME: GRAY (corporativo)
    ===================================================== */
 [data-theme="gray"] {
   --bg: #eef2f6;
   --surface: #e2e8f0;
-  --surface2: #cfd8e6; /* más contraste en headers/hover */
+  --surface2: #cfd8e6;
   --card: #ffffff;
 
   --text: #0b1220;
@@ -97,7 +108,9 @@
   --text-on-dark: #f9fafb;
   --text-on-dark-muted: rgba(249, 250, 251, 0.72);
 
-  --primary: #334155; /* slate-700 */
+  /* ✅ Primary */
+  --primary: #334155;              /* slate-700 */
+  --primary-rgb: 51 65 85;         /* ✅ */
   --primary-foreground: #ffffff;
 
   --secondary: #94a3b8;
@@ -123,7 +136,9 @@
   --text-on-dark: #f9fafb;
   --text-on-dark-muted: rgba(249, 250, 251, 0.72);
 
+  /* ✅ Primary */
   --primary: #059669;
+  --primary-rgb: 5 150 105;        /* ✅ */
   --primary-foreground: #ffffff;
 
   --secondary: #86efac;

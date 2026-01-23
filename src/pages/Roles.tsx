@@ -24,6 +24,16 @@ import ConfirmDeleteDialog from "../components/ui/ConfirmDeleteDialog";
 import { useConfirmDelete } from "../hooks/useConfirmDelete";
 
 /* =========================
+   Labels roles (humanos)
+========================= */
+const ROLE_LABEL_BY_CODE: Record<string, string> = {
+  OWNER: "Propietario",
+  ADMIN: "Administrador",
+  STAFF: "Empleado",
+  READONLY: "Solo Lectura",
+};
+
+/* =========================
    Labels permisos (humanos)
 ========================= */
 const MODULE_LABEL: Record<string, string> = {
@@ -56,12 +66,16 @@ function prettyPerm(module: string, action: string) {
   return `${ACTION_LABEL[action] ?? action} ${MODULE_LABEL[module] ?? module}`;
 }
 
-function prettyRole(name: string) {
-  return name;
-}
-
 function getRoleCode(r: RoleLite): string | undefined {
   return r.code;
+}
+
+function prettyRole(r: RoleLite) {
+  const code = String(getRoleCode(r) || "").toUpperCase().trim();
+  if (code && ROLE_LABEL_BY_CODE[code]) return ROLE_LABEL_BY_CODE[code];
+
+  // fallback: lo que venga del backend (roles personalizados)
+  return r.name;
 }
 
 /* =========================
@@ -474,7 +488,7 @@ const RoleRow = React.memo(function RoleRow({
 
   return (
     <tr className="border-t border-border">
-      <td className="px-4 py-3 font-semibold">{prettyRole(r.name)}</td>
+      <td className="px-4 py-3 font-semibold">{prettyRole(r)}</td>
 
       <td className="hidden sm:table-cell px-4 py-3">
         <Badge>{r.isSystem ? "Sistema" : "Personalizado"}</Badge>
@@ -601,7 +615,7 @@ export default function RolesPage() {
     arr.sort((a, b) => {
       if (sortBy === "ROLE") {
         return (
-          prettyRole(a.name).localeCompare(prettyRole(b.name), "es", {
+          prettyRole(a).localeCompare(prettyRole(b), "es", {
             sensitivity: "base",
           }) * dir
         );
@@ -614,7 +628,7 @@ export default function RolesPage() {
       if (byType !== 0) return byType;
 
       return (
-        prettyRole(a.name).localeCompare(prettyRole(b.name), "es", {
+        prettyRole(a).localeCompare(prettyRole(b), "es", {
           sensitivity: "base",
         }) * dir
       );
@@ -755,10 +769,10 @@ export default function RolesPage() {
 
       askDelete({
         entityName: "rol",
-        entityLabel: prettyRole(r.name),
+        entityLabel: prettyRole(r),
         onDelete: () => deleteRole(r.id),
         onAfterSuccess: loadRoles,
-        confirmTitle: `Eliminar rol: ${prettyRole(r.name)}`,
+        confirmTitle: `Eliminar rol: ${prettyRole(r)}`,
         confirmDescription: "Esta acción no se puede deshacer.",
         dangerHint:
           "Si este rol está asignado a usuarios o asociado a operaciones, puede que no se permita eliminarlo.",
@@ -982,7 +996,7 @@ export default function RolesPage() {
       {/* EDIT */}
       <RoleEditorModal
         open={editOpen}
-        title={`Editar rol${target ? `: ${prettyRole(target.name)}` : ""}`}
+        title={`Editar rol${target ? `: ${prettyRole(target)}` : ""}`}
         initialName={editInitialName}
         permsByModule={permsByModule}
         initialSelectedIds={editInitialPermIds}

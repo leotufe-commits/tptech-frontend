@@ -1,7 +1,7 @@
 // tptech-frontend/src/pages/Login.tsx
-import { useMemo, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { apiFetch, SS_TOKEN_KEY } from "../lib/api";
+import { apiFetch } from "../lib/api";
 import { useAuth } from "../context/AuthContext";
 
 function EyeIcon({ open }: { open: boolean }) {
@@ -40,40 +40,191 @@ function XIcon() {
   );
 }
 
+// ✅ flecha “select”
+function ChevronDownIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path
+        d="M6 9l6 6 6-6"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
 type LoginResponse = {
   accessToken?: string;
   token?: string;
 };
 
+type TenantOption = {
+  id: string;
+  name: string;
+};
+
+type LoginOptionsResponse = {
+  email: string;
+  tenants: TenantOption[];
+};
+
+function isValidEmail(v: string) {
+  const s = v.trim();
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s);
+}
+
+function safeGet(key: string) {
+  try {
+    return localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+function safeSet(key: string, value: string) {
+  try {
+    localStorage.setItem(key, value);
+  } catch {
+    // ignore
+  }
+}
+
 export default function Login() {
   const navigate = useNavigate();
   const { setTokenOnly, refreshMe } = useAuth();
 
-  // ✅ nuevo: tenantId / jewelryId (código de joyería)
-  const [tenantId, setTenantId] = useState("");
-
   const [email, setEmail] = useState("");
   const [pass, setPass] = useState("");
   const [showPass, setShowPass] = useState(false);
+
+  // ✅ opciones por email
+  const [tenants, setTenants] = useState<TenantOption[]>([]);
+  const [tenantId, setTenantId] = useState<string>("");
+
+  // ✅ fallback manual (si no se encuentran joyerías o falla options)
+  const [manualTenantId, setManualTenantId] = useState<string>("");
+
+  const [loadingTenants, setLoadingTenants] = useState(false);
+
+  // ✅ FIX parpadeo: solo mostramos UI de joyería cuando ya hicimos al menos 1 lookup
+  const [didLookup, setDidLookup] = useState(false);
+
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
-  const hasTenant = tenantId.trim().length > 0;
+  const emailOk = useMemo(() => isValidEmail(email), [email]);
   const hasEmail = email.trim().length > 0;
   const hasPass = pass.trim().length > 0;
 
-  const canSubmit = useMemo(
-    () => Boolean(tenantId.trim()) && Boolean(email.trim()) && Boolean(pass.trim()),
-    [tenantId, email, pass]
-  );
+  const lastLookupEmailRef = useRef<string>("");
+
+  // clave para “última joyería usada” por email
+  const lastTenantKey = useMemo(() => {
+    const e = email.trim().toLowerCase();
+    return e ? `tptech_last_tenant_for_email:${e}` : "";
+  }, [email]);
+
+  const showTenantSelect = useMemo(() => tenants.length > 1, [tenants.length]);
+  const autoTenant = useMemo(() => (tenants.length === 1 ? tenants[0]?.id : ""), [tenants]);
+
+  // ✅ mostramos fallback manual SOLO cuando ya intentamos lookup
+  const showManualTenantInput = useMemo(() => {
+    return Boolean(didLookup && emailOk && !loadingTenants && tenants.length === 0);
+  }, [didLookup, emailOk, loadingTenants, tenants.length]);
+
+  // tenant efectivo: si hay tenants -> tenantId, si no -> manualTenantId
+  const effectiveTenantId = useMemo(() => {
+    if (tenants.length > 0) return tenantId.trim();
+    return manualTenantId.trim();
+  }, [tenants.length, tenantId, manualTenantId]);
+
+  // cuando hay 1 sola, la seleccionamos sin mostrar
+  useEffect(() => {
+    if (autoTenant) setTenantId(autoTenant);
+    if (!autoTenant && tenants.length === 0) setTenantId("");
+  }, [autoTenant, tenants.length]);
+
+  // ✅ buscar joyerías asociadas al email (debounce)
+  useEffect(() => {
+    const e = email.trim().toLowerCase();
+
+    setError(null);
+
+    // reset si email invalido / vacío
+    if (!e || !emailOk) {
+      setTenants([]);
+      setTenantId("");
+      setManualTenantId("");
+      lastLookupEmailRef.current = "";
+      setLoadingTenants(false);
+      setDidLookup(false);
+      return;
+    }
+
+    // evitar refetch si no cambió
+    if (lastLookupEmailRef.current === e) return;
+
+    const t = window.setTimeout(() => {
+      setDidLookup(true);
+      setLoadingTenants(true);
+
+      apiFetch<LoginOptionsResponse>("/auth/login/options", {
+        method: "POST",
+        body: { email: e },
+        timeoutMs: 8000,
+      })
+        .then((resp) => {
+          const list = Array.isArray(resp?.tenants) ? resp.tenants : [];
+          setTenants(list);
+
+          if (list.length === 1) {
+            setTenantId(list[0].id);
+            return;
+          }
+
+          if (list.length > 1) {
+            const saved = lastTenantKey ? safeGet(lastTenantKey) : null;
+            const savedId = saved ? String(saved) : "";
+            const exists = savedId && list.some((x) => x.id === savedId);
+
+            setTenantId(exists ? savedId : list[0].id);
+            return;
+          }
+
+          // si no hay joyerías, dejamos tenant vacío y habilitamos fallback manual
+          setTenantId("");
+        })
+        .catch(() => {
+          // si falla options, habilitamos fallback manual
+          setTenants([]);
+          setTenantId("");
+        })
+        .finally(() => {
+          lastLookupEmailRef.current = e;
+          setLoadingTenants(false);
+        });
+    }, 400);
+
+    return () => window.clearTimeout(t);
+  }, [email, emailOk, lastTenantKey]);
+
+  const canSubmit = useMemo(() => {
+    if (!emailOk) return false;
+    if (!pass.trim()) return false;
+    if (loadingTenants) return false;
+    return Boolean(effectiveTenantId);
+  }, [emailOk, pass, loadingTenants, effectiveTenantId]);
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
     setError(null);
 
     if (!canSubmit) {
-      setError("Completá código de joyería, email y contraseña.");
-      return;
+      if (!emailOk) return setError("Ingresá un email válido.");
+      if (!pass.trim()) return setError("Ingresá tu contraseña.");
+      if (loadingTenants) return setError("Buscando joyerías…");
+      return setError("Completá la joyería (selección o código).");
     }
 
     try {
@@ -82,26 +233,21 @@ export default function Login() {
       const resp = await apiFetch<LoginResponse>("/auth/login", {
         method: "POST",
         body: {
-          tenantId: tenantId.trim(), // ✅ el backend lo usa como jewelryId
-          email: email.trim(),
+          tenantId: effectiveTenantId,
+          email: email.trim().toLowerCase(),
           password: pass,
         },
       });
 
-      const token = resp?.accessToken || resp?.token;
-      if (!token) throw new Error("No se recibió token.");
+      // recordar “última joyería” para este email (solo si vino por options/selección)
+      if (lastTenantKey && tenants.length > 0 && tenantId) safeSet(lastTenantKey, tenantId);
 
-      try {
-        sessionStorage.setItem(SS_TOKEN_KEY, token);
-      } catch {
-        // noop
-      }
+      const token = resp?.accessToken || resp?.token || null;
+      if (token) setTokenOnly(token);
 
-      setTokenOnly(token);
+      await refreshMe({ force: true, silent: true });
       navigate("/dashboard", { replace: true });
-      void refreshMe();
     } catch (err: any) {
-      setTenantId((v) => v.trim());
       setEmail((v) => v.trim());
       setError(String(err?.message || "Email o contraseña incorrectos."));
     } finally {
@@ -113,6 +259,11 @@ export default function Login() {
     "absolute right-3 top-1/2 -translate-y-1/2 inline-flex h-8 w-8 items-center justify-center " +
     "rounded-md bg-transparent text-text/70 hover:text-text " +
     "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30";
+
+  // ✅ wrapper para flecha del select (look similar al Theme selector)
+  const selectWrapClass = "relative";
+  const selectChevronClass =
+    "pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-muted";
 
   return (
     <div className="min-h-screen bg-surface text-text flex items-center justify-center px-4 py-10">
@@ -128,39 +279,7 @@ export default function Login() {
         )}
 
         <form onSubmit={onSubmit} className="mt-8 space-y-5">
-          {/* ✅ NUEVO: tenant / joyería */}
-          <div>
-            <label className="mb-2 block text-sm text-muted">Código de joyería</label>
-
-            <div className="relative">
-              <input
-                type="text"
-                value={tenantId}
-                onChange={(e) => setTenantId(e.target.value)}
-                className={`tp-input ${hasTenant ? "pr-11" : ""}`}
-                autoComplete="off"
-                placeholder="Ej: cmk700nve0000caekyg8uw2d6"
-              />
-
-              {hasTenant && (
-                <button
-                  type="button"
-                  onClick={() => setTenantId("")}
-                  className={iconBtnClass}
-                  aria-label="Limpiar código de joyería"
-                  title="Limpiar"
-                >
-                  <XIcon />
-                </button>
-              )}
-            </div>
-
-            <p className="mt-2 text-xs text-muted">
-              Tip: por ahora es el <span className="text-text/80">ID de la joyería</span>. Luego lo
-              cambiamos a subdominio (modo pro).
-            </p>
-          </div>
-
+          {/* 1) EMAIL */}
           <div>
             <label className="mb-2 block text-sm text-muted">Email</label>
 
@@ -168,7 +287,16 @@ export default function Login() {
               <input
                 type="email"
                 value={email}
-                onChange={(e) => setEmail(e.target.value)}
+                onChange={(e) => {
+                  setEmail(e.target.value);
+                  // reset lookup
+                  lastLookupEmailRef.current = "";
+                  // si cambia email, limpiamos selección/manual
+                  setTenants([]);
+                  setTenantId("");
+                  setManualTenantId("");
+                  setDidLookup(false); // ✅ FIX parpadeo: hasta que arranque lookup real
+                }}
                 className={`tp-input ${hasEmail ? "pr-11" : ""}`}
                 autoComplete="email"
               />
@@ -176,7 +304,14 @@ export default function Login() {
               {hasEmail && (
                 <button
                   type="button"
-                  onClick={() => setEmail("")}
+                  onClick={() => {
+                    setEmail("");
+                    setTenants([]);
+                    setTenantId("");
+                    setManualTenantId("");
+                    lastLookupEmailRef.current = "";
+                    setDidLookup(false);
+                  }}
                   className={iconBtnClass}
                   aria-label="Limpiar email"
                   title="Limpiar"
@@ -185,8 +320,29 @@ export default function Login() {
                 </button>
               )}
             </div>
+
+            <div className="mt-2 min-h-[18px] text-xs text-muted">
+              {emailOk ? (
+                loadingTenants ? (
+                  <span>Buscando joyerías…</span>
+                ) : tenants.length === 0 ? (
+                  <span>
+                    {didLookup
+                      ? "Si no aparece joyería, ingresá el código manual."
+                      : "—"}
+                  </span>
+                ) : tenants.length === 1 ? (
+                  <span>Joyería detectada: {tenants[0].name}</span>
+                ) : (
+                  <span>Seleccioná una joyería para continuar.</span>
+                )
+              ) : (
+                <span>—</span>
+              )}
+            </div>
           </div>
 
+          {/* 2) PASSWORD */}
           <div>
             <label className="mb-2 block text-sm text-muted">Contraseña</label>
 
@@ -212,6 +368,55 @@ export default function Login() {
               )}
             </div>
           </div>
+
+          {/* 3) JOYERÍA (al final) */}
+          {showTenantSelect && (
+            <div>
+              <label className="mb-2 block text-sm text-muted">Joyería</label>
+
+              <div className={selectWrapClass}>
+                <select
+                  className="tp-select appearance-none pr-10"
+                  value={tenantId}
+                  onChange={(e) => setTenantId(e.target.value)}
+                  disabled={!emailOk || loadingTenants || loading}
+                >
+                  {tenants.map((t) => (
+                    <option key={t.id} value={t.id}>
+                      {t.name}
+                    </option>
+                  ))}
+                </select>
+
+                {/* ✅ Flecha visual (no clickeable) */}
+                <span className={selectChevronClass} aria-hidden="true">
+                  <ChevronDownIcon />
+                </span>
+              </div>
+
+              <p className="mt-2 text-xs text-muted">
+                Se recuerda la última joyería usada para este email.
+              </p>
+            </div>
+          )}
+
+          {showManualTenantInput && (
+            <div>
+              <label className="mb-2 block text-sm text-muted">Código de joyería</label>
+              <input
+                type="text"
+                value={manualTenantId}
+                onChange={(e) => setManualTenantId(e.target.value)}
+                className="tp-input"
+                autoComplete="off"
+                placeholder="Ej: cmk700nve0000caekyg8uw2d6"
+                disabled={!emailOk || loadingTenants || loading}
+              />
+              <p className="mt-2 text-xs text-muted">
+                No se detectó joyería automáticamente. Podés ingresar el código manual.
+              </p>
+            </div>
+          )}
 
           <button type="submit" disabled={!canSubmit || loading} className="tp-btn-primary w-full">
             {loading ? "Ingresando..." : "Iniciar sesión"}

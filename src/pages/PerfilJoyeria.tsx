@@ -3,6 +3,10 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { apiFetch } from "../lib/api";
 import { useMe } from "../hooks/useMe";
+import UserPinSettings from "../components/UserPinSettings";
+import { RequirePermission } from "../components/RequirePermission";
+import { useNavigate } from "react-router-dom";
+import { X } from "lucide-react";
 
 /* ================== TIPOS ================== */
 
@@ -143,6 +147,50 @@ function normalizeJewelryResponse(resp: any) {
 function devLog(...args: any[]) {
   try {
     if (import.meta.env.DEV) console.log(...args);
+  } catch {}
+}
+
+function getInitials(name: string) {
+  const s = String(name || "").trim();
+  if (!s) return "TP";
+  const parts = s.split(/\s+/).filter(Boolean);
+  const a = parts[0]?.[0] ?? "T";
+  const b = (parts[1]?.[0] ?? parts[0]?.[1] ?? "P") || "P";
+  return (a + b).toUpperCase();
+}
+
+/** ✅ Setea favicon dinámicamente + persiste para recargas */
+function setFaviconPersisted(url: string) {
+  try {
+    const href = String(url || "").trim();
+    if (!href) return;
+
+    // persistimos (index.html lo usa antes de React)
+    try {
+      localStorage.setItem("tptech_favicon_href", href);
+    } catch {}
+
+    const head = document.head || document.getElementsByTagName("head")[0];
+
+    let link =
+      (head.querySelector("#tptech-favicon") as HTMLLinkElement | null) ||
+      (head.querySelector('link[rel~="icon"]') as HTMLLinkElement | null) ||
+      (head.querySelector('link[rel="shortcut icon"]') as HTMLLinkElement | null);
+
+    if (!link) {
+      link = document.createElement("link");
+      link.rel = "icon";
+      head.appendChild(link);
+    }
+    link.id = "tptech-favicon";
+
+    // cache-bust SOLO para http/https o rutas
+    const needsBust = /^https?:\/\//i.test(href) || href.startsWith("/");
+    const finalHref = needsBust
+      ? `${href}${href.includes("?") ? "&" : "?"}v=${Date.now()}`
+      : href;
+
+    link.href = finalHref;
   } catch {}
 }
 
@@ -293,7 +341,10 @@ function TpSelect({
         title={current?.label ?? placeholder}
       >
         <span className="text-sm">{current?.label ?? placeholder}</span>
-        <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-muted" aria-hidden="true">
+        <span
+          className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-muted"
+          aria-hidden="true"
+        >
           ▾
         </span>
       </button>
@@ -306,6 +357,7 @@ function TpSelect({
 /* ================== COMPONENTE ================== */
 
 export default function PerfilJoyeria() {
+  const navigate = useNavigate();
   const { me, loading, error, refresh } = useMe();
   const jewelryFromContext = pickJewelryFromMe(me);
 
@@ -350,6 +402,12 @@ export default function PerfilJoyeria() {
     };
   }, [logoPreview]);
 
+  // ✅ cuando cambia el logo de la empresa, persiste favicon (para recargas)
+  useEffect(() => {
+    const url = absUrl(company?.logoUrl || "");
+    if (url) setFaviconPersisted(url);
+  }, [company?.logoUrl]);
+
   const savedAttachments: JewelryAttachment[] = useMemo(() => {
     const arr = (serverJewelry?.attachments ?? []) as JewelryAttachment[];
     return Array.isArray(arr) ? arr : [];
@@ -367,6 +425,25 @@ export default function PerfilJoyeria() {
   function setCompanyField<K extends keyof CompanyBody>(key: K, value: CompanyBody[K]) {
     if (key !== "logoUrl") setDirty(true);
     setCompany((p) => (p ? { ...p, [key]: value } : p));
+  }
+
+  function resetToServerValues() {
+    if (!serverJewelry) return;
+    const d = jewelryToDraft(serverJewelry);
+    setExisting(d.existing);
+    setCompany(d.company);
+    setDirty(false);
+    setMsg(null);
+
+    if (logoPreview?.startsWith("blob:")) URL.revokeObjectURL(logoPreview);
+    setLogoPreview("");
+  }
+
+  function onCancel() {
+    if (saving || uploadingLogo || deletingLogo || uploadingAttachments || deletingAttId) return;
+
+    if (dirty) resetToServerValues();
+    navigate(-1);
   }
 
   async function uploadLogoInstant(file: File) {
@@ -406,6 +483,10 @@ export default function PerfilJoyeria() {
 
       const newLogo = updated?.logoUrl || "";
       setCompany((p) => (p ? { ...p, logoUrl: newLogo } : p));
+
+      // ✅ persiste favicon con el logo final del backend
+      const fav = absUrl(newLogo || "");
+      if (fav) setFaviconPersisted(fav);
 
       if (localPreview?.startsWith("blob:")) URL.revokeObjectURL(localPreview);
       setLogoPreview("");
@@ -448,7 +529,6 @@ export default function PerfilJoyeria() {
 
     const arr = files;
 
-    // ✅ Diagnóstico (solo dev): evidencia de qué llegó del input
     devLog("[ATTACH] received count:", arr.length);
     try {
       if (import.meta.env.DEV) {
@@ -473,7 +553,9 @@ export default function PerfilJoyeria() {
         const detail = rejected
           .map((f) => `${f.name} (${(f.size / 1024 / 1024).toFixed(2)} MB)`)
           .join(", ");
-        setMsg(`No se pudieron adjuntar los archivos: ${detail}. Máximo permitido: 20 MB por archivo.`);
+        setMsg(
+          `No se pudieron adjuntar los archivos: ${detail}. Máximo permitido: 20 MB por archivo.`
+        );
       } else {
         setMsg("No se recibió ningún archivo desde el selector. Volvé a intentar y revisá la consola.");
       }
@@ -555,6 +637,10 @@ export default function PerfilJoyeria() {
       setExisting(d.existing);
       setCompany(d.company);
 
+      // ✅ si backend devolvió logo, asegura favicon persistido
+      const fav = absUrl(d.company.logoUrl || "");
+      if (fav) setFaviconPersisted(fav);
+
       setDirty(false);
       setMsg("Guardado correctamente ✅");
 
@@ -600,22 +686,21 @@ export default function PerfilJoyeria() {
   const headerLogoSrc = logoPreview || absUrl(company.logoUrl || "");
   const hasLogo = !!headerLogoSrc;
 
+  const busyAny =
+    saving || uploadingLogo || deletingLogo || uploadingAttachments || Boolean(deletingAttId);
+
+  const initials = getInitials(existing.name || company.legalName || "TPTech");
+
   return (
     <div className="mx-auto max-w-6xl p-4 sm:p-6">
       <h2 className="text-xl font-semibold text-text">Datos de la empresa</h2>
 
-      {msg && (
-        <div
-          className="mt-4 rounded-xl px-4 py-3 text-sm"
-          style={{
-            border: "1px solid var(--border)",
-            background: "var(--card)",
-            boxShadow: "var(--shadow)",
-          }}
-        >
-          {msg}
-        </div>
-      )}
+      {/* 🔐 Seguridad (PIN / Quick Switch) */}
+      <div className="mt-4">
+        <RequirePermission any={["COMPANY_SETTINGS:VIEW", "COMPANY_SETTINGS:EDIT", "COMPANY_SETTINGS:ADMIN"]}>
+          <UserPinSettings />
+        </RequirePermission>
+      </div>
 
       <div
         className="mt-6 rounded-2xl p-4 sm:p-6"
@@ -681,7 +766,10 @@ export default function PerfilJoyeria() {
                     />
                   </>
                 ) : (
-                  <span className="text-2xl leading-none select-none">+</span>
+                  // ✅ SIN LOGO: iniciales (como el sidebar)
+                  <span className="text-lg font-extrabold tracking-tight text-text select-none">
+                    {initials}
+                  </span>
                 )}
 
                 <div
@@ -935,7 +1023,6 @@ export default function PerfilJoyeria() {
               multiple
               hidden
               onChange={(e) => {
-                // ✅ snapshot ANTES de limpiar el input (FileList puede ser "live")
                 const picked = Array.from(e.currentTarget.files ?? []);
                 e.currentTarget.value = "";
                 uploadAttachmentsInstant(picked);
@@ -1028,12 +1115,34 @@ export default function PerfilJoyeria() {
             )}
           </div>
         </div>
-      </div>
 
-      <div className="mt-8 flex justify-center">
-        <button onClick={onSave} disabled={!canSave || saving} className="tp-btn-primary px-10 py-4">
-          {saving ? "Guardando..." : dirty ? "Guardar cambios" : "Guardar"}
-        </button>
+        {/* ✅ Acciones (Cancelar + Guardar) */}
+        <div className="mt-8 flex items-center justify-end gap-3">
+          <button
+            type="button"
+            disabled={busyAny}
+            onClick={onCancel}
+            className="inline-flex items-center gap-2 rounded-xl border-2 border-border bg-transparent px-4 py-2 text-sm font-semibold text-text hover:bg-surface2 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-primary/20 disabled:opacity-60"
+          >
+            <X className="h-4 w-4" />
+            Cancelar
+          </button>
+
+          <button
+            type="button"
+            onClick={onSave}
+            disabled={!canSave || saving}
+            className="tp-btn-primary px-6 py-2 inline-flex items-center justify-center"
+          >
+            {saving ? "Guardando..." : dirty ? "Guardar cambios" : "Guardar"}
+          </button>
+        </div>
+
+        {msg && (
+          <div className="mt-4 text-center text-sm" style={{ color: "var(--muted)" }}>
+            {msg}
+          </div>
+        )}
       </div>
     </div>
   );

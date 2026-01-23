@@ -75,6 +75,9 @@ export function UserPermissionsEditor({
   // saving por permiso (no bloquea todo el modal)
   const [saving, setSaving] = useState<Record<string, OverrideEffect | null>>({});
 
+  // saving global (para deshabilitar permisos especiales)
+  const [specialBusy, setSpecialBusy] = useState(false);
+
   const permsByModule = useMemo(() => {
     const map = new Map<string, Permission[]>();
     for (const p of permissions) {
@@ -100,6 +103,11 @@ export function UserPermissionsEditor({
     }
     return m;
   }, [user?.permissionOverrides]);
+
+  const overridesCount = useMemo(() => (user?.permissionOverrides ?? []).length, [user]);
+
+  // ✅ “Permisos especiales habilitados” = hay al menos 1 override
+  const specialEnabled = overridesCount > 0;
 
   const getOverrideEffect = useCallback(
     (permissionId: string): OverrideEffect | null => overridesMap.get(permissionId) ?? null,
@@ -183,6 +191,37 @@ export function UserPermissionsEditor({
     [user, getOverrideEffect, setSavingFor, applyLocalOverride]
   );
 
+  // ✅ Deshabilitar permisos especiales = borrar todos los overrides
+  const disableSpecialPermissions = useCallback(async () => {
+    if (!user) return;
+    if ((user.permissionOverrides ?? []).length === 0) return;
+    if (specialBusy) return;
+
+    const ok = window.confirm(
+      "Esto va a borrar TODOS los permisos especiales (overrides) de este usuario. ¿Continuar?"
+    );
+    if (!ok) return;
+
+    setError(null);
+    setSpecialBusy(true);
+
+    const prevOverrides = user.permissionOverrides ?? [];
+
+    // optimistic: limpiar local
+    setUser((prev) => (prev ? { ...prev, permissionOverrides: [] } : prev));
+
+    try {
+      // borrar uno por uno (paralelo) usando lo que ya tenés
+      await Promise.all(prevOverrides.map((o) => removeUserOverride(user.id, o.permissionId)));
+    } catch (e: any) {
+      // rollback
+      setUser((prev) => (prev ? { ...prev, permissionOverrides: prevOverrides } : prev));
+      setError(e?.message ?? "No se pudo deshabilitar. Intentá de nuevo.");
+    } finally {
+      setSpecialBusy(false);
+    }
+  }, [user, specialBusy]);
+
   return (
     <div
       role="dialog"
@@ -230,85 +269,139 @@ export function UserPermissionsEditor({
           )}
 
           {!loading && user && (
-            <div className="grid gap-3">
-              {permsByModule.map(([module, perms]) => (
-                <section
-                  key={module}
-                  className="rounded-xl border border-border bg-bg/40 p-3"
-                >
-                  <div className="mb-2 flex items-center justify-between gap-3">
-                    <div className="font-semibold">{module}</div>
+            <div className="space-y-4">
+              {/* ✅ Píldora Permisos Especiales (reemplaza checkbox) */}
+              <div className="rounded-xl border border-border bg-bg/40 p-3">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="min-w-0">
+                    <div className="font-semibold">Permisos especiales</div>
                     <div className="text-xs text-text/60">
-                      Click en <b>ALLOW</b> o <b>DENY</b> para setear override. Repetir click
-                      lo borra.
+                      Los permisos especiales son overrides (ALLOW / DENY) a nivel usuario.
                     </div>
                   </div>
 
-                  <div className="divide-y divide-border">
-                    {perms.map((p) => {
-                      const current = getOverrideEffect(p.id);
-                      const rowSaving = saving[p.id] ?? null;
+                  <div className="flex items-center gap-2">
+                    {/* Deshabilitados */}
+                    <button
+                      type="button"
+                      disabled={specialBusy || !specialEnabled}
+                      onClick={() => void disableSpecialPermissions()}
+                      className={cn(
+                        "rounded-full border px-3 py-1 text-sm font-semibold transition",
+                        specialEnabled
+                          ? "border-rose-300/60 bg-rose-50 text-rose-700 hover:bg-rose-100"
+                          : "border-border bg-surface text-text/50",
+                        (specialBusy || !specialEnabled) && "opacity-70 cursor-not-allowed"
+                      )}
+                      title="Deshabilitar (borra overrides)"
+                    >
+                      Permisos especiales deshabilitados
+                    </button>
 
-                      const allowActive = current === "ALLOW";
-                      const denyActive = current === "DENY";
-
-                      const allowBusy = rowSaving === "ALLOW";
-                      const denyBusy = rowSaving === "DENY";
-                      const disabled = rowSaving !== null;
-
-                      return (
-                        <div key={p.id} className="flex flex-wrap items-center gap-2 py-2">
-                          <div className="min-w-[240px] font-mono text-xs text-text/80">
-                            {permLabel(p)}
-                          </div>
-
-                          <button
-                            type="button"
-                            onClick={() => toggleOverride(p.id, "ALLOW")}
-                            disabled={disabled}
-                            className={cn(
-                              "rounded-lg border px-3 py-1.5 text-sm",
-                              allowActive
-                                ? "border-emerald-300 bg-emerald-50 text-emerald-700"
-                                : "border-border bg-surface hover:bg-bg",
-                              allowBusy && "opacity-70"
-                            )}
-                            title="Forzar permitir (override)"
-                          >
-                            {allowBusy ? "Guardando…" : "ALLOW"}
-                          </button>
-
-                          <button
-                            type="button"
-                            onClick={() => toggleOverride(p.id, "DENY")}
-                            disabled={disabled}
-                            className={cn(
-                              "rounded-lg border px-3 py-1.5 text-sm",
-                              denyActive
-                                ? "border-rose-300 bg-rose-50 text-rose-700"
-                                : "border-border bg-surface hover:bg-bg",
-                              denyBusy && "opacity-70"
-                            )}
-                            title="Forzar denegar (override)"
-                          >
-                            {denyBusy ? "Guardando…" : "DENY"}
-                          </button>
-
-                          <div className="ml-auto text-xs text-text/60">
-                            {current ? (
-                              <span>
-                                Override: <b>{current}</b>
-                              </span>
-                            ) : (
-                              <span>Sin override</span>
-                            )}
-                          </div>
-                        </div>
-                      );
-                    })}
+                    {/* Habilitados (solo indicador) */}
+                    <span
+                      className={cn(
+                        "rounded-full border px-3 py-1 text-sm font-semibold",
+                        specialEnabled
+                          ? "border-emerald-300/60 bg-emerald-50 text-emerald-700"
+                          : "border-border bg-surface text-text/50"
+                      )}
+                      title={
+                        specialEnabled
+                          ? `Habilitados (${overridesCount} override/s)`
+                          : "Deshabilitados (0 overrides)"
+                      }
+                    >
+                      Permisos especiales habilitados
+                    </span>
                   </div>
-                </section>
-              ))}
+                </div>
+
+                <div className="mt-2 text-[11px] text-text/60">
+                  Estado actual:{" "}
+                  <b>{specialEnabled ? `Habilitados (${overridesCount})` : "Deshabilitados"}</b>
+                </div>
+              </div>
+
+              {/* Lista de permisos */}
+              <div className="grid gap-3">
+                {permsByModule.map(([module, perms]) => (
+                  <section key={module} className="rounded-xl border border-border bg-bg/40 p-3">
+                    <div className="mb-2 flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
+                      <div className="font-semibold">{module}</div>
+                      <div className="text-xs text-text/60">
+                        Click en <b>ALLOW</b> o <b>DENY</b> para setear override. Repetir click lo borra.
+                      </div>
+                    </div>
+
+                    <div className="divide-y divide-border">
+                      {perms.map((p) => {
+                        const current = getOverrideEffect(p.id);
+                        const rowSaving = saving[p.id] ?? null;
+
+                        const allowActive = current === "ALLOW";
+                        const denyActive = current === "DENY";
+
+                        const allowBusy = rowSaving === "ALLOW";
+                        const denyBusy = rowSaving === "DENY";
+                        const disabled = rowSaving !== null || specialBusy;
+
+                        return (
+                          <div key={p.id} className="flex flex-wrap items-center gap-2 py-2">
+                            <div className="min-w-[240px] font-mono text-xs text-text/80">
+                              {permLabel(p)}
+                            </div>
+
+                            <button
+                              type="button"
+                              onClick={() => toggleOverride(p.id, "ALLOW")}
+                              disabled={disabled}
+                              className={cn(
+                                "rounded-lg border px-3 py-1.5 text-sm",
+                                allowActive
+                                  ? "border-emerald-300 bg-emerald-50 text-emerald-700"
+                                  : "border-border bg-surface hover:bg-bg",
+                                allowBusy && "opacity-70",
+                                disabled && "cursor-not-allowed opacity-70"
+                              )}
+                              title="Forzar permitir (override)"
+                            >
+                              {allowBusy ? "Guardando…" : "ALLOW"}
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={() => toggleOverride(p.id, "DENY")}
+                              disabled={disabled}
+                              className={cn(
+                                "rounded-lg border px-3 py-1.5 text-sm",
+                                denyActive
+                                  ? "border-rose-300 bg-rose-50 text-rose-700"
+                                  : "border-border bg-surface hover:bg-bg",
+                                denyBusy && "opacity-70",
+                                disabled && "cursor-not-allowed opacity-70"
+                              )}
+                              title="Forzar denegar (override)"
+                            >
+                              {denyBusy ? "Guardando…" : "DENY"}
+                            </button>
+
+                            <div className="ml-auto text-xs text-text/60">
+                              {current ? (
+                                <span>
+                                  Override: <b>{current}</b>
+                                </span>
+                              ) : (
+                                <span>Sin override</span>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </section>
+                ))}
+              </div>
             </div>
           )}
         </div>

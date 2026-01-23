@@ -8,12 +8,89 @@ function sizeClass(size: Size) {
   return size === "sm" ? "px-2 py-0.5 text-xs" : "px-2 py-1 text-xs";
 }
 
+/* =========================
+   ✅ Segmented Pills (GLOBAL) – DISEÑO MUY SUTIL
+   - Sin contenedor
+   - Activo: color (rojo / verde) sin relleno fuerte
+   - Inactivo: gris secundario (NUNCA blanco)
+   - Jerarquía visual clara
+========================= */
+export function TPSegmentedPills({
+  value,
+  onChange,
+  disabled,
+  labels = { off: "Deshabilitado", on: "Habilitado" },
+  size = "md",
+  className,
+}: {
+  value: boolean;
+  onChange: (v: boolean) => void;
+  disabled?: boolean;
+  labels?: { on: string; off: string };
+  size?: Size;
+  className?: string;
+}) {
+  const dis = !!disabled;
+
+  const base = cn(
+    "inline-flex items-center rounded-full font-semibold select-none transition-colors",
+    "border",
+    "focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-primary/20",
+    size === "sm" ? "px-3 py-1 text-xs" : "px-3 py-1.5 text-xs",
+    dis && "opacity-50 cursor-not-allowed"
+  );
+
+  // OFF (activo cuando value=false)
+  const offBtn = cn(
+    base,
+    !value
+      ? "border-red-500/45 text-red-300 hover:bg-red-500/5"
+      : "border-border/50 bg-surface2/60 text-muted/80 hover:bg-surface2/70"
+  );
+
+  // ON (activo cuando value=true)
+  const onBtn = cn(
+    base,
+    value
+      ? "border-emerald-500/45 text-emerald-300 hover:bg-emerald-500/5"
+      : "border-border/50 bg-surface2/60 text-muted/80 hover:bg-surface2/70"
+  );
+
+  return (
+    <div className={cn("inline-flex items-center gap-2", className)}>
+      <button
+        type="button"
+        disabled={dis}
+        onClick={() => {
+          if (!dis) onChange(false);
+        }}
+        className={offBtn}
+        title={labels.off}
+      >
+        {labels.off}
+      </button>
+
+      <button
+        type="button"
+        disabled={dis}
+        onClick={() => {
+          if (!dis) onChange(true);
+        }}
+        className={onBtn}
+        title={labels.on}
+      >
+        {labels.on}
+      </button>
+    </div>
+  );
+}
+
 /** Stock badge (0 gris / 1-5 primary / 6+ verde) */
 export function TPStockBadge({ n, size = "md" }: { n: number; size?: Size }) {
   const base = cn("rounded-full font-semibold border", sizeClass(size));
 
   if (n === 0) {
-    return <span className={cn(base, "bg-surface2 text-muted border-border")}>0</span>;
+    return <span className={cn(base, "bg-surface2/80 text-text/70 border-border")}>0</span>;
   }
   if (n <= 5) {
     return <span className={cn(base, "bg-primary/10 text-primary border-primary/20")}>{n}</span>;
@@ -25,7 +102,7 @@ export function TPStockBadge({ n, size = "md" }: { n: number; size?: Size }) {
   );
 }
 
-/** Stock “label” (Sin stock / Bajo (n) / n u.) */
+/** Stock “label” */
 export function TPStockLabelBadge({
   n,
   low = 2,
@@ -38,7 +115,7 @@ export function TPStockLabelBadge({
   const base = cn("rounded-full font-semibold border", sizeClass(size));
 
   if (n === 0) {
-    return <span className={cn(base, "bg-surface2 text-muted border-border")}>Sin stock</span>;
+    return <span className={cn(base, "bg-surface2/80 text-text/70 border-border")}>Sin stock</span>;
   }
   if (n <= low) {
     return (
@@ -63,7 +140,7 @@ export function TPActiveBadge({ active, size = "md" }: { active: boolean; size?:
         base,
         active
           ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20"
-          : "bg-surface2 text-muted border-border"
+          : "bg-surface2/80 text-text/70 border-border"
       )}
     >
       {active ? "Activo" : "Inactivo"}
@@ -71,10 +148,7 @@ export function TPActiveBadge({ active, size = "md" }: { active: boolean; size?:
   );
 }
 
-/**
- * ✅ Estado usuario (ACTIVE/PENDING/BLOCKED → Activo/Inactivo/Inactivo)
- * Requisito: en UI NO mostramos "Bloqueado".
- */
+/** Estado usuario */
 export function TPUserStatusBadge({
   status,
   size = "md",
@@ -92,7 +166,7 @@ export function TPUserStatusBadge({
     );
   }
 
-  return <span className={cn(base, "bg-surface2 text-muted border-border")}>Inactivo</span>;
+  return <span className={cn(base, "bg-surface2/80 text-text/70 border-border")}>Inactivo</span>;
 }
 
 /** Tipo movimiento */
@@ -109,7 +183,5 @@ export function TPTipoMovBadge({ tipo, size = "md" }: { tipo: TipoMov; size?: Si
   if (tipo === "Salida") {
     return <span className={cn(base, "bg-red-500/10 text-red-400 border-red-500/20")}>Salida</span>;
   }
-  return (
-    <span className={cn(base, "bg-primary/10 text-primary border-primary/20")}>Ajuste</span>
-  );
+  return <span className={cn(base, "bg-primary/10 text-primary border-primary/20")}>Ajuste</span>;
 }

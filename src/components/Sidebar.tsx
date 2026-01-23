@@ -1,14 +1,9 @@
 // tptech-frontend/src/components/Sidebar.tsx
-import {
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type ComponentType,
-} from "react";
+import { useEffect, useMemo, useRef, useState, type ComponentType } from "react";
 import { createPortal } from "react-dom";
 import { NavLink, useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
+import { roleLabel } from "../lib/roleLabels";
 import {
   LayoutDashboard,
   Package,
@@ -36,11 +31,19 @@ function absUrl(u: string) {
   if (!raw) return "";
   if (/^https?:\/\//i.test(raw)) return raw;
 
-  const base =
-    (import.meta.env.VITE_API_URL as string) || "http://localhost:3001";
+  const base = (import.meta.env.VITE_API_URL as string) || "http://localhost:3001";
   const API = base.replace(/\/+$/, "");
   const p = raw.startsWith("/") ? raw : `/${raw}`;
   return `${API}${p}`;
+}
+
+function getInitials(name: string) {
+  const s = String(name || "").trim();
+  if (!s) return "TP";
+  const parts = s.split(/\s+/).filter(Boolean);
+  const a = parts[0]?.[0] ?? "T";
+  const b = (parts[1]?.[0] ?? parts[0]?.[1] ?? "P") || "P";
+  return (a + b).toUpperCase();
 }
 
 /* ---------------- types ---------------- */
@@ -112,7 +115,6 @@ function Leaf({
   disabled?: boolean;
 }) {
   if (disabled) {
-    // ✅ bloqueado: render como "item" sin navegación
     return (
       <div
         className={cn(
@@ -135,7 +137,13 @@ function Leaf({
         )}
 
         {collapsed ? (
-          <span className={cn("text-[11px] leading-tight text-center", "w-full max-w-[66px] overflow-hidden line-clamp-2 break-words", "text-muted")}>
+          <span
+            className={cn(
+              "text-[11px] leading-tight text-center",
+              "w-full max-w-[66px] overflow-hidden line-clamp-2 break-words",
+              "text-muted"
+            )}
+          >
             {label}
           </span>
         ) : (
@@ -184,9 +192,7 @@ function Leaf({
               )}
             />
           ) : (
-            <span className={cn("shrink-0", isActive ? "text-primary" : "text-muted")}>
-              •
-            </span>
+            <span className={cn("shrink-0", isActive ? "text-primary" : "text-muted")}>•</span>
           )}
 
           {collapsed ? (
@@ -239,9 +245,7 @@ function Group({
   onNavigate?: () => void;
 }) {
   const { pathname } = useLocation();
-  const active = children.some(
-    (c) => pathname === c.to || pathname.startsWith(c.to + "/")
-  );
+  const active = children.some((c) => pathname === c.to || pathname.startsWith(c.to + "/"));
 
   const btnRef = useRef<HTMLButtonElement | null>(null);
 
@@ -284,10 +288,7 @@ function Group({
     const left = canRight ? btnRight + gap : Math.max(viewportPad, btnLeft - gap - W);
 
     const desiredTop = btnTop;
-    const top = Math.max(
-      viewportPad,
-      Math.min(window.innerHeight - viewportPad - maxH, desiredTop)
-    );
+    const top = Math.max(viewportPad, Math.min(window.innerHeight - viewportPad - maxH, desiredTop));
 
     return {
       position: "fixed" as const,
@@ -343,6 +344,7 @@ function Group({
               <div
                 onMouseDown={() => setPopoverOpen(false)}
                 style={{ position: "fixed", inset: 0, zIndex: 9998 }}
+                aria-hidden="true"
               />
 
               <div
@@ -360,7 +362,10 @@ function Group({
                   </div>
                 </div>
 
-                <div className="p-2 tp-scroll" style={{ maxHeight: "calc(var(--popover-max, 560px) - 1px)" }}>
+                <div
+                  className="p-2 tp-scroll"
+                  style={{ maxHeight: "calc(var(--popover-max, 560px) - 1px)" }}
+                >
                   <div className="max-h-[60vh] overflow-auto tp-scroll">
                     {children.map((c) => (
                       <NavLink
@@ -551,23 +556,94 @@ export default function Sidebar({
     document.documentElement.style.setProperty("--sidebar-w", `${actualWidth}px`);
   }, [actualWidth]);
 
-  const jewelryName =
-    auth.jewelry?.name ?? (auth.loading ? "Cargando..." : "Sin joyería");
+  const jewelryName = auth.jewelry?.name ?? (auth.loading ? "Cargando..." : "Sin joyería");
 
   const user = auth.user ?? null;
 
-  const avatarUrl: string | null = (user as any)?.avatarUrl ?? null;
+  const avatarUrlRaw: string = String((user as any)?.avatarUrl ?? "").trim();
+const avatarBase = avatarUrlRaw ? absUrl(avatarUrlRaw) : "";
+
+// ✅ cache-bust estable: usa updatedAt/quickPinUpdatedAt/etc si existe; si no, "1"
+const avatarBust = String(
+  (user as any)?.updatedAt ??
+    (user as any)?.avatarUpdatedAt ??
+    (user as any)?.quickPinUpdatedAt ??
+    ""
+).trim();
+
+const avatarSrc = avatarBase
+  ? `${avatarBase}${avatarBase.includes("?") ? "&" : "?"}v=${encodeURIComponent(avatarBust || "1")}`
+  : "";
+
+
   const userName: string = (user as any)?.name || (user as any)?.email || "Usuario";
   const userEmail: string = (user as any)?.email || "";
+
+  // ✅ Rol del usuario (tolerante a distintas estructuras) + HUMANO (usa roleLabel)
+  const userRoleLabel: string = useMemo(() => {
+    const u: any = user || {};
+
+    const collected: string[] = [];
+
+    // 1) roleNames: string[]
+    if (Array.isArray(u.roleNames)) {
+      for (const x of u.roleNames) {
+        const s = String(x || "").trim();
+        if (s) collected.push(s);
+      }
+    }
+
+    // 2) roles: string[] | {name}[]
+    if (Array.isArray(u.roles)) {
+      if (u.roles.every((x: any) => typeof x === "string")) {
+        for (const x of u.roles) {
+          const s = String(x || "").trim();
+          if (s) collected.push(s);
+        }
+      } else {
+        for (const r of u.roles) {
+          const s = typeof r?.name === "string" ? r.name.trim() : "";
+          if (s) collected.push(s);
+        }
+      }
+    }
+
+    // 3) campos directos
+    const direct =
+      (typeof u.role === "string" ? u.role : "") ||
+      (typeof u.roleName === "string" ? u.roleName : "") ||
+      (typeof u?.role?.name === "string" ? u.role.name : "") ||
+      (typeof u.roleLabel === "string" ? u.roleLabel : "") ||
+      "";
+
+    const d = String(direct || "").trim();
+    if (d) collected.push(d);
+
+    const uniq = Array.from(new Set(collected.map((x) => x.trim()).filter(Boolean)));
+    if (uniq.length) return uniq.map((x) => roleLabel(x)).join(" • ");
+
+    // 4) fallback suave por permisos
+    const perms = Array.isArray((auth as any)?.permissions)
+      ? ((auth as any).permissions as string[])
+      : [];
+    const hasAdmin = perms.some(
+      (p) => /:ADMIN$/.test(p) || p.includes("USERS_ROLES:ADMIN") || p.includes("COMPANY_SETTINGS:ADMIN")
+    );
+    if (hasAdmin) return "Administrador";
+
+    const hasEdit = perms.some((p) => /:EDIT$/.test(p) || p.includes(":WRITE") || p.includes(":UPDATE"));
+    if (hasEdit) return "Empleado";
+
+    const hasView = perms.some((p) => /:VIEW$/.test(p) || p.includes(":READ") || p.includes(":LIST"));
+    if (hasView) return "Solo Lectura";
+
+    return "Usuario";
+  }, [user, auth]);
 
   const logoUrlRaw = (auth.jewelry as any)?.logoUrl ?? "";
   const logoUrl = absUrl(logoUrlRaw);
 
-  const perms: string[] = auth.permissions ?? [];
-
-  const canSeeUsers =
-    perms.includes("USERS_ROLES:VIEW") || perms.includes("USERS_ROLES:ADMIN");
-  const canSeeRoles = canSeeUsers;
+  const initials = getInitials(auth.jewelry?.name || jewelryName || "TPTech");
 
   async function onLogout() {
     try {
@@ -578,11 +654,6 @@ export default function Sidebar({
   }
 
   const nav: NavItem[] = useMemo(() => {
-    const configChildren: GroupItem[] = [];
-    if (canSeeUsers) configChildren.push({ label: "Usuarios", to: "/configuracion/usuarios" });
-    if (canSeeRoles) configChildren.push({ label: "Roles", to: "/configuracion/roles" });
-    configChildren.push({ label: "Datos de la Empresa", to: "/configuracion/joyeria" });
-
     return [
       { kind: "link", label: "Dashboard", to: "/dashboard", icon: LayoutDashboard },
       { kind: "link", label: "Divisas", to: "/divisas", icon: GoldBarsIcon },
@@ -645,14 +716,10 @@ export default function Sidebar({
 
       { kind: "link", label: "Finanzas", to: "/finanzas", icon: Landmark },
 
-      {
-        kind: "group",
-        label: "Configuracion",
-        icon: Settings,
-        children: configChildren,
-      },
+      // ✅ ÚNICO botón de Configuración → abre Configuración del Sistema
+      { kind: "link", label: "Configuración", to: "/configuracion-sistema", icon: Settings },
     ];
-  }, [canSeeUsers, canSeeRoles]);
+  }, []);
 
   useEffect(() => {
     const firstMatch = nav.find((it) => {
@@ -660,7 +727,7 @@ export default function Sidebar({
       return it.children.some((c) => pathname === c.to || pathname.startsWith(c.to + "/"));
     });
     if (firstMatch?.kind === "group") setOpenGroup(firstMatch.label);
-    else setOpenGroup(null); // ✅
+    else setOpenGroup(null);
   }, [pathname, nav]);
 
   function collapseToMobile() {
@@ -707,19 +774,16 @@ export default function Sidebar({
         )}
         style={{ width: asideWidth }}
       >
-        <div
-          className={cn(
-            "border-b border-border px-4 py-4",
-            effectiveCollapsed && !isMobile && "px-3"
-          )}
-        >
+        <div className={cn("border-b border-border px-4 py-4", effectiveCollapsed && !isMobile && "px-3")}>
           <div className="flex items-center justify-between gap-3">
             <div className="flex items-center gap-3 min-w-0">
               <div className="grid h-11 w-11 place-items-center overflow-hidden rounded-xl border border-border bg-surface2">
                 {logoUrl ? (
                   <img src={logoUrl} alt="Logo" className="h-full w-full object-cover" />
                 ) : (
-                  <span className="font-bold text-primary">TP</span>
+                  <span className="font-extrabold text-primary text-[13px] tracking-tight select-none">
+                    {initials}
+                  </span>
                 )}
               </div>
 
@@ -733,10 +797,10 @@ export default function Sidebar({
 
             <button
               onClick={() => {
-                if (locked) return; // ✅
+                if (locked) return;
                 collapsed ? expandFromMobile() : collapseToMobile();
               }}
-              disabled={locked} // ✅
+              disabled={locked}
               className={cn(
                 "hidden lg:grid h-10 w-10 place-items-center rounded-md border border-border bg-card text-text hover:bg-surface2",
                 "focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-primary/20",
@@ -789,7 +853,7 @@ export default function Sidebar({
                 icon={item.icon}
                 collapsed={effectiveCollapsed}
                 onNavigate={onNavigate}
-                disabled={locked} // ✅
+                disabled={locked}
               />
             );
           })}
@@ -798,18 +862,23 @@ export default function Sidebar({
         <div className="mt-auto border-t border-border bg-bg p-4">
           <div className="mb-3 flex items-center gap-3">
             <div className="h-10 w-10 overflow-hidden rounded-full border border-border bg-card">
-              {avatarUrl ? (
-                <img src={avatarUrl} alt="Avatar" className="h-full w-full object-cover" />
+              {avatarBase ? (
+                <img src={avatarSrc} alt="Avatar" className="h-full w-full object-cover" />
               ) : (
                 <div className="grid h-full w-full place-items-center text-sm font-bold text-primary">
-                  {userName.charAt(0).toUpperCase()}
+                  {(userName || "U").charAt(0).toUpperCase()}
                 </div>
               )}
             </div>
 
             <div className="min-w-0">
               <div className="truncate text-sm font-semibold text-text">{userName}</div>
+
+              {/* ✅ Mail */}
               <div className="truncate text-xs text-muted">{userEmail}</div>
+
+              {/* ✅ Rol abajo del mail (HUMANO) */}
+              <div className="mt-0.5 truncate text-[11px] text-muted">{userRoleLabel}</div>
             </div>
           </div>
 
@@ -825,15 +894,16 @@ export default function Sidebar({
         {!mini && !collapsed && (
           <div
             onMouseDown={() => {
-              if (locked) return; // ✅
+              if (locked) return;
               resizing.current = true;
               setIsResizing(true);
             }}
             className={cn(
               "hidden lg:block absolute right-0 top-0 h-full w-3 cursor-ew-resize select-none group",
-              locked && "pointer-events-none opacity-60" // ✅
+              locked && "pointer-events-none opacity-60"
             )}
             title="Ajustar ancho"
+            aria-hidden="true"
           >
             <div
               className={cn(

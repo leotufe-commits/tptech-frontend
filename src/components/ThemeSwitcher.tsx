@@ -10,21 +10,18 @@ function clamp(n: number, min: number, max: number) {
   return Math.max(min, Math.min(max, n));
 }
 
-export default function ThemeSwitcher({
-  variant = "inline",
-}: {
-  variant?: "inline" | "menu";
-}) {
+export default function ThemeSwitcher({ variant = "inline" }: { variant?: "inline" | "menu" }) {
   const { theme, setTheme, themes } = useTheme();
 
   const [open, setOpen] = useState(false);
   const btnRef = useRef<HTMLButtonElement | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
 
-  const current = useMemo(
-    () => themes.find((t) => t.value === theme),
-    [themes, theme]
-  );
+  const optionRefs = useRef<Array<HTMLButtonElement | null>>([]);
+
+  const current = useMemo(() => themes.find((t) => t.value === theme), [themes, theme]);
+
+  const isMenu = variant === "menu";
 
   // Cerrar al click fuera
   useEffect(() => {
@@ -49,6 +46,21 @@ export default function ThemeSwitcher({
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [open]);
 
+  // Auto-focus al abrir (en el activo o el primero)
+  useEffect(() => {
+    if (!open) return;
+    const idx = Math.max(
+      0,
+      themes.findIndex((t) => t.value === theme)
+    );
+
+    const t = window.setTimeout(() => {
+      optionRefs.current[idx]?.focus?.();
+    }, 0);
+
+    return () => window.clearTimeout(t);
+  }, [open, theme, themes]);
+
   function onButtonKeyDown(e: React.KeyboardEvent) {
     if (e.key === "Escape") {
       setOpen(false);
@@ -58,9 +70,42 @@ export default function ThemeSwitcher({
       e.preventDefault();
       setOpen((v) => !v);
     }
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      setOpen(true);
+    }
   }
 
-  const isMenu = variant === "menu";
+  function focusMove(dir: 1 | -1) {
+    const activeIdx = themes.findIndex((t) => t.value === theme);
+    const start = activeIdx >= 0 ? activeIdx : 0;
+
+    // buscamos el focus real actual
+    const focusedIdx = optionRefs.current.findIndex((r) => r === document.activeElement);
+    const from = focusedIdx >= 0 ? focusedIdx : start;
+
+    const next = clamp(from + dir, 0, themes.length - 1);
+    optionRefs.current[next]?.focus?.();
+  }
+
+  function onMenuKeyDown(e: React.KeyboardEvent) {
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      focusMove(1);
+      return;
+    }
+    if (e.key === "ArrowUp") {
+      e.preventDefault();
+      focusMove(-1);
+      return;
+    }
+    if (e.key === "Escape") {
+      e.preventDefault();
+      setOpen(false);
+      btnRef.current?.focus?.();
+      return;
+    }
+  }
 
   // ---- Portal positioning ----
   const r = btnRef.current?.getBoundingClientRect();
@@ -68,8 +113,7 @@ export default function ThemeSwitcher({
   const gap = 8;
 
   const width = r?.width ?? (isMenu ? 320 : 170);
-
-  const leftWanted = (r?.left ?? viewportPad);
+  const leftWanted = r?.left ?? viewportPad;
   const left = clamp(leftWanted, viewportPad, window.innerWidth - viewportPad - width);
 
   const maxH = 320;
@@ -105,25 +149,31 @@ export default function ThemeSwitcher({
         }}
         className="overflow-hidden rounded-xl border border-border bg-card shadow-soft"
         onMouseDown={(e) => e.stopPropagation()}
+        onKeyDown={onMenuKeyDown}
       >
         <div className="tp-scroll overflow-auto" style={{ maxHeight: maxH }}>
-          {themes.map((t) => {
+          {themes.map((t, i) => {
             const active = t.value === theme;
             return (
               <button
                 key={t.value}
+                ref={(el) => {
+                  optionRefs.current[i] = el;
+                }}
                 type="button"
                 role="option"
                 aria-selected={active}
                 onClick={() => {
                   setTheme(t.value as any);
                   setOpen(false);
+                  btnRef.current?.focus?.();
                 }}
                 className={cn(
-                  "w-full px-3 py-2 text-left text-sm transition-colors",
+                  "w-full px-3 py-2 text-left text-sm transition-colors outline-none",
                   active
                     ? "bg-[var(--primary)] text-[var(--primary-foreground,#fff)]"
-                    : "text-text hover:bg-[color-mix(in_oklab,var(--primary)_12%,transparent)]"
+                    : "text-text hover:bg-[color-mix(in_oklab,var(--primary)_12%,transparent)]",
+                  "focus-visible:ring-4 focus-visible:ring-primary/25"
                 )}
               >
                 {t.label}
@@ -149,9 +199,7 @@ export default function ThemeSwitcher({
           aria-expanded={open}
           className={cn(
             "tp-input text-left cursor-pointer select-none relative",
-            isMenu
-              ? "!py-2 !px-3 !pr-9 text-sm"
-              : "!py-[0.55rem] !px-[0.9rem] !pr-[2.25rem]"
+            isMenu ? "!py-2 !px-3 !pr-9 text-sm" : "!py-[0.55rem] !px-[0.9rem] !pr-[2.25rem]"
           )}
           title={current?.label ?? "Tema"}
         >
@@ -165,7 +213,6 @@ export default function ThemeSwitcher({
           </span>
         </button>
 
-        {/* ✅ Menú en Portal (NO se recorta por overflow del PortalMenu) */}
         {open ? createPortal(menu, document.body) : null}
       </div>
     </div>

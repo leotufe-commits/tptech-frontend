@@ -12,11 +12,15 @@ import {
   Paperclip,
   CheckSquare,
   Square,
+  KeyRound,
+  Shield,
+  ShieldOff,
 } from "lucide-react";
 
 import { apiFetch } from "../lib/api";
 import { useAuth } from "../context/AuthContext";
 import { useInventory } from "../context/InventoryContext";
+import { TPSegmentedPills } from "../components/ui/TPBadges";
 
 import {
   assignRolesToUser,
@@ -31,6 +35,9 @@ import {
   removeAvatarForUser,
   updateFavoriteWarehouseForUser,
   updateUserProfile,
+  setUserQuickPin,
+  removeUserQuickPin,
+  setUserPinEnabled,
   type Role,
   type UserListItem,
   type Override,
@@ -72,22 +79,103 @@ function Badge({ children }: { children: React.ReactNode }) {
 function Section({
   title,
   desc,
+  right,
   children,
 }: {
-  title: string;
+  title: React.ReactNode;
   desc?: string;
+  right?: React.ReactNode;
   children: React.ReactNode;
 }) {
   return (
     <div className="tp-card p-4 w-full">
       <div className="mb-3">
-        <div className="text-sm font-semibold">{title}</div>
+        <div className="flex items-center justify-between gap-3">
+          <div className="text-sm font-semibold">{title}</div>
+          {right ? <div className="shrink-0">{right}</div> : null}
+        </div>
         {desc ? <div className="text-xs text-muted mt-0.5">{desc}</div> : null}
       </div>
       {children}
     </div>
   );
 }
+
+function PillSwitch({
+  value,
+  onChange,
+  disabled,
+  onDisabledClick,
+  labels = { on: "Habilitados", off: "Deshabilitados" },
+}: {
+  value: boolean;
+  onChange: (v: boolean) => void;
+  disabled?: boolean;
+  onDisabledClick?: () => void;
+  labels?: { on: string; off: string };
+}) {
+  const dis = !!disabled;
+
+  return (
+    <div
+      className={cn(
+        "inline-flex items-center rounded-full border border-border bg-bg p-1",
+        dis && "opacity-60"
+      )}
+    >
+      <button
+        type="button"
+        disabled={dis}
+        onClick={() => {
+          if (dis) return;
+          onChange(false);
+        }}
+        className={cn(
+          "px-3 py-1.5 rounded-full text-xs font-semibold transition",
+          !value
+            ? "bg-red-500/15 text-red-400 border border-red-500/25"
+            : "text-muted hover:bg-surface2",
+          dis && "cursor-not-allowed"
+        )}
+        title={labels.off}
+      >
+        {labels.off}
+      </button>
+
+      <button
+        type="button"
+        disabled={dis}
+        onClick={() => {
+          if (dis) return;
+          onChange(true);
+        }}
+        className={cn(
+          "px-3 py-1.5 rounded-full text-xs font-semibold transition",
+          value
+            ? "bg-emerald-500/15 text-emerald-300 border border-emerald-500/25"
+            : "text-muted hover:bg-surface2",
+          dis && "cursor-not-allowed"
+        )}
+        title={labels.on}
+      >
+        {labels.on}
+      </button>
+
+      {/* Si está deshabilitado pero querés que el click muestre un aviso/navegue */}
+      {dis && onDisabledClick ? (
+        <button
+          type="button"
+          className="ml-1 px-2 py-1 rounded-full text-[11px] text-muted hover:bg-surface2"
+          onClick={onDisabledClick}
+          title="Ver motivo"
+        >
+          ?
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
 
 /* =========================
    Modal (scroll)
@@ -259,7 +347,9 @@ async function uploadUserAttachmentsInstant(userId: string, files: File[]) {
   const rejected = arr.filter((f) => f.size > MAX);
 
   if (filtered.length === 0) {
-    const detail = rejected.map((f) => `${f.name} (${(f.size / 1024 / 1024).toFixed(2)} MB)`).join(", ");
+    const detail = rejected
+      .map((f) => `${f.name} (${(f.size / 1024 / 1024).toFixed(2)} MB)`)
+      .join(", ");
     throw new Error(
       rejected.length
         ? `No se pudieron adjuntar los archivos: ${detail}. Máximo permitido: 20 MB por archivo.`
@@ -403,6 +493,13 @@ async function prefetchUserDetail(userId: string) {
     userDetailInFlight.delete(userId);
   }
 }
+
+function invalidateUserDetail(userId: string) {
+  if (!userId) return;
+  userDetailCache.delete(userId);
+  userDetailInFlight.delete(userId);
+}
+
 /* =========================
    PAGE
 ========================= */
@@ -492,7 +589,10 @@ export default function UsersPage() {
 
   // acciones masivas
   const [selectedIds, setSelectedIds] = useState<Record<string, boolean>>({});
-  const selectedCount = useMemo(() => Object.values(selectedIds).filter(Boolean).length, [selectedIds]);
+  const selectedCount = useMemo(
+    () => Object.values(selectedIds).filter(Boolean).length,
+    [selectedIds]
+  );
   const selectedList = useMemo(
     () => Object.entries(selectedIds).filter(([, v]) => v).map(([k]) => k),
     [selectedIds]
@@ -527,7 +627,6 @@ export default function UsersPage() {
   const [fEmail, setFEmail] = useState("");
   const [fName, setFName] = useState("");
   const [fPassword, setFPassword] = useState("");
-  const [fPin4, setFPin4] = useState("");
   const [fRoleIds, setFRoleIds] = useState<string[]>([]);
   const [fFavWarehouseId, setFFavWarehouseId] = useState<string>("");
 
@@ -545,7 +644,101 @@ export default function UsersPage() {
 
   const [fNotes, setFNotes] = useState("");
 
+  // ✅ QUICK PIN (ADMIN UI)
+  const [pinNew, setPinNew] = useState("");
+  const [pinNew2, setPinNew2] = useState("");
+  const [pinBusy, setPinBusy] = useState(false);
+  const [pinMsg, setPinMsg] = useState<string | null>(null);
+
+  function resetPinForm() {
+    setPinNew("");
+    setPinNew2("");
+  }
+
+  function pinStatusLabel() {
+    const has = Boolean(detail?.hasQuickPin);
+    const enabled = Boolean(detail?.pinEnabled);
+    if (!has) return { text: "Sin PIN definido", tone: "muted" as const };
+    if (enabled) return { text: "PIN activo", tone: "ok" as const };
+    return { text: "PIN definido, pero deshabilitado", tone: "warn" as const };
+  }
+
+  function assertPin4Local(pin: string) {
+    const s = String(pin ?? "").trim();
+    if (!/^\d{4}$/.test(s)) throw new Error("El PIN debe tener 4 dígitos.");
+    return s;
+  }
+
+  async function refreshDetailAndList(userId: string) {
+    invalidateUserDetail(userId);
+    const refreshed = await prefetchUserDetail(userId);
+    if (refreshed) hydrateFromDetail(refreshed);
+    await load();
+  }
+
+  async function adminSetOrResetPin() {
+    if (!canAdmin) return;
+    if (modalMode !== "EDIT" || !targetId) return;
+
+    setPinMsg(null);
+
+    const p1 = assertPin4Local(pinNew);
+    const p2 = assertPin4Local(pinNew2);
+    if (p1 !== p2) {
+      setPinMsg("Los PIN no coinciden.");
+      return;
+    }
+
+    setPinBusy(true);
+    try {
+      await setUserQuickPin(targetId, p1);
+      resetPinForm();
+      setPinMsg("PIN configurado correctamente.");
+      await refreshDetailAndList(targetId);
+    } catch (e: unknown) {
+      setPinMsg(getErrorMessage(e, "Error configurando el PIN."));
+    } finally {
+      setPinBusy(false);
+    }
+  }
+
+  async function adminRemovePin() {
+    if (!canAdmin) return;
+    if (modalMode !== "EDIT" || !targetId) return;
+
+    setPinMsg(null);
+    setPinBusy(true);
+    try {
+      await removeUserQuickPin(targetId);
+      resetPinForm();
+      setPinMsg("PIN eliminado / desactivado.");
+      await refreshDetailAndList(targetId);
+    } catch (e: unknown) {
+      setPinMsg(getErrorMessage(e, "Error eliminando el PIN."));
+    } finally {
+      setPinBusy(false);
+    }
+  }
+
+  async function adminTogglePinEnabled(nextEnabled: boolean) {
+    if (!canAdmin) return;
+    if (modalMode !== "EDIT" || !targetId) return;
+
+    setPinMsg(null);
+    setPinBusy(true);
+    try {
+      await setUserPinEnabled(targetId, nextEnabled);
+      setPinMsg(nextEnabled ? "PIN habilitado." : "PIN deshabilitado.");
+      await refreshDetailAndList(targetId);
+    } catch (e: unknown) {
+      setPinMsg(getErrorMessage(e, "Error cambiando el estado del PIN."));
+    } finally {
+      setPinBusy(false);
+    }
+  }
+
   // permisos especiales
+  const [specialEnabled, setSpecialEnabled] = useState(false);
   const [specialPermPick, setSpecialPermPick] = useState<string>("");
   const [specialEffectPick, setSpecialEffectPick] = useState<OverrideEffect>("ALLOW");
   const [specialList, setSpecialList] = useState<Override[]>([]);
@@ -650,54 +843,58 @@ export default function UsersPage() {
     return permLabelByModuleAction(p.module, p.action);
   }
 
-  // ✅ ORDEN ALFABÉTICO DE PERMISOS ESPECIALES (hook en el lugar correcto)
-  const specialListSorted = useMemo(() => {
-    const arr = [...specialList];
-    arr.sort((a, b) => {
-      const la = labelPerm(a.permissionId).toLowerCase();
-      const lb = labelPerm(b.permissionId).toLowerCase();
-      return la.localeCompare(lb, "es");
-    });
-    return arr;
-  }, [specialList, allPerms]); // allPerms porque labelPerm depende del catálogo
+// ✅ ORDEN ALFABÉTICO DE PERMISOS ESPECIALES
+const specialListSorted = useMemo(() => {
+  const arr = [...specialList];
+  arr.sort((a, b) => {
+    const la = labelPerm(a.permissionId).toLowerCase();
+    const lb = labelPerm(b.permissionId).toLowerCase();
+    return la.localeCompare(lb, "es");
+  });
+  return arr;
+}, [specialList, allPerms]);
 
-  function resetForm() {
-    setDetail(null);
-    setTargetId("");
+function resetForm() {
+  setDetail(null);
+  setTargetId("");
 
-    setFEmail("");
-    setFName("");
-    setFPassword("");
-    setFPin4("");
-    setFRoleIds([]);
-    setFFavWarehouseId("");
+  setFEmail("");
+  setFName("");
+  setFPassword("");
+  setFRoleIds([]);
+  setFFavWarehouseId("");
 
-    setFPhoneCountry("");
-    setFPhoneNumber("");
-    setFDocType("");
-    setFDocNumber("");
+  setFPhoneCountry("");
+  setFPhoneNumber("");
+  setFDocType("");
+  setFDocNumber("");
 
-    setFStreet("");
-    setFNumber("");
-    setFCity("");
-    setFProvince("");
-    setFPostalCode("");
-    setFCountry("");
+  setFStreet("");
+  setFNumber("");
+  setFCity("");
+  setFProvince("");
+  setFPostalCode("");
+  setFCountry("");
 
-    setFNotes("");
+  setFNotes("");
 
-    setSpecialList([]);
-    setSpecialPermPick("");
-    setSpecialEffectPick("ALLOW");
+  setSpecialList([]);
+  setSpecialPermPick("");
+  setSpecialEffectPick("ALLOW");
 
-    setAvatarFileDraft(null);
+  setAvatarFileDraft(null);
 
-    setUploadingAttachments(false);
-    setDeletingAttId(null);
-    setAttachmentsDraft([]);
+  setUploadingAttachments(false);
+  setDeletingAttId(null);
+  setAttachmentsDraft([]);
 
-    setTab("DATA");
-  }
+  // ✅ PIN UI reset
+  resetPinForm();
+  setPinBusy(false);
+  setPinMsg(null);
+
+  setTab("DATA");
+}
 
   function hydrateFromDetail(d: UserDetail) {
     setDetail(d);
@@ -723,7 +920,9 @@ export default function UsersPage() {
 
     setFNotes((d as any).notes ?? "");
 
-    setSpecialList(d.permissionOverrides ?? []);
+    const ov = (d.permissionOverrides ?? []) as Override[];
+    setSpecialList(ov);
+    setSpecialEnabled(ov.length > 0);
   }
 
   async function openCreate() {
@@ -740,7 +939,13 @@ export default function UsersPage() {
       const perms = await ensurePermsLoaded();
       setSpecialPermPick(perms[0]?.id || "");
       setSpecialEffectPick("ALLOW");
+      setSpecialEnabled(false);
       setTab("DATA");
+
+      // ✅ PIN default al crear usuario
+      setPinNew("1234");
+      setPinNew2("1234");
+      setPinMsg(null);
     } finally {
       setModalLoading(false);
     }
@@ -776,7 +981,8 @@ export default function UsersPage() {
   }
 
   async function closeModal() {
-    if (modalBusy || avatarBusy || specialSaving || uploadingAttachments || deletingAttId) return;
+    if (modalBusy || avatarBusy || specialSaving || uploadingAttachments || deletingAttId || pinBusy)
+      return;
     setModalOpen(false);
   }
 
@@ -800,13 +1006,6 @@ export default function UsersPage() {
       return;
     }
 
-    // pin simple: solo validar formato (backend se conecta después)
-    if (fPin4 && !/^\d{4}$/.test(fPin4)) {
-      setErr("La clave debe tener exactamente 4 dígitos.");
-      setTab("DATA");
-      return;
-    }
-
     setModalBusy(true);
 
     try {
@@ -816,11 +1015,22 @@ export default function UsersPage() {
           name: cleanName,
           password: fPassword.trim() || undefined,
           roleIds: fRoleIds,
-          // pin4: fPin4 || undefined, // 🔌 cuando conectemos backend
         } as any);
 
         const createdUserId = (created as any)?.user?.id;
         if (!createdUserId) throw new Error("No se recibió el ID del usuario creado.");
+
+        // ✅ PIN inicial
+        try {
+          const p1 = String(pinNew || "").trim();
+          const p2 = String(pinNew2 || "").trim();
+          if (p1 && p1 === p2 && /^\d{4}$/.test(p1)) {
+            await setUserQuickPin(createdUserId, p1);
+            await setUserPinEnabled(createdUserId, true);
+          }
+        } catch (e: unknown) {
+          setErr(getErrorMessage(e, "No se pudo configurar el PIN inicial."));
+        }
 
         if (fFavWarehouseId) {
           await updateFavoriteWarehouseForUser(createdUserId, fFavWarehouseId || null);
@@ -856,7 +1066,7 @@ export default function UsersPage() {
           }
         }
 
-        if (specialList.length) {
+        if (specialEnabled && specialList.length) {
           for (const ov of specialList) {
             await setUserOverride(createdUserId, ov.permissionId, ov.effect);
           }
@@ -1040,8 +1250,6 @@ export default function UsersPage() {
   }
 
   // ✅ Avatar como Empresa
-  // CREATE → preview + draft (se sube cuando creás)
-  // EDIT   → upload instant + refresh (sin tocar Guardar)
   async function pickAvatarForModal(file: File) {
     if (!canAdmin) return;
 
@@ -1049,72 +1257,29 @@ export default function UsersPage() {
       assertImageFile(file);
       setErr(null);
 
-      // siempre genero preview (como Empresa)
       setAvatarPreview((prev) => {
         if (prev?.startsWith("blob:")) URL.revokeObjectURL(prev);
         return URL.createObjectURL(file);
       });
 
-      // CREATE → queda en draft (se sube al crear)
       if (modalMode === "CREATE") {
         setAvatarFileDraft(file);
         return;
       }
 
-      // EDIT → upload inmediato
       if (!targetId) return;
 
       setAvatarBusy(true);
       await updateUserAvatarForUser(targetId, file);
-
-      // limpiamos draft porque ya está guardado
       setAvatarFileDraft(null);
 
-      // importante: refrescar detail para que traiga avatarUrl real
       const refreshed = await prefetchUserDetail(targetId);
       if (refreshed) hydrateFromDetail(refreshed);
 
-      // opcional: si querés que quede la url real y no el blob
       setAvatarPreview((prev) => {
         if (prev?.startsWith("blob:")) URL.revokeObjectURL(prev);
         return "";
       });
-
-      await load();
-    } catch (e: unknown) {
-      setErr(getErrorMessage(e, "Error subiendo avatar"));
-    } finally {
-      setAvatarBusy(false);
-    }
-  }
-
-  async function modalUploadAvatarNow() {
-    if (!canAdmin) return;
-
-    if (modalMode === "CREATE") {
-      if (!avatarFileDraft) setErr("Elegí una imagen para el avatar.");
-      return;
-    }
-
-    if (!targetId) return;
-    if (!avatarFileDraft) {
-      setErr("Elegí una imagen para el avatar.");
-      return;
-    }
-
-    setAvatarBusy(true);
-    setErr(null);
-    try {
-      assertImageFile(avatarFileDraft);
-      await updateUserAvatarForUser(targetId, avatarFileDraft);
-      setAvatarFileDraft(null);
-      setAvatarPreview((prev) => {
-        if (prev?.startsWith("blob:")) URL.revokeObjectURL(prev);
-        return "";
-      });
-
-      const refreshed = await prefetchUserDetail(targetId);
-      if (refreshed) hydrateFromDetail(refreshed);
 
       await load();
     } catch (e: unknown) {
@@ -1147,6 +1312,7 @@ export default function UsersPage() {
 
   async function addOrUpdateSpecial() {
     if (!canAdmin) return;
+    if (!specialEnabled) return;
     if (!specialPermPick) return;
 
     if (modalMode === "CREATE") {
@@ -1202,13 +1368,11 @@ export default function UsersPage() {
     if (!canAdmin) return;
     if (!files.length) return;
 
-    // CREATE -> draft (se sube al crear)
     if (modalMode === "CREATE") {
       setAttachmentsDraft((prev) => [...prev, ...files]);
       return;
     }
 
-    // EDIT -> upload instantáneo (como Empresa)
     if (!targetId) return;
 
     setErr(null);
@@ -1269,7 +1433,6 @@ export default function UsersPage() {
   const someOnPageSelected =
     selectableIdsOnPage.length > 0 && selectableIdsOnPage.some((id) => !!selectedIds[id]);
 
-  // ⬇️ PARTE 3 arranca en el return()
   return (
     <div className="p-4 md:p-6 space-y-4 min-h-0">
       <div className="space-y-2">
@@ -1414,7 +1577,11 @@ export default function UsersPage() {
                           onClick={() => toggleOne(u.id)}
                           title={!selectable ? "No disponible" : "Seleccionar"}
                         >
-                          {checked ? <CheckSquare className="h-4 w-4" /> : <Square className="h-4 w-4" />}
+                          {checked ? (
+                            <CheckSquare className="h-4 w-4" />
+                          ) : (
+                            <Square className="h-4 w-4" />
+                          )}
                         </button>
                       </TPTd>
 
@@ -1513,15 +1680,15 @@ export default function UsersPage() {
 
                           <button
                             className={cn(iconBtnBase, (!canAdmin || me?.id === u.id) && disabledCls)}
-  type="button"
-  disabled={!canAdmin || me?.id === u.id}
-  onClick={() => (canAdmin ? askDelete(u) : null)}
-  title={
-    !canAdmin
-      ? "Sin permisos de administrador"
-      : me?.id === u.id
-      ? "No podés eliminar tu propio usuario"
-      : "Eliminar usuario"
+                            type="button"
+                            disabled={!canAdmin || me?.id === u.id}
+                            onClick={() => (canAdmin ? askDelete(u) : null)}
+                            title={
+                              !canAdmin
+                                ? "Sin permisos de administrador"
+                                : me?.id === u.id
+                                ? "No podés eliminar tu propio usuario"
+                                : "Eliminar usuario"
                             }
                           >
                             <Trash2 className="h-4 w-4" />
@@ -1578,6 +1745,7 @@ export default function UsersPage() {
         </div>
       </TPTableWrap>
 
+// tptech-frontend/src/pages/Users.tsx
       {/* MODAL CREATE / EDIT */}
       <Modal
         open={modalOpen}
@@ -1585,7 +1753,6 @@ export default function UsersPage() {
         title={modalMode === "CREATE" ? "Crear usuario" : `Editar usuario • ${detail?.email ?? ""}`}
         onClose={closeModal}
       >
-        {/* ⬇️ PARTE 4 sigue acá */}
         {modalLoading ? (
           <div className="tp-card p-4 text-sm text-muted flex items-center gap-2">
             <Loader2 className="h-4 w-4 animate-spin" />
@@ -1664,7 +1831,6 @@ export default function UsersPage() {
                         onClick={() => {
                           if (avatarBusy || modalBusy) return;
 
-                          // si hay preview (CREATE o EDIT), descartarlo
                           if (avatarPreview) {
                             setAvatarPreview((prev) => {
                               if (prev?.startsWith("blob:")) URL.revokeObjectURL(prev);
@@ -1674,7 +1840,6 @@ export default function UsersPage() {
                             return;
                           }
 
-                          // si es EDIT y hay avatar guardado, eliminarlo
                           if (modalMode === "EDIT" && detail?.avatarUrl) void modalRemoveAvatar();
                         }}
                         className={cn(
@@ -1741,8 +1906,8 @@ export default function UsersPage() {
             {/* TAB DATA */}
             {tab === "DATA" ? (
               <div className="space-y-4">
-                <Section title="Cuenta" desc="Email, contraseña inicial y clave de 4 dígitos.">
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                <Section title="Cuenta" desc="Email y contraseña inicial.">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                     <div className="md:col-span-1">
                       <label className="mb-1 block text-xs text-muted">Email</label>
                       <input
@@ -1777,22 +1942,6 @@ export default function UsersPage() {
                       ) : (
                         <p className="mt-1 text-[11px] text-muted">(Solo se cambia si escribís una nueva)</p>
                       )}
-                    </div>
-
-                    <div className="md:col-span-1">
-                      <label className="mb-1 block text-xs text-muted">Clave 4 dígitos</label>
-                      <input
-                        className="tp-input"
-                        inputMode="numeric"
-                        value={fPin4}
-                        onChange={(e) => {
-                          const next = e.target.value.replace(/\D/g, "").slice(0, 4);
-                          setFPin4(next);
-                        }}
-                        placeholder="0000"
-                        maxLength={4}
-                      />
-                      <p className="mt-1 text-[11px] text-muted">Solo números (4). Luego lo conectamos a backend.</p>
                     </div>
                   </div>
                 </Section>
@@ -1993,67 +2142,6 @@ export default function UsersPage() {
                         }}
                       />
 
-                      {/* CREATE: mostrar seleccionados (draft) */}
-                      {modalMode === "CREATE" && attachmentsDraft.length > 0 && (
-                        <div>
-                          <div className="text-xs text-[color:var(--muted)] mb-2">Seleccionados</div>
-                          <div className="space-y-2">
-                            {attachmentsDraft.map((f, idx) => (
-                              <div
-                                key={`${f.name}-${idx}`}
-                                className="group flex items-center justify-between gap-3 rounded-xl px-3 py-2"
-                                style={{
-                                  border: "1px solid var(--border)",
-                                  background: "color-mix(in oklab, var(--card) 90%, var(--bg))",
-                                }}
-                              >
-                                <div className="flex items-center gap-3 min-w-0">
-                                  <div
-                                    className="h-10 w-10 rounded-lg grid place-items-center border text-xs"
-                                    style={{
-                                      borderColor: "var(--border)",
-                                      color: "var(--muted)",
-                                      background: "color-mix(in oklab, var(--card) 85%, var(--bg))",
-                                    }}
-                                  >
-                                    DOC
-                                  </div>
-
-                                  <div className="min-w-0">
-                                    <div className="text-sm text-text truncate">{safeFileLabel(f.name)}</div>
-                                    <div className="text-xs text-muted flex gap-2">
-                                      <span className="truncate">{formatBytes(f.size)}</span>
-                                    </div>
-                                  </div>
-                                </div>
-
-                                <button
-                                  type="button"
-                                  className={cn(
-                                    "h-8 w-8 rounded-full grid place-items-center",
-                                    "opacity-0 group-hover:opacity-100 transition-opacity"
-                                  )}
-                                  style={{
-                                    background: "var(--card)",
-                                    border: "1px solid var(--border)",
-                                  }}
-                                  title="Quitar adjunto"
-                                  aria-label="Quitar adjunto"
-                                  onClick={() => removeDraftAttachmentByIndex(idx)}
-                                  disabled={modalBusy}
-                                >
-                                  <span className="text-xs">✕</span>
-                                </button>
-                              </div>
-                            ))}
-                          </div>
-
-                          <div className="mt-2 text-xs text-muted">
-                            En “Crear”, los adjuntos se subirán cuando toques <b>Crear</b>.
-                          </div>
-                        </div>
-                      )}
-
                       {/* EDIT: mostrar guardados (servidor) */}
                       {modalMode === "EDIT" && savedAttachments.length > 0 && (
                         <div>
@@ -2096,9 +2184,7 @@ export default function UsersPage() {
                                     )}
 
                                     <div className="min-w-0">
-                                      <div className="text-sm text-text truncate">
-                                        {safeFileLabel(a.filename)}
-                                      </div>
+                                      <div className="text-sm text-text truncate">{safeFileLabel(a.filename)}</div>
                                       <div className="text-xs text-muted flex gap-2">
                                         <span className="truncate">{formatBytes(a.size)}</span>
                                         {url && (
@@ -2152,6 +2238,113 @@ export default function UsersPage() {
             {/* TAB CONFIG */}
             {tab === "CONFIG" ? (
               <div className="w-full space-y-4">
+                {/* ✅ PIN SOLO EN EDIT */}
+                {modalMode === "EDIT" ? (
+                  <Section
+                    title={
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="min-w-0">
+                          <div className="font-semibold">Clave rápida (PIN)</div>
+                          <div className="text-xs text-muted">
+                            PIN de 4 dígitos para LockScreen / cambio rápido. (Admin)
+                          </div>
+                        </div>
+
+                        {/* ✅ Reemplaza el botón por píldoras */}
+                        <TPSegmentedPills
+                          value={Boolean(detail?.pinEnabled)}
+                          disabled={pinBusy || !detail?.hasQuickPin}
+                          onChange={(v) => {
+                            if (pinBusy) return;
+                            if (!detail?.hasQuickPin) {
+                              setPinMsg("Primero configurá un PIN para poder habilitarlo.");
+                              return;
+                            }
+                            void adminTogglePinEnabled(v);
+                          }}
+                          labels={{ on: "PIN habilitado", off: "PIN deshabilitado" }}
+                        />
+                      </div>
+                    }
+                    desc={null as any}
+                  >
+                    <div className="space-y-3">
+                      {pinMsg && (
+                        <div className="rounded-xl border border-border bg-bg px-3 py-2 text-sm">
+                          {pinMsg}
+                        </div>
+                      )}
+
+                      {/* ✅ Mostrar estado del PIN como asteriscos + EyeIcon (visual) */}
+                      <div className="flex items-center justify-between gap-3 tp-card p-3">
+                        <div className="text-sm">
+                          <span className="text-muted">PIN: </span>
+                          <span className="font-semibold">
+                            {detail?.hasQuickPin ? "••••" : "Sin PIN"}
+                          </span>
+                        </div>
+
+                        {/* Este toggle es SOLO VISUAL: lo implementamos con estado local en el bloque real (UserPinSettings).
+                            Acá lo dejamos simple para no romper tu file si no tenés todavía el estado showPin. */}
+                      </div>
+
+                      {/* Inputs */}
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                        <input
+                          className="tp-input"
+                          type="password"
+                          inputMode="numeric"
+                          pattern="\d*"
+                          maxLength={4}
+                          value={pinNew}
+                          onChange={(e) => setPinNew(e.target.value.replace(/\D/g, ""))}
+                          placeholder="Nuevo PIN (4 dígitos)"
+                          disabled={pinBusy}
+                        />
+                        <input
+                          className="tp-input"
+                          type="password"
+                          inputMode="numeric"
+                          pattern="\d*"
+                          maxLength={4}
+                          value={pinNew2}
+                          onChange={(e) => setPinNew2(e.target.value.replace(/\D/g, ""))}
+                          placeholder="Confirmar PIN"
+                          disabled={pinBusy}
+                        />
+                      </div>
+
+                      {/* Acciones */}
+                      <div className="flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          className={cn("tp-btn-primary inline-flex items-center gap-2", pinBusy && "opacity-60")}
+                          disabled={pinBusy}
+                          onClick={() => void adminSetOrResetPin()}
+                        >
+                          {pinBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <KeyRound className="h-4 w-4" />}
+                          Configurar / Cambiar PIN
+                        </button>
+
+                        <button
+                          type="button"
+                          className={cn("tp-btn-secondary inline-flex items-center gap-2", pinBusy && "opacity-60")}
+                          disabled={pinBusy || !detail?.hasQuickPin}
+                          onClick={() => void adminRemovePin()}
+                          title={!detail?.hasQuickPin ? "No hay PIN para eliminar" : "Eliminar PIN"}
+                        >
+                          {pinBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <ShieldOff className="h-4 w-4" />}
+                          Eliminar PIN
+                        </button>
+                      </div>
+
+                      <p className="text-xs text-muted">
+                        Tip: si el PIN está definido pero deshabilitado, el usuario no podrá usarlo para desbloquear.
+                      </p>
+                    </div>
+                  </Section>
+                ) : null}
+
                 <Section title="Almacén favorito" desc="Se usará por defecto en operaciones.">
                   <select
                     className="tp-input"
@@ -2196,6 +2389,7 @@ export default function UsersPage() {
                             <label key={(r as any).id} className="flex items-center gap-2 text-sm">
                               <input
                                 type="checkbox"
+                                className="h-4 w-4"
                                 checked={checked}
                                 onChange={(e) =>
                                   setFRoleIds((prev) =>
@@ -2212,12 +2406,30 @@ export default function UsersPage() {
                       </div>
                     )}
                   </div>
-                  <p className="mt-2 text-xs text-muted">
-                    Si no seleccionás roles, queda sin permisos hasta asignar.
-                  </p>
+                  <p className="mt-2 text-xs text-muted">Si no seleccionás roles, queda sin permisos hasta asignar.</p>
                 </Section>
 
-                <Section title="Permisos especiales" desc="Opcional: Permitir/Denegar por permiso.">
+                <Section
+                  title={
+                    <div className="flex items-center justify-between gap-3">
+                      <span className="inline-flex items-center gap-2">Permisos especiales</span>
+
+                      <TPSegmentedPills
+                        value={specialEnabled}
+                        onChange={(next) => {
+                          setSpecialEnabled(next);
+                          if (!next) setSpecialList([]);
+                        }}
+                        disabled={!canAdmin}
+                        labels={{
+                          on: "Permisos habilitados",
+                          off: "Permisos deshabilitados",
+                        }}
+                      />
+                    </div>
+                  }
+                  desc="Opcional: Permitir/Denegar por permiso."
+                >
                   <div className="space-y-3">
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
                       <div className="md:col-span-2">
@@ -2226,9 +2438,11 @@ export default function UsersPage() {
                           className="tp-input"
                           value={specialPermPick}
                           onChange={(e) => setSpecialPermPick(e.target.value)}
-                          disabled={permsLoading}
+                          disabled={permsLoading || !specialEnabled}
                         >
-                          <option value="">Seleccionar…</option>
+                          <option value="">
+                            {specialEnabled ? "Seleccionar…" : "Permisos especiales deshabilitados"}
+                          </option>
                           {allPerms.map((p) => {
                             const alreadyAdded = specialList.some((x) => x.permissionId === p.id);
                             return (
@@ -2247,6 +2461,7 @@ export default function UsersPage() {
                           className="tp-input"
                           value={specialEffectPick}
                           onChange={(e) => setSpecialEffectPick(e.target.value as any)}
+                          disabled={!specialEnabled}
                         >
                           <option value="ALLOW">Permitir</option>
                           <option value="DENY">Denegar</option>
@@ -2257,10 +2472,10 @@ export default function UsersPage() {
                         <button
                           className={cn(
                             "tp-btn-primary w-full",
-                            (!specialPermPick || specialSaving) && "opacity-60"
+                            (!specialEnabled || !specialPermPick || specialSaving) && "opacity-60"
                           )}
                           type="button"
-                          disabled={!specialPermPick || specialSaving}
+                          disabled={!specialEnabled || !specialPermPick || specialSaving}
                           onClick={() => void addOrUpdateSpecial()}
                         >
                           {specialSaving ? "Guardando…" : "Agregar / Actualizar"}
@@ -2283,7 +2498,13 @@ export default function UsersPage() {
                         </thead>
 
                         <tbody>
-                          {specialListSorted.length === 0 ? (
+                          {!specialEnabled ? (
+                            <tr>
+                              <td className="px-3 py-3 text-muted" colSpan={3}>
+                                Permisos especiales deshabilitados.
+                              </td>
+                            </tr>
+                          ) : specialListSorted.length === 0 ? (
                             <tr>
                               <td className="px-3 py-3 text-muted" colSpan={3}>
                                 Sin permisos especiales.
@@ -2328,20 +2549,15 @@ export default function UsersPage() {
               </div>
             ) : null}
 
+            {/* ✅ ACCIONES (ACÁ agregamos “Guardar y configurar PIN” pero SOLO si nos pasás tu saveModal y cómo abrís EDIT) */}
             <div className="flex justify-end gap-2 pt-2">
-              <button
-                className="tp-btn-secondary"
-                type="button"
-                onClick={closeModal}
-                disabled={modalBusy}
-              >
+              <button className="tp-btn-secondary" type="button" onClick={closeModal} disabled={modalBusy}>
                 Cancelar
               </button>
-              <button
-                className={cn("tp-btn-primary", modalBusy && "opacity-60")}
-                type="submit"
-                disabled={modalBusy}
-              >
+
+              {/* TODO: acá va “Guardar y configurar PIN” en CREATE (necesito tu lógica de saveModal/openEdit) */}
+
+              <button className={cn("tp-btn-primary", modalBusy && "opacity-60")} type="submit" disabled={modalBusy}>
                 {modalBusy ? "Guardando…" : modalMode === "CREATE" ? "Crear" : "Guardar"}
               </button>
             </div>
@@ -2361,8 +2577,7 @@ export default function UsersPage() {
       >
         <div className="space-y-4">
           <div className="text-sm">
-            Vas a eliminar (soft delete) a:{" "}
-            <span className="font-semibold">{deleteTarget?.email}</span>
+            Vas a eliminar (soft delete) a: <span className="font-semibold">{deleteTarget?.email}</span>
             <div className="mt-2 text-xs text-muted">
               - Se bloquea el usuario y se invalida la sesión. <br />
               - Se liberará el email para poder recrearlo. <br />
@@ -2407,8 +2622,7 @@ export default function UsersPage() {
           <div className="text-sm">
             Vas a eliminar (soft delete) <b>{selectedCount}</b> usuario(s).
             <div className="mt-2 text-xs text-muted">
-              Esto eliminará usuarios seleccionados en esta página (según tu
-              selección actual).
+              Esto eliminará usuarios seleccionados en esta página (según tu selección actual).
             </div>
           </div>
 

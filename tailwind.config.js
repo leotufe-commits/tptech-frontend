@@ -1,4 +1,7 @@
 /** @type {import('tailwindcss').Config} */
+
+const withAlpha = (cssVar) => `rgb(var(${cssVar}) / <alpha-value>)`;
+
 export default {
   content: ["./index.html", "./src/**/*.{js,ts,jsx,tsx}"],
   theme: {
@@ -8,14 +11,20 @@ export default {
         bg: "var(--bg)",
         card: "var(--card)",
         text: "var(--text)",
-        primary: "var(--primary)",
-        secondary: "var(--secondary)",
 
-        /* Contrast helpers (CLAVE para dark theme) */
-        muted: "var(--muted)",        // texto secundario, labels, breadcrumbs
-        border: "var(--border)",      // bordes visibles en dark
-        surface: "var(--surface)",    // inputs, filtros, bloques suaves
-        surface2: "var(--surface2)",  // headers de tabla, hover sutil
+        /**
+         * ✅ IMPORTANTE (FIX focus/ring):
+         * Para que clases tipo `ring-primary/20` NO caigan a azul,
+         * el color debe soportar alpha. Usamos rgb(var(--*-rgb) / <alpha-value>)
+         */
+        primary: withAlpha("--primary-rgb"),
+        secondary: withAlpha("--secondary-rgb"),
+
+        /* Contrast helpers */
+        muted: "var(--muted)",
+        border: withAlpha("--border-rgb"),
+        surface: "var(--surface)",
+        surface2: "var(--surface2)",
       },
     },
   },

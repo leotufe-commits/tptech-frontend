@@ -1,8 +1,8 @@
 // tptech-frontend/src/components/Topbar.tsx
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { Link, useLocation } from "react-router-dom";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 import { createPortal } from "react-dom";
-import { Menu, Settings, Lock } from "lucide-react";
+import { Menu, Settings, Lock, UsersRound } from "lucide-react";
 import { useTheme } from "../context/ThemeContext";
 import { useAuth } from "../context/AuthContext";
 import ThemeSwitcher from "./ThemeSwitcher";
@@ -19,6 +19,36 @@ function getMeta(pathname: string): RouteMeta {
     return { title: "Dashboard", crumbs: [{ label: "Dashboard" }] };
   }
 
+  if (p.startsWith("/configuracion-sistema")) {
+    // subpages
+    if (p.startsWith("/configuracion-sistema/pin")) {
+      return {
+        title: "Configurar PIN",
+        crumbs: [
+          { label: "Dashboard", to: "/dashboard" },
+          { label: "Configuración", to: "/configuracion-sistema" },
+          { label: "PIN" },
+        ],
+      };
+    }
+    if (p.startsWith("/configuracion-sistema/tema")) {
+      return {
+        title: "Tema",
+        crumbs: [
+          { label: "Dashboard", to: "/dashboard" },
+          { label: "Configuración", to: "/configuracion-sistema" },
+          { label: "Tema" },
+        ],
+      };
+    }
+
+    return {
+      title: "Configuración del sistema",
+      crumbs: [{ label: "Dashboard", to: "/dashboard" }, { label: "Configuración" }],
+    };
+  }
+
+  // compat rutas viejas
   if (p.startsWith("/configuracion")) {
     return {
       title: "Configuración",
@@ -110,6 +140,9 @@ function PortalMenu({
 
   if (!open) return null;
 
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const _tick = forceTick; // evita warning si TS/ESLint se pone pesado
+
   const r = anchorRef.current?.getBoundingClientRect();
   const viewportPad = 10;
   const gap = 10;
@@ -168,10 +201,11 @@ export default function Topbar({
   onCloseSidebar?: () => void;
 }) {
   const { pathname } = useLocation();
+  const navigate = useNavigate();
   const meta = useMemo(() => getMeta(pathname), [pathname]);
 
   const auth = useAuth();
-  const locked = auth.locked;
+  const locked = Boolean((auth as any)?.locked);
 
   const { theme, themes } = useTheme();
 
@@ -182,7 +216,6 @@ export default function Topbar({
   }, [themes, theme]);
 
   const [settingsOpen, setSettingsOpen] = useState(false);
-
   const settingsBtnRef = useRef<HTMLButtonElement | null>(null);
 
   const settingsAnchorRef = useMemo<React.RefObject<HTMLElement | null>>(
@@ -206,6 +239,57 @@ export default function Topbar({
     if (!locked) return;
     setSettingsOpen(false);
   }, [locked]);
+
+  // ✅ pinLockEnabled robusto (compat con distintas versiones del AuthContext)
+  const pinLockEnabled = Boolean(
+    (auth as any).pinLockEnabled ??
+      (auth as any).lockEnabled ??
+      (auth as any)?.jewelry?.pinLockEnabled ??
+      false
+  );
+
+  const pinLockTimeoutMinutes = Number(
+    (auth as any).pinLockTimeoutMinutes ?? (auth as any).lockTimeoutMinutes ?? 5
+  );
+
+  const pinLockRequireOnUserSwitch = Boolean(
+    (auth as any).pinLockRequireOnUserSwitch ??
+      (auth as any)?.jewelry?.pinLockRequireOnUserSwitch ??
+      true
+  );
+
+  const quickSwitchEnabled = Boolean(
+    (auth as any).quickSwitchEnabled ?? (auth as any)?.jewelry?.quickSwitchEnabled ?? false
+  );
+
+  // “switch sin pin” = quickSwitch ON + requireOnUserSwitch false (y pin global ON)
+  const switchWithoutPin = Boolean(
+    pinLockEnabled && quickSwitchEnabled && pinLockRequireOnUserSwitch === false
+  );
+
+  function onPressLock() {
+    if (locked) return;
+
+    // ✅ Si el PIN está deshabilitado => ir a configuración NUEVA
+    if (!pinLockEnabled) {
+      navigate("/configuracion-sistema/pin");
+      return;
+    }
+
+    // ✅ Si está habilitado => bloquear pantalla (LockScreen)
+    const lockNowFn = (auth as any).lockNow;
+    if (typeof lockNowFn === "function") {
+      lockNowFn();
+      return;
+    }
+
+    // ✅ fallback: si por versión no existe lockNow, usamos setLocked directo
+    const setLockedFn = (auth as any).setLocked;
+    if (typeof setLockedFn === "function") {
+      setLockedFn(true);
+      return;
+    }
+  }
 
   return (
     <header
@@ -254,23 +338,21 @@ export default function Topbar({
 
           {/* DER */}
           <div className="flex shrink-0 items-center gap-2">
-            {/* 🔒 Bloquear ahora */}
+            {/* 🔒 Bloquear ahora (o ir a config si está apagado) */}
             <button
               type="button"
-              onClick={() => {
-                if (locked) return;
-                // ✅ ya existe en AuthContext
-                auth.setLocked(true);
-              }}
+              onClick={onPressLock}
               className={cn(
                 "grid h-10 w-10 place-items-center rounded-xl border border-border bg-card",
                 locked && "opacity-50 pointer-events-none",
                 "focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-primary/20"
               )}
-              aria-label="Bloquear"
-              title="Bloquear"
+              aria-label={
+                pinLockEnabled ? (switchWithoutPin ? "Cambiar usuario" : "Bloquear") : "Configurar PIN"
+              }
+              title={pinLockEnabled ? (switchWithoutPin ? "Cambiar usuario" : "Bloquear") : "Configurar PIN"}
             >
-              <Lock className="h-5 w-5" />
+              {switchWithoutPin ? <UsersRound className="h-5 w-5" /> : <Lock className="h-5 w-5" />}
             </button>
 
             {/* ⚙️ Configuración */}
@@ -305,23 +387,72 @@ export default function Topbar({
                   <div className="text-xs text-muted">Preferencias del sistema</div>
                 </div>
 
-                {/* Tema */}
+                {/* Tema (solo switch rápido, sin botones de navegación) */}
                 <div className="tp-card p-3 space-y-2">
                   <div className="text-xs font-semibold text-muted">Tema</div>
-
                   <ThemeSwitcher variant="menu" />
-
                   <div className="text-[11px] text-muted">
-                    Actual:{" "}
-                    <span className="font-semibold text-text">{currentThemeLabel}</span>
+                    Actual: <span className="font-semibold text-text">{currentThemeLabel}</span>
                   </div>
                 </div>
 
-                {/* Joyería */}
-                <div className="tp-card p-3">
+                {/* Joyería + Seguridad (solo info, sin botones) */}
+                <div className="tp-card p-3 space-y-2">
                   <div className="text-xs font-semibold text-muted">Joyería</div>
-                  <div className="mt-1 text-sm font-semibold text-text truncate" title={jewelryName}>
+
+                  <div className="text-sm font-semibold text-text truncate" title={jewelryName}>
                     {jewelryName}
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-2 pt-1">
+                    <span
+                      className={cn(
+                        "inline-flex items-center gap-1 rounded-full border px-2 py-1 text-[11px]",
+                        pinLockEnabled
+                          ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300"
+                          : "border-red-500/30 bg-red-500/10 text-red-300"
+                      )}
+                      title="Bloqueo por PIN"
+                    >
+                      <Lock className="h-3.5 w-3.5" />
+                      {pinLockEnabled ? "PIN habilitado" : "PIN deshabilitado"}
+                    </span>
+
+                    <span
+                      className="inline-flex items-center gap-1 rounded-full border border-border bg-card px-2 py-1 text-[11px] text-muted"
+                      title="Tiempo de inactividad para bloquear"
+                    >
+                      ⏱ {Number.isFinite(pinLockTimeoutMinutes) ? pinLockTimeoutMinutes : 5} min
+                    </span>
+
+                    {pinLockEnabled && (
+                      <span
+                        className={cn(
+                          "inline-flex items-center gap-1 rounded-full border px-2 py-1 text-[11px]",
+                          switchWithoutPin
+                            ? "border-sky-500/30 bg-sky-500/10 text-sky-300"
+                            : "border-border bg-card text-muted"
+                        )}
+                        title="Cambio de usuario"
+                      >
+                        <UsersRound className="h-3.5 w-3.5" />
+                        {switchWithoutPin ? "Switch sin PIN" : "Switch con PIN"}
+                      </span>
+                    )}
+                  </div>
+
+                  <div className="pt-2 text-[11px] text-muted">
+                    Para más opciones:{" "}
+                    <button
+                      type="button"
+                      className="font-semibold text-primary hover:underline"
+                      onClick={() => {
+                        setSettingsOpen(false);
+                        navigate("/configuracion-sistema");
+                      }}
+                    >
+                      Configuración del sistema
+                    </button>
                   </div>
                 </div>
               </div>

@@ -1,6 +1,7 @@
 // tptech-frontend/src/context/AuthContext.tsx
 import React, {
   createContext,
+  useCallback,
   useContext,
   useEffect,
   useMemo,
@@ -17,14 +18,258 @@ import {
 } from "../lib/api";
 
 /* =========================
-   TYPES
+   FAVICON (PUBLIC vs AUTH)
+   - PUBLIC (login): TPT negro (default)
+   - AUTH: logo de joyería o iniciales
 ========================= */
+function toDataUri(svg: string) {
+  return "data:image/svg+xml;charset=UTF-8," + encodeURIComponent(svg);
+}
+
+function ensureIconLink(): HTMLLinkElement {
+  const head = document.head || document.getElementsByTagName("head")[0];
+  let link =
+    (head.querySelector("link[rel='icon']") as HTMLLinkElement | null) ||
+    (head.querySelector("link[rel='shortcut icon']") as HTMLLinkElement | null);
+
+  if (!link) {
+    link = document.createElement("link");
+    link.setAttribute("rel", "icon");
+    head.appendChild(link);
+  }
+  return link;
+}
+
+function pickPrimaryColor(): string {
+  try {
+    const cs = getComputedStyle(document.documentElement);
+    const p = (cs.getPropertyValue("--primary") || "").trim();
+    return p || "#f97316";
+  } catch {
+    return "#f97316";
+  }
+}
+
+function buildSvgTextBadge(opts: {
+  text: string;
+  bg: string;
+  fg?: string;
+  rx?: number;
+  fontSize?: number;
+  fontWeight?: number;
+  letterSpacing?: number;
+}) {
+  const text = (opts.text || "").trim();
+  const bg = opts.bg || "#0b0b0d";
+  const fg = opts.fg || "#ffffff";
+  const rx = typeof opts.rx === "number" ? opts.rx : 18;
+  const fontSize = typeof opts.fontSize === "number" ? opts.fontSize : 26;
+  const fontWeight = typeof opts.fontWeight === "number" ? opts.fontWeight : 800;
+  const letterSpacing = typeof opts.letterSpacing === "number" ? opts.letterSpacing : -1.2;
+
+  return (
+    "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'>" +
+    "<rect width='64' height='64' rx='" +
+    rx +
+    "' fill='" +
+    bg +
+    "'/>" +
+    "<text x='32' y='40' text-anchor='middle' " +
+    "font-family='system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif' " +
+    "font-size='" +
+    fontSize +
+    "' font-weight='" +
+    fontWeight +
+    "' letter-spacing='" +
+    letterSpacing +
+    "' fill='" +
+    fg +
+    "'>" +
+    text +
+    "</text>" +
+    "</svg>"
+  );
+}
+
+function buildPublicTptFaviconSvg() {
+  return buildSvgTextBadge({
+    text: "TPT",
+    bg: "#0b0b0d",
+    fg: "#ffffff",
+    rx: 18,
+    fontSize: 26,
+    fontWeight: 800,
+    letterSpacing: -1.2,
+  });
+}
+
+function setFaviconHref(href: string, type?: string) {
+  try {
+    const link = ensureIconLink();
+    link.setAttribute("href", href);
+    if (type) link.setAttribute("type", type);
+  } catch {
+    // ignore
+  }
+}
+
+function normalizeLogoUrl(u: any): string {
+  const raw = String(u || "").trim();
+  if (!raw) return "";
+  if (/^https?:\/\//i.test(raw)) return raw;
+
+  // Si viene "/uploads/..." o similar, lo hacemos absoluto al backend
+  const base = (import.meta.env.VITE_API_URL as string) || "http://localhost:3001";
+  const api = String(base).replace(/\/+$/, "");
+  if (raw.startsWith("/")) return api + raw;
+  return api + "/" + raw;
+}
+
+function initialsFromName(name: string): string {
+  const s = String(name || "").trim();
+  if (!s) return "";
+  const parts = s.split(/\s+/).filter(Boolean);
+  const a = parts[0]?.[0] || "";
+  const b = parts.length > 1 ? parts[1]?.[0] || "" : (parts[0]?.[1] || "");
+  const out = (a + b).toUpperCase().replace(/[^A-Z0-9]/g, "");
+  return out.slice(0, 2) || "";
+}
+
+function applyAppFavicon(args: { token?: string | null; user?: any; jewelry?: any }) {
+  try {
+    const token = String(args.token || "").trim();
+
+    // ✅ Sin token -> PUBLIC favicon TPT negro
+    if (!token) {
+      setFaviconHref(toDataUri(buildPublicTptFaviconSvg()), "image/svg+xml");
+      return;
+    }
+
+    const j = args.jewelry || null;
+    const u = args.user || null;
+
+    const logoUrl = normalizeLogoUrl(j?.logoUrl);
+    if (logoUrl) {
+      // ✅ si hay logo, lo ponemos directo
+      // type se omite porque puede ser png/jpg/svg
+      setFaviconHref(logoUrl);
+      return;
+    }
+
+    // ✅ si no hay logo -> iniciales
+    const nameSource =
+      String(j?.name || "").trim() ||
+      String(u?.name || "").trim() ||
+      String(u?.email || "").trim();
+
+    const initials = initialsFromName(nameSource) || "TP";
+    const bg = "#0b0b0d";
+    const svg = buildSvgTextBadge({
+      text: initials,
+      bg,
+      fg: "#ffffff",
+      rx: 18,
+      fontSize: 28,
+      fontWeight: 900,
+      letterSpacing: -1.1,
+    });
+    setFaviconHref(toDataUri(svg), "image/svg+xml");
+  } catch {
+    // ignore
+  }
+}
+
+/* =========================
+   DEV LOCK BYPASS
+========================= */
+const DEV = import.meta.env.DEV;
+
+const SS_LOCK_BYPASS = "tptech_lock_bypass";
+export function setDevLockBypass(on: boolean) {
+  try {
+    if (!DEV) return;
+    if (on) sessionStorage.setItem(SS_LOCK_BYPASS, "1");
+    else sessionStorage.removeItem(SS_LOCK_BYPASS);
+  } catch {}
+}
+
+function hasDevLockBypass(): boolean {
+  if (!DEV) return false;
+  try {
+    return sessionStorage.getItem(SS_LOCK_BYPASS) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function clearDevLockBypass() {
+  try {
+    if (!DEV) return;
+    sessionStorage.removeItem(SS_LOCK_BYPASS);
+  } catch {}
+}
+
+/* =========================
+   LOCK PERSIST (F5 FIX)
+========================= */
+const SS_LOCKED = "tptech_locked";
+
+function readLockedPersisted(): boolean {
+  try {
+    return sessionStorage.getItem(SS_LOCKED) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function writeLockedPersisted(v: boolean) {
+  try {
+    if (v) sessionStorage.setItem(SS_LOCKED, "1");
+    else sessionStorage.removeItem(SS_LOCKED);
+  } catch {
+    // ignore
+  }
+}
+
+// ✅ limpiar lock persistido (evita que tras login quede pidiendo PIN por un lock viejo)
+function clearLockedPersisted() {
+  try {
+    sessionStorage.removeItem(SS_LOCKED);
+  } catch {
+    // ignore
+  }
+}
+
+function hasPossibleSession(): boolean {
+  try {
+    const p = (window.location.pathname || "").toLowerCase();
+    if (
+      p.startsWith("/login") ||
+      p.startsWith("/register") ||
+      p.startsWith("/forgot-password") ||
+      p.startsWith("/reset-password")
+    ) {
+      const tSS = sessionStorage.getItem(SS_TOKEN_KEY);
+      const tLS = localStorage.getItem(LS_TOKEN_KEY);
+      return Boolean(tSS || tLS);
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export type User = {
   id: string;
   email: string;
   name?: string | null;
   avatarUrl?: string | null;
+
+  // ✅ para cache-bust del avatar en Sidebar
+  updatedAt?: string | null;
+  avatarUpdatedAt?: string | null;
 };
+
 
 export type Jewelry = Record<string, any>;
 export type Role = { id: string; name: string; isSystem?: boolean };
@@ -34,9 +279,6 @@ export type MeResponse = {
   jewelry?: Jewelry | null;
   roles?: Role[];
   permissions?: string[];
-  favoriteWarehouse?: any | null;
-
-  // legacy / compat (si backend lo manda)
   token?: string;
   accessToken?: string;
 };
@@ -44,32 +286,42 @@ export type MeResponse = {
 type AuthEvent = { type: "LOGIN" | "LOGOUT"; at: number };
 
 /* =========================
-   PIN / QUICK SWITCH TYPES
+   QUICK SWITCH
 ========================= */
 export type QuickUser = {
   id: string;
   email: string;
   name?: string | null;
   avatarUrl?: string | null;
+  hasQuickPin: boolean;
+  pinEnabled: boolean;
 
-  /** ✅ modelo pro */
-  hasQuickPin: boolean;  // existe pin guardado (sin exponer hash)
-  pinEnabled: boolean;   // permitido usar PIN
+  // ✅ roles (para LockScreen)
+  roles?: Role[] | Array<{ id?: string; name?: string }> | string[];
+  roleNames?: string[];
+  roleLabel?: string;
+  role?: string;
+  roleName?: string;
 };
 
-type QuickUsersResponse = { enabled: boolean; users: QuickUser[] };
+export type QuickUsersResponse = {
+  enabled: boolean;
+  users: QuickUser[];
+};
 
 /* =========================
-   LOCK SETTINGS (frontend local)
+   LOCK LOCAL FALLBACK
 ========================= */
 const LS_LOCK_TIMEOUT_MIN = "tptech_lock_timeout_min";
 const LS_LOCK_ENABLED = "tptech_lock_enabled";
 
-// defaults razonables para mostrador
-const DEFAULT_LOCK_ENABLED = true;
+// ✅ IMPORTANTE: default false para que NO bloquee si nunca configuraste PIN en la joyería
+const DEFAULT_LOCK_ENABLED = false;
+
+// ✅ tu UI permite hasta 720 (12h)
 const DEFAULT_LOCK_TIMEOUT_MIN = 5;
 
-function readLockEnabled(): boolean {
+function readLockEnabledLocal(): boolean {
   try {
     const v = localStorage.getItem(LS_LOCK_ENABLED);
     if (v === null) return DEFAULT_LOCK_ENABLED;
@@ -79,72 +331,91 @@ function readLockEnabled(): boolean {
   }
 }
 
-function readLockTimeoutMin(): number {
+function readLockTimeoutMinLocal(): number {
   try {
-    const v = localStorage.getItem(LS_LOCK_TIMEOUT_MIN);
-    const n = Number(v);
+    const n = Number(localStorage.getItem(LS_LOCK_TIMEOUT_MIN));
     if (!Number.isFinite(n) || n <= 0) return DEFAULT_LOCK_TIMEOUT_MIN;
-    return Math.max(1, Math.min(60, Math.floor(n)));
+    return Math.max(1, Math.min(720, Math.floor(n)));
   } catch {
     return DEFAULT_LOCK_TIMEOUT_MIN;
   }
 }
 
-function writeLockEnabled(on: boolean) {
+function writeLockEnabledLocal(v: boolean) {
   try {
-    localStorage.setItem(LS_LOCK_ENABLED, on ? "1" : "0");
+    localStorage.setItem(LS_LOCK_ENABLED, v ? "1" : "0");
   } catch {}
 }
 
-function writeLockTimeoutMin(n: number) {
+function writeLockTimeoutMinLocal(n: number) {
   try {
-    const safe = Math.max(1, Math.min(60, Math.floor(n)));
-    localStorage.setItem(LS_LOCK_TIMEOUT_MIN, String(safe));
+    localStorage.setItem(LS_LOCK_TIMEOUT_MIN, String(n));
   } catch {}
 }
+
+/* =========================
+   AUTH STATE
+========================= */
+type PinArg = string | { pin4?: string; pin?: string };
 
 export type AuthState = {
   token: string | null;
-
   user: User | null;
   jewelry: Jewelry | null;
-
   roles: Role[];
   permissions: string[];
-
   loading: boolean;
 
-  // ✅ Lock screen (inactividad)
   locked: boolean;
   setLocked: (v: boolean) => void;
 
-  // ✅ Config local (hasta que lo pasemos a DB)
+  /** ✅ bloquear manualmente (candado del topbar) */
+  lockNow: () => void;
+
+  /** lock efectivo (server si existe, sino local) */
   lockEnabled: boolean;
   lockTimeoutMinutes: number;
-  setLockEnabledLocal: (v: boolean) => void;
-  setLockTimeoutMinutesLocal: (minutes: number) => void;
 
-  // ✅ Habilitado por empresa (desde endpoint PIN)
+  /** ✅ alias para que LockScreen y settings sean claros */
+  pinLockEnabled: boolean;
+  pinLockTimeoutMinutes: number;
+  pinLockRequireOnUserSwitch: boolean;
+
+  setLockEnabledLocal: (v: boolean) => void;
+  setLockTimeoutMinutesLocal: (n: number) => void;
+
   quickSwitchEnabled: boolean;
 
-  // PIN / quick switch calls
-  pinSet: (pin4: string) => Promise<void>;
-  pinDisable: (pin4: string) => Promise<void>;
-  pinUnlock: (pin4: string) => Promise<void>;
+  pinSet: (pin: PinArg) => Promise<void>;
+  pinRemove: (pin: PinArg) => Promise<void>;
+
+  pinUnlock: (pin: PinArg) => Promise<void>;
   pinQuickUsers: () => Promise<QuickUsersResponse>;
-  pinSwitchUser: (args: { targetUserId: string; pin4: string }) => Promise<void>;
+
+  pinSwitchUser: (args: { targetUserId: string; pin4?: string; pin?: string }) => Promise<void>;
+
+  setPinLockSettingsForJewelry: (args: {
+    enabled: boolean;
+    timeoutMinutes: number;
+    requireOnUserSwitch: boolean;
+    quickSwitchEnabled: boolean;
+  }) => Promise<void>;
+
+  setPinLockSettings: (args: {
+    enabled: boolean;
+    timeoutMinutes: number;
+    requireOnUserSwitch: boolean;
+    quickSwitchEnabled: boolean;
+  }) => Promise<void>;
 
   setTokenOnly: (token: string | null) => void;
-  setSession: (payload: {
+  setSession: (p: {
     token?: string | null;
     user: User;
     jewelry?: Jewelry | null;
     roles?: Role[];
     permissions?: string[];
   }) => void;
-
-  setJewelryLocal: (next: Jewelry | null) => void;
-  patchJewelryLocal: (partial: Partial<Jewelry>) => void;
 
   refreshMe: (opts?: { force?: boolean; silent?: boolean }) => Promise<void>;
   logout: () => Promise<void>;
@@ -154,29 +425,18 @@ export type AuthState = {
 const AuthContext = createContext<AuthState | null>(null);
 
 /* =========================
-   STORAGE HELPERS
+   HELPERS
 ========================= */
 function readStoredToken() {
   try {
     const t = sessionStorage.getItem(SS_TOKEN_KEY);
     if (t) return t;
   } catch {}
-
   try {
     const t = localStorage.getItem(LS_TOKEN_KEY);
     if (t) return t;
   } catch {}
-
   return null;
-}
-
-function clearStoredTokenOnly() {
-  try {
-    sessionStorage.removeItem(SS_TOKEN_KEY);
-  } catch {}
-  try {
-    localStorage.removeItem(LS_TOKEN_KEY);
-  } catch {}
 }
 
 function storeTokenEverywhere(token: string) {
@@ -188,11 +448,19 @@ function storeTokenEverywhere(token: string) {
   } catch {}
 }
 
+function clearStoredToken() {
+  try {
+    sessionStorage.removeItem(SS_TOKEN_KEY);
+  } catch {}
+  try {
+    localStorage.removeItem(LS_TOKEN_KEY);
+  } catch {}
+}
+
 function emitAuthEvent(ev: AuthEvent) {
   try {
     if (ev.type === "LOGOUT") localStorage.setItem(LS_LOGOUT_KEY, String(ev.at));
     localStorage.setItem(LS_AUTH_EVENT_KEY, JSON.stringify(ev));
-
     if ("BroadcastChannel" in window) {
       const bc = new BroadcastChannel("tptech_auth");
       bc.postMessage(ev);
@@ -207,388 +475,474 @@ function assertPin4(pin: string) {
   return s;
 }
 
+function clamp(n: number, min: number, max: number) {
+  return Math.max(min, Math.min(max, n));
+}
+
+function normalizePinArg(arg: PinArg): string {
+  if (typeof arg === "string") return assertPin4(arg);
+  const maybe = arg?.pin4 ?? arg?.pin ?? "";
+  return assertPin4(maybe);
+}
+
+function getServerLockFromJewelry(j: any): {
+  enabled?: boolean;
+  timeoutMin?: number;
+  requireOnUserSwitch?: boolean;
+  quickSwitchEnabled?: boolean;
+} {
+  if (!j || typeof j !== "object") return {};
+
+  const enabledRaw = (j as any).pinLockEnabled;
+  const timeoutSecRaw = (j as any).pinLockTimeoutSec;
+  const requireRaw = (j as any).pinLockRequireOnUserSwitch;
+  const quickRaw = (j as any).quickSwitchEnabled;
+
+  const out: {
+    enabled?: boolean;
+    timeoutMin?: number;
+    requireOnUserSwitch?: boolean;
+    quickSwitchEnabled?: boolean;
+  } = {};
+
+  if (typeof enabledRaw === "boolean") out.enabled = enabledRaw;
+
+  const sec = Number(timeoutSecRaw);
+  if (Number.isFinite(sec) && sec > 0) {
+    const safeSec = clamp(Math.trunc(sec), 10, 60 * 60 * 12);
+    const min = Math.max(1, Math.round(safeSec / 60));
+    out.timeoutMin = clamp(min, 1, 60 * 12);
+  }
+
+  if (typeof requireRaw === "boolean") out.requireOnUserSwitch = requireRaw;
+  if (typeof quickRaw === "boolean") out.quickSwitchEnabled = quickRaw;
+
+  return out;
+}
+
 /* =========================
    PROVIDER
 ========================= */
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [token, setToken] = useState<string | null>(() => readStoredToken());
-
   const [user, setUser] = useState<User | null>(null);
   const [jewelry, setJewelry] = useState<Jewelry | null>(null);
-
   const [roles, setRoles] = useState<Role[]>([]);
   const [permissions, setPermissions] = useState<string[]>([]);
-
   const [loading, setLoading] = useState(true);
 
-  // ✅ lock screen
-  const [locked, setLocked] = useState(false);
+  // ✅ inicia con el lock persistido (para que F5 NO saltee el lock)
+  const [locked, setLockedState] = useState<boolean>(() => readLockedPersisted());
 
-  // ✅ lock config local
-  const [lockEnabled, setLockEnabled] = useState<boolean>(() => readLockEnabled());
-  const [lockTimeoutMinutes, setLockTimeoutMinutes] = useState<number>(() =>
-    readLockTimeoutMin()
-  );
+  const [lockEnabledLocal, setLockEnabledLocalState] = useState(readLockEnabledLocal);
+  const [lockTimeoutMinutesLocal, setLockTimeoutMinutesLocalState] =
+    useState(readLockTimeoutMinLocal);
 
-  // ✅ quick switch enabled (fuente real: /auth/me/pin/quick-users)
   const [quickSwitchEnabled, setQuickSwitchEnabled] = useState(false);
 
-  const setLockEnabledLocal = (v: boolean) => {
-    setLockEnabled(v);
-    writeLockEnabled(v);
-    if (!v) setLocked(false);
-  };
-
-  const setLockTimeoutMinutesLocal = (minutes: number) => {
-    const safe = Math.max(1, Math.min(60, Math.floor(minutes)));
-    setLockTimeoutMinutes(safe);
-    writeLockTimeoutMin(safe);
-  };
-
+  const lastActivityRef = useRef(Date.now());
+  const timerRef = useRef<number | null>(null);
   const refreshPromiseRef = useRef<Promise<void> | null>(null);
-  const lastSessionKeyLoadedRef = useRef<string | null>(null);
+  const lastQuickUsersAtRef = useRef<number>(0);
 
-  const setTokenSafe = (next: string | null) => {
-    setToken((prev) => (prev === next ? prev : next));
-  };
+  const effectiveLock = useMemo(() => {
+    const server = getServerLockFromJewelry(jewelry);
+    return {
+      enabled: typeof server.enabled === "boolean" ? server.enabled : lockEnabledLocal,
+      timeoutMin:
+        typeof server.timeoutMin === "number" ? server.timeoutMin : lockTimeoutMinutesLocal,
+      requireOnUserSwitch:
+        typeof server.requireOnUserSwitch === "boolean" ? server.requireOnUserSwitch : true,
+      quickSwitchEnabled:
+        typeof server.quickSwitchEnabled === "boolean" ? server.quickSwitchEnabled : false,
+    };
+  }, [jewelry, lockEnabledLocal, lockTimeoutMinutesLocal]);
 
-  const resetStateOnly = () => {
-    setTokenSafe(null);
+  // ✅ setLocked con persistencia
+  const setLocked = useCallback((v: boolean) => {
+    setLockedState(v);
+    writeLockedPersisted(v);
+  }, []);
+
+  const bumpActivity = useCallback(() => {
+    lastActivityRef.current = Date.now();
+  }, []);
+
+  /** ✅ bloqueo manual (candado topbar)
+   *  FIX: si está activo el bypass DEV, lo apagamos para que el candado funcione.
+   */
+  const lockNow = useCallback(() => {
+    if (DEV) clearDevLockBypass();
+    setLocked(true);
+  }, [setLocked]);
+
+  const clearSession = useCallback(() => {
+    forceLogout();
+    clearStoredToken();
+    if (DEV) clearDevLockBypass();
+
+    // ✅ asegurar que no quede un lock viejo persistido
+    clearLockedPersisted();
+
+    try {
+      localStorage.removeItem("tptech_current_user_id");
+    } catch {}
+
+    setToken(null);
     setUser(null);
     setJewelry(null);
     setRoles([]);
     setPermissions([]);
     setLocked(false);
-    setLoading(false);
     setQuickSwitchEnabled(false);
-    lastSessionKeyLoadedRef.current = null;
-  };
+    setLoading(false);
 
-  const resetStateAndCancelInFlight = () => {
-    refreshPromiseRef.current = null;
-    resetStateOnly();
-  };
+    // ✅ volver a favicon público (TPT negro)
+    applyAppFavicon({ token: null, user: null, jewelry: null });
+  }, [setLocked]);
 
-  const clearSession = () => {
-    try {
-      forceLogout();
-    } catch {
-      clearStoredTokenOnly();
+  const setTokenOnly = useCallback((t: string | null) => {
+    if (!t) {
+      clearStoredToken();
+      setToken(null);
       emitAuthEvent({ type: "LOGOUT", at: Date.now() });
-    }
-    resetStateAndCancelInFlight();
-  };
 
-  const setTokenOnly = (newToken: string | null) => {
-    if (!newToken) {
-      clearStoredTokenOnly();
-      setTokenSafe(null);
-    } else {
-      storeTokenEverywhere(newToken);
-      setTokenSafe(newToken);
-    }
-    emitAuthEvent({ type: "LOGIN", at: Date.now() });
-  };
-
-  const setSession = (payload: {
-    token?: string | null;
-    user: User;
-    jewelry?: Jewelry | null;
-    roles?: Role[];
-    permissions?: string[];
-  }) => {
-    const t = payload.token ?? null;
-
-    if (t) storeTokenEverywhere(t);
-    setTokenSafe(t);
-
-    setUser(payload.user);
-    setJewelry(payload.jewelry ?? null);
-    setRoles(payload.roles ?? []);
-    setPermissions(payload.permissions ?? []);
-
-    setLocked(false);
-    lastSessionKeyLoadedRef.current = t || "cookie";
-
-    emitAuthEvent({ type: "LOGIN", at: Date.now() });
-  };
-
-  const setJewelryLocal = (next: Jewelry | null) => setJewelry(next ?? null);
-
-  const patchJewelryLocal = (partial: Partial<Jewelry>) => {
-    setJewelry((prev) => ({ ...(prev ?? {}), ...(partial ?? {}) }));
-  };
-
-  const logout = async () => {
-    try {
-      await apiFetch("/auth/logout", { method: "POST" });
-    } catch {
-      // ignore
-    } finally {
-      clearSession();
-    }
-  };
-
-  const refreshMe = async (opts?: { force?: boolean; silent?: boolean }) => {
-    const storedToken = readStoredToken();
-    const sessionKey = storedToken || "cookie";
-
-    const force = Boolean(opts?.force);
-    const silent = Boolean(opts?.silent);
-
-    if (!force && lastSessionKeyLoadedRef.current === sessionKey && user) {
-      setLoading(false);
+      // ✅ volver a favicon público
+      applyAppFavicon({ token: null, user: null, jewelry: null });
       return;
     }
+    storeTokenEverywhere(t);
+    setToken(t);
+    emitAuthEvent({ type: "LOGIN", at: Date.now() });
 
-    if (refreshPromiseRef.current) return refreshPromiseRef.current;
+    // Nota: el favicon final (logo/iniciales) se setea cuando llega /me (setSession/refreshMe)
+  }, []);
 
-    if (!silent) setLoading(true);
+  const setSession = useCallback(
+    (p: {
+      token?: string | null;
+      user: User;
+      jewelry?: Jewelry | null;
+      roles?: Role[];
+      permissions?: string[];
+    }) => {
+      let nextToken: string | null = token;
 
-    const p = (async () => {
+      if (p.token) {
+        storeTokenEverywhere(p.token);
+        setToken(p.token);
+        nextToken = p.token;
+      }
+
+      setUser(p.user);
+      setJewelry(p.jewelry ?? null);
+      setRoles(p.roles ?? []);
+      setPermissions(p.permissions ?? []);
+
       try {
-        const bust = force ? `?__t=${Date.now()}` : "";
-        const data = await apiFetch<MeResponse>(`/auth/me${bust}`, {
-          method: "GET",
-          cache: "no-store",
-        });
+        if (p.user?.id) localStorage.setItem("tptech_current_user_id", String(p.user.id));
+      } catch {}
 
-        const backendToken = data.accessToken || data.token || null;
-        if (backendToken) {
-          storeTokenEverywhere(backendToken);
-          setTokenSafe(backendToken);
-          lastSessionKeyLoadedRef.current = backendToken;
-        } else {
-          lastSessionKeyLoadedRef.current = storedToken || "cookie";
-        }
+      // ✅ al iniciar sesión/switch, nunca heredar un lock persistido viejo
+      clearLockedPersisted();
+      setLocked(false);
 
-        setUser(data.user ?? null);
-        setJewelry(data.jewelry ?? null);
-        setRoles(data.roles ?? []);
-        setPermissions(data.permissions ?? []);
+      bumpActivity();
+      emitAuthEvent({ type: "LOGIN", at: Date.now() });
 
-        // ✅ traer quickSwitchEnabled real (silencioso)
+      // ✅ favicon AUTH (logo o iniciales)
+      applyAppFavicon({ token: nextToken, user: p.user, jewelry: p.jewelry ?? null });
+    },
+    [bumpActivity, setLocked, token]
+  );
+
+  const refreshMe = useCallback(
+    async (opts?: { force?: boolean; silent?: boolean }) => {
+      if (refreshPromiseRef.current) return refreshPromiseRef.current;
+      const silent = Boolean(opts?.silent);
+      if (!silent) setLoading(true);
+
+      const p = (async () => {
         try {
-          const q = await apiFetch<QuickUsersResponse>("/auth/me/pin/quick-users", {
+          const data = await apiFetch<MeResponse>("/auth/me", {
             method: "GET",
             cache: "no-store",
-            timeoutMs: 8000,
           });
-          setQuickSwitchEnabled(Boolean(q?.enabled));
-        } catch {
-          setQuickSwitchEnabled(false);
+
+          const backendToken = data.accessToken || data.token || null;
+          if (backendToken) {
+            storeTokenEverywhere(backendToken);
+            setToken(backendToken);
+          }
+
+          setUser(data.user);
+          setJewelry(data.jewelry ?? null);
+          setRoles(data.roles ?? []);
+          setPermissions(data.permissions ?? []);
+
+          try {
+            if (data.user?.id) localStorage.setItem("tptech_current_user_id", String(data.user.id));
+          } catch {}
+
+          // quickSwitch viene del jewelry (source of truth)
+          const serverFlags = getServerLockFromJewelry(data.jewelry);
+          const qs =
+            typeof serverFlags.quickSwitchEnabled === "boolean"
+              ? serverFlags.quickSwitchEnabled
+              : false;
+          setQuickSwitchEnabled(Boolean(qs));
+
+          // ✅ si hay bypass activo, nunca dejamos locked true
+          if (hasDevLockBypass()) setLocked(false);
+
+          // ✅ si el PIN global está deshabilitado, no dejamos persistido el lock
+          const pinEnabled =
+            typeof serverFlags.enabled === "boolean" ? serverFlags.enabled : readLockEnabledLocal();
+          if (!pinEnabled) setLocked(false);
+
+          // ✅ favicon AUTH (logo o iniciales)
+          const t = backendToken || readStoredToken();
+          applyAppFavicon({ token: t, user: data.user, jewelry: data.jewelry ?? null });
+
+          // ✅ (opcional) ping quick-users cada tanto (no pisa flags locales)
+          const now = Date.now();
+          if (now - lastQuickUsersAtRef.current > 10_000) {
+            lastQuickUsersAtRef.current = now;
+            try {
+              await apiFetch("/auth/me/pin/quick-users", {
+                method: "GET",
+                cache: "no-store",
+                timeoutMs: 8000,
+              });
+            } catch {
+              // ignore
+            }
+          }
+        } finally {
+          setLoading(false);
+          refreshPromiseRef.current = null;
         }
-      } catch (err: any) {
-        console.warn("[Auth] refreshMe falló; se mantiene la sesión:", err);
-      } finally {
-        setLoading(false);
-        refreshPromiseRef.current = null;
-      }
-    })();
+      })();
 
-    refreshPromiseRef.current = p;
-    return p;
-  };
+      refreshPromiseRef.current = p;
+      return p;
+    },
+    [setLocked]
+  );
 
-  /* =========================
-     PIN / QUICK SWITCH CALLS
-     (Auth endpoints: unlock/switch/list)
-  ========================= */
-  const pinSet = async (pin4: string) => {
-    const clean = assertPin4(pin4);
-    await apiFetch("/auth/me/pin/set", { method: "POST", body: { pin: clean } });
-    await refreshMe({ force: true, silent: true });
-  };
+  const logout = useCallback(
+  async () => {
+    // ✅ 1. Cambiar favicon INMEDIATAMENTE (evita flash del logo viejo)
+    applyAppFavicon({ token: null, user: null, jewelry: null });
 
-  const pinDisable = async (pin4: string) => {
-    const clean = assertPin4(pin4);
-    await apiFetch("/auth/me/pin/disable", { method: "POST", body: { pin: clean } });
-    await refreshMe({ force: true, silent: true });
-  };
+    try {
+      await apiFetch("/auth/logout", { method: "POST" });
+    } catch {}
 
-  const pinUnlock = async (pin4: string) => {
-    const clean = assertPin4(pin4);
-    await apiFetch("/auth/me/pin/unlock", { method: "POST", body: { pin: clean } });
-    setLocked(false);
-  };
+    clearSession();
+    emitAuthEvent({ type: "LOGOUT", at: Date.now() });
+  },
+  [clearSession]
+);
 
-  const pinQuickUsers = async (): Promise<QuickUsersResponse> => {
+
+  const pinSet = useCallback(
+    async (pin: PinArg) => {
+      const p = normalizePinArg(pin);
+      await apiFetch("/auth/me/pin/set", { method: "POST", body: { pin: p } as any });
+      await refreshMe({ silent: true });
+    },
+    [refreshMe]
+  );
+
+  const pinRemove = useCallback(
+    async (pin: PinArg) => {
+      const p = normalizePinArg(pin);
+      await apiFetch("/auth/me/pin/disable", { method: "POST", body: { pin: p } as any });
+      await refreshMe({ silent: true });
+      setLocked(false);
+    },
+    [refreshMe, setLocked]
+  );
+
+  const pinUnlock = useCallback(
+    async (pin: PinArg) => {
+      const p = normalizePinArg(pin);
+      await apiFetch("/auth/me/pin/unlock", { method: "POST", body: { pin: p } as any });
+      setLocked(false);
+      bumpActivity();
+    },
+    [bumpActivity, setLocked]
+  );
+
+  const pinQuickUsers = useCallback(async (): Promise<QuickUsersResponse> => {
     const data = await apiFetch<any>("/auth/me/pin/quick-users", {
       method: "GET",
       cache: "no-store",
+      timeoutMs: 8000,
     });
-
-    const enabled = Boolean(data?.enabled);
-    setQuickSwitchEnabled(enabled);
 
     const users: QuickUser[] = Array.isArray(data?.users)
       ? data.users.map((u: any) => {
-          const hasQuickPin = Boolean(u.hasQuickPin ?? u.hasPin ?? u.hasQuick ?? false);
-          const pinEnabled = Boolean(u.pinEnabled ?? (u.hasPin ?? false)); // compat
+          // ✅ normalizar roles para UI
+          const rawRoles = u?.roles;
+          const roleNames =
+            Array.isArray(u?.roleNames) && u.roleNames.length
+              ? u.roleNames
+              : Array.isArray(rawRoles)
+              ? rawRoles
+                  .map((r: any) => (typeof r === "string" ? r : r?.name))
+                  .filter((x: any) => typeof x === "string" && x.trim())
+                  .map((x: string) => x.trim())
+              : [];
+
+          const roleLabel =
+            (typeof u?.roleLabel === "string" && u.roleLabel.trim() ? u.roleLabel.trim() : "") ||
+            (roleNames.length ? roleNames.join(" • ") : "") ||
+            (typeof u?.roleName === "string" ? u.roleName : "") ||
+            (typeof u?.role === "string" ? u.role : "") ||
+            "";
+
           return {
             id: String(u.id),
             email: String(u.email),
             name: u.name ?? null,
             avatarUrl: u.avatarUrl ?? null,
-            hasQuickPin,
-            pinEnabled,
+            hasQuickPin: Boolean(u.hasQuickPin ?? u.hasPin),
+            pinEnabled: Boolean(u.pinEnabled ?? u.quickPinEnabled ?? u.hasPin),
+
+            roles: rawRoles,
+            roleNames,
+            roleLabel,
+            role: u?.role,
+            roleName: u?.roleName,
           };
         })
       : [];
 
-    return { enabled, users };
-  };
+    return { enabled: Boolean(data?.enabled), users };
+  }, []);
 
-  const pinSwitchUser = async (args: { targetUserId: string; pin4: string }) => {
-    const clean = assertPin4(args.pin4);
+  const pinSwitchUser = useCallback(
+    async (args: { targetUserId: string; pin4?: string; pin?: string }) => {
+      const body: any = { targetUserId: args.targetUserId };
 
-    const data = await apiFetch<MeResponse>("/auth/me/pin/switch", {
-      method: "POST",
-      body: { targetUserId: args.targetUserId, pin: clean },
-    });
+      const maybePin = args.pin4 ?? args.pin;
+      if (maybePin) body.pin = assertPin4(maybePin);
 
-    setSession({
-      token: data.accessToken || data.token || null,
-      user: data.user,
-      jewelry: data.jewelry ?? null,
-      roles: data.roles ?? [],
-      permissions: data.permissions ?? [],
-    });
-  };
+      const data = await apiFetch<MeResponse>("/auth/me/pin/switch", {
+        method: "POST",
+        body,
+        timeoutMs: 8000,
+      });
+
+      setSession({
+        token: data.accessToken || data.token || null,
+        user: data.user,
+        jewelry: data.jewelry ?? null,
+        roles: data.roles ?? [],
+        permissions: data.permissions ?? [],
+      });
+      bumpActivity();
+    },
+    [setSession, bumpActivity]
+  );
+
+  const setPinLockSettingsForJewelry = useCallback(
+    async (args: {
+      enabled: boolean;
+      timeoutMinutes: number;
+      requireOnUserSwitch: boolean;
+      quickSwitchEnabled: boolean;
+    }) => {
+      const timeoutMinutes = clamp(Math.floor(Number(args.timeoutMinutes) || 1), 1, 60 * 12);
+
+      await apiFetch("/auth/company/security/pin-lock", {
+        method: "PATCH",
+        body: {
+          quickSwitchEnabled: Boolean(args.quickSwitchEnabled),
+          pinLockEnabled: Boolean(args.enabled),
+          pinLockTimeoutSec: timeoutMinutes * 60,
+          pinLockRequireOnUserSwitch: Boolean(args.requireOnUserSwitch),
+        } as any,
+        timeoutMs: 10_000,
+      });
+
+      await refreshMe({ silent: true, force: true } as any);
+
+      if (!args.enabled) setLocked(false);
+    },
+    [refreshMe, setLocked]
+  );
+
+  const setPinLockSettings = useCallback(
+    async (args: {
+      enabled: boolean;
+      timeoutMinutes: number;
+      requireOnUserSwitch: boolean;
+      quickSwitchEnabled: boolean;
+    }) => {
+      await setPinLockSettingsForJewelry(args);
+    },
+    [setPinLockSettingsForJewelry]
+  );
 
   /* -------------------------
-     Auto-lock por inactividad
+     AUTO LOCK
   ------------------------- */
-  const lastActivityRef = useRef<number>(Date.now());
-  const lockTimerRef = useRef<number | null>(null);
-
-  const bumpActivity = () => {
-    lastActivityRef.current = Date.now();
-  };
-
   useEffect(() => {
-    if (!user) return;
+    if (!user || !effectiveLock.enabled) return;
 
-    if (!lockEnabled) {
-      setLocked(false);
-      return;
-    }
+    const onVisibility = () => bumpActivity();
 
-    const onAny = () => bumpActivity();
-
-    window.addEventListener("mousemove", onAny, { passive: true });
-    window.addEventListener("mousedown", onAny, { passive: true });
-    window.addEventListener("keydown", onAny);
-    window.addEventListener("touchstart", onAny, { passive: true });
-    window.addEventListener("scroll", onAny, { passive: true });
+    window.addEventListener("mousemove", bumpActivity, { passive: true });
+    window.addEventListener("keydown", bumpActivity);
+    window.addEventListener("mousedown", bumpActivity);
+    window.addEventListener("touchstart", bumpActivity, { passive: true });
+    window.addEventListener("scroll", bumpActivity, { passive: true });
+    document.addEventListener("visibilitychange", onVisibility);
 
     return () => {
-      window.removeEventListener("mousemove", onAny);
-      window.removeEventListener("mousedown", onAny);
-      window.removeEventListener("keydown", onAny);
-      window.removeEventListener("touchstart", onAny);
-      window.removeEventListener("scroll", onAny);
+      window.removeEventListener("mousemove", bumpActivity);
+      window.removeEventListener("keydown", bumpActivity);
+      window.removeEventListener("mousedown", bumpActivity);
+      window.removeEventListener("touchstart", bumpActivity);
+      window.removeEventListener("scroll", bumpActivity);
+      document.removeEventListener("visibilitychange", onVisibility);
     };
-  }, [user, lockEnabled]);
+  }, [user, effectiveLock.enabled, bumpActivity]);
 
   useEffect(() => {
-    if (lockTimerRef.current) window.clearInterval(lockTimerRef.current);
-    lockTimerRef.current = null;
+    if (timerRef.current) clearInterval(timerRef.current);
+    if (!user || !effectiveLock.enabled) return;
 
-    if (!user) return;
-    if (!lockEnabled) return;
-
-    const interval = window.setInterval(() => {
-      if (!user) return;
-      if (!lockEnabled) return;
+    timerRef.current = window.setInterval(() => {
       if (locked) return;
+      if (hasDevLockBypass()) return;
 
-      const idleMs = Date.now() - lastActivityRef.current;
-      const limitMs = lockTimeoutMinutes * 60 * 1000;
-
-      if (idleMs >= limitMs) {
+      const idle = Date.now() - lastActivityRef.current;
+      if (idle >= effectiveLock.timeoutMin * 60_000) {
         setLocked(true);
       }
     }, 1000);
 
-    lockTimerRef.current = interval;
-
     return () => {
-      if (lockTimerRef.current) window.clearInterval(lockTimerRef.current);
-      lockTimerRef.current = null;
+      if (timerRef.current) clearInterval(timerRef.current);
+      timerRef.current = null;
     };
-  }, [user, lockEnabled, lockTimeoutMinutes, locked]);
+  }, [user, effectiveLock.enabled, effectiveLock.timeoutMin, locked, setLocked]);
 
   /* -------------------------
-     Multi-tab sync (storage)
+     BOOT
   ------------------------- */
   useEffect(() => {
-    const onStorage = (e: StorageEvent) => {
-      if (e.key === LS_TOKEN_KEY) {
-        const newToken = readStoredToken();
-        setTokenSafe(newToken);
-        refreshMe({ force: true, silent: true }).catch(() => {});
-      }
-
-      if (e.key === LS_LOGOUT_KEY) {
-        resetStateAndCancelInFlight();
-      }
-
-      if (e.key === LS_AUTH_EVENT_KEY && e.newValue) {
-        try {
-          const ev = JSON.parse(e.newValue) as AuthEvent;
-
-          if (ev?.type === "LOGOUT") {
-            resetStateAndCancelInFlight();
-            return;
-          }
-
-          if (ev?.type === "LOGIN") {
-            const newToken = readStoredToken();
-            setTokenSafe(newToken);
-            refreshMe({ force: true, silent: true }).catch(() => {});
-          }
-        } catch {}
-      }
-    };
-
-    window.addEventListener("storage", onStorage);
-    return () => window.removeEventListener("storage", onStorage);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  /* -------------------------
-     Multi-tab sync (BroadcastChannel)
-  ------------------------- */
-  useEffect(() => {
-    if (!("BroadcastChannel" in window)) return;
-
-    const bc = new BroadcastChannel("tptech_auth");
-    bc.onmessage = (msg) => {
-      const ev = msg.data as AuthEvent | undefined;
-      if (!ev?.type) return;
-
-      if (ev.type === "LOGOUT") {
-        resetStateAndCancelInFlight();
-        return;
-      }
-
-      if (ev.type === "LOGIN") {
-        const newToken = readStoredToken();
-        setTokenSafe(newToken);
-        refreshMe({ force: true, silent: true }).catch(() => {});
-      }
-    };
-
-    return () => bc.close();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  /* -------------------------
-     BOOTSTRAP
-  ------------------------- */
-  useEffect(() => {
-    refreshMe({ force: true }).catch(() => {});
+    if (!hasPossibleSession()) {
+      setLoading(false);
+      // ✅ en rutas públicas, asegurar favicon público
+      applyAppFavicon({ token: null, user: null, jewelry: null });
+      return;
+    }
+    refreshMe({ force: true } as any).catch(() => setLoading(false));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -603,24 +957,40 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
       locked,
       setLocked,
+      lockNow,
 
-      lockEnabled,
-      lockTimeoutMinutes,
-      setLockEnabledLocal,
-      setLockTimeoutMinutesLocal,
+      lockEnabled: effectiveLock.enabled,
+      lockTimeoutMinutes: effectiveLock.timeoutMin,
+
+      pinLockEnabled: effectiveLock.enabled,
+      pinLockTimeoutMinutes: effectiveLock.timeoutMin,
+      pinLockRequireOnUserSwitch: effectiveLock.requireOnUserSwitch,
+
+      setLockEnabledLocal: (v) => {
+        setLockEnabledLocalState(v);
+        writeLockEnabledLocal(v);
+        if (!v) setLocked(false);
+      },
+      setLockTimeoutMinutesLocal: (n) => {
+        const safe = clamp(Math.floor(Number(n) || 1), 1, 720);
+        setLockTimeoutMinutesLocalState(safe);
+        writeLockTimeoutMinLocal(safe);
+      },
 
       quickSwitchEnabled,
 
       pinSet,
-      pinDisable,
+      pinRemove,
       pinUnlock,
       pinQuickUsers,
       pinSwitchUser,
 
+      setPinLockSettingsForJewelry,
+      setPinLockSettings,
+
       setTokenOnly,
       setSession,
-      setJewelryLocal,
-      patchJewelryLocal,
+
       refreshMe,
       logout,
       clearSession,
@@ -633,9 +1003,24 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       permissions,
       loading,
       locked,
-      lockEnabled,
-      lockTimeoutMinutes,
+      setLocked,
+      lockNow,
+      effectiveLock.enabled,
+      effectiveLock.timeoutMin,
+      effectiveLock.requireOnUserSwitch,
       quickSwitchEnabled,
+      pinSet,
+      pinRemove,
+      pinUnlock,
+      pinQuickUsers,
+      pinSwitchUser,
+      setPinLockSettingsForJewelry,
+      setPinLockSettings,
+      setTokenOnly,
+      setSession,
+      refreshMe,
+      logout,
+      clearSession,
     ]
   );
 
@@ -647,6 +1032,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 ========================= */
 export function useAuth() {
   const ctx = useContext(AuthContext);
-  if (!ctx) throw new Error("useAuth must be used within an AuthProvider");
+  if (!ctx) throw new Error("useAuth must be used within AuthProvider");
   return ctx;
 }

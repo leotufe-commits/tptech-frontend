@@ -5,19 +5,84 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>TPTech</title>
 
-    <!-- ✅ Aplica theme antes del render (evita flash) -->
+    <!-- ✅ Aplica theme ANTES del render (sin flash) -->
     <script>
       (function () {
         try {
-          var t = localStorage.getItem("tptech_theme") || "classic";
-          if (t && t !== "classic") document.documentElement.setAttribute("data-theme", t);
-          else document.documentElement.removeAttribute("data-theme");
+          // 🔴 usar la key correcta (NO la legacy)
+          var t = localStorage.getItem("tptech_theme:public") || "classic";
+          // siempre setear data-theme (classic incluido)
+          document.documentElement.setAttribute("data-theme", t);
         } catch (e) {}
+      })();
+    </script>
+
+    <!-- ✅ favicon:
+         - PUBLIC/LOGIN: "TPT" fondo negro
+         - AUTH: no tocar (el sistema lo reemplaza por logo/iniciales)
+    -->
+    <script>
+      (function () {
+        function toDataUri(svg) {
+          return "data:image/svg+xml;charset=UTF-8," + encodeURIComponent(svg);
+        }
+
+        function ensureIconLink() {
+          var head = document.head || document.getElementsByTagName("head")[0];
+          var link =
+            head.querySelector("link[rel='icon']") ||
+            head.querySelector("link[rel='shortcut icon']");
+          if (!link) {
+            link = document.createElement("link");
+            link.setAttribute("rel", "icon");
+            head.appendChild(link);
+          }
+          return link;
+        }
+
+        function hasAnyAuthToken() {
+          try {
+            // ✅ en tu proyecto existen keys: LS_TOKEN_KEY="tptech_token" y SS_TOKEN_KEY="tptech_access_token"
+            // y hay cookie httpOnly "tptech_session" (no accesible). Así que detectamos por storage.
+            var ls = localStorage.getItem("tptech_token");
+            var ss = sessionStorage.getItem("tptech_access_token");
+            return Boolean((ls && String(ls).trim()) || (ss && String(ss).trim()));
+          } catch (e) {
+            return false;
+          }
+        }
+
+        function buildSvg() {
+          return (
+            "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'>" +
+            "<rect width='64' height='64' rx='18' fill='#0b0b0d'/>" +
+            "<text x='32' y='40' text-anchor='middle' " +
+            "font-family='system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif' " +
+            "font-size='26' font-weight='800' letter-spacing='-1.2' fill='white'>TPT</text>" +
+            "</svg>"
+          );
+        }
+
+        function applyPublicFavicon() {
+          // ✅ Si ya hay token, NO tocamos el favicon (lo maneja el sistema logueado)
+          if (hasAnyAuthToken()) return;
+
+          var link = ensureIconLink();
+          link.setAttribute("href", toDataUri(buildSvg()));
+          link.setAttribute("type", "image/svg+xml");
+        }
+
+        if (document.readyState === "complete" || document.readyState === "interactive") {
+          setTimeout(applyPublicFavicon, 0);
+        } else {
+          document.addEventListener("DOMContentLoaded", function () {
+            setTimeout(applyPublicFavicon, 0);
+          });
+        }
       })();
     </script>
   </head>
 
-  <!-- ✅ sin bg-white: lo maneja el theme -->
   <body>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>

@@ -7,6 +7,8 @@ import router from "./router";
 import { AuthProvider } from "./context/AuthContext";
 import { ThemeProvider } from "./context/ThemeContext";
 
+// ✅ IMPORTANTE: themes primero (define variables), luego index.css (las usa)
+import "./styles/themes.css";
 import "./index.css";
 
 ReactDOM.createRoot(document.getElementById("root")!).render(

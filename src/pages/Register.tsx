@@ -1,6 +1,8 @@
-import { useMemo, useState } from "react";
+// tptech-frontend/src/pages/Register.tsx
+import React, { useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { apiFetch } from "../lib/api";
+import { useAuth } from "../context/AuthContext";
 
 type FormState = {
   jewelryName: string;
@@ -66,13 +68,20 @@ function XIcon() {
 }
 
 type RegisterResponse = {
-  user: { id: string; email: string; name: string | null; createdAt: string };
-  jewelry: any | null;
-  token: string;
+  accessToken?: string;
+  token?: string;
+  // el backend suele mandar user/jewelry/roles/permissions también,
+  // pero acá solo nos interesan token(s) para compat
 };
+
+function isValidEmail(v: string) {
+  const s = v.trim();
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s);
+}
 
 export default function Register() {
   const navigate = useNavigate();
+  const { setTokenOnly, refreshMe } = useAuth();
 
   const [showPass, setShowPass] = useState(false);
   const [showPass2, setShowPass2] = useState(false);
@@ -99,116 +108,118 @@ export default function Register() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
-  const canSubmit = useMemo(() => {
-    const required =
-      form.jewelryName &&
-      form.email &&
-      form.firstName &&
-      form.lastName &&
-      form.phoneNumber &&
-      form.street &&
-      form.number &&
-      form.city &&
-      form.province &&
-      form.postalCode &&
-      form.country &&
-      form.password &&
-      form.confirmPassword;
-
-    const samePass = form.password === form.confirmPassword;
-    return Boolean(required) && samePass && !loading;
-  }, [form, loading]);
-
   function update<K extends keyof FormState>(key: K, value: FormState[K]) {
     setForm((prev) => ({ ...prev, [key]: value }));
   }
+
+  const emailOk = useMemo(() => isValidEmail(form.email), [form.email]);
+  const hasEmail = useMemo(() => form.email.trim().length > 0, [form.email]);
+
+  const canSubmit = useMemo(() => {
+    if (loading) return false;
+
+    const required =
+      form.jewelryName.trim() &&
+      form.email.trim() &&
+      form.firstName.trim() &&
+      form.lastName.trim() &&
+      form.phoneCountry.trim() &&
+      form.phoneNumber.trim() &&
+      form.street.trim() &&
+      form.number.trim() &&
+      form.city.trim() &&
+      form.province.trim() &&
+      form.postalCode.trim() &&
+      form.country.trim() &&
+      form.password &&
+      form.confirmPassword;
+
+    if (!required) return false;
+    if (!emailOk) return false;
+    if (form.password.length < 6) return false;
+    if (form.password !== form.confirmPassword) return false;
+
+    return true;
+  }, [form, loading, emailOk]);
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
 
+    const email = form.email.trim().toLowerCase();
+    if (!isValidEmail(email)) return setError("Ingresá un email válido.");
+    if (form.password.length < 6) return setError("La contraseña debe tener al menos 6 caracteres.");
     if (form.password !== form.confirmPassword) {
       setError("Las contraseñas no coinciden.");
       return;
     }
 
     setLoading(true);
+
     try {
       const payload = {
-        email: form.email,
+        email,
         password: form.password,
 
-        jewelryName: form.jewelryName,
-        firstName: form.firstName,
-        lastName: form.lastName,
+        jewelryName: form.jewelryName.trim(),
+        firstName: form.firstName.trim(),
+        lastName: form.lastName.trim(),
 
-        phoneCountry: form.phoneCountry,
-        phoneNumber: form.phoneNumber,
+        phoneCountry: form.phoneCountry.trim(),
+        phoneNumber: form.phoneNumber.trim(),
 
-        street: form.street,
-        number: form.number,
-        city: form.city,
-        province: form.province,
-        postalCode: form.postalCode,
-        country: form.country,
+        street: form.street.trim(),
+        number: form.number.trim(),
+        city: form.city.trim(),
+        province: form.province.trim(),
+        postalCode: form.postalCode.trim(),
+        country: form.country.trim(),
       };
 
+      // ✅ Importante: body como objeto (apiFetch lo JSON-stringify + headers)
       const data = await apiFetch<RegisterResponse>("/auth/register", {
         method: "POST",
-        body: JSON.stringify(payload),
+        body: payload,
       });
 
-      localStorage.setItem("tptech_token", data.token);
-      localStorage.setItem("tptech_user", JSON.stringify(data.user));
-      if (data.jewelry) localStorage.setItem("tptech_jewelry", JSON.stringify(data.jewelry));
+      // ✅ compat: si backend devuelve token/accessToken, lo guardamos (aunque sea cookie-based)
+      const t = data?.accessToken || data?.token || null;
+      if (t) setTokenOnly(t);
 
-      navigate("/dashboard");
+      // ✅ trae /auth/me y setea estado real (user/jewelry/roles/perms)
+      await refreshMe({ force: true, silent: true } as any);
+
+      navigate("/dashboard", { replace: true });
     } catch (err: any) {
-      setError(err?.message || "No se pudo registrar.");
+      setError(String(err?.message || "No se pudo registrar."));
     } finally {
       setLoading(false);
     }
   }
 
+  const iconBtnClass =
+    "absolute right-3 top-1/2 -translate-y-1/2 inline-flex h-8 w-8 items-center justify-center " +
+    "rounded-md bg-transparent text-text/70 hover:text-text " +
+    "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30";
+
   return (
-    <div
-      className="min-h-screen flex items-center justify-center px-4 py-10"
-      style={{ background: "var(--surface)", color: "var(--text)" }}
-    >
-      <div
-        className="w-full max-w-2xl rounded-2xl"
-        style={{
-          background: "var(--card)",
-          border: "1px solid var(--border)",
-          boxShadow: "var(--shadow)",
-        }}
-      >
+    <div className="min-h-screen bg-surface text-text flex items-center justify-center px-4 py-10">
+      <div className="w-full max-w-2xl rounded-2xl border border-border bg-card shadow-soft">
         <div className="max-h-[calc(100vh-5rem)] overflow-y-auto p-8 tp-scroll">
           <div className="flex items-start justify-between gap-4">
             <div>
-              <p className="text-xs font-semibold tracking-wide" style={{ color: "var(--primary)" }}>
-                TPTech
-              </p>
+              <p className="text-xs font-semibold tracking-wide text-primary">TPTech</p>
               <h1 className="mt-2 text-3xl font-semibold text-text">Crear cuenta</h1>
-              <p className="mt-1 text-sm text-[color:var(--muted)]">
-                Completá tus datos para registrar tu joyería.
-              </p>
+              <p className="mt-1 text-sm text-muted">Completá tus datos para registrar tu joyería.</p>
             </div>
 
-            <Link to="/login" className="text-sm hover:underline" style={{ color: "var(--primary)" }}>
+            <Link to="/login" className="text-sm text-primary hover:underline">
               Volver a iniciar sesión
             </Link>
           </div>
 
           {error && (
-            <div
-              className="mt-6 rounded-xl px-4 py-3 text-sm"
-              style={{
-                border: "1px solid rgba(239,68,68,0.35)",
-                background: "rgba(239,68,68,0.12)",
-                color: "color-mix(in oklab, var(--text) 85%, #ef4444)",
-              }}
-            >
+            <div className="mt-6 rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm">
               {error}
             </div>
           )}
@@ -219,42 +230,49 @@ export default function Register() {
 
               <div className="mt-4 grid grid-cols-1 gap-4">
                 <div>
-                  <label className="block text-sm mb-2" style={{ color: "var(--muted)" }}>
-                    Nombre de joyería
-                  </label>
+                  <label className="mb-2 block text-sm text-muted">Nombre de joyería</label>
                   <input
                     value={form.jewelryName}
                     onChange={(e) => update("jewelryName", e.target.value)}
                     placeholder="Ej: Joyería Tuport"
                     className="tp-input"
+                    disabled={loading}
                   />
                 </div>
 
                 <div>
-                  <label className="block text-sm mb-2" style={{ color: "var(--muted)" }}>
-                    Email
-                  </label>
+                  <label className="mb-2 block text-sm text-muted">Email</label>
                   <div className="relative">
                     <input
                       type="email"
                       value={form.email}
                       onChange={(e) => update("email", e.target.value)}
                       placeholder="tuemail@ejemplo.com"
-                      className="tp-input pr-11"
+                      className={`tp-input ${hasEmail ? "pr-11" : ""}`}
+                      disabled={loading}
+                      autoComplete="email"
                     />
 
-                    {form.email.length > 0 && (
+                    {hasEmail && (
                       <button
                         type="button"
                         onClick={() => update("email", "")}
-                        className="absolute right-3 top-1/2 -translate-y-1/2 transition"
-                        style={{ color: "var(--muted)" }}
+                        className={iconBtnClass}
                         aria-label="Limpiar email"
                         title="Limpiar"
+                        disabled={loading}
                       >
                         <XIcon />
                       </button>
                     )}
+                  </div>
+
+                  <div className="mt-2 min-h-[18px] text-xs text-muted">
+                    {form.email.trim()
+                      ? emailOk
+                        ? "—"
+                        : "Ingresá un email válido."
+                      : "—"}
                   </div>
                 </div>
               </div>
@@ -265,33 +283,29 @@ export default function Register() {
 
               <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-sm mb-2" style={{ color: "var(--muted)" }}>
-                    Nombre
-                  </label>
+                  <label className="mb-2 block text-sm text-muted">Nombre</label>
                   <input
                     value={form.firstName}
                     onChange={(e) => update("firstName", e.target.value)}
                     placeholder="Nombre"
                     className="tp-input"
+                    disabled={loading}
                   />
                 </div>
 
                 <div>
-                  <label className="block text-sm mb-2" style={{ color: "var(--muted)" }}>
-                    Apellido
-                  </label>
+                  <label className="mb-2 block text-sm text-muted">Apellido</label>
                   <input
                     value={form.lastName}
                     onChange={(e) => update("lastName", e.target.value)}
                     placeholder="Apellido"
                     className="tp-input"
+                    disabled={loading}
                   />
                 </div>
 
                 <div className="md:col-span-2">
-                  <label className="block text-sm mb-2" style={{ color: "var(--muted)" }}>
-                    Teléfono
-                  </label>
+                  <label className="mb-2 block text-sm text-muted">Teléfono</label>
 
                   <div className="flex gap-3">
                     <input
@@ -299,12 +313,14 @@ export default function Register() {
                       onChange={(e) => update("phoneCountry", e.target.value)}
                       className="tp-input !w-24 !flex-none shrink-0"
                       placeholder="+54"
+                      disabled={loading}
                     />
                     <input
                       value={form.phoneNumber}
                       onChange={(e) => update("phoneNumber", e.target.value)}
                       className="tp-input !flex-1 min-w-0"
                       placeholder="11 1234 5678"
+                      disabled={loading}
                     />
                   </div>
                 </div>
@@ -316,74 +332,68 @@ export default function Register() {
 
               <div className="mt-4 grid grid-cols-1 md:grid-cols-3 gap-4">
                 <div className="md:col-span-2">
-                  <label className="block text-sm mb-2" style={{ color: "var(--muted)" }}>
-                    Domicilio (calle)
-                  </label>
+                  <label className="mb-2 block text-sm text-muted">Domicilio (calle)</label>
                   <input
                     value={form.street}
                     onChange={(e) => update("street", e.target.value)}
                     placeholder="Ej: Av. Corrientes"
                     className="tp-input"
+                    disabled={loading}
                   />
                 </div>
 
                 <div>
-                  <label className="block text-sm mb-2" style={{ color: "var(--muted)" }}>
-                    Número
-                  </label>
+                  <label className="mb-2 block text-sm text-muted">Número</label>
                   <input
                     value={form.number}
                     onChange={(e) => update("number", e.target.value)}
                     placeholder="1234"
                     className="tp-input"
+                    disabled={loading}
                   />
                 </div>
 
                 <div>
-                  <label className="block text-sm mb-2" style={{ color: "var(--muted)" }}>
-                    Ciudad
-                  </label>
+                  <label className="mb-2 block text-sm text-muted">Ciudad</label>
                   <input
                     value={form.city}
                     onChange={(e) => update("city", e.target.value)}
                     placeholder="Ciudad"
                     className="tp-input"
+                    disabled={loading}
                   />
                 </div>
 
                 <div>
-                  <label className="block text-sm mb-2" style={{ color: "var(--muted)" }}>
-                    Provincia
-                  </label>
+                  <label className="mb-2 block text-sm text-muted">Provincia</label>
                   <input
                     value={form.province}
                     onChange={(e) => update("province", e.target.value)}
                     placeholder="Provincia"
                     className="tp-input"
+                    disabled={loading}
                   />
                 </div>
 
                 <div>
-                  <label className="block text-sm mb-2" style={{ color: "var(--muted)" }}>
-                    Código Postal
-                  </label>
+                  <label className="mb-2 block text-sm text-muted">Código Postal</label>
                   <input
                     value={form.postalCode}
                     onChange={(e) => update("postalCode", e.target.value)}
                     placeholder="C1000"
                     className="tp-input"
+                    disabled={loading}
                   />
                 </div>
 
                 <div className="md:col-span-3">
-                  <label className="block text-sm mb-2" style={{ color: "var(--muted)" }}>
-                    País
-                  </label>
+                  <label className="mb-2 block text-sm text-muted">País</label>
                   <input
                     value={form.country}
                     onChange={(e) => update("country", e.target.value)}
                     placeholder="Argentina"
                     className="tp-input"
+                    disabled={loading}
                   />
                 </div>
               </div>
@@ -394,9 +404,7 @@ export default function Register() {
 
               <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-sm mb-2" style={{ color: "var(--muted)" }}>
-                    Contraseña
-                  </label>
+                  <label className="mb-2 block text-sm text-muted">Contraseña</label>
 
                   <div className="relative">
                     <input
@@ -405,14 +413,16 @@ export default function Register() {
                       onChange={(e) => update("password", e.target.value)}
                       placeholder="Creá una contraseña"
                       className="tp-input pr-11"
+                      disabled={loading}
+                      autoComplete="new-password"
                     />
                     <button
                       type="button"
                       onClick={() => setShowPass((s) => !s)}
-                      className="absolute right-3 top-1/2 -translate-y-1/2 transition"
-                      style={{ color: "var(--muted)" }}
+                      className={iconBtnClass}
                       aria-label={showPass ? "Ocultar contraseña" : "Ver contraseña"}
                       title={showPass ? "Ocultar" : "Ver"}
+                      disabled={loading}
                     >
                       <EyeIcon open={showPass} />
                     </button>
@@ -420,9 +430,7 @@ export default function Register() {
                 </div>
 
                 <div>
-                  <label className="block text-sm mb-2" style={{ color: "var(--muted)" }}>
-                    Repetir contraseña
-                  </label>
+                  <label className="mb-2 block text-sm text-muted">Repetir contraseña</label>
 
                   <div className="relative">
                     <input
@@ -431,19 +439,25 @@ export default function Register() {
                       onChange={(e) => update("confirmPassword", e.target.value)}
                       placeholder="Repetí la contraseña"
                       className="tp-input pr-11"
+                      disabled={loading}
+                      autoComplete="new-password"
                     />
                     <button
                       type="button"
                       onClick={() => setShowPass2((s) => !s)}
-                      className="absolute right-3 top-1/2 -translate-y-1/2 transition"
-                      style={{ color: "var(--muted)" }}
+                      className={iconBtnClass}
                       aria-label={showPass2 ? "Ocultar contraseña" : "Ver contraseña"}
                       title={showPass2 ? "Ocultar" : "Ver"}
+                      disabled={loading}
                     >
                       <EyeIcon open={showPass2} />
                     </button>
                   </div>
                 </div>
+              </div>
+
+              <div className="mt-2 text-xs text-muted">
+                La contraseña debe tener al menos 6 caracteres.
               </div>
             </section>
 
@@ -451,9 +465,9 @@ export default function Register() {
               {loading ? "Registrando..." : "Registrarme"}
             </button>
 
-            <p className="text-center text-sm" style={{ color: "var(--muted)" }}>
+            <p className="text-center text-sm text-muted">
               ¿Ya tenés cuenta?{" "}
-              <Link to="/login" className="hover:underline" style={{ color: "var(--primary)" }}>
+              <Link to="/login" className="text-primary hover:underline">
                 Iniciar sesión
               </Link>
             </p>

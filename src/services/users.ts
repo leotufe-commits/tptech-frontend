@@ -444,3 +444,33 @@ export async function resetUserPinForUser(userId: string, pin: string): Promise<
 export async function setUserPinEnabledForUser(userId: string, enabled: boolean): Promise<QuickPinState> {
   return setUserPinEnabled(userId, enabled);
 }
+/* =========================
+   ✅ USER ATTACHMENTS (ADMIN)
+   Backend:
+   PUT    /users/:id/attachments   (field: attachments[])
+   DELETE /users/:id/attachments/:attachmentId
+========================= */
+
+export async function uploadUserAttachmentsInstant(
+  userId: string,
+  files: File[]
+): Promise<OkResponse<{ attachments?: UserAttachment[]; user?: UserDetail }>> {
+  if (!files?.length) return { ok: true };
+
+  const form = new FormData();
+  for (const f of files) form.append("attachments", f);
+
+  return apiFetch<OkResponse<{ attachments?: UserAttachment[]; user?: UserDetail }>>(
+    `/users/${userId}/attachments`,
+    { method: "PUT", body: form }
+  );
+}
+
+export async function deleteUserAttachmentInstant(
+  userId: string,
+  attachmentId: string
+): Promise<OkResponse> {
+  return apiFetch<OkResponse>(`/users/${userId}/attachments/${attachmentId}`, {
+    method: "DELETE",
+  });
+}

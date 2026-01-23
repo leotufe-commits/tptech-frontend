@@ -1,24 +1,26 @@
 // tptech-frontend/src/components/ProtectedRoute.tsx
-import { Navigate, Outlet } from "react-router-dom";
+import React from "react";
+import { Navigate, Outlet, useLocation } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
+import LockScreen from "./LockScreen";
 
 export default function ProtectedRoute() {
-  const { user, loading } = useAuth();
+  const { user, loading, locked } = useAuth();
+  const location = useLocation();
 
-  // Evita flash / redirecciones mientras resolvemos /auth/me
   if (loading) {
-    return (
-      <div className="flex min-h-screen items-center justify-center text-sm text-gray-500">
-        Cargando…
-      </div>
-    );
+    return <div className="p-6 text-sm text-muted">Cargando…</div>;
   }
 
-  // ✅ Cookie-first:
-  // Si no hay user, no hay sesión válida (o expiró cookie)
   if (!user) {
-    return <Navigate to="/login" replace />;
+    return <Navigate to="/login" replace state={{ from: location.pathname }} />;
   }
 
-  return <Outlet />;
+  // ✅ Renderiza la app, y si está lockeado, pone LockScreen arriba de todo.
+  return (
+    <>
+      <Outlet />
+      {locked && <LockScreen />}
+    </>
+  );
 }

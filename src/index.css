@@ -1,8 +1,54 @@
-@import "./styles/themes.css";
+/* tptech-frontend/src/index.css */
+
+/* ✅ NO importar themes.css acá.
+   Se importa en main.tsx para asegurar orden y evitar rutas incorrectas. */
 
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+/* =====================================
+   ✅ GLOBAL FOCUS (THEME AWARE)
+   - Elimina el azul/celeste del navegador
+   - Usa el color del theme (--primary)
+   ===================================== */
+
+/* iOS/Chrome highlight al tocar */
+* {
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* ✅ color nativo para controles (checkbox/radio/range/progress)
+   OJO: usamos --primary-rgb para que coincida con Tailwind alpha utilities. */
+:root {
+  accent-color: rgb(var(--primary-rgb) / 1);
+}
+
+/* ✅ ring/outline global (fallback) */
+:where(a, button, input, select, textarea, summary, [role="button"], [tabindex]):focus {
+  outline: none;
+}
+
+/* ✅ focus-visible: anillo del theme */
+:where(a, button, input, select, textarea, summary, [role="button"], [tabindex]):focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 4px color-mix(in oklab, var(--primary) 28%, transparent);
+}
+
+/* ✅ borde theme para inputs/select/textarea cuando reciben focus-visible */
+:where(input, select, textarea):focus-visible {
+  border-color: color-mix(in oklab, var(--primary) 55%, var(--border));
+}
+
+/* ✅ si algún componente usa `outline` por defecto */
+:where(*):focus-visible {
+  outline-color: var(--primary);
+}
+
+/* ✅ “caret” (cursor de texto) del theme */
+:where(input, textarea) {
+  caret-color: rgb(var(--primary-rgb) / 1);
+}
 
 /* =====================================
    Base global (respeta themes)
@@ -52,7 +98,7 @@ body,
 }
 
 [data-theme="dark"] .tp-input:hover {
-  border-color: rgba(255, 255, 255, 0.30);
+  border-color: rgba(255, 255, 255, 0.3);
 }
 
 [data-theme="dark"] .tp-input:focus {
@@ -64,7 +110,6 @@ body,
 
 /* =====================================
    Selects / Combos (TPTech - THEME AWARE)
-   (misma familia visual que .tp-input)
    ===================================== */
 .tp-select {
   width: 100%;
@@ -115,7 +160,7 @@ body,
 }
 
 [data-theme="dark"] .tp-select:hover {
-  border-color: rgba(255, 255, 255, 0.30);
+  border-color: rgba(255, 255, 255, 0.3);
 }
 
 [data-theme="dark"] .tp-select:focus {
@@ -129,7 +174,6 @@ body,
    Botones TPTech (THEME AWARE)
    ===================================== */
 
-/* Botón primario (usa --primary del theme) */
 .tp-btn-primary {
   background: var(--primary);
   color: #fff;
@@ -164,12 +208,10 @@ body,
   cursor: not-allowed;
 }
 
-/* ✅ DARK: sombra para separar del fondo */
 [data-theme="dark"] .tp-btn-primary {
   box-shadow: 0 14px 28px rgba(0, 0, 0, 0.45);
 }
 
-/* Botón secundario (card + borde) */
 .tp-btn-secondary {
   background: var(--card);
   color: var(--text);
