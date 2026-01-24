@@ -4,7 +4,9 @@ import { Navigate, Outlet, useLocation } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import LockScreen from "./LockScreen";
 
-export default function ProtectedRoute() {
+type Props = { children?: React.ReactNode };
+
+export default function ProtectedRoute({ children }: Props) {
   const { user, loading, locked } = useAuth();
   const location = useLocation();
 
@@ -16,10 +18,9 @@ export default function ProtectedRoute() {
     return <Navigate to="/login" replace state={{ from: location.pathname }} />;
   }
 
-  // ✅ Renderiza la app, y si está lockeado, pone LockScreen arriba de todo.
   return (
     <>
-      <Outlet />
+      {children ?? <Outlet />}
       {locked && <LockScreen />}
     </>
   );

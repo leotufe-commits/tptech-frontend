@@ -1,6 +1,6 @@
 // tptech-frontend/src/router.tsx
 import React from "react";
-import { createBrowserRouter, Navigate, Outlet } from "react-router-dom";
+import { createBrowserRouter, Navigate } from "react-router-dom";
 
 import { useAuth } from "./context/AuthContext";
 
@@ -50,18 +50,6 @@ function PublicOnly({ children }: { children: React.ReactNode }) {
   return <>{children}</>;
 }
 
-/**
- * ✅ Wrapper para usar ProtectedRoute correctamente con Router v6:
- * ProtectedRoute espera children → le pasamos <Outlet />.
- */
-function ProtectedOutlet() {
-  return (
-    <ProtectedRoute>
-      <Outlet />
-    </ProtectedRoute>
-  );
-}
-
 const router = createBrowserRouter([
   { path: "/", element: <IndexRedirect /> },
 
@@ -97,7 +85,7 @@ const router = createBrowserRouter([
      PRIVATE
   ===================== */
   {
-    element: <ProtectedOutlet />,
+    element: <ProtectedRoute />,
     children: [
       {
         path: "/",
@@ -177,7 +165,7 @@ const router = createBrowserRouter([
           { path: "roles", element: <Navigate to="/configuracion/roles" replace /> },
           { path: "perfil-joyeria", element: <Navigate to="/configuracion/joyeria" replace /> },
 
-          // ✅ fallback: si llega cualquier cosa rara
+          // ✅ fallback
           { path: "*", element: <Navigate to="/dashboard" replace /> },
         ],
       },

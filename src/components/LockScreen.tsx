@@ -242,7 +242,6 @@ export default function LockScreen() {
 
   // en modo switch sin pin, NO pedimos pin nunca
   const mustEnterPin = !switchingWithoutPin;
-
   // ✅ Último usuario usado en ESTE dispositivo (por joyería/tenant)
   const lastDeviceUserKey = useMemo(() => {
     const jId = (jewelry as any)?.id ? String((jewelry as any).id) : "no-jewelry";
@@ -271,7 +270,7 @@ export default function LockScreen() {
       .split(/\s+/)
       .filter(Boolean)
       .slice(0, 2)
-      .map((x) => x[0]?.toUpperCase())
+      .map((x: string) => x[0]?.toUpperCase()) // ✅ FIX TS7006
       .join("")
       .slice(0, 2);
   }, [displayName]);

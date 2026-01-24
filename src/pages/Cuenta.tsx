@@ -1,5 +1,5 @@
 // tptech-frontend/src/pages/Cuenta.tsx
-import { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { apiFetch } from "../lib/api";
 import { useMe } from "../hooks/useMe";
 import { useNavigate } from "react-router-dom";
@@ -101,7 +101,7 @@ export default function Cuenta() {
 
       setMsg("Datos guardados correctamente ✅");
       await refresh();
-      await auth.refreshMe({ silent: true });
+      await auth.refreshMe({ silent: true }); // ✅ siempre con argumento
     } catch (e: any) {
       setMsg(e?.message || "Error al guardar los datos.");
     } finally {
@@ -131,7 +131,7 @@ export default function Cuenta() {
       setPinNew("");
       setPinMsg("PIN actualizado correctamente ✅");
       await refresh();
-      await auth.refreshMe({ silent: true });
+      await auth.refreshMe({ silent: true }); // ✅ siempre con argumento
     } catch (e: any) {
       setPinMsg(e?.message || "No se pudo actualizar el PIN.");
     } finally {
@@ -147,7 +147,7 @@ export default function Cuenta() {
       setPinNew("");
       setPinMsg("PIN eliminado correctamente ✅");
       await refresh();
-      await auth.refreshMe({ silent: true });
+      await auth.refreshMe({ silent: true }); // ✅ siempre con argumento
     } catch (e: any) {
       setPinMsg(e?.message || "No se pudo eliminar el PIN.");
     } finally {
@@ -206,11 +206,7 @@ export default function Cuenta() {
         </div>
 
         <div className="mt-6 flex justify-end">
-          <button
-            className="tp-btn-primary"
-            disabled={!canSave || saving}
-            onClick={onSave}
-          >
+          <button className="tp-btn-primary" disabled={!canSave || saving} onClick={onSave}>
             {saving ? "Guardando…" : "Guardar"}
           </button>
         </div>
@@ -219,9 +215,7 @@ export default function Cuenta() {
       {/* SEGURIDAD */}
       <Card title="Seguridad">
         <div className="flex justify-between items-start gap-4">
-          <p className="text-sm text-muted">
-            La contraseña se gestiona desde recuperación.
-          </p>
+          <p className="text-sm text-muted">La contraseña se gestiona desde recuperación.</p>
 
           <button className="tp-btn-secondary" onClick={onChangePassword}>
             Cambiar contraseña
@@ -267,20 +261,14 @@ export default function Cuenta() {
                 disabled={pinBusy || pinNew.length !== 4}
                 onClick={onSetPin}
               >
-                {pinBusy
-                  ? "Guardando…"
-                  : pinState.hasQuickPin
-                  ? "Cambiar PIN"
-                  : "Guardar PIN"}
+                {pinBusy ? "Guardando…" : pinState.hasQuickPin ? "Cambiar PIN" : "Guardar PIN"}
               </button>
             </div>
 
             {pinState.hasQuickPin && (
               <div>
                 <Field label="Eliminar PIN">
-                  <div className="text-xs text-muted">
-                    Elimina la clave rápida de tu cuenta.
-                  </div>
+                  <div className="text-xs text-muted">Elimina la clave rápida de tu cuenta.</div>
                 </Field>
 
                 <button
