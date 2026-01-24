@@ -85,6 +85,16 @@ export default function Cuenta() {
     setForm((prev) => ({ ...prev, [key]: value }));
   }
 
+  // ✅ helper para evitar errores TS2554 por firmas distintas
+  async function safeRefreshAll() {
+    // useMe.refresh puede ser (opts?) o () según tu tipado actual
+    await (refresh as any)({ silent: true });
+
+    // auth.refreshMe en tu proyecto parece estar tipado como () => Promise<void>
+    // o como (opts) => Promise<void>, entonces lo llamamos por any
+    await (auth as any).refreshMe?.({ silent: true });
+  }
+
   /* -------------------------
      ACCOUNT
   ------------------------- */
@@ -100,8 +110,7 @@ export default function Cuenta() {
       await apiFetch("/auth/me", { method: "PUT", body: payload });
 
       setMsg("Datos guardados correctamente ✅");
-      await refresh({ silent: true } as any); // ✅ FIX: refresh espera 1 argumento
-      await auth.refreshMe({ silent: true }); // ✅ siempre con argumento
+      await safeRefreshAll();
     } catch (e: any) {
       setMsg(e?.message || "Error al guardar los datos.");
     } finally {
@@ -127,11 +136,10 @@ export default function Cuenta() {
 
     setPinBusy(true);
     try {
-      await auth.pinSet(clean);
+      await (auth as any).pinSet(clean);
       setPinNew("");
       setPinMsg("PIN actualizado correctamente ✅");
-      await refresh({ silent: true } as any); // ✅ FIX
-      await auth.refreshMe({ silent: true }); // ✅ siempre con argumento
+      await safeRefreshAll();
     } catch (e: any) {
       setPinMsg(e?.message || "No se pudo actualizar el PIN.");
     } finally {
@@ -143,11 +151,10 @@ export default function Cuenta() {
     setPinMsg(null);
     setPinBusy(true);
     try {
-      await auth.pinRemove();
+      await (auth as any).pinRemove();
       setPinNew("");
       setPinMsg("PIN eliminado correctamente ✅");
-      await refresh({ silent: true } as any); // ✅ FIX
-      await auth.refreshMe({ silent: true }); // ✅ siempre con argumento
+      await safeRefreshAll();
     } catch (e: any) {
       setPinMsg(e?.message || "No se pudo eliminar el PIN.");
     } finally {
@@ -271,7 +278,11 @@ export default function Cuenta() {
                   <div className="text-xs text-muted">Elimina la clave rápida de tu cuenta.</div>
                 </Field>
 
-                <button className="tp-btn-secondary mt-6 w-full" disabled={pinBusy} onClick={onRemovePin}>
+                <button
+                  className="tp-btn-secondary mt-6 w-full"
+                  disabled={pinBusy}
+                  onClick={onRemovePin}
+                >
                   {pinBusy ? "Procesando…" : "Eliminar PIN"}
                 </button>
               </div>
