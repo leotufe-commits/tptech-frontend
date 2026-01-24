@@ -101,7 +101,7 @@ export default function Cuenta() {
 
       setMsg("Datos guardados correctamente ✅");
       await refresh({ silent: true } as any); // ✅ FIX: refresh espera 1 argumento
-      await auth.refreshMe({ silent: true });
+      await auth.refreshMe({ silent: true }); // ✅ siempre con argumento
     } catch (e: any) {
       setMsg(e?.message || "Error al guardar los datos.");
     } finally {
@@ -131,7 +131,7 @@ export default function Cuenta() {
       setPinNew("");
       setPinMsg("PIN actualizado correctamente ✅");
       await refresh({ silent: true } as any); // ✅ FIX
-      await auth.refreshMe({ silent: true });
+      await auth.refreshMe({ silent: true }); // ✅ siempre con argumento
     } catch (e: any) {
       setPinMsg(e?.message || "No se pudo actualizar el PIN.");
     } finally {
@@ -147,7 +147,7 @@ export default function Cuenta() {
       setPinNew("");
       setPinMsg("PIN eliminado correctamente ✅");
       await refresh({ silent: true } as any); // ✅ FIX
-      await auth.refreshMe({ silent: true });
+      await auth.refreshMe({ silent: true }); // ✅ siempre con argumento
     } catch (e: any) {
       setPinMsg(e?.message || "No se pudo eliminar el PIN.");
     } finally {
