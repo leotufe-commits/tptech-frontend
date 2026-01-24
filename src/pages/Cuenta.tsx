@@ -100,8 +100,8 @@ export default function Cuenta() {
       await apiFetch("/auth/me", { method: "PUT", body: payload });
 
       setMsg("Datos guardados correctamente ✅");
-      await refresh();
-      await auth.refreshMe({ silent: true }); // ✅ siempre con argumento
+      await refresh({ silent: true } as any); // ✅ FIX: refresh espera 1 argumento
+      await auth.refreshMe({ silent: true });
     } catch (e: any) {
       setMsg(e?.message || "Error al guardar los datos.");
     } finally {
@@ -130,8 +130,8 @@ export default function Cuenta() {
       await auth.pinSet(clean);
       setPinNew("");
       setPinMsg("PIN actualizado correctamente ✅");
-      await refresh();
-      await auth.refreshMe({ silent: true }); // ✅ siempre con argumento
+      await refresh({ silent: true } as any); // ✅ FIX
+      await auth.refreshMe({ silent: true });
     } catch (e: any) {
       setPinMsg(e?.message || "No se pudo actualizar el PIN.");
     } finally {
@@ -146,8 +146,8 @@ export default function Cuenta() {
       await auth.pinRemove();
       setPinNew("");
       setPinMsg("PIN eliminado correctamente ✅");
-      await refresh();
-      await auth.refreshMe({ silent: true }); // ✅ siempre con argumento
+      await refresh({ silent: true } as any); // ✅ FIX
+      await auth.refreshMe({ silent: true });
     } catch (e: any) {
       setPinMsg(e?.message || "No se pudo eliminar el PIN.");
     } finally {
@@ -271,11 +271,7 @@ export default function Cuenta() {
                   <div className="text-xs text-muted">Elimina la clave rápida de tu cuenta.</div>
                 </Field>
 
-                <button
-                  className="tp-btn-secondary mt-6 w-full"
-                  disabled={pinBusy}
-                  onClick={onRemovePin}
-                >
+                <button className="tp-btn-secondary mt-6 w-full" disabled={pinBusy} onClick={onRemovePin}>
                   {pinBusy ? "Procesando…" : "Eliminar PIN"}
                 </button>
               </div>

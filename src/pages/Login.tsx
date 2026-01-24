@@ -409,7 +409,7 @@ export default function Login() {
                 onChange={(e) => setManualTenantId(e.target.value)}
                 className="tp-input"
                 autoComplete="off"
-                placeholder="Ej: cmk700nve0000caekyg8uw2d6"
+                placeholder="Código de joyería"
                 disabled={!emailOk || loadingTenants || loading}
               />
               <p className="mt-2 text-xs text-muted">
