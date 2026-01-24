@@ -102,7 +102,8 @@ export default function UsersPage() {
   const [permsLoading, setPermsLoading] = useState(false);
 
   // avatar (modal)
-  const avatarInputModalRef = useRef<HTMLInputElement | null>(null);
+  // ✅ FIX TS2322: el modal tipa RefObject<HTMLInputElement> (sin null)
+  const avatarInputModalRef = useRef<HTMLInputElement>(null!);
   const [avatarPreview, setAvatarPreview] = useState<string>("");
   const [avatarImgLoading, setAvatarImgLoading] = useState(false);
   const [avatarFileDraft, setAvatarFileDraft] = useState<File | null>(null);
@@ -282,7 +283,8 @@ export default function UsersPage() {
   const [specialSaving, setSpecialSaving] = useState(false);
 
   // attachments
-  const attInputRef = useRef<HTMLInputElement | null>(null);
+  // ✅ FIX TS2322: el modal tipa RefObject<HTMLInputElement> (sin null)
+  const attInputRef = useRef<HTMLInputElement>(null!);
   const [uploadingAttachments, setUploadingAttachments] = useState(false);
   const [deletingAttId, setDeletingAttId] = useState<string | null>(null);
   const [attachmentsDraft, setAttachmentsDraft] = useState<File[]>([]);
@@ -1022,7 +1024,9 @@ export default function UsersPage() {
       </div>
 
       {err && (
-        <div className="rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm">{err}</div>
+        <div className="rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm">
+          {err}
+        </div>
       )}
 
       <UsersTable
