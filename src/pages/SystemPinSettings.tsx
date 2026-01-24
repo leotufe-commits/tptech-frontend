@@ -55,9 +55,11 @@ export default function SystemPinSettings() {
   const [leaveBusy, setLeaveBusy] = useState(false);
 
   const savedTimerRef = useRef<number | null>(null);
+
+  // snapshot “server”
   const serverSnapRef = useRef<Snapshot>({
     enabled: Boolean(auth.pinLockEnabled),
-    timeoutMin: Number(auth.pinLockTimeoutMinutes || 5),
+    timeoutMin: clamp(Math.floor(Number(auth.pinLockTimeoutMinutes || 5)), 1, 60 * 12),
     quickSwitchEnabled: Boolean(auth.quickSwitchEnabled),
     requireOnSwitch: Boolean(auth.pinLockRequireOnUserSwitch),
   });
@@ -142,12 +144,22 @@ export default function SystemPinSettings() {
 
     setBusy(true);
     try {
-      await auth.setPinLockSettingsForJewelry({
+      const payload = {
         enabled: Boolean(enabled),
         timeoutMinutes: safeMin,
         requireOnUserSwitch: Boolean(requireOnSwitch),
         quickSwitchEnabled: Boolean(quickSwitchEnabled),
-      });
+      };
+
+      await auth.setPinLockSettingsForJewelry(payload);
+
+      // ✅ Dejamos el “server snapshot” alineado de inmediato
+      serverSnapRef.current = {
+        enabled: payload.enabled,
+        timeoutMin: payload.timeoutMinutes,
+        quickSwitchEnabled: payload.quickSwitchEnabled,
+        requireOnSwitch: payload.requireOnUserSwitch,
+      };
 
       setSaved("Guardado.");
       savedTimerRef.current = window.setTimeout(() => setSaved(null), 2500);
@@ -174,7 +186,6 @@ export default function SystemPinSettings() {
   function onGoUsers() {
     if (busy) return;
 
-    // ✅ si hay cambios sin guardar, confirmamos
     if (dirty) {
       setShowLeaveConfirm(true);
       return;
@@ -299,37 +310,10 @@ export default function SystemPinSettings() {
       </div>
 
       <div className="tp-card p-4 space-y-4">
-        {/* Header + Selector */}
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div className="min-w-0">
-            <div className="font-semibold text-text">Bloqueo por PIN</div>
-            <div className="text-sm text-muted">
-              Si está activado, la sesión se bloquea tras inactividad y se pide PIN.
-            </div>
-          </div>
-
-          <TPSegmentedPills
-            value={enabled}
-            onChange={(v) => {
-              if (!canEdit || busy) return;
-
-              setErr(null);
-              setSaved(null);
-              clearSavedTimer();
-
-              // ✅ UX: si apagan PIN global, también apagamos dependencias
-              if (!v) {
-                setEnabled(false);
-                setQuickSwitchEnabled(false);
-                setRequireOnSwitch(false);
-                return;
-              }
-
-              setEnabled(true);
-            }}
-            disabled={!canEdit || busy}
-            labels={{ off: "PIN deshabilitado", on: "PIN habilitado" }}
-          />
+        {/* Header */}
+        <div className="min-w-0">
+          <div className="font-semibold text-text">Seguridad (PIN / Quick Switch)</div>
+          <div className="text-sm text-muted">Configuración por joyería.</div>
         </div>
 
         {!canEdit && (
@@ -338,15 +322,47 @@ export default function SystemPinSettings() {
           </div>
         )}
 
-        {/* Settings */}
+        {/* ✅ Layout igual a Perfil Joyeria */}
         <div className="grid gap-4 md:grid-cols-2">
-          {/* Quick switch */}
+          {/* Bloqueo por PIN (principal) */}
+          <div className="tp-card p-4">
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <div className="text-sm font-semibold text-text">Bloqueo por PIN</div>
+                <div className="text-xs text-muted mt-1">Bloquea por inactividad</div>
+              </div>
+
+              <TPSegmentedPills
+                value={enabled}
+                onChange={(v) => {
+                  if (!canEdit || busy) return;
+
+                  setErr(null);
+                  setSaved(null);
+                  clearSavedTimer();
+
+                  if (!v) {
+                    setEnabled(false);
+                    setQuickSwitchEnabled(false);
+                    setRequireOnSwitch(false);
+                    return;
+                  }
+                  setEnabled(true);
+                }}
+                disabled={!canEdit || busy}
+                labels={{ off: "Deshabilitado", on: "Habilitado" }}
+                size="sm"
+              />
+            </div>
+          </div>
+
+          {/* Cambio rápido */}
           <div className={`tp-card p-4 transition ${disabledCardClass}`}>
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
                 <div className="text-sm font-semibold text-text">Cambio rápido de usuario</div>
                 <div className="text-xs text-muted mt-1">
-                  Permite listar usuarios en LockScreen para cambiar rápidamente.
+                  Permite cambiar de usuario desde la pantalla bloqueada.
                 </div>
               </div>
 
@@ -359,9 +375,7 @@ export default function SystemPinSettings() {
                   setSaved(null);
                   clearSavedTimer();
 
-                  setQuickSwitchEnabled(v);
-
-                  // ✅ UX: si deshabilitan quick switch, la opción dependiente deja de aplicar
+                  setQuickSwitchEnabled(Boolean(v));
                   if (!v) setRequireOnSwitch(false);
                 }}
                 disabled={!canEdit || busy || !enabled}
@@ -371,12 +385,12 @@ export default function SystemPinSettings() {
             </div>
           </div>
 
-          {/* Require PIN on switch */}
+          {/* Requerir PIN al cambiar usuario */}
           <div className={`tp-card p-4 transition ${disabledCardClass}`}>
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
                 <div className="text-sm font-semibold text-text">Requerir PIN al cambiar usuario</div>
-                <div className="text-xs text-muted mt-1">Exige PIN al cambiar de usuario desde LockScreen.</div>
+                <div className="text-xs text-muted mt-1">Exige PIN cuando se usa el cambio rápido.</div>
               </div>
 
               <TPSegmentedPills
@@ -386,7 +400,7 @@ export default function SystemPinSettings() {
                   setErr(null);
                   setSaved(null);
                   clearSavedTimer();
-                  setRequireOnSwitch(v);
+                  setRequireOnSwitch(Boolean(v));
                 }}
                 disabled={!canEdit || busy || requireSwitchDisabled}
                 labels={requireSwitchLabels}
@@ -396,23 +410,23 @@ export default function SystemPinSettings() {
 
             {enabled && !quickSwitchEnabled && (
               <div className="mt-2 text-[11px] text-muted">
-                <b>No aplica:</b> activá “Cambio rápido de usuario” para poder exigir PIN al cambiar usuario.
-              </div>
-            )}
-
-            {!enabled && (
-              <div className="mt-2 text-[11px] text-muted">
-                <b>No aplica:</b> primero habilitá el “Bloqueo por PIN”.
+                Esta opción aplica solo si “Cambio rápido de usuario” está habilitado.
               </div>
             )}
           </div>
 
-          {/* Timeout */}
-          <div className={`tp-card p-4 transition ${disabledCardClass} md:col-span-2`}>
-            <div className="text-sm font-semibold text-text mb-2">Tiempo de inactividad (minutos)</div>
+          {/* Tiempo de inactividad (al lado del Requerir PIN) */}
+          <div className={`tp-card p-4 transition ${disabledCardClass}`}>
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <div className="text-sm font-semibold text-text">Tiempo de inactividad</div>
+                <div className="text-xs text-muted">Minutos para bloquear</div>
+              </div>
+              <div className="text-sm font-semibold text-text">{timeoutMin} min</div>
+            </div>
 
             <input
-              className={cn("tp-input", (!canEdit || busy || !enabled) && "opacity-60")}
+              className={cn("tp-input w-full mt-2", (!canEdit || busy || !enabled) && "opacity-60")}
               type="number"
               min={1}
               max={720}
@@ -426,7 +440,8 @@ export default function SystemPinSettings() {
                 setTimeoutMin(next);
               }}
             />
-            <div className="text-xs text-muted mt-2">Recomendado: 1 a 720 minutos.</div>
+
+            <div className="text-[11px] text-muted mt-2">Recomendado: 1 a 720 minutos.</div>
           </div>
         </div>
 

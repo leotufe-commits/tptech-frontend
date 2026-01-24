@@ -3,7 +3,6 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { apiFetch } from "../lib/api";
 import { useMe } from "../hooks/useMe";
-import UserPinSettings from "../components/UserPinSettings";
 import { RequirePermission } from "../components/RequirePermission";
 import { useNavigate } from "react-router-dom";
 import { X } from "lucide-react";
@@ -695,13 +694,7 @@ export default function PerfilJoyeria() {
     <div className="mx-auto max-w-6xl p-4 sm:p-6">
       <h2 className="text-xl font-semibold text-text">Datos de la empresa</h2>
 
-      {/* 🔐 Seguridad (PIN / Quick Switch) */}
-      <div className="mt-4">
-        <RequirePermission any={["COMPANY_SETTINGS:VIEW", "COMPANY_SETTINGS:EDIT", "COMPANY_SETTINGS:ADMIN"]}>
-          <UserPinSettings />
-        </RequirePermission>
-      </div>
-
+    
       <div
         className="mt-6 rounded-2xl p-4 sm:p-6"
         style={{

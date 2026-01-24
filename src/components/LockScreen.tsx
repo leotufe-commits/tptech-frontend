@@ -55,11 +55,6 @@ function safeSet(key: string, value: string) {
  * - Si te llegan roles system (OWNER/ADMIN/STAFF) los convierte a etiquetas amigables.
  * - Si te llegan "SALES_MANAGER" los "humaniza".
  * - Si ya te llega un label lindo, lo deja.
- *
- * IMPORTANTE:
- * Vos pediste "con el nombre del rol que figura en configuración".
- * En la UI de Configuración normalmente el Role.name es el label final.
- * Acá NO lo pisamos salvo que sea un "CODE" tipo OWNER/ADMIN/STAFF o SNAKE_CASE.
  */
 function prettyRoleName(raw: string): string {
   const s = String(raw || "").trim();
@@ -141,28 +136,35 @@ function getUserRoleLabel(u: any): string {
  * En algunos backends, /auth/me/pin/quick-users NO manda roles.
  * Entonces, para evitar "Sin rol" en los botones, unimos (merge) con info del usuario actual:
  * - Si el quick user coincide con el user logueado => inyectamos roles del AuthContext.
- * - Si el quick user no trae roles/roleNames/roleLabel => intentamos usar roleName/roleLabel si vienen,
- *   y si no, queda "Sin rol" (para otros usuarios) hasta que el backend lo envíe.
  *
- * ⚠️ Nota: para ver roles correctos de TODOS los usuarios, el backend debe devolver roleNames/roles en quick-users.
+ * ✅ Además: pinEnabled
+ * - Si el backend manda pinEnabled => lo usamos.
+ * - Si manda quickPinEnabled => lo usamos.
+ * - Si no manda flag => asumimos habilitado SOLO si tiene PIN (hasQuickPin/hasPin).
  */
-function normalizeQuickUser(u: any, opts?: { currentUserId?: string; currentUserRoles?: any[] }): QuickUser {
+function normalizeQuickUser(
+  u: any,
+  opts?: { currentUserId?: string; currentUserRoles?: any[] }
+): QuickUser {
   const currentUserId = opts?.currentUserId ? String(opts.currentUserId) : "";
   const sameAsCurrent = currentUserId && String(u?.id ?? "") === currentUserId;
 
-  // base
   const baseRoles = u?.roles;
   const baseRoleNames = Array.isArray(u?.roleNames) ? u.roleNames : undefined;
 
   // ✅ si es el usuario actual y el backend no trajo roles, injectamos roles reales del contexto
   const injectedRoles =
-    sameAsCurrent && (!Array.isArray(baseRoles) || baseRoles.length === 0) && Array.isArray(opts?.currentUserRoles)
+    sameAsCurrent &&
+    (!Array.isArray(baseRoles) || baseRoles.length === 0) &&
+    Array.isArray(opts?.currentUserRoles)
       ? opts!.currentUserRoles
       : baseRoles;
 
   const roleNames =
     Array.isArray(baseRoleNames) && baseRoleNames.length
       ? baseRoleNames
+          .filter((x: any) => typeof x === "string" && x.trim())
+          .map((x: string) => x.trim())
       : Array.isArray(injectedRoles)
       ? injectedRoles
           .map((r: any) => (typeof r === "string" ? r : r?.name))
@@ -177,15 +179,22 @@ function normalizeQuickUser(u: any, opts?: { currentUserId?: string; currentUser
     (typeof u?.role === "string" ? u.role : "") ||
     "";
 
+  const has = Boolean(u?.hasQuickPin ?? u?.hasPin);
+  const enabled =
+    typeof u?.pinEnabled === "boolean"
+      ? u.pinEnabled
+      : typeof u?.quickPinEnabled === "boolean"
+      ? u.quickPinEnabled
+      : has; // ✅ si tiene PIN y no vino flag, asumimos habilitado
+
   return {
     id: String(u?.id ?? ""),
     email: String(u?.email ?? ""),
     name: u?.name ?? null,
     avatarUrl: u?.avatarUrl ?? null,
 
-    hasQuickPin: Boolean(u?.hasQuickPin ?? u?.hasPin),
-    pinEnabled: Boolean(u?.pinEnabled ?? u?.quickPinEnabled ?? true),
-
+    hasQuickPin: has,
+    pinEnabled: enabled,
     hasPin: Boolean(u?.hasPin),
 
     roles: injectedRoles,
@@ -242,6 +251,7 @@ export default function LockScreen() {
 
   // en modo switch sin pin, NO pedimos pin nunca
   const mustEnterPin = !switchingWithoutPin;
+
   // ✅ Último usuario usado en ESTE dispositivo (por joyería/tenant)
   const lastDeviceUserKey = useMemo(() => {
     const jId = (jewelry as any)?.id ? String((jewelry as any).id) : "no-jewelry";
@@ -270,7 +280,7 @@ export default function LockScreen() {
       .split(/\s+/)
       .filter(Boolean)
       .slice(0, 2)
-      .map((x: string) => x[0]?.toUpperCase()) // ✅ FIX TS7006
+      .map((x: string) => x[0]?.toUpperCase())
       .join("")
       .slice(0, 2);
   }, [displayName]);
@@ -278,7 +288,9 @@ export default function LockScreen() {
   // ✅ rol del usuario actual (usar roles del auth, no del user)
   const currentUserRoleLabel = useMemo(() => {
     const roleArr = Array.isArray(roles) ? roles : [];
-    const roleNames = roleArr.map((r: any) => (typeof r?.name === "string" ? r.name.trim() : "")).filter(Boolean);
+    const roleNames = roleArr
+      .map((r: any) => (typeof r?.name === "string" ? r.name.trim() : ""))
+      .filter(Boolean);
 
     const uExtended: any = {
       ...(user as any),
@@ -318,12 +330,12 @@ export default function LockScreen() {
   }, [busy, targetUserId]);
 
   function isUserSelectable(u: QuickUser) {
-    // modo sin PIN: todos los usuarios activos pueden seleccionarse
+    // modo sin PIN: todos los usuarios pueden seleccionarse
     if (!pinLockRequireOnUserSwitch) return true;
 
     // modo con PIN: sólo usuarios con PIN habilitado + con hash
     const has = Boolean(u.hasQuickPin ?? u.hasPin);
-    const enabled = Boolean(u.pinEnabled ?? true);
+    const enabled = Boolean(u.pinEnabled ?? has);
     return has && enabled;
   }
 
@@ -343,6 +355,7 @@ export default function LockScreen() {
     try {
       await pinSwitchUser({ targetUserId: targetId, pin4: "" } as any);
       rememberLastDeviceUser(targetId);
+      setLocked(false); // ✅ forzamos salida del lock
       setPin("");
       setTargetUserId(null);
       setShowPin(false);
@@ -385,6 +398,8 @@ export default function LockScreen() {
         await pinUnlock({ pin4: pin } as any);
         if ((user as any)?.id) rememberLastDeviceUser((user as any).id);
       }
+
+      setLocked(false); // ✅ forzamos salida del lock
 
       setPin("");
       setTargetUserId(null);
@@ -777,11 +792,12 @@ export default function LockScreen() {
                             focusPin();
                           }}
                           title={
-                            selectable ? "Seleccionar usuario" : "Este usuario no tiene PIN configurado (o está deshabilitado)"
+                            selectable
+                              ? "Seleccionar usuario"
+                              : "Este usuario no tiene PIN configurado (o está deshabilitado)"
                           }
                         >
                           <div className="text-xs font-semibold truncate">{u.name || u.email}</div>
-                          {/* ✅ ROL DEBAJO DEL MAIL (como pediste) */}
                           <div className="text-[11px] text-muted truncate">{u.email}</div>
                           <div className="mt-0.5 text-[11px] text-muted truncate">{roleLabel}</div>
                         </button>

@@ -893,7 +893,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (!user || !effectiveLock.enabled) return;
 
-    const onVisibility = () => bumpActivity();
+    const onVisibility = () => {
+  if (document.visibilityState === "visible") bumpActivity();
+};
 
     window.addEventListener("mousemove", bumpActivity, { passive: true });
     window.addEventListener("keydown", bumpActivity);
