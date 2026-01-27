@@ -1,6 +1,8 @@
-import React, { type FormEvent } from "react";
+// tptech-frontend/src/components/users/UserEditModal.tsx
+import React, { type FormEvent, useState } from "react";
 import { Loader2, Paperclip, KeyRound, ShieldOff } from "lucide-react";
 
+import EyeIcon from "../EyeIcon";
 import { TPSegmentedPills } from "../ui/TPBadges";
 import {
   cn,
@@ -135,6 +137,69 @@ type Props = {
   removeSpecial: (permissionId: string) => Promise<void>;
 };
 
+function InputWithEye({
+  value,
+  onChange,
+  placeholder,
+  disabled,
+  inputMode,
+  maxLength,
+  onlyDigits,
+  show,
+  setShow,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  placeholder: string;
+  disabled?: boolean;
+  inputMode?: React.HTMLAttributes<HTMLInputElement>["inputMode"];
+  maxLength?: number;
+  onlyDigits?: boolean;
+  show: boolean;
+  setShow: (v: boolean) => void;
+}) {
+  return (
+    <div className="relative">
+      <input
+        className="tp-input pr-10"
+        type={show ? "text" : "password"}
+        value={value}
+        onChange={(e) => {
+          let next = e.target.value;
+          if (onlyDigits) next = next.replace(/\D/g, "");
+          if (typeof maxLength === "number") next = next.slice(0, maxLength);
+          onChange(next);
+        }}
+        placeholder={placeholder}
+        disabled={disabled}
+        inputMode={inputMode}
+        maxLength={maxLength}
+        autoComplete="off"
+      />
+
+      {/* ✅ ojo TPT (sin borde) */}
+      <button
+        type="button"
+        onClick={() => setShow(!show)}
+        tabIndex={-1}
+        className="absolute right-3 top-1/2 -translate-y-1/2 p-0 m-0 bg-transparent border-0 outline-none text-muted hover:text-text"
+        aria-label={show ? "Ocultar" : "Mostrar"}
+        style={{ border: "none" }}
+      >
+        <EyeIcon open={show} />
+      </button>
+    </div>
+  );
+}
+
+function shouldHidePinMsg(msg: string | null | undefined) {
+  const m = String(msg || "").trim().toLowerCase();
+  if (!m) return true;
+  // ✅ no mostrar “sesión expirada” en este bloque (viene de un 401 del endpoint enabled)
+  if (m.includes("sesión expirada") || m.includes("sesion expirada")) return true;
+  return false;
+}
+
 export default function UserEditModal(props: Props) {
   const {
     open,
@@ -240,6 +305,19 @@ export default function UserEditModal(props: Props) {
     removeSpecial,
   } = props;
 
+  const [showPassword, setShowPassword] = useState(false);
+  const [showPin1, setShowPin1] = useState(false);
+  const [showPin2, setShowPin2] = useState(false);
+
+  const canShowPinToggle = Boolean(detail?.hasQuickPin);
+  const pinPillsDisabled = pinBusy || !canShowPinToggle;
+
+  // ✅ avatar: siempre normalizar /uploads/... a URL absoluta
+  const detailAvatar = detail?.avatarUrl ? absUrl(String(detail.avatarUrl)) : "";
+  const avatarSrc = avatarPreview || detailAvatar;
+
+  const showPinMessage = !shouldHidePinMsg(pinMsg);
+
   return (
     <Modal open={open} wide={wide} title={title} onClose={onClose}>
       {modalLoading ? (
@@ -281,14 +359,17 @@ export default function UserEditModal(props: Props) {
                       </div>
                     )}
 
-                    {avatarPreview || detail?.avatarUrl ? (
+                    {avatarSrc ? (
                       <img
-                        src={avatarPreview || detail?.avatarUrl!}
+                        src={avatarSrc}
                         alt="Avatar"
                         className="h-full w-full object-cover"
                         onLoadStart={() => setAvatarImgLoading(true)}
                         onLoad={() => setAvatarImgLoading(false)}
-                        onError={() => setAvatarImgLoading(false)}
+                        onError={() => {
+                          // ✅ no “romper” la UI si el backend devuelve 401/403 en /uploads
+                          setAvatarImgLoading(false);
+                        }}
                       />
                     ) : (
                       <div className="grid h-full w-full place-items-center text-sm font-bold text-primary">
@@ -318,7 +399,7 @@ export default function UserEditModal(props: Props) {
 
                         if (avatarPreview) {
                           setAvatarPreview((prev) => {
-                            if (prev?.startsWith("blob:")) URL.revokeObjectURL(prev);
+                            if (String(prev || "").startsWith("blob:")) URL.revokeObjectURL(String(prev));
                             return "";
                           });
                           setAvatarFileDraft(null);
@@ -373,7 +454,7 @@ export default function UserEditModal(props: Props) {
                   type="button"
                   onClick={() => {
                     setAvatarPreview((prev) => {
-                      if (prev?.startsWith("blob:")) URL.revokeObjectURL(prev);
+                      if (String(prev || "").startsWith("blob:")) URL.revokeObjectURL(String(prev));
                       return "";
                     });
                     setAvatarFileDraft(null);
@@ -408,18 +489,23 @@ export default function UserEditModal(props: Props) {
                   </div>
 
                   <div className="md:col-span-1">
-                    <label className="mb-1 block text-xs text-muted">Contraseña (opcional)</label>
-                    <input
-                      className="tp-input"
-                      type="password"
+                    <label className="mb-1 block text-xs text-muted">
+                      {modalMode === "CREATE" ? "Contraseña (opcional)" : "Nueva contraseña (opcional)"}
+                    </label>
+
+                    <InputWithEye
                       value={fPassword}
-                      onChange={(e) => setFPassword(e.target.value)}
+                      onChange={setFPassword}
                       placeholder={
                         modalMode === "CREATE"
                           ? "Si la dejás vacía, queda Inactivo"
                           : "Dejar vacía para no cambiar"
                       }
+                      disabled={false}
+                      show={showPassword}
+                      setShow={setShowPassword}
                     />
+
                     {modalMode === "CREATE" ? (
                       <p className="mt-1 text-[11px] text-muted">
                         Si la contraseña está vacía, el usuario queda <b>Inactivo</b> (PENDING en backend).
@@ -724,66 +810,70 @@ export default function UserEditModal(props: Props) {
               {modalMode === "EDIT" ? (
                 <Section
                   title={
-                    <div className="flex items-center justify-between gap-3">
-                      <div className="min-w-0">
-                        <div className="font-semibold">Clave rápida (PIN)</div>
-                        <div className="text-xs text-muted">
-                          PIN de 4 dígitos para LockScreen / cambio rápido. (Admin)
-                        </div>
+                    <div className="min-w-0">
+                      <div className="font-semibold">Clave rápida (PIN)</div>
+                      <div className="text-xs text-muted">
+                        PIN de 4 dígitos para LockScreen / cambio rápido. (Admin)
                       </div>
-
-                      <TPSegmentedPills
-                        value={Boolean(detail?.pinEnabled)}
-                        disabled={pinBusy || !detail?.hasQuickPin}
-                        onChange={(v) => {
-                          if (pinBusy) return;
-                          if (!detail?.hasQuickPin) return;
-                          void adminTogglePinEnabled(v);
-                        }}
-                        labels={{ on: "PIN habilitado", off: "PIN deshabilitado" }}
-                      />
+                    </div>
+                  }
+                  right={
+                    <div className="ml-auto">
+                      {/* ✅ pills SOLO si el usuario ya tiene PIN */}
+                      {canShowPinToggle ? (
+                        <TPSegmentedPills
+                          value={Boolean(detail?.pinEnabled)}
+                          disabled={pinPillsDisabled}
+                          onChange={(v) => {
+                            if (pinBusy) return;
+                            if (!detail?.hasQuickPin) return;
+                            void adminTogglePinEnabled(v);
+                          }}
+                          labels={{ on: "PIN habilitado", off: "PIN deshabilitado" }}
+                        />
+                      ) : (
+                        <span className="text-xs text-muted">Sin PIN</span>
+                      )}
                     </div>
                   }
                   desc={null as any}
                 >
                   <div className="space-y-3">
-                    {pinMsg && (
-                      <div className="rounded-xl border border-border bg-bg px-3 py-2 text-sm">
-                        {pinMsg}
-                      </div>
+                    {/* ✅ NO mostrar “Sesión expirada” acá */}
+                    {showPinMessage && (
+                      <div className="rounded-xl border border-border bg-bg px-3 py-2 text-sm">{pinMsg}</div>
                     )}
 
                     <div className="flex items-center justify-between gap-3 tp-card p-3">
                       <div className="text-sm">
                         <span className="text-muted">PIN: </span>
-                        <span className="font-semibold">
-                          {detail?.hasQuickPin ? "••••" : "Sin PIN"}
-                        </span>
+                        <span className="font-semibold">{detail?.hasQuickPin ? "••••" : "Sin PIN"}</span>
                       </div>
                     </div>
 
+                    {/* ✅ 2 inputs PIN con EyeIcon */}
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                      <input
-                        className="tp-input"
-                        type="password"
-                        inputMode="numeric"
-                        pattern="\d*"
-                        maxLength={4}
+                      <InputWithEye
                         value={pinNew}
-                        onChange={(e) => setPinNew(e.target.value.replace(/\D/g, ""))}
+                        onChange={(v) => setPinNew(v)}
                         placeholder="Nuevo PIN (4 dígitos)"
                         disabled={pinBusy}
-                      />
-                      <input
-                        className="tp-input"
-                        type="password"
                         inputMode="numeric"
-                        pattern="\d*"
                         maxLength={4}
+                        onlyDigits
+                        show={showPin1}
+                        setShow={setShowPin1}
+                      />
+                      <InputWithEye
                         value={pinNew2}
-                        onChange={(e) => setPinNew2(e.target.value.replace(/\D/g, ""))}
+                        onChange={(v) => setPinNew2(v)}
                         placeholder="Confirmar PIN"
                         disabled={pinBusy}
+                        inputMode="numeric"
+                        maxLength={4}
+                        onlyDigits
+                        show={showPin2}
+                        setShow={setShowPin2}
                       />
                     </div>
 
@@ -882,23 +972,14 @@ export default function UserEditModal(props: Props) {
               </Section>
 
               <Section
-                title={
-                  <div className="flex items-center justify-between gap-3">
-                    <span className="inline-flex items-center gap-2">Permisos especiales</span>
-
+                title={<span className="inline-flex items-center gap-2">Permisos especiales</span>}
+                right={
+                  <div className="ml-auto">
                     <TPSegmentedPills
                       value={specialEnabled}
-                      onChange={(next) => {
-                        setSpecialEnabled(next);
-                        if (!next) {
-                          // si apaga, el page se encarga de limpiar specialList
-                        }
-                      }}
+                      onChange={(next) => setSpecialEnabled(next)}
                       disabled={!canAdmin}
-                      labels={{
-                        on: "Permisos habilitados",
-                        off: "Permisos deshabilitados",
-                      }}
+                      labels={{ on: "Permisos habilitados", off: "Permisos deshabilitados" }}
                     />
                   </div>
                 }
@@ -914,9 +995,7 @@ export default function UserEditModal(props: Props) {
                         onChange={(e) => setSpecialPermPick(e.target.value)}
                         disabled={permsLoading || !specialEnabled}
                       >
-                        <option value="">
-                          {specialEnabled ? "Seleccionar…" : "Permisos especiales deshabilitados"}
-                        </option>
+                        <option value="">{specialEnabled ? "Seleccionar…" : "Permisos especiales deshabilitados"}</option>
                         {allPerms.map((p) => {
                           const alreadyAdded = specialListSorted.some((x) => x.permissionId === p.id);
                           return (
@@ -987,10 +1066,12 @@ export default function UserEditModal(props: Props) {
                         ) : (
                           specialListSorted.map((ov) => (
                             <tr key={ov.permissionId} className="border-t border-border">
-                              <td className="px-3 py-2">{permLabelByModuleAction(
-                                allPerms.find((x) => x.id === ov.permissionId)?.module,
-                                allPerms.find((x) => x.id === ov.permissionId)?.action
-                              )}</td>
+                              <td className="px-3 py-2">
+                                {permLabelByModuleAction(
+                                  allPerms.find((x) => x.id === ov.permissionId)?.module,
+                                  allPerms.find((x) => x.id === ov.permissionId)?.action
+                                )}
+                              </td>
 
                               <td className="px-3 py-2">
                                 <span

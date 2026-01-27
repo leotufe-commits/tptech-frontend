@@ -17,6 +17,9 @@ import {
 import UsersTable from "../components/users/UsersTable";
 import UserEditModal from "../components/users/UserEditModal";
 
+
+
+
 import {
   getRolesCached,
   getPermsCached,
@@ -102,7 +105,6 @@ export default function UsersPage() {
   const [permsLoading, setPermsLoading] = useState(false);
 
   // avatar (modal)
-  // ✅ FIX TS2322: el modal tipa RefObject<HTMLInputElement> (sin null)
   const avatarInputModalRef = useRef<HTMLInputElement>(null!);
   const [avatarPreview, setAvatarPreview] = useState<string>("");
   const [avatarImgLoading, setAvatarImgLoading] = useState(false);
@@ -125,35 +127,20 @@ export default function UsersPage() {
     const fromCatalog = (r as any)?.id ? roleById.get(String((r as any).id)) : null;
     const base: any = fromCatalog ?? r;
 
-    const name = String(base?.name || "").trim();
-    if (name) return name;
-
     const display = String(base?.displayName || "").trim();
     if (display) return display;
+
+    const name = String(base?.name || "").trim();
+    if (name) return name;
 
     const code = String(base?.code || "").toUpperCase().trim();
     return ROLE_LABEL[code] || code || "Rol";
   }
 
-  // selection
-  const [selectedIds, setSelectedIds] = useState<Record<string, boolean>>({});
-  const selectedCount = useMemo(
-    () => Object.values(selectedIds).filter(Boolean).length,
-    [selectedIds]
-  );
-  const selectedList = useMemo(
-    () => Object.entries(selectedIds).filter(([, v]) => v).map(([k]) => k),
-    [selectedIds]
-  );
-
   // delete confirmation
   const [deleteBusy, setDeleteBusy] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<UserListItem | null>(null);
-
-  // bulk delete confirm
-  const [bulkConfirmOpen, setBulkConfirmOpen] = useState(false);
-  const [bulkBusy, setBulkBusy] = useState(false);
 
   // avatar quick edit (table)
   const [avatarQuickBusyId, setAvatarQuickBusyId] = useState<string | null>(null);
@@ -283,7 +270,6 @@ export default function UsersPage() {
   const [specialSaving, setSpecialSaving] = useState(false);
 
   // attachments
-  // ✅ FIX TS2322: el modal tipa RefObject<HTMLInputElement> (sin null)
   const attInputRef = useRef<HTMLInputElement>(null!);
   const [uploadingAttachments, setUploadingAttachments] = useState(false);
   const [deletingAttId, setDeletingAttId] = useState<string | null>(null);
@@ -307,23 +293,26 @@ export default function UsersPage() {
     };
   }, [qUI]);
 
+  function sortUsersAlpha(list: UserListItem[]) {
+    const arr = [...(list ?? [])];
+    arr.sort((a, b) => {
+      const la = String(a?.name || a?.email || "").trim().toLowerCase();
+      const lb = String(b?.name || b?.email || "").trim().toLowerCase();
+      return la.localeCompare(lb, "es", { sensitivity: "base" });
+    });
+    return arr;
+  }
+
   async function load(next?: { q?: string; page?: number }) {
     setErr(null);
     setLoading(true);
     try {
       const resp = await fetchUsers({ q: next?.q ?? q, page: next?.page ?? page, limit } as any);
       const norm = normalizeUsersResponse(resp);
-      setUsers((norm.users ?? []) as UserListItem[]);
-      setTotal(Number(norm.total ?? 0));
 
-      setSelectedIds((prev) => {
-        const keep: Record<string, boolean> = {};
-        const ids = new Set((norm.users ?? []).map((u: UserListItem) => u.id));
-        for (const [k, v] of Object.entries(prev)) {
-          if (v && ids.has(k)) keep[k] = true;
-        }
-        return keep;
-      });
+      const rawUsers = (norm.users ?? []) as UserListItem[];
+      setUsers(sortUsersAlpha(rawUsers)); // ✅ ordenar alfabéticamente
+      setTotal(Number(norm.total ?? 0));
     } catch (e: unknown) {
       setErr(getErrorMessage(e, "Error cargando usuarios"));
     } finally {
@@ -375,7 +364,6 @@ export default function UsersPage() {
   function labelPerm(permissionId: string) {
     const p = allPerms.find((x) => x.id === permissionId);
     if (!p) return permissionId;
-    // NO importamos permLabelByModuleAction acá: lo usa el modal (UserEditModal)
     return `${p.module} • ${p.action}`;
   }
 
@@ -553,7 +541,7 @@ export default function UsersPage() {
         const createdUserId = (created as any)?.user?.id;
         if (!createdUserId) throw new Error("No se recibió el ID del usuario creado.");
 
-        // PIN inicial
+        // PIN inicial (opcional)
         try {
           const p1 = String(pinNew || "").trim();
           const p2 = String(pinNew2 || "").trim();
@@ -561,8 +549,8 @@ export default function UsersPage() {
             await setUserQuickPin(createdUserId, p1);
             await setUserPinEnabled(createdUserId, true);
           }
-        } catch (e: unknown) {
-          setErr(getErrorMessage(e, "No se pudo configurar el PIN inicial."));
+        } catch (ePin: unknown) {
+          setErr(getErrorMessage(ePin, "No se pudo configurar el PIN inicial."));
         }
 
         if (fFavWarehouseId) {
@@ -672,71 +660,6 @@ export default function UsersPage() {
       await load();
     } catch (e: unknown) {
       setErr(getErrorMessage(e, "Error actualizando estado"));
-    }
-  }
-
-  function isSelectableUserId(id: string) {
-    if (me?.id && id === me.id) return false;
-    return true;
-  }
-
-  function toggleOne(id: string) {
-    if (!isSelectableUserId(id)) return;
-    setSelectedIds((prev) => ({ ...prev, [id]: !prev[id] }));
-  }
-
-  function toggleAllOnPage() {
-    const ids = users.map((u) => u.id).filter((id) => isSelectableUserId(id));
-    const allSelected = ids.length > 0 && ids.every((id) => selectedIds[id]);
-    setSelectedIds((prev) => {
-      const next = { ...prev };
-      for (const id of ids) next[id] = !allSelected;
-      return next;
-    });
-  }
-
-  function clearSelection() {
-    setSelectedIds({});
-  }
-
-  async function bulkSetStatus(status: "ACTIVE" | "BLOCKED") {
-    if (!canEditStatus) return;
-    if (selectedList.length === 0) return;
-
-    setBulkBusy(true);
-    setErr(null);
-    try {
-      for (const id of selectedList) {
-        if (!isSelectableUserId(id)) continue;
-        await updateUserStatus(id, status);
-      }
-      clearSelection();
-      await load();
-    } catch (e: unknown) {
-      setErr(getErrorMessage(e, "Error aplicando acción masiva"));
-    } finally {
-      setBulkBusy(false);
-    }
-  }
-
-  async function bulkDelete() {
-    if (!canAdmin) return;
-    if (selectedList.length === 0) return;
-
-    setBulkBusy(true);
-    setErr(null);
-    try {
-      for (const id of selectedList) {
-        if (!isSelectableUserId(id)) continue;
-        await deleteUser(id);
-      }
-      clearSelection();
-      setBulkConfirmOpen(false);
-      await load();
-    } catch (e: unknown) {
-      setErr(getErrorMessage(e, "Error eliminando usuarios"));
-    } finally {
-      setBulkBusy(false);
     }
   }
 
@@ -952,12 +875,6 @@ export default function UsersPage() {
 
   const totalLabel = `${total} ${total === 1 ? "Usuario" : "Usuarios"}`;
 
-  const selectableIdsOnPage = users.map((u) => u.id).filter((id) => isSelectableUserId(id));
-  const allOnPageSelected =
-    selectableIdsOnPage.length > 0 && selectableIdsOnPage.every((id) => !!selectedIds[id]);
-  const someOnPageSelected =
-    selectableIdsOnPage.length > 0 && selectableIdsOnPage.some((id) => !!selectedIds[id]);
-
   return (
     <div className="p-4 md:p-6 space-y-4 min-h-0">
       <div className="space-y-2">
@@ -980,47 +897,6 @@ export default function UsersPage() {
             </button>
           )}
         </div>
-
-        {selectedCount > 0 && (
-          <div className="tp-card p-3 flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
-            <div className="text-sm">
-              Seleccionados: <b>{selectedCount}</b>
-            </div>
-
-            <div className="flex flex-wrap gap-2">
-              <button
-                className={cn("tp-btn", (!canEditStatus || bulkBusy) && "opacity-60")}
-                type="button"
-                disabled={!canEditStatus || bulkBusy}
-                onClick={() => void bulkSetStatus("ACTIVE")}
-              >
-                Activar
-              </button>
-
-              <button
-                className={cn("tp-btn", (!canEditStatus || bulkBusy) && "opacity-60")}
-                type="button"
-                disabled={!canEditStatus || bulkBusy}
-                onClick={() => void bulkSetStatus("BLOCKED")}
-              >
-                Inactivar
-              </button>
-
-              <button
-                className={cn("tp-btn", (!canAdmin || bulkBusy) && "opacity-60")}
-                type="button"
-                disabled={!canAdmin || bulkBusy}
-                onClick={() => setBulkConfirmOpen(true)}
-              >
-                Eliminar
-              </button>
-
-              <button className="tp-btn-secondary" type="button" onClick={clearSelection}>
-                Limpiar
-              </button>
-            </div>
-          </div>
-        )}
       </div>
 
       {err && (
@@ -1037,13 +913,6 @@ export default function UsersPage() {
         totalPages={totalPages}
         onPrev={() => setPage((p) => Math.max(1, p - 1))}
         onNext={() => setPage((p) => Math.min(totalPages, p + 1))}
-        selectedIds={selectedIds}
-        allOnPageSelected={allOnPageSelected}
-        someOnPageSelected={someOnPageSelected}
-        selectableIdsOnPageCount={selectableIdsOnPage.length}
-        toggleAllOnPage={toggleAllOnPage}
-        toggleOne={toggleOne}
-        isSelectableUserId={isSelectableUserId}
         canAdmin={canAdmin}
         canEditStatus={canEditStatus}
         meId={me?.id ?? null}
@@ -1190,44 +1059,6 @@ export default function UsersPage() {
               onClick={() => void confirmDelete()}
             >
               {deleteBusy ? "Eliminando…" : "Eliminar"}
-            </button>
-          </div>
-        </div>
-      </Modal>
-
-      {/* CONFIRM DELETE bulk */}
-      <Modal
-        open={bulkConfirmOpen}
-        title="Eliminar usuarios seleccionados"
-        onClose={() => {
-          if (bulkBusy) return;
-          setBulkConfirmOpen(false);
-        }}
-      >
-        <div className="space-y-4">
-          <div className="text-sm">
-            Vas a eliminar (soft delete) <b>{selectedCount}</b> usuario(s).
-            <div className="mt-2 text-xs text-muted">
-              Esto eliminará usuarios seleccionados en esta página (según tu selección actual).
-            </div>
-          </div>
-
-          <div className="flex justify-end gap-2">
-            <button
-              className="tp-btn-secondary"
-              type="button"
-              disabled={bulkBusy}
-              onClick={() => setBulkConfirmOpen(false)}
-            >
-              Cancelar
-            </button>
-            <button
-              className={cn("tp-btn", bulkBusy && "opacity-60")}
-              type="button"
-              disabled={bulkBusy}
-              onClick={() => void bulkDelete()}
-            >
-              {bulkBusy ? "Eliminando…" : "Eliminar"}
             </button>
           </div>
         </div>
