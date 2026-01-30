@@ -146,6 +146,36 @@ const router = createBrowserRouter([
           { path: "configuracion-sistema/pin", element: <SystemPinSettings /> },
           { path: "configuracion-sistema/tema", element: <SystemThemeSettings /> },
 
+          // ✅ NUEVAS SECCIONES (placeholders por ahora)
+          {
+            path: "configuracion-sistema/impuestos",
+            element: <Placeholder title="Impuestos y tributos" />,
+          },
+          {
+            path: "configuracion-sistema/pagos",
+            element: <Placeholder title="Pagos y cobros" />,
+          },
+          {
+            path: "configuracion-sistema/envios",
+            element: <Placeholder title="Envíos y logística" />,
+          },
+          {
+            path: "configuracion-sistema/listas-precios",
+            element: <Placeholder title="Listas de precios" />,
+          },
+          {
+            path: "configuracion-sistema/categorias",
+            element: <Placeholder title="Categorías de artículos" />,
+          },
+          {
+            path: "configuracion-sistema/numeracion",
+            element: <Placeholder title="Numeración de comprobantes" />,
+          },
+          {
+            path: "configuracion-sistema/etiquetas",
+            element: <Placeholder title="Impresión de etiquetas" />,
+          },
+
           /* =====================
              COMPAT: RUTAS VIEJAS
           ===================== */

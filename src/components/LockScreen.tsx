@@ -1,7 +1,8 @@
 // tptech-frontend/src/components/LockScreen.tsx
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useAuth } from "../context/AuthContext";
-import { Check, Delete, Eye, EyeOff, Lock, Loader2, LogOut } from "lucide-react";
+import { Check, Delete, Lock, Loader2, LogOut } from "lucide-react";
+import EyeIcon from "./EyeIcon";
 
 type QuickUser = {
   id: string;
@@ -15,7 +16,7 @@ type QuickUser = {
   hasPin?: boolean;
 
   // ✅ roles (pueden venir en distintas formas)
-  roles?: Array<{ id?: string; name?: string }> | string[];
+  roles?: Array<{ id?: string; name?: string; displayName?: string }> | string[];
   roleNames?: string[];
   roleLabel?: string;
   role?: string;
@@ -24,6 +25,21 @@ type QuickUser = {
 
 function cn(...classes: Array<string | false | null | undefined>) {
   return classes.filter(Boolean).join(" ");
+}
+
+/**
+ * ✅ Convierte URLs relativas ("/uploads/...") en absolutas hacia el backend.
+ * Si ya es "http/https", la deja igual.
+ */
+function absUrl(u: string) {
+  const raw = String(u || "").trim();
+  if (!raw) return "";
+  if (/^https?:\/\//i.test(raw)) return raw;
+
+  const base = (import.meta.env.VITE_API_URL as string) || "http://localhost:3001";
+  const API = base.replace(/\/+$/, "");
+  const p = raw.startsWith("/") ? raw : `/${raw}`;
+  return `${API}${p}`;
 }
 
 function friendlyPinError(rawMsg?: string) {
@@ -52,9 +68,6 @@ function safeSet(key: string, value: string) {
 
 /**
  * ✅ Normaliza nombre de rol para que coincida con lo que mostrás en Configuración/Usuarios/Roles.
- * - Si te llegan roles system (OWNER/ADMIN/STAFF) los convierte a etiquetas amigables.
- * - Si te llegan "SALES_MANAGER" los "humaniza".
- * - Si ya te llega un label lindo, lo deja.
  */
 function prettyRoleName(raw: string): string {
   const s = String(raw || "").trim();
@@ -64,14 +77,18 @@ function prettyRoleName(raw: string): string {
     OWNER: "Propietario",
     ADMIN: "Administrador",
     STAFF: "Empleado",
+    MANAGER: "Encargado",
+
+    READONLY: "Solo lectura",
+    READ_ONLY: "Solo lectura",
+    SOLO_LECTURA: "Solo lectura",
   };
 
   const upper = s.toUpperCase();
   if (MAP[upper]) return MAP[upper];
 
-  // si viene como "SALES_MANAGER" => "Sales Manager"
-  if (/^[A-Z0-9_]+$/.test(s)) {
-    return s
+  if (/^[A-Z0-9_]+$/.test(upper)) {
+    return upper
       .toLowerCase()
       .split("_")
       .filter(Boolean)
@@ -79,7 +96,6 @@ function prettyRoleName(raw: string): string {
       .join(" ");
   }
 
-  // si viene como "Vendedor" / "Encargado" => queda igual
   return s;
 }
 
@@ -99,7 +115,6 @@ function getUserRoleLabel(u: any): string {
 
   // 2) roles: string[] | {name}[]
   if (Array.isArray(u.roles) && u.roles.length) {
-    // roles como string[]
     if (u.roles.every((x: any) => typeof x === "string")) {
       const arr = (u.roles as string[])
         .map((x) => String(x || "").trim())
@@ -109,9 +124,12 @@ function getUserRoleLabel(u: any): string {
       if (arr.length) return arr.join(" • ");
     }
 
-    // roles como objetos
     const names = (u.roles as any[])
-      .map((r) => (typeof r?.name === "string" ? r.name.trim() : ""))
+      .map((r) => {
+        const dn = typeof r?.displayName === "string" ? r.displayName.trim() : "";
+        const n = typeof r?.name === "string" ? r.name.trim() : "";
+        return dn || n;
+      })
       .filter(Boolean)
       .map(prettyRoleName)
       .filter(Boolean);
@@ -132,15 +150,7 @@ function getUserRoleLabel(u: any): string {
 }
 
 /**
- * ✅ FIX PRINCIPAL:
- * En algunos backends, /auth/me/pin/quick-users NO manda roles.
- * Entonces, para evitar "Sin rol" en los botones, unimos (merge) con info del usuario actual:
- * - Si el quick user coincide con el user logueado => inyectamos roles del AuthContext.
- *
- * ✅ Además: pinEnabled
- * - Si el backend manda pinEnabled => lo usamos.
- * - Si manda quickPinEnabled => lo usamos.
- * - Si no manda flag => asumimos habilitado SOLO si tiene PIN (hasQuickPin/hasPin).
+ * ✅ Merge quick user con roles del usuario actual si el endpoint no los manda.
  */
 function normalizeQuickUser(
   u: any,
@@ -152,7 +162,6 @@ function normalizeQuickUser(
   const baseRoles = u?.roles;
   const baseRoleNames = Array.isArray(u?.roleNames) ? u.roleNames : undefined;
 
-  // ✅ si es el usuario actual y el backend no trajo roles, injectamos roles reales del contexto
   const injectedRoles =
     sameAsCurrent &&
     (!Array.isArray(baseRoles) || baseRoles.length === 0) &&
@@ -185,7 +194,7 @@ function normalizeQuickUser(
       ? u.pinEnabled
       : typeof u?.quickPinEnabled === "boolean"
       ? u.quickPinEnabled
-      : has; // ✅ si tiene PIN y no vino flag, asumimos habilitado
+      : has;
 
   return {
     id: String(u?.id ?? ""),
@@ -218,7 +227,7 @@ export default function LockScreen() {
     pinLockRequireOnUserSwitch,
     jewelry,
     logout,
-    roles, // ✅ roles reales del usuario logueado
+    roles,
   } = useAuth() as any;
 
   const DEV = import.meta.env.DEV;
@@ -237,22 +246,15 @@ export default function LockScreen() {
   const dialogRef = useRef<HTMLDivElement | null>(null);
   const hiddenInputRef = useRef<HTMLInputElement | null>(null);
 
-  // ✅ focus visual del “campo” de PIN
   const [pinFocused, setPinFocused] = useState(false);
 
-  /**
-   * ✅ FIX “flash del teclado”
-   * Si la joyería permite switch SIN PIN, NO mostramos teclado nunca.
-   */
   const switchingWithoutPin = useMemo(
     () => Boolean(quickSwitchEnabled && !pinLockRequireOnUserSwitch),
     [quickSwitchEnabled, pinLockRequireOnUserSwitch]
   );
 
-  // en modo switch sin pin, NO pedimos pin nunca
   const mustEnterPin = !switchingWithoutPin;
 
-  // ✅ Último usuario usado en ESTE dispositivo (por joyería/tenant)
   const lastDeviceUserKey = useMemo(() => {
     const jId = (jewelry as any)?.id ? String((jewelry as any).id) : "no-jewelry";
     return `tptech_device_last_user:${jId}`;
@@ -285,59 +287,47 @@ export default function LockScreen() {
       .slice(0, 2);
   }, [displayName]);
 
-  // ✅ rol del usuario actual (usar roles del auth, no del user)
-  const currentUserRoleLabel = useMemo(() => {
-    const roleArr = Array.isArray(roles) ? roles : [];
-    const roleNames = roleArr
-      .map((r: any) => (typeof r?.name === "string" ? r.name.trim() : ""))
-      .filter(Boolean);
-
-    const uExtended: any = {
-      ...(user as any),
-      roles: roleArr.length ? roleArr : (user as any)?.roles,
-      roleNames: roleNames.length ? roleNames : (user as any)?.roleNames,
-    };
-
-    return getUserRoleLabel(uExtended);
-  }, [user, roles]);
-
   const selectedUserLabel = useMemo(() => {
     if (!targetUserId) return null;
     const u = quickUsers.find((x) => x.id === targetUserId);
     return u ? (u.name || u.email) : "Usuario";
   }, [targetUserId, quickUsers]);
 
-  // ✅ rol del usuario seleccionado (cambio)
   const selectedUserRoleLabel = useMemo(() => {
     if (!targetUserId) return "";
     const u = quickUsers.find((x) => x.id === targetUserId);
     return getUserRoleLabel(u);
   }, [targetUserId, quickUsers]);
 
+  // ✅ NUEVO: seleccionado es "usable" (tiene PIN y está habilitado)
+  function isUserUsable(u: QuickUser) {
+    const has = Boolean(u.hasQuickPin ?? u.hasPin);
+    const enabled = Boolean(u.pinEnabled ?? has);
+    return has && enabled;
+  }
+
+  // ✅ NUEVO: para UI: nunca "bloqueamos" (disabled) el botón usuario
+  function isUserSelectable(_u: QuickUser) {
+    return true;
+  }
+
   const allowContinue = useMemo(() => {
     if (busy) return false;
 
-    // ✅ modo switch sin PIN: continuar solo si hay target elegido
+    // si no pide PIN (cambio sin pin), igual requiere elegir un usuario
     if (!mustEnterPin) return Boolean(targetUserId);
 
-    // modo con PIN
+    // si hay quick switch, requiere: usuario elegido Y pin de 4 dígitos
+    if (quickSwitchEnabled) return Boolean(targetUserId) && pin.length === 4;
+
+    // si no hay quick switch (solo desbloquear), alcanza con pin de 4 dígitos
     return pin.length === 4;
-  }, [busy, mustEnterPin, pin.length, targetUserId]);
+  }, [busy, mustEnterPin, pin.length, targetUserId, quickSwitchEnabled]);
 
   const continueLabel = useMemo(() => {
     if (busy) return "Verificando…";
     return targetUserId ? "Continuar" : "Desbloquear";
   }, [busy, targetUserId]);
-
-  function isUserSelectable(u: QuickUser) {
-    // modo sin PIN: todos los usuarios pueden seleccionarse
-    if (!pinLockRequireOnUserSwitch) return true;
-
-    // modo con PIN: sólo usuarios con PIN habilitado + con hash
-    const has = Boolean(u.hasQuickPin ?? u.hasPin);
-    const enabled = Boolean(u.pinEnabled ?? has);
-    return has && enabled;
-  }
 
   function focusPin() {
     queueMicrotask(() => hiddenInputRef.current?.focus?.());
@@ -355,7 +345,7 @@ export default function LockScreen() {
     try {
       await pinSwitchUser({ targetUserId: targetId, pin4: "" } as any);
       rememberLastDeviceUser(targetId);
-      setLocked(false); // ✅ forzamos salida del lock
+      setLocked(false);
       setPin("");
       setTargetUserId(null);
       setShowPin(false);
@@ -369,7 +359,6 @@ export default function LockScreen() {
   async function handleUnlock() {
     if (busy) return;
 
-    // ✅ modo sin PIN: hay que elegir usuario y se switchea
     if (!mustEnterPin) {
       if (!targetUserId) {
         setError("Seleccioná un usuario para continuar.");
@@ -379,7 +368,18 @@ export default function LockScreen() {
       return;
     }
 
-    // ✅ modo con PIN
+    // ✅ validación extra: si hay quick switch y se requiere PIN por usuario, el usuario elegido debe ser usable
+    if (quickSwitchEnabled && pinLockRequireOnUserSwitch && targetUserId) {
+      const u = quickUsers.find((x) => x.id === targetUserId);
+      if (u && !isUserUsable(u)) {
+        setError("Este usuario no tiene PIN configurado (o está deshabilitado).");
+        setPin("");
+        setShowPin(false);
+        focusPin();
+        return;
+      }
+    }
+
     if (pin.length !== 4) return;
 
     setError(null);
@@ -399,8 +399,7 @@ export default function LockScreen() {
         if ((user as any)?.id) rememberLastDeviceUser((user as any).id);
       }
 
-      setLocked(false); // ✅ forzamos salida del lock
-
+      setLocked(false);
       setPin("");
       setTargetUserId(null);
       setShowPin(false);
@@ -421,7 +420,6 @@ export default function LockScreen() {
     try {
       await logout();
     } finally {
-      // ✅ salir SIEMPRE del lock
       try {
         window.location.assign("/login");
       } catch {
@@ -454,18 +452,15 @@ export default function LockScreen() {
     focusPin();
   }
 
-  // ✅ si quedó locked pero se apagó el PIN global, salimos
   useEffect(() => {
     if (locked && !pinLockEnabled) {
       setLocked(false);
     }
   }, [locked, pinLockEnabled, setLocked]);
 
-  // ✅ cargar quick users + preseleccionar último usado (del dispositivo)
   useEffect(() => {
     if (!locked || !pinLockEnabled) return;
 
-    // DEV bypass
     if (DEV && sessionStorage.getItem("tptech_lock_bypass") === "1") {
       setPin("");
       setError(null);
@@ -491,14 +486,13 @@ export default function LockScreen() {
 
       if (savedId) {
         const found = users.find((u) => u.id === savedId);
-        if (found && isUserSelectable(found)) {
+        if (found) {
           setTargetUserId(savedId);
           return;
         }
       }
 
-      const firstSelectable = users.find((u) => isUserSelectable(u));
-      setTargetUserId(firstSelectable?.id ?? null);
+      setTargetUserId(users[0]?.id ?? null);
     };
 
     if (quickSwitchEnabled) {
@@ -507,7 +501,6 @@ export default function LockScreen() {
         .then((res: any) => {
           const usersRaw = (res?.enabled ? (res?.users ?? []) : []) as any[];
 
-          // ✅ FIX: merge roles del usuario actual si el backend no los manda en quick-users
           const currentUserId = String((user as any)?.id ?? "");
           const roleArr = Array.isArray(roles) ? roles : [];
 
@@ -538,7 +531,6 @@ export default function LockScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [locked, pinLockEnabled, quickSwitchEnabled, pinQuickUsers, DEV, lastDeviceUserKey, user, roles]);
 
-  // ✅ teclado físico (global) — Enter simula botón
   useEffect(() => {
     if (!locked || !pinLockEnabled || bypass) return;
 
@@ -562,7 +554,6 @@ export default function LockScreen() {
         return;
       }
 
-      // ✅ solo acepta números cuando hay PIN (modo con PIN)
       if (mustEnterPin && /^\d$/.test(e.key)) {
         e.preventDefault();
         setError(null);
@@ -576,7 +567,6 @@ export default function LockScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [locked, pinLockEnabled, bypass, busy, mustEnterPin]);
 
-  // ✅ focus trap
   useEffect(() => {
     if (!locked || !pinLockEnabled || bypass) return;
 
@@ -618,6 +608,9 @@ export default function LockScreen() {
 
   if (!locked || !pinLockEnabled || !user || bypass) return null;
 
+  // ✅ Avatar url normalizada (arregla /uploads/... en LockScreen)
+  const userAvatarSrc = (user as any)?.avatarUrl ? absUrl(String((user as any).avatarUrl)) : "";
+
   return (
     <div className="fixed inset-0 z-[999] flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-black/60" />
@@ -632,7 +625,6 @@ export default function LockScreen() {
         onMouseDown={() => {
           if (mustEnterPin) focusPin();
         }}
-        // ✅ EXTRA: Enter siempre “toca el botón”
         onKeyDownCapture={(e) => {
           if (busy) return;
           if (e.key === "Enter") {
@@ -641,7 +633,6 @@ export default function LockScreen() {
           }
         }}
       >
-        {/* ✅ input invisible */}
         {mustEnterPin && (
           <input
             ref={hiddenInputRef}
@@ -684,7 +675,6 @@ export default function LockScreen() {
             <div className="font-semibold">Sesión bloqueada</div>
           </div>
 
-          {/* ✅ cerrar sesión */}
           <button
             type="button"
             onClick={() => void handleLogout()}
@@ -706,20 +696,29 @@ export default function LockScreen() {
         <div className="p-6 space-y-4">
           <div className="flex items-center gap-4">
             <div className="h-14 w-14 rounded-2xl border border-border bg-surface grid place-items-center overflow-hidden">
-              {(user as any).avatarUrl ? (
-                <img src={(user as any).avatarUrl} className="h-full w-full object-cover" alt="avatar" />
+              {userAvatarSrc ? (
+                <img
+                  src={userAvatarSrc}
+                  className="h-full w-full object-cover"
+                  alt="avatar"
+                  onError={(e) => {
+                    // ✅ fallback: ocultar img y mostrar iniciales
+                    e.currentTarget.style.display = "none";
+                  }}
+                />
               ) : (
                 <div className="text-sm font-bold text-primary">{initials}</div>
               )}
+
+              {/* ✅ Si el <img> falla y se oculta, mostramos iniciales abajo */}
+              {userAvatarSrc ? (
+                <div className="text-sm font-bold text-primary pointer-events-none select-none">{initials}</div>
+              ) : null}
             </div>
 
             <div className="min-w-0">
               <div className="font-semibold truncate">{displayName}</div>
-
               <div className="text-xs text-muted truncate">{(user as any).email}</div>
-
-              {/* ✅ ROL ABAJO DEL MAIL (como en Configuración) */}
-              <div className="mt-0.5 text-[11px] text-muted truncate">{currentUserRoleLabel || "Sin rol"}</div>
 
               {selectedUserLabel && (
                 <div className="mt-1 text-[11px] text-muted truncate">
@@ -734,7 +733,6 @@ export default function LockScreen() {
             </div>
           </div>
 
-          {/* ✅ Cambiar usuario */}
           {quickSwitchEnabled && (
             <div className="tp-card p-3 min-h-[140px]">
               <div className="text-xs text-muted mb-2">Cambiar usuario</div>
@@ -754,32 +752,34 @@ export default function LockScreen() {
                       const selected = targetUserId === u.id;
 
                       const roleLabel = getUserRoleLabel(u) || "Sin rol";
+                      const usable = isUserUsable(u);
 
                       return (
                         <button
                           key={u.id}
                           type="button"
-                          disabled={!selectable || busy}
+                          disabled={busy}
                           className={cn(
                             "w-full text-left rounded-2xl px-3 py-2 border transition select-none",
                             "focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-primary/20",
 
-                            selectable && !selected && "bg-surface border-border shadow-[0_6px_14px_rgba(0,0,0,0.18)]",
-                            selectable &&
-                              !selected &&
-                              "hover:translate-y-[-1px] hover:shadow-[0_10px_22px_rgba(0,0,0,0.22)]",
-                            selectable &&
-                              !selected &&
-                              "active:translate-y-[0px] active:shadow-[0_4px_10px_rgba(0,0,0,0.16)]",
+                            !selected && "bg-surface border-border shadow-[0_6px_14px_rgba(0,0,0,0.18)]",
+                            !selected && "hover:translate-y-[-1px] hover:shadow-[0_10px_22px_rgba(0,0,0,0.22)]",
+                            !selected && "active:translate-y-[0px] active:shadow-[0_4px_10px_rgba(0,0,0,0.16)]",
 
                             selected &&
                               "bg-[color-mix(in_oklab,var(--primary)_14%,var(--surface))] border-[color-mix(in_oklab,var(--primary)_45%,var(--border))] " +
                                 "shadow-[inset_0_1px_0_rgba(255,255,255,0.10),0_10px_24px_rgba(0,0,0,0.25)] " +
                                 "ring-2 ring-primary/35",
 
-                            (!selectable || busy) && "opacity-50 shadow-none translate-y-0"
+                            busy && "opacity-60 pointer-events-none",
+
+                            // ✅ si NO es usable, NO lo bloqueamos, solo lo vemos más tenue
+                            pinLockRequireOnUserSwitch && !usable && "opacity-70"
                           )}
                           onClick={() => {
+                            if (busy) return;
+
                             setError(null);
                             setTargetUserId(u.id);
                             rememberLastDeviceUser(u.id);
@@ -789,12 +789,17 @@ export default function LockScreen() {
                               return;
                             }
 
+                            // ✅ si no es usable, avisamos, pero igual lo dejamos seleccionar
+                            if (!usable) {
+                              setError("Este usuario no tiene PIN configurado (o está deshabilitado).");
+                            }
+
                             focusPin();
                           }}
                           title={
-                            selectable
-                              ? "Seleccionar usuario"
-                              : "Este usuario no tiene PIN configurado (o está deshabilitado)"
+                            pinLockRequireOnUserSwitch && !usable
+                              ? "Este usuario no tiene PIN configurado (o está deshabilitado)"
+                              : "Seleccionar usuario"
                           }
                         >
                           <div className="text-xs font-semibold truncate">{u.name || u.email}</div>
@@ -815,7 +820,6 @@ export default function LockScreen() {
             </div>
           )}
 
-          {/* ✅ PIN UI solo si corresponde */}
           {mustEnterPin && (
             <>
               <div className="space-y-2">
@@ -855,7 +859,7 @@ export default function LockScreen() {
                     aria-label={showPin ? "Ocultar PIN" : "Mostrar PIN"}
                     title={showPin ? "Ocultar" : "Mostrar"}
                   >
-                    {showPin ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                    <EyeIcon open={showPin} />
                   </button>
                 </div>
 

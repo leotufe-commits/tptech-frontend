@@ -87,6 +87,13 @@ export type ApiFetchOptions = Omit<RequestInit, "body" | "signal"> & {
    * ✅ AbortSignal opcional (se combina con timeout)
    */
   signal?: AbortSignal;
+
+  /**
+   * ✅ Control de qué hacer ante 401
+   * - "logout" (default): fuerza logout global + error "Sesión expirada"
+   * - "throw": NO desloguea, solo lanza error (ideal para uploads como avatar)
+   */
+  on401?: "logout" | "throw";
 };
 
 function isFormData(body: any): body is FormData {
@@ -166,12 +173,20 @@ function isAbortError(err: any) {
   return err?.name === "AbortError";
 }
 
+function tryParseJsonText(s: string) {
+  try {
+    return JSON.parse(s);
+  } catch {
+    return null;
+  }
+}
+
 /**
  * apiFetch
  * - ✅ Auth por COOKIE httpOnly (credentials: "include")
  * - ❌ NO agrega Authorization Bearer
  * - si options.body es objeto/array -> JSON.stringify
- * - si 401 -> forceLogout (multi-tab) + throw
+ * - si 401 -> (por default) forceLogout (multi-tab) + throw
  * - soporta FormData (avatar/logo/adjuntos) sin setear Content-Type
  *
  * ✅ IMPORTANTÍSIMO: GET por defecto va con cache:"no-store"
@@ -264,10 +279,15 @@ export async function apiFetch<T = any>(
       throw new Error("Error de red. Revisá tu conexión e intentá de nuevo.");
     }
 
-    // ✅ sesión inválida → logout global (multi-tab)
+    // ✅ 401: controlable por opción (default: logout)
     if (res.status === 401) {
-      forceLogout();
-      throw new Error("Sesión expirada");
+      const mode = options.on401 ?? "logout";
+      if (mode === "logout") {
+        forceLogout();
+        throw new Error("Sesión expirada");
+      }
+      // "throw": NO desloguea, solo error
+      throw new Error("No autorizado (401)");
     }
 
     if (res.status === 204) return undefined as T;
@@ -282,8 +302,11 @@ export async function apiFetch<T = any>(
         payload = null;
       }
     } else {
+      // ✅ algunos backends devuelven JSON con ct incorrecto
       try {
-        payload = await res.text();
+        const txt = await res.text();
+        const maybeJson = tryParseJsonText(txt);
+        payload = maybeJson ?? txt;
       } catch {
         payload = null;
       }

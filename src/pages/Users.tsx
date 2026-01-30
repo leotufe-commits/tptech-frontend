@@ -6,7 +6,6 @@ import { useInventory } from "../context/InventoryContext";
 
 import {
   cn,
-  Modal,
   normalizeUsersResponse,
   assertImageFile,
   getErrorMessage,
@@ -14,11 +13,9 @@ import {
   type TabKey,
 } from "../components/users/users.ui";
 
+import { Modal } from "../components/ui/Modal";
 import UsersTable from "../components/users/UsersTable";
 import UserEditModal from "../components/users/UserEditModal";
-
-
-
 
 import {
   getRolesCached,
@@ -27,6 +24,8 @@ import {
   invalidateUserDetail,
   uploadUserAttachmentsInstant,
   deleteUserAttachmentInstant,
+  setUserQuickPinEnabledAdmin,
+  removeUserQuickPinAdmin,
 } from "../components/users/users.data";
 
 import {
@@ -42,8 +41,6 @@ import {
   updateFavoriteWarehouseForUser,
   updateUserProfile,
   setUserQuickPin,
-  removeUserQuickPin,
-  setUserPinEnabled,
   type Role,
   type UserListItem,
   type Override,
@@ -54,15 +51,16 @@ import {
 
 import type { Permission } from "../services/permissions";
 
+/** ✅ flag para “abrir modal y scrollear a Adjuntos” */
+const OPEN_USERS_ATTACHMENTS_KEY = "tptech_users_open_attachments_v1";
+
 export default function UsersPage() {
   const auth = useAuth();
   const me = (auth.user ?? null) as { id: string } | null;
   const permissions: string[] = (auth.permissions ?? []) as string[];
 
-  const canView =
-    permissions.includes("USERS_ROLES:VIEW") || permissions.includes("USERS_ROLES:ADMIN");
-  const canEditStatus =
-    permissions.includes("USERS_ROLES:EDIT") || permissions.includes("USERS_ROLES:ADMIN");
+  const canView = permissions.includes("USERS_ROLES:VIEW") || permissions.includes("USERS_ROLES:ADMIN");
+  const canEditStatus = permissions.includes("USERS_ROLES:EDIT") || permissions.includes("USERS_ROLES:ADMIN");
   const canAdmin = permissions.includes("USERS_ROLES:ADMIN");
 
   const inv = useInventory();
@@ -111,6 +109,22 @@ export default function UsersPage() {
   const [avatarFileDraft, setAvatarFileDraft] = useState<File | null>(null);
   const [avatarBusy, setAvatarBusy] = useState(false);
 
+  // ✅ limpieza dura del avatar para que NO quede “en memoria” al cancelar/cerrar
+  function clearAvatarState() {
+    setAvatarPreview((prev) => {
+      try {
+        if (prev?.startsWith("blob:")) URL.revokeObjectURL(prev);
+      } catch {}
+      return "";
+    });
+    setAvatarImgLoading(false);
+    setAvatarFileDraft(null);
+
+    try {
+      if (avatarInputModalRef.current) avatarInputModalRef.current.value = "";
+    } catch {}
+  }
+
   useEffect(() => {
     return () => {
       if (avatarPreview?.startsWith("blob:")) URL.revokeObjectURL(avatarPreview);
@@ -123,27 +137,31 @@ export default function UsersPage() {
     return m;
   }, [roles]);
 
+  const ownerRoleId = useMemo(() => {
+    const r =
+      roles.find((x: any) => String((x as any)?.code || "").toUpperCase() === "OWNER") ||
+      roles.find((x: any) => String((x as any)?.name || "").toUpperCase() === "OWNER");
+    return r ? String((r as any).id) : null;
+  }, [roles]);
+
   function roleLabel(r: Partial<Role> & { code?: string }) {
     const fromCatalog = (r as any)?.id ? roleById.get(String((r as any).id)) : null;
     const base: any = fromCatalog ?? r;
 
-    const display = String(base?.displayName || "").trim();
+    const display = String((base as any)?.displayName || "").trim();
     if (display) return display;
 
     const name = String(base?.name || "").trim();
     if (name) return name;
 
-    const code = String(base?.code || "").toUpperCase().trim();
-    return ROLE_LABEL[code] || code || "Rol";
+    const code = String((base as any)?.code || "").toUpperCase().trim();
+    return (ROLE_LABEL as any)[code] || code || "Rol";
   }
 
   // delete confirmation
   const [deleteBusy, setDeleteBusy] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<UserListItem | null>(null);
-
-  // avatar quick edit (table)
-  const [avatarQuickBusyId, setAvatarQuickBusyId] = useState<string | null>(null);
 
   // modal
   const [modalOpen, setModalOpen] = useState(false);
@@ -155,6 +173,10 @@ export default function UsersPage() {
   const [detail, setDetail] = useState<UserDetail | null>(null);
 
   const [tab, setTab] = useState<TabKey>("DATA");
+
+  const isSelfEditing = Boolean(
+    modalOpen && modalMode === "EDIT" && targetId && me?.id && String(targetId) === String(me.id)
+  );
 
   // form fields
   const [fEmail, setFEmail] = useState("");
@@ -177,16 +199,42 @@ export default function UsersPage() {
 
   const [fNotes, setFNotes] = useState("");
 
-  // PIN (admin)
+  /* =========================
+     ✅ PIN (admin) - DRAFT
+     - Se aplica al backend SOLO en Guardar
+  ========================= */
   const [pinNew, setPinNew] = useState("");
   const [pinNew2, setPinNew2] = useState("");
   const [pinBusy, setPinBusy] = useState(false);
   const [pinMsg, setPinMsg] = useState<string | null>(null);
 
+  // ✅ draft: enabled / remove / clearOverridesOnSave
+  const [pinEnabledDraft, setPinEnabledDraft] = useState<boolean | null>(null); // null = sin cambios
+  const [pinRemoveDraft, setPinRemoveDraft] = useState(false);
+  const [pinClearOverridesOnSave, setPinClearOverridesOnSave] = useState(false);
+
   function resetPinForm() {
     setPinNew("");
     setPinNew2("");
   }
+
+  // ✅ PIN: mensaje dentro del modal (autolimpia)
+  const pinMsgTimerRef = useRef<number | null>(null);
+
+  function flashPinMsg(msg: string, ms = 2500) {
+    setPinMsg(msg);
+    if (pinMsgTimerRef.current) window.clearTimeout(pinMsgTimerRef.current);
+    pinMsgTimerRef.current = window.setTimeout(() => {
+      setPinMsg(null);
+      pinMsgTimerRef.current = null;
+    }, ms);
+  }
+
+  useEffect(() => {
+    return () => {
+      if (pinMsgTimerRef.current) window.clearTimeout(pinMsgTimerRef.current);
+    };
+  }, []);
 
   function assertPin4Local(pin: string) {
     const s = String(pin ?? "").trim();
@@ -194,80 +242,124 @@ export default function UsersPage() {
     return s;
   }
 
-  async function refreshDetailAndList(userId: string) {
+  /**
+   * ✅ Refresca el detail sin pisar el formulario (clave para que no “desaparezcan” cambios
+   * cuando subís adjuntos o cambiás avatar).
+   *
+   * ⚠️ OJO: no tocamos drafts de PIN (pinEnabledDraft/pinRemoveDraft/...) porque ahora
+   * son “pendientes hasta Guardar”.
+   */
+  async function refreshDetailOnly(userId: string, opts?: { hydrate?: boolean }) {
     invalidateUserDetail(userId);
     const refreshed = await prefetchUserDetail(userId);
-    if (refreshed) hydrateFromDetail(refreshed);
+    if (!refreshed) return refreshed;
+
+    // 🔁 siempre sincronizamos permisos especiales (detail -> draft inicial)
+    // (pero si el usuario ya tocó el draft mientras el modal está abierto,
+    // no llamamos refreshDetailOnly con hydrate true salvo al abrir)
+    const ov = (refreshed.permissionOverrides ?? []) as Override[];
+    setSpecialList(ov);
+    setSpecialEnabledState(ov.length > 0);
+
+    if (opts?.hydrate === false) {
+      setDetail(refreshed);
+      return refreshed;
+    }
+
+    hydrateFromDetail(refreshed);
+    return refreshed;
+  }
+
+  async function refreshDetailAndList(userId: string, opts?: { hydrate?: boolean }) {
+    await refreshDetailOnly(userId, opts);
     await load();
   }
 
+  /**
+   * ✅ DRAFT handlers (antes pegaban al backend)
+   * - Mantengo las mismas props para no romper UserEditModal.
+   */
   async function adminSetOrResetPin() {
     if (!canAdmin) return;
-    if (modalMode !== "EDIT" || !targetId) return;
+    if (isSelfEditing) return;
+    if (modalMode !== "EDIT" && modalMode !== "CREATE") return;
 
     setPinMsg(null);
 
-    const p1 = assertPin4Local(pinNew);
-    const p2 = assertPin4Local(pinNew2);
-    if (p1 !== p2) {
-      setPinMsg("Los PIN no coinciden.");
+    // permitimos armar el draft sin backend
+    let p1 = "";
+    let p2 = "";
+    try {
+      p1 = assertPin4Local(pinNew);
+      p2 = assertPin4Local(pinNew2);
+    } catch (e: any) {
+      flashPinMsg(e?.message || "PIN inválido.");
       return;
     }
 
-    setPinBusy(true);
-    try {
-      await setUserQuickPin(targetId, p1);
-      resetPinForm();
-      setPinMsg("PIN configurado correctamente.");
-      await refreshDetailAndList(targetId);
-    } catch (e: unknown) {
-      setPinMsg(getErrorMessage(e, "Error configurando el PIN."));
-    } finally {
-      setPinBusy(false);
+    if (p1 !== p2) {
+      flashPinMsg("Los PIN no coinciden.");
+      return;
     }
+
+    // si el usuario está creando/cambiando PIN, por defecto lo dejamos habilitado
+    if (pinEnabledDraft === null) setPinEnabledDraft(true);
+
+    // si estaba marcado para borrar, lo desmarcamos
+    if (pinRemoveDraft) setPinRemoveDraft(false);
+
+    flashPinMsg("PIN listo para aplicar al guardar.", 3000);
   }
 
-  async function adminRemovePin() {
+  async function adminRemovePin(opts?: { confirmRemoveOverrides?: boolean }) {
     if (!canAdmin) return;
+    if (isSelfEditing) return;
     if (modalMode !== "EDIT" || !targetId) return;
 
-    setPinMsg(null);
-    setPinBusy(true);
-    try {
-      await removeUserQuickPin(targetId);
-      resetPinForm();
-      setPinMsg("PIN eliminado / desactivado.");
-      await refreshDetailAndList(targetId);
-    } catch (e: unknown) {
-      setPinMsg(getErrorMessage(e, "Error eliminando el PIN."));
-    } finally {
-      setPinBusy(false);
+    // draft remove
+    setPinRemoveDraft(true);
+    setPinEnabledDraft(false);
+
+    if (opts?.confirmRemoveOverrides) {
+      setPinClearOverridesOnSave(true);
+      // dejamos el draft de especiales limpio (la confirmación ya se mostró en el modal)
+      setSpecialPermPick("");
+      setSpecialEffectPick("ALLOW");
+      setSpecialEnabledState(false);
+      setSpecialList([]);
     }
+
+    flashPinMsg("Se eliminará el PIN al guardar.", 3000);
   }
 
-  async function adminTogglePinEnabled(nextEnabled: boolean) {
+  async function adminTogglePinEnabled(nextEnabled: boolean, opts?: { confirmRemoveOverrides?: boolean }) {
     if (!canAdmin) return;
+    if (isSelfEditing) return;
     if (modalMode !== "EDIT" || !targetId) return;
 
-    setPinMsg(null);
-    setPinBusy(true);
-    try {
-      await setUserPinEnabled(targetId, nextEnabled);
-      setPinMsg(nextEnabled ? "PIN habilitado." : "PIN deshabilitado.");
-      await refreshDetailAndList(targetId);
-    } catch (e: unknown) {
-      setPinMsg(getErrorMessage(e, "Error cambiando el estado del PIN."));
-    } finally {
-      setPinBusy(false);
+    setPinEnabledDraft(nextEnabled);
+
+    // si habilita, no tiene sentido mantener “remove”
+    if (nextEnabled && pinRemoveDraft) setPinRemoveDraft(false);
+
+    if (!nextEnabled && opts?.confirmRemoveOverrides) {
+      setPinClearOverridesOnSave(true);
+      // limpiar draft permisos especiales (porque al guardar se van a borrar)
+      setSpecialPermPick("");
+      setSpecialEffectPick("ALLOW");
+      setSpecialEnabledState(false);
+      setSpecialList([]);
     }
+
+    flashPinMsg(nextEnabled ? "Cambio pendiente: PIN se habilitará al guardar." : "Cambio pendiente: PIN se deshabilitará al guardar.", 2500);
   }
 
-  // special perms
-  const [specialEnabled, setSpecialEnabled] = useState(false);
+  // special perms (DRAFT)
+  const [specialEnabled, setSpecialEnabledState] = useState(false);
   const [specialPermPick, setSpecialPermPick] = useState<string>("");
   const [specialEffectPick, setSpecialEffectPick] = useState<OverrideEffect>("ALLOW");
   const [specialList, setSpecialList] = useState<Override[]>([]);
-  const [specialSaving, setSpecialSaving] = useState(false);
+  const [specialSaving, setSpecialSaving] = useState(false); // ahora solo para “guardando” en saveModal
 
   // attachments
   const attInputRef = useRef<HTMLInputElement>(null!);
@@ -311,7 +403,7 @@ export default function UsersPage() {
       const norm = normalizeUsersResponse(resp);
 
       const rawUsers = (norm.users ?? []) as UserListItem[];
-      setUsers(sortUsersAlpha(rawUsers)); // ✅ ordenar alfabéticamente
+      setUsers(sortUsersAlpha(rawUsers));
       setTotal(Number(norm.total ?? 0));
     } catch (e: unknown) {
       setErr(getErrorMessage(e, "Error cargando usuarios"));
@@ -404,16 +496,26 @@ export default function UsersPage() {
     setSpecialList([]);
     setSpecialPermPick("");
     setSpecialEffectPick("ALLOW");
+    setSpecialEnabledState(false);
 
-    setAvatarFileDraft(null);
+    clearAvatarState();
 
     setUploadingAttachments(false);
     setDeletingAttId(null);
     setAttachmentsDraft([]);
 
+    // PIN drafts reset
     resetPinForm();
     setPinBusy(false);
     setPinMsg(null);
+    setPinEnabledDraft(null);
+    setPinRemoveDraft(false);
+    setPinClearOverridesOnSave(false);
+
+    if (pinMsgTimerRef.current) {
+      window.clearTimeout(pinMsgTimerRef.current);
+      pinMsgTimerRef.current = null;
+    }
 
     setTab("DATA");
   }
@@ -444,7 +546,14 @@ export default function UsersPage() {
 
     const ov = (d.permissionOverrides ?? []) as Override[];
     setSpecialList(ov);
-    setSpecialEnabled(ov.length > 0);
+    setSpecialEnabledState(ov.length > 0);
+
+    // PIN drafts: al abrir, no hay cambios pendientes
+    setPinEnabledDraft(null);
+    setPinRemoveDraft(false);
+    setPinClearOverridesOnSave(false);
+    resetPinForm();
+    setPinMsg(null);
   }
 
   async function openCreate() {
@@ -461,11 +570,11 @@ export default function UsersPage() {
       const perms = await ensurePermsLoaded();
       setSpecialPermPick(perms[0]?.id || "");
       setSpecialEffectPick("ALLOW");
-      setSpecialEnabled(false);
+      setSpecialEnabledState(false);
       setTab("DATA");
 
-      setPinNew("1234");
-      setPinNew2("1234");
+      setPinNew("");
+      setPinNew2("");
       setPinMsg(null);
     } finally {
       setModalLoading(false);
@@ -487,12 +596,24 @@ export default function UsersPage() {
 
       setTargetId(u.id);
 
-      const d = await prefetchUserDetail(u.id);
-      if (d) hydrateFromDetail(d);
+      // ✅ carga inicial: sí hidratamos (llenar form)
+      await refreshDetailOnly(u.id, { hydrate: true });
 
       setSpecialPermPick(perms[0]?.id || "");
       setSpecialEffectPick("ALLOW");
-      setTab("DATA");
+
+      try {
+        const raw = sessionStorage.getItem(OPEN_USERS_ATTACHMENTS_KEY);
+        if (raw) {
+          const j = JSON.parse(raw);
+          if (j?.userId && String(j.userId) === String(u.id)) setTab("DATA");
+          else setTab("DATA");
+        } else {
+          setTab("DATA");
+        }
+      } catch {
+        setTab("DATA");
+      }
     } catch (e: unknown) {
       setErr(getErrorMessage(e, "Error cargando usuario"));
       setModalOpen(false);
@@ -502,9 +623,58 @@ export default function UsersPage() {
   }
 
   async function closeModal() {
-    if (modalBusy || avatarBusy || specialSaving || uploadingAttachments || deletingAttId || pinBusy)
-      return;
+    if (modalBusy || avatarBusy || specialSaving || uploadingAttachments || deletingAttId || pinBusy) return;
+
+    clearAvatarState();
+    setAttachmentsDraft([]);
+    setErr(null);
+
     setModalOpen(false);
+    resetForm();
+  }
+
+  function isOwnerInDraft() {
+    if (!ownerRoleId) return false;
+    return fRoleIds.includes(String(ownerRoleId));
+  }
+
+  function computeOverrideDiff(
+    prev: Override[],
+    nextEnabled: boolean,
+    next: Override[]
+  ): { toRemove: string[]; toUpsert: Array<{ permissionId: string; effect: OverrideEffect }> } {
+    const prevMap = new Map<string, OverrideEffect>();
+    for (const ov of prev || []) {
+      const pid = String(ov.permissionId);
+      if (!pid) continue;
+      prevMap.set(pid, ov.effect);
+    }
+
+    const nextMap = new Map<string, OverrideEffect>();
+    if (nextEnabled) {
+      for (const ov of next || []) {
+        const pid = String(ov.permissionId);
+        if (!pid) continue;
+        nextMap.set(pid, ov.effect);
+      }
+    }
+
+    const toRemove: string[] = [];
+    for (const [pid] of prevMap) {
+      if (!nextEnabled || !nextMap.has(pid)) toRemove.push(pid);
+    }
+
+    const toUpsert: Array<{ permissionId: string; effect: OverrideEffect }> = [];
+    if (nextEnabled) {
+      for (const [pid, eff] of nextMap) {
+        const prevEff = prevMap.get(pid);
+        if (!prevEff || prevEff !== eff) {
+          toUpsert.push({ permissionId: pid, effect: eff });
+        }
+      }
+    }
+
+    return { toRemove, toUpsert };
   }
 
   async function saveModal(e?: FormEvent) {
@@ -528,6 +698,8 @@ export default function UsersPage() {
     }
 
     setModalBusy(true);
+    setSpecialSaving(true);
+    setPinBusy(true);
 
     try {
       if (modalMode === "CREATE") {
@@ -541,27 +713,7 @@ export default function UsersPage() {
         const createdUserId = (created as any)?.user?.id;
         if (!createdUserId) throw new Error("No se recibió el ID del usuario creado.");
 
-        // PIN inicial (opcional)
-        try {
-          const p1 = String(pinNew || "").trim();
-          const p2 = String(pinNew2 || "").trim();
-          if (p1 && p1 === p2 && /^\d{4}$/.test(p1)) {
-            await setUserQuickPin(createdUserId, p1);
-            await setUserPinEnabled(createdUserId, true);
-          }
-        } catch (ePin: unknown) {
-          setErr(getErrorMessage(ePin, "No se pudo configurar el PIN inicial."));
-        }
-
-        if (fFavWarehouseId) {
-          await updateFavoriteWarehouseForUser(createdUserId, fFavWarehouseId || null);
-        }
-
-        if (avatarFileDraft) {
-          assertImageFile(avatarFileDraft);
-          await updateUserAvatarForUser(createdUserId, avatarFileDraft);
-        }
-
+        // profile extra
         await updateUserProfile(createdUserId, {
           name: cleanName,
           phoneCountry: fPhoneCountry,
@@ -577,6 +729,15 @@ export default function UsersPage() {
           notes: fNotes,
         } as any);
 
+        if (fFavWarehouseId) {
+          await updateFavoriteWarehouseForUser(createdUserId, fFavWarehouseId || null);
+        }
+
+        if (avatarFileDraft) {
+          assertImageFile(avatarFileDraft);
+          await updateUserAvatarForUser(createdUserId, avatarFileDraft);
+        }
+
         if (attachmentsDraft.length) {
           setUploadingAttachments(true);
           try {
@@ -587,17 +748,35 @@ export default function UsersPage() {
           }
         }
 
-        if (specialEnabled && specialList.length) {
+        // ✅ PIN inicial (solo si el usuario lo “marcó” con el botón y es válido)
+        try {
+          const p1 = String(pinNew || "").trim();
+          const p2 = String(pinNew2 || "").trim();
+          if (p1 && p1 === p2 && /^\d{4}$/.test(p1)) {
+            await setUserQuickPin(createdUserId, p1);
+            // si no tocó pills, por defecto lo habilitamos al crear PIN
+            const enabled = pinEnabledDraft ?? true;
+            await setUserQuickPinEnabledAdmin(createdUserId, enabled);
+          }
+        } catch (ePin: unknown) {
+          setErr(getErrorMessage(ePin, "No se pudo configurar el PIN inicial."));
+        }
+
+        // ✅ overrides (draft) al final
+        const ownerNow = ownerRoleId ? fRoleIds.includes(String(ownerRoleId)) : false;
+        if (!ownerNow && specialEnabled && specialList.length) {
           for (const ov of specialList) {
             await setUserOverride(createdUserId, ov.permissionId, ov.effect);
           }
         }
 
         setModalOpen(false);
+        resetForm();
         await load({ page: 1 });
       } else {
         if (!targetId) throw new Error("Falta ID de usuario.");
 
+        // profile
         await updateUserProfile(targetId, {
           name: cleanName,
           phoneCountry: fPhoneCountry,
@@ -613,8 +792,10 @@ export default function UsersPage() {
           notes: fNotes,
         } as any);
 
-        await assignRolesToUser(targetId, fRoleIds);
-        await updateFavoriteWarehouseForUser(targetId, fFavWarehouseId ? fFavWarehouseId : null);
+        if (!isSelfEditing) {
+          await assignRolesToUser(targetId, fRoleIds);
+          await updateFavoriteWarehouseForUser(targetId, fFavWarehouseId ? fFavWarehouseId : null);
+        }
 
         if (avatarFileDraft) {
           assertImageFile(avatarFileDraft);
@@ -632,17 +813,68 @@ export default function UsersPage() {
           }
         }
 
-        await load();
+        // ✅ OVERRIDES (DRAFT -> backend) + regla: si se vuelve OWNER, limpiar overrides
+        if (!isSelfEditing) {
+          const prevOverrides = ((detail?.permissionOverrides ?? []) as Override[]) || [];
+          const ownerNow = isOwnerInDraft();
 
-        const refreshed = await prefetchUserDetail(targetId);
-        if (refreshed) hydrateFromDetail(refreshed);
+          // si se confirmó que PIN va a borrar overrides, forzamos limpieza
+          const overridesEnabledNext = !ownerNow && !pinClearOverridesOnSave && specialEnabled;
+
+          const nextOverrides = overridesEnabledNext ? specialList : [];
+          const diff = computeOverrideDiff(prevOverrides, overridesEnabledNext, nextOverrides);
+
+          // primero removemos
+          for (const pid of diff.toRemove) {
+            await removeUserOverride(targetId, pid);
+          }
+
+          // luego upsert
+          for (const it of diff.toUpsert) {
+            await setUserOverride(targetId, it.permissionId, it.effect);
+          }
+        }
+
+        // ✅ PIN (DRAFT -> backend)
+        if (!isSelfEditing) {
+          // Si pidió borrar PIN, lo hacemos y listo
+          if (pinRemoveDraft) {
+            await removeUserQuickPinAdmin(targetId, { confirmRemoveOverrides: pinClearOverridesOnSave });
+          } else {
+            // Si setearon nuevo PIN, lo seteamos
+            const p1Raw = String(pinNew || "").trim();
+            const p2Raw = String(pinNew2 || "").trim();
+
+            const hasPinDraft = Boolean(p1Raw || p2Raw);
+
+            if (hasPinDraft) {
+              const p1 = assertPin4Local(p1Raw);
+              const p2 = assertPin4Local(p2Raw);
+              if (p1 !== p2) throw new Error("Los PIN no coinciden.");
+
+              await setUserQuickPin(targetId, p1);
+
+              // si no tocaron pills, al setear PIN por defecto lo habilitamos
+              const enabled = pinEnabledDraft ?? true;
+              await setUserQuickPinEnabledAdmin(targetId, enabled);
+            } else if (pinEnabledDraft !== null) {
+              // solo toggle enabled
+              await setUserQuickPinEnabledAdmin(targetId, pinEnabledDraft, { confirmRemoveOverrides: pinClearOverridesOnSave });
+            }
+          }
+        }
+
+        await refreshDetailAndList(targetId, { hydrate: false });
 
         setModalOpen(false);
+        resetForm();
       }
     } catch (e2: unknown) {
       setErr(getErrorMessage(e2, "Error guardando usuario"));
     } finally {
       setModalBusy(false);
+      setSpecialSaving(false);
+      setPinBusy(false);
     }
   }
 
@@ -690,21 +922,6 @@ export default function UsersPage() {
     }
   }
 
-  async function quickChangeAvatar(userId: string, file: File) {
-    if (!canAdmin) return;
-    setAvatarQuickBusyId(userId);
-    setErr(null);
-    try {
-      assertImageFile(file);
-      await updateUserAvatarForUser(userId, file);
-      await load();
-    } catch (e: unknown) {
-      setErr(getErrorMessage(e, "Error subiendo avatar"));
-    } finally {
-      setAvatarQuickBusyId(null);
-    }
-  }
-
   async function pickAvatarForModal(file: File) {
     if (!canAdmin) return;
 
@@ -724,12 +941,12 @@ export default function UsersPage() {
 
       if (!targetId) return;
 
+      // ✅ sigue siendo “instantáneo” (como lo tenías)
       setAvatarBusy(true);
       await updateUserAvatarForUser(targetId, file);
       setAvatarFileDraft(null);
 
-      const refreshed = await prefetchUserDetail(targetId);
-      if (refreshed) hydrateFromDetail(refreshed);
+      await refreshDetailOnly(targetId, { hydrate: false });
 
       setAvatarPreview((prev) => {
         if (prev?.startsWith("blob:")) URL.revokeObjectURL(prev);
@@ -753,10 +970,7 @@ export default function UsersPage() {
     setErr(null);
     try {
       await removeAvatarForUser(targetId);
-
-      const refreshed = await prefetchUserDetail(targetId);
-      if (refreshed) hydrateFromDetail(refreshed);
-
+      await refreshDetailOnly(targetId, { hydrate: false });
       await load();
     } catch (e: unknown) {
       setErr(getErrorMessage(e, "Error quitando avatar"));
@@ -765,58 +979,34 @@ export default function UsersPage() {
     }
   }
 
+  // ✅ permisos especiales ahora 100% draft (no backend)
   async function addOrUpdateSpecial() {
     if (!canAdmin) return;
     if (!specialEnabled) return;
     if (!specialPermPick) return;
 
-    if (modalMode === "CREATE") {
-      setSpecialList((prev) => {
-        const next = prev.filter((x) => x.permissionId !== specialPermPick);
-        next.push({ permissionId: specialPermPick, effect: specialEffectPick });
-        return next;
-      });
+    if (isSelfEditing) {
+      setErr("No podés editar permisos especiales en tu propio usuario.");
       return;
     }
 
-    if (!targetId) return;
-
-    setSpecialSaving(true);
-    setErr(null);
-    try {
-      await setUserOverride(targetId, specialPermPick, specialEffectPick);
-      const refreshed = await prefetchUserDetail(targetId);
-      if (refreshed) hydrateFromDetail(refreshed);
-      await load();
-    } catch (e: unknown) {
-      setErr(getErrorMessage(e, "Error guardando permiso especial"));
-    } finally {
-      setSpecialSaving(false);
-    }
+    // draft (CREATE/EDIT igual)
+    setSpecialList((prev) => {
+      const next = prev.filter((x) => x.permissionId !== specialPermPick);
+      next.push({ permissionId: specialPermPick, effect: specialEffectPick });
+      return next;
+    });
   }
 
   async function removeSpecial(permissionId: string) {
     if (!canAdmin) return;
 
-    if (modalMode === "CREATE") {
-      setSpecialList((prev) => prev.filter((x) => x.permissionId !== permissionId));
+    if (isSelfEditing) {
+      setErr("No podés editar permisos especiales en tu propio usuario.");
       return;
     }
 
-    if (!targetId) return;
-
-    setSpecialSaving(true);
-    setErr(null);
-    try {
-      await removeUserOverride(targetId, permissionId);
-      const refreshed = await prefetchUserDetail(targetId);
-      if (refreshed) hydrateFromDetail(refreshed);
-      await load();
-    } catch (e: unknown) {
-      setErr(getErrorMessage(e, "Error quitando permiso especial"));
-    } finally {
-      setSpecialSaving(false);
-    }
+    setSpecialList((prev) => prev.filter((x) => x.permissionId !== permissionId));
   }
 
   async function addAttachments(files: File[]) {
@@ -835,9 +1025,7 @@ export default function UsersPage() {
     try {
       await uploadUserAttachmentsInstant(targetId, files);
 
-      const refreshed = await prefetchUserDetail(targetId);
-      if (refreshed) hydrateFromDetail(refreshed);
-
+      await refreshDetailOnly(targetId, { hydrate: false });
       await load();
     } catch (e: unknown) {
       setErr(getErrorMessage(e, "No se pudieron subir los adjuntos."));
@@ -853,14 +1041,25 @@ export default function UsersPage() {
 
     setDeletingAttId(attId);
     setErr(null);
+
+    setDetail((prev) => {
+      if (!prev) return prev;
+      const cur = Array.isArray((prev as any).attachments) ? ((prev as any).attachments as any[]) : [];
+      return {
+        ...(prev as any),
+        attachments: cur.filter((a) => String(a?.id) !== String(attId)),
+      } as any;
+    });
+
     try {
       await deleteUserAttachmentInstant(targetId, attId);
 
-      const refreshed = await prefetchUserDetail(targetId);
-      if (refreshed) hydrateFromDetail(refreshed);
-
+      await refreshDetailOnly(targetId, { hydrate: false });
       await load();
     } catch (e: unknown) {
+      try {
+        await refreshDetailOnly(targetId, { hydrate: false });
+      } catch {}
       setErr(getErrorMessage(e, "No se pudo eliminar el adjunto."));
     } finally {
       setDeletingAttId(null);
@@ -879,9 +1078,7 @@ export default function UsersPage() {
     <div className="p-4 md:p-6 space-y-4 min-h-0">
       <div className="space-y-2">
         <h1 className="text-2xl font-semibold">Usuarios</h1>
-        <p className="text-sm text-muted">
-          Gestión de usuarios, roles, permisos especiales, avatar, adjuntos y almacén favorito.
-        </p>
+        <p className="text-sm text-muted">Gestión de usuarios, roles, permisos especiales, avatar, adjuntos y almacén favorito.</p>
 
         <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
           <input
@@ -899,11 +1096,7 @@ export default function UsersPage() {
         </div>
       </div>
 
-      {err && (
-        <div className="rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm">
-          {err}
-        </div>
-      )}
+      {err && <div className="rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm">{err}</div>}
 
       <UsersTable
         loading={loading}
@@ -918,8 +1111,6 @@ export default function UsersPage() {
         meId={me?.id ?? null}
         roleLabel={roleLabel}
         warehouseLabelById={warehouseLabelById}
-        avatarQuickBusyId={avatarQuickBusyId}
-        quickChangeAvatar={quickChangeAvatar}
         toggleStatus={toggleStatus}
         openEdit={openEdit}
         askDelete={askDelete}
@@ -936,9 +1127,11 @@ export default function UsersPage() {
         onClose={closeModal}
         onSubmit={saveModal}
         canAdmin={canAdmin}
+        isSelfEditing={isSelfEditing}
         detail={detail}
         tab={tab}
         setTab={setTab}
+        // fields
         fEmail={fEmail}
         setFEmail={setFEmail}
         fName={fName}
@@ -967,6 +1160,7 @@ export default function UsersPage() {
         setFCountry={setFCountry}
         fNotes={fNotes}
         setFNotes={setFNotes}
+        // avatar
         avatarBusy={avatarBusy}
         avatarImgLoading={avatarImgLoading}
         setAvatarImgLoading={setAvatarImgLoading}
@@ -976,6 +1170,7 @@ export default function UsersPage() {
         pickAvatarForModal={pickAvatarForModal}
         modalRemoveAvatar={modalRemoveAvatar}
         setAvatarFileDraft={setAvatarFileDraft}
+        // attachments
         attInputRef={attInputRef}
         uploadingAttachments={uploadingAttachments}
         deletingAttId={deletingAttId}
@@ -984,6 +1179,7 @@ export default function UsersPage() {
         addAttachments={addAttachments}
         removeSavedAttachment={removeSavedAttachment}
         savedAttachments={savedAttachments}
+        // pin (draft handlers)
         pinBusy={pinBusy}
         pinMsg={pinMsg}
         pinNew={pinNew}
@@ -993,21 +1189,28 @@ export default function UsersPage() {
         adminTogglePinEnabled={adminTogglePinEnabled}
         adminSetOrResetPin={adminSetOrResetPin}
         adminRemovePin={adminRemovePin}
+        // warehouse
         fFavWarehouseId={fFavWarehouseId}
         setFFavWarehouseId={setFFavWarehouseId}
         activeAlmacenes={activeAlmacenes}
         warehouseLabelById={warehouseLabelById}
+        // roles
         roles={roles}
         rolesLoading={rolesLoading}
         fRoleIds={fRoleIds}
         setFRoleIds={setFRoleIds}
         roleLabel={roleLabel}
+        // perms
         allPerms={allPerms}
         permsLoading={permsLoading}
+        // ✅ special perms (draft handlers)
         specialEnabled={specialEnabled}
         setSpecialEnabled={(v) => {
-          setSpecialEnabled(v);
-          if (!v) setSpecialList([]);
+          if (isSelfEditing) {
+            setErr("No podés editar permisos especiales en tu propio usuario.");
+            return;
+          }
+          setSpecialEnabledState(v);
         }}
         specialPermPick={specialPermPick}
         setSpecialPermPick={setSpecialPermPick}
@@ -1019,7 +1222,6 @@ export default function UsersPage() {
         removeSpecial={removeSpecial}
       />
 
-      {/* CONFIRM DELETE single */}
       <Modal
         open={confirmOpen}
         title="Eliminar usuario"
@@ -1031,8 +1233,7 @@ export default function UsersPage() {
       >
         <div className="space-y-4">
           <div className="text-sm">
-            Vas a eliminar (soft delete) a:{" "}
-            <span className="font-semibold">{deleteTarget?.email}</span>
+            Vas a eliminar (soft delete) a: <span className="font-semibold">{deleteTarget?.email}</span>
             <div className="mt-2 text-xs text-muted">
               - Se bloquea el usuario y se invalida la sesión. <br />
               - Se liberará el email para poder recrearlo. <br />
@@ -1052,12 +1253,8 @@ export default function UsersPage() {
             >
               Cancelar
             </button>
-            <button
-              className={cn("tp-btn", deleteBusy && "opacity-60")}
-              type="button"
-              disabled={deleteBusy}
-              onClick={() => void confirmDelete()}
-            >
+
+            <button className={cn("tp-btn", deleteBusy && "opacity-60")} type="button" disabled={deleteBusy} onClick={() => void confirmDelete()}>
               {deleteBusy ? "Eliminando…" : "Eliminar"}
             </button>
           </div>

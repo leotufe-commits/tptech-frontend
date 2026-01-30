@@ -1,7 +1,23 @@
 // tptech-frontend/src/pages/ConfiguracionSistema.tsx
 import React from "react";
 import { NavLink, useLocation } from "react-router-dom";
-import { KeyRound, ChevronRight, Palette, Users, Shield, Building2, Landmark, Boxes } from "lucide-react";
+import {
+  KeyRound,
+  ChevronRight,
+  Palette,
+  Users,
+  Shield,
+  Building2,
+  Landmark,
+  Boxes,
+  Receipt,
+  CreditCard,
+  Truck,
+  Tags,
+  Layers,
+  Hash,
+  Printer,
+} from "lucide-react";
 
 function cn(...classes: Array<string | false | null | undefined>) {
   return classes.filter(Boolean).join(" ");
@@ -89,13 +105,25 @@ function Pill({ children }: { children: React.ReactNode }) {
 export default function ConfiguracionSistema() {
   const location = useLocation();
 
+  // Config sistema
   const inPin = location.pathname.startsWith("/configuracion-sistema/pin");
   const inTheme = location.pathname.startsWith("/configuracion-sistema/tema");
 
+  const inImpuestos = location.pathname.startsWith("/configuracion-sistema/impuestos");
+  const inPagos = location.pathname.startsWith("/configuracion-sistema/pagos");
+  const inEnvios = location.pathname.startsWith("/configuracion-sistema/envios");
+  const inListasPrecios = location.pathname.startsWith("/configuracion-sistema/listas-precios");
+  const inCategorias = location.pathname.startsWith("/configuracion-sistema/categorias");
+
+  const inNumeracion = location.pathname.startsWith("/configuracion-sistema/numeracion");
+  const inEtiquetas = location.pathname.startsWith("/configuracion-sistema/etiquetas");
+
+  // Config (usuarios/roles/joyeria)
   const inUsers = location.pathname.startsWith("/configuracion/usuarios");
   const inRoles = location.pathname.startsWith("/configuracion/roles");
   const inCompany = location.pathname.startsWith("/configuracion/joyeria");
 
+  // Módulos existentes
   const inWarehouses = location.pathname.startsWith("/inventario/almacenes");
   const inCurrencies = location.pathname.startsWith("/divisas");
 
@@ -162,6 +190,69 @@ export default function ConfiguracionSistema() {
             icon={<KeyRound size={20} />}
             active={inPin}
             badge={<Pill>2 niveles</Pill>}
+          />
+        </Section>
+
+        {/* ================= OPERACIONES ================= */}
+        <Section title="Operaciones" desc="Reglas comerciales del negocio y parámetros del día a día.">
+          <CardLink
+            to="/configuracion-sistema/impuestos"
+            title="Impuestos y tributos"
+            desc="Impuestos, alícuotas, percepciones/retenciones y configuración fiscal."
+            icon={<Receipt size={20} />}
+            active={inImpuestos}
+          />
+
+          <CardLink
+            to="/configuracion-sistema/pagos"
+            title="Pagos y cobros"
+            desc="Medios de pago, condiciones, recargos/descuentos, cuotas y reglas."
+            icon={<CreditCard size={20} />}
+            active={inPagos}
+          />
+
+          <CardLink
+            to="/configuracion-sistema/envios"
+            title="Envíos y logística"
+            desc="Transportistas, métodos de envío, costos y parámetros de despacho."
+            icon={<Truck size={20} />}
+            active={inEnvios}
+          />
+
+          <CardLink
+            to="/configuracion-sistema/listas-precios"
+            title="Listas de precios"
+            desc="Creá y administrá múltiples listas, márgenes y reglas por cliente."
+            icon={<Tags size={20} />}
+            active={inListasPrecios}
+          />
+
+          <CardLink
+            to="/configuracion-sistema/categorias"
+            title="Categorías de artículos"
+            desc="Estructura de catálogo: categorías y organización del inventario."
+            icon={<Layers size={20} />}
+            active={inCategorias}
+          />
+        </Section>
+
+        {/* ================= DOCUMENTOS ================= */}
+        <Section title="Documentos" desc="Plantillas, numeración e impresión.">
+          <CardLink
+            to="/configuracion-sistema/numeracion"
+            title="Numeración de comprobantes"
+            desc="Series, prefijos, puntos de venta y próximo número por documento."
+            icon={<Hash size={20} />}
+            active={inNumeracion}
+          />
+
+          <CardLink
+            to="/configuracion-sistema/etiquetas"
+            title="Impresión de etiquetas"
+            desc="Diseño e impresión de etiquetas para anillos y artículos."
+            icon={<Printer size={20} />}
+            active={inEtiquetas}
+            badge={<Pill>Anillos</Pill>}
           />
         </Section>
 

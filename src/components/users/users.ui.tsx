@@ -1,18 +1,46 @@
-// tptech-frontend/src/components/users/users.ui.tsx
 import React from "react";
 
+/* =========================
+   Utils
+========================= */
 export function cn(...classes: Array<string | false | null | undefined>) {
   return classes.filter(Boolean).join(" ");
 }
 
-export function Badge({ children }: { children: React.ReactNode }) {
+/* =========================
+   Sort arrows (como Roles)
+========================= */
+export function SortArrows({
+  dir,
+  active,
+  className,
+}: {
+  dir?: "asc" | "desc";
+  active?: boolean;
+  className?: string;
+}) {
+  const isActive = !!active;
+  const upOn = isActive && dir === "asc";
+  const dnOn = isActive && dir === "desc";
+
   return (
-    <span className="inline-flex items-center rounded-full border border-border px-2 py-0.5 text-xs">
-      {children}
+    <span
+      className={cn("inline-flex flex-col leading-none ml-1 -mt-0.5", className)}
+      aria-hidden="true"
+    >
+      <svg width="10" height="10" viewBox="0 0 10 10">
+        <path d="M5 2 L8 5 H2 Z" fill="currentColor" opacity={upOn ? 1 : 0.35} />
+      </svg>
+      <svg width="10" height="10" viewBox="0 0 10 10" className="-mt-1">
+        <path d="M5 8 L2 5 H8 Z" fill="currentColor" opacity={dnOn ? 1 : 0.35} />
+      </svg>
     </span>
   );
 }
 
+/* =========================
+   Section wrapper
+========================= */
 export function Section({
   title,
   desc,
@@ -29,7 +57,7 @@ export function Section({
       <div className="mb-3">
         <div className="flex items-center justify-between gap-3">
           <div className="text-sm font-semibold">{title}</div>
-          {right ? <div className="shrink-0">{right}</div> : null}
+          {right ? <div className="shrink-0 ml-auto">{right}</div> : null}
         </div>
         {desc ? <div className="text-xs text-muted mt-0.5">{desc}</div> : null}
       </div>
@@ -38,45 +66,9 @@ export function Section({
   );
 }
 
-export function Modal({
-  open,
-  title,
-  children,
-  onClose,
-  wide,
-}: {
-  open: boolean;
-  title: string;
-  children: React.ReactNode;
-  onClose: () => void;
-  wide?: boolean;
-}) {
-  if (!open) return null;
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center px-4">
-      <div className="absolute inset-0 bg-black/40" onClick={onClose} />
-
-      <div
-        className={cn(
-          "relative w-full rounded-2xl border border-border bg-card shadow-soft",
-          wide ? "max-w-6xl" : "max-w-4xl",
-          "max-h-[85vh] flex flex-col"
-        )}
-      >
-        <div className="p-6 pb-4 border-b border-border flex items-center justify-between gap-3">
-          <h2 className="text-lg font-semibold">{title}</h2>
-          <button className="tp-btn" onClick={onClose} type="button">
-            Cerrar
-          </button>
-        </div>
-
-        <div className="p-6 pt-4 overflow-y-auto tp-scroll">{children}</div>
-      </div>
-    </div>
-  );
-}
-
+/* =========================
+   Helpers
+========================= */
 export function initialsFrom(label: string) {
   const clean = (label || "").trim();
   if (!clean) return "U";
@@ -94,6 +86,11 @@ export const ROLE_LABEL: Record<string, string> = {
   ADMIN: "Administrador",
   MANAGER: "Encargado",
   STAFF: "Empleado",
+  READONLY: "Solo lectura",
+
+  READ_ONLY: "Solo lectura",
+  READ_ONLY_USER: "Solo lectura",
+  VIEWER: "Solo lectura",
 };
 
 export const MODULE_LABEL: Record<string, string> = {
@@ -119,6 +116,15 @@ export const ACTION_LABEL: Record<string, string> = {
   EXPORT: "Exportar",
   ADMIN: "Administrar",
 };
+
+export function roleLabel(raw: unknown) {
+  const s = String(raw ?? "").trim();
+  if (!s) return "";
+  const looksLikeCode = /^[A-Za-z0-9_]+$/.test(s);
+  if (!looksLikeCode) return s;
+  const code = s.toUpperCase();
+  return ROLE_LABEL[code] ?? s;
+}
 
 export function permLabelByModuleAction(module?: string, action?: string) {
   const m = String(module || "");
@@ -198,32 +204,58 @@ export function absUrl(u: string) {
 ========================= */
 export type TabKey = "DATA" | "CONFIG";
 
-export function Tabs({ value, onChange }: { value: TabKey; onChange: (v: TabKey) => void }) {
+export function Tabs({
+  value,
+  onChange,
+  dataBadge,
+  configBadge,
+}: {
+  value: TabKey;
+  onChange: (v: TabKey) => void;
+  dataBadge?: string;
+  configBadge?: string;
+}) {
+  const BadgePill = ({ label }: { label: string }) => (
+    <span
+      className="ml-2 inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-semibold"
+      style={{
+        borderColor: "var(--border)",
+        background: "color-mix(in oklab, var(--card) 85%, var(--bg))",
+        color: "var(--muted)",
+      }}
+    >
+      {label}
+    </span>
+  );
+
   return (
     <div className="tp-card p-1 flex items-center gap-1">
       <button
         type="button"
         onClick={() => onChange("DATA")}
         className={cn(
-          "flex-1 rounded-xl px-3 py-2 text-sm font-semibold transition-colors",
+          "flex-1 rounded-xl px-3 py-2 text-sm font-semibold transition-colors inline-flex items-center justify-center",
           value === "DATA"
             ? "bg-[var(--primary)] text-[var(--primary-foreground,#fff)]"
             : "hover:bg-surface2"
         )}
       >
         Datos del usuario
+        {dataBadge ? <BadgePill label={dataBadge} /> : null}
       </button>
+
       <button
         type="button"
         onClick={() => onChange("CONFIG")}
         className={cn(
-          "flex-1 rounded-xl px-3 py-2 text-sm font-semibold transition-colors",
+          "flex-1 rounded-xl px-3 py-2 text-sm font-semibold transition-colors inline-flex items-center justify-center",
           value === "CONFIG"
             ? "bg-[var(--primary)] text-[var(--primary-foreground,#fff)]"
             : "hover:bg-surface2"
         )}
       >
         Configuración del usuario
+        {configBadge ? <BadgePill label={configBadge} /> : null}
       </button>
     </div>
   );

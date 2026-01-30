@@ -350,7 +350,9 @@ export default function Topbar({
               aria-label={
                 pinLockEnabled ? (switchWithoutPin ? "Cambiar usuario" : "Bloquear") : "Configurar PIN"
               }
-              title={pinLockEnabled ? (switchWithoutPin ? "Cambiar usuario" : "Bloquear") : "Configurar PIN"}
+              title={
+                pinLockEnabled ? (switchWithoutPin ? "Cambiar usuario" : "Bloquear") : "Configurar PIN"
+              }
             >
               {switchWithoutPin ? <UsersRound className="h-5 w-5" /> : <Lock className="h-5 w-5" />}
             </button>
@@ -448,10 +450,10 @@ export default function Topbar({
                       className="font-semibold text-primary hover:underline"
                       onClick={() => {
                         setSettingsOpen(false);
-                        navigate("/configuracion-sistema");
+                        navigate("/configuracion-sistema/pin");
                       }}
                     >
-                      Configuración del sistema
+                      Configuración PIN
                     </button>
                   </div>
                 </div>

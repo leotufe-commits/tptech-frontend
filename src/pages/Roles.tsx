@@ -1,14 +1,9 @@
 // tptech-frontend/src/pages/Roles.tsx
-import React, {
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type FormEvent,
-} from "react";
-import { Pencil, Trash2, Loader2 } from "lucide-react";
+import React, { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { Pencil, Trash2, Loader2, Lock } from "lucide-react";
+
 import { useAuth } from "../context/AuthContext";
+
 import {
   createRole,
   deleteRole,
@@ -19,19 +14,14 @@ import {
   extractPermissionIdsFromRoleDetail,
   type RoleLite,
 } from "../services/roles";
+
 import { fetchPermissions, type Permission } from "../services/permissions";
+
 import ConfirmDeleteDialog from "../components/ui/ConfirmDeleteDialog";
 import { useConfirmDelete } from "../hooks/useConfirmDelete";
-
-/* =========================
-   Labels roles (humanos)
-========================= */
-const ROLE_LABEL_BY_CODE: Record<string, string> = {
-  OWNER: "Propietario",
-  ADMIN: "Administrador",
-  STAFF: "Empleado",
-  READONLY: "Solo Lectura",
-};
+import { SortArrows } from "../components/ui/TPSort";
+import { TPBadge } from "../components/ui/TPBadges";
+import { Modal } from "../components/ui/Modal";
 
 /* =========================
    Labels permisos (humanos)
@@ -66,16 +56,25 @@ function prettyPerm(module: string, action: string) {
   return `${ACTION_LABEL[action] ?? action} ${MODULE_LABEL[module] ?? module}`;
 }
 
-function getRoleCode(r: RoleLite): string | undefined {
-  return r.code;
+/* =========================
+   Role label
+   - Prioriza displayName del backend
+   - fallback a name
+   - último fallback a code
+========================= */
+function roleLabel(r: RoleLite) {
+  const display = String((r as any)?.displayName || "").trim();
+  if (display) return display;
+
+  const name = String(r?.name || "").trim();
+  if (name) return name;
+
+  const code = String((r as any)?.code || "").trim();
+  return code || "Rol";
 }
 
-function prettyRole(r: RoleLite) {
-  const code = String(getRoleCode(r) || "").toUpperCase().trim();
-  if (code && ROLE_LABEL_BY_CODE[code]) return ROLE_LABEL_BY_CODE[code];
-
-  // fallback: lo que venga del backend (roles personalizados)
-  return r.name;
+function isOwnerRole(r: RoleLite) {
+  return String((r as any)?.code || "").toUpperCase().trim() === "OWNER";
 }
 
 /* =========================
@@ -83,155 +82,6 @@ function prettyRole(r: RoleLite) {
 ========================= */
 function cn(...classes: Array<string | false | null | undefined>) {
   return classes.filter(Boolean).join(" ");
-}
-
-function Badge({ children }: { children: any }) {
-  return (
-    <span className="inline-flex items-center rounded-full border border-border px-2 py-0.5 text-xs">
-      {children}
-    </span>
-  );
-}
-
-/**
- * Modal con opción draggable.
- */
-function Modal({
-  open,
-  title,
-  children,
-  onClose,
-  wide,
-  draggable,
-}: {
-  open: boolean;
-  title: string;
-  children: any;
-  onClose: () => void;
-  wide?: boolean;
-  draggable?: boolean;
-}) {
-  const [pos, setPos] = useState({ x: 0, y: 0 });
-  const dragging = useRef(false);
-  const start = useRef({ x: 0, y: 0 });
-  const startPos = useRef({ x: 0, y: 0 });
-
-  useEffect(() => {
-    if (!open) return;
-    setPos({ x: 0, y: 0 });
-  }, [open]);
-
-  useEffect(() => {
-    if (!open || !draggable) return;
-
-    function onMove(e: MouseEvent) {
-      if (!dragging.current) return;
-      const dx = e.clientX - start.current.x;
-      const dy = e.clientY - start.current.y;
-      setPos({ x: startPos.current.x + dx, y: startPos.current.y + dy });
-    }
-    function onUp() {
-      dragging.current = false;
-    }
-
-    window.addEventListener("mousemove", onMove);
-    window.addEventListener("mouseup", onUp);
-    return () => {
-      window.removeEventListener("mousemove", onMove);
-      window.removeEventListener("mouseup", onUp);
-    };
-  }, [open, draggable]);
-
-  // bloquear scroll del fondo
-  useEffect(() => {
-    if (!open) return;
-    const prev = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    return () => {
-      document.body.style.overflow = prev;
-    };
-  }, [open]);
-
-  if (!open) return null;
-
-  const boxClass = [
-    "relative w-full rounded-2xl border border-border bg-card p-6 shadow-soft",
-    wide ? "max-w-5xl" : "max-w-3xl",
-  ].join(" ");
-
-  if (!draggable) {
-    return (
-      <div className="fixed inset-0 z-50 flex items-center justify-center px-4">
-        <div className="absolute inset-0 bg-black/40" onClick={onClose} />
-        <div className={boxClass}>
-          <div className="flex items-center justify-between gap-3">
-            <h2 className="text-lg font-semibold">{title}</h2>
-            <button className="tp-btn" onClick={onClose} type="button">
-              Cerrar
-            </button>
-          </div>
-          <div className="mt-4">{children}</div>
-        </div>
-      </div>
-    );
-  }
-
-  return (
-    <div className="fixed inset-0 z-50">
-      <div className="absolute inset-0 bg-black/40" onMouseDown={onClose} />
-      <div
-        className={[boxClass, "absolute left-1/2 top-1/2"].join(" ")}
-        style={{
-          transform: `translate(calc(-50% + ${pos.x}px), calc(-50% + ${pos.y}px))`,
-        }}
-        onMouseDown={(e) => e.stopPropagation()}
-      >
-        <div
-          className="flex select-none items-center justify-between gap-3"
-          onMouseDown={(e) => {
-            dragging.current = true;
-            start.current = { x: e.clientX, y: e.clientY };
-            startPos.current = { ...pos };
-          }}
-          style={{ cursor: "move" }}
-          title="Arrastrá para mover"
-        >
-          <h2 className="text-lg font-semibold">{title}</h2>
-          <button
-            className="tp-btn"
-            onMouseDown={(e) => e.stopPropagation()}
-            onClick={onClose}
-            type="button"
-            title="Cerrar"
-          >
-            Cerrar
-          </button>
-        </div>
-
-        <div className="mt-4">{children}</div>
-      </div>
-    </div>
-  );
-}
-
-function SortTrianglesIcon({
-  state,
-  className,
-}: {
-  state: "INACTIVE" | "ASC" | "DESC";
-  className?: string;
-}) {
-  const upOpacity = state === "ASC" ? 1 : state === "DESC" ? 0.18 : 0.28;
-  const downOpacity = state === "DESC" ? 1 : state === "ASC" ? 0.18 : 0.28;
-
-  return (
-    <span className={["inline-flex items-center", className ?? ""].join(" ")}>
-      <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true">
-        <path d="M12 3 L21 12 H3 Z" fill="currentColor" opacity={upOpacity} />
-        <path d="M3 12 H21 L12 21 Z" fill="currentColor" opacity={downOpacity} />
-      </svg>
-    </span>
-  );
 }
 
 /* =========================
@@ -250,10 +100,7 @@ function groupPermsByModule(all: Permission[]) {
   });
 
   for (const [, list] of entries) {
-    list.sort(
-      (x, y) =>
-        ACTION_ORDER.indexOf(x.action as any) - ACTION_ORDER.indexOf(y.action as any)
-    );
+    list.sort((x, y) => ACTION_ORDER.indexOf(x.action as any) - ACTION_ORDER.indexOf(y.action as any));
   }
 
   return entries;
@@ -267,11 +114,13 @@ function ModuleCheckbox({
   indeterminate,
   onChange,
   label,
+  disabled,
 }: {
   checked: boolean;
   indeterminate: boolean;
   onChange: (checked: boolean) => void;
   label: string;
+  disabled?: boolean;
 }) {
   const ref = useRef<HTMLInputElement | null>(null);
 
@@ -280,20 +129,15 @@ function ModuleCheckbox({
   }, [indeterminate]);
 
   return (
-    <label className="flex items-center gap-2">
-      <input
-        ref={ref}
-        type="checkbox"
-        checked={checked}
-        onChange={(e) => onChange(e.target.checked)}
-      />
+    <label className={cn("flex items-center gap-2", disabled && "opacity-60")}>
+      <input ref={ref} type="checkbox" checked={checked} disabled={disabled} onChange={(e) => onChange(e.target.checked)} />
       <span className="text-sm font-semibold underline underline-offset-4">{label}</span>
     </label>
   );
 }
 
 /* =========================
-   Shared editor modal (optimizado)
+   Shared editor modal
 ========================= */
 function RoleEditorModal({
   open,
@@ -307,6 +151,7 @@ function RoleEditorModal({
   nameInputRef,
   onClose,
   onSubmit,
+  permissionsDisabled,
 }: {
   open: boolean;
   title: string;
@@ -319,13 +164,10 @@ function RoleEditorModal({
   nameInputRef?: React.RefObject<HTMLInputElement | null>;
   onClose: () => void;
   onSubmit: (name: string, selectedIds: string[]) => Promise<void>;
+  permissionsDisabled?: boolean;
 }) {
   const [name, setName] = useState(initialName);
-
-  // ✅ PERFORMANCE: Set en estado (tildar/destildar es mucho más rápido)
-  const [selectedSet, setSelectedSet] = useState<Set<string>>(
-    () => new Set(initialSelectedIds)
-  );
+  const [selectedSet, setSelectedSet] = useState<Set<string>>(() => new Set(initialSelectedIds));
 
   const initializedRef = useRef(false);
   useEffect(() => {
@@ -367,7 +209,7 @@ function RoleEditorModal({
   }
 
   return (
-    <Modal open={open} title={title} onClose={onClose} wide draggable>
+    <Modal open={open} title={title} onClose={onClose} wide>
       {loadingPerms ? (
         <div className="flex items-center gap-2 text-sm">
           <Loader2 className="h-4 w-4 animate-spin" />
@@ -386,13 +228,27 @@ function RoleEditorModal({
             />
           </div>
 
-          <div className="text-xs text-muted">
-            Tip: el checkbox del título del módulo selecciona/deselecciona todo el módulo.
-          </div>
+          {permissionsDisabled ? (
+            <div className="tp-card p-3 flex items-start gap-2">
+              <Lock className="h-4 w-4 mt-0.5" />
+              <div className="text-sm">
+                <div className="font-semibold">Rol Propietario (Owner)</div>
+                <div className="text-xs text-muted">
+                  En este rol solo se permite cambiar el <b>nombre</b>. Los permisos quedan bloqueados.
+                </div>
+              </div>
+            </div>
+          ) : (
+            <div className="text-xs text-muted">Tip: el checkbox del título del módulo selecciona/deselecciona todo el módulo.</div>
+          )}
 
-          <div className="space-y-4 max-h-[55vh] overflow-auto tp-scroll pr-1">
+          <div
+            className={cn(
+              "space-y-4 max-h-[55vh] overflow-auto tp-scroll pr-1",
+              permissionsDisabled && "opacity-60 pointer-events-none select-none"
+            )}
+          >
             {permsByModule.map(([module, listRaw]) => {
-              // ✅ Quitamos ADMIN del listado
               const list = listRaw.filter((p) => p.action !== "ADMIN");
 
               const ids = list.map((p) => p.id);
@@ -412,6 +268,7 @@ function RoleEditorModal({
                       indeterminate={indeterminate}
                       onChange={(checked) => toggleModule(list, checked)}
                       label={MODULE_LABEL[module] ?? module}
+                      disabled={permissionsDisabled}
                     />
                     <div className="text-xs text-muted">
                       {selectedCount}/{total}
@@ -428,6 +285,7 @@ function RoleEditorModal({
                           <input
                             type="checkbox"
                             checked={checked}
+                            disabled={permissionsDisabled}
                             onChange={(e) => toggleOne(p.id, e.target.checked)}
                           />
                           {prettyPerm(p.module, p.action)}
@@ -441,12 +299,7 @@ function RoleEditorModal({
           </div>
 
           <div className="pt-2 flex justify-end gap-2">
-            <button
-              className="tp-btn-secondary"
-              onClick={onClose}
-              type="button"
-              disabled={saving}
-            >
+            <button className="tp-btn-secondary" onClick={onClose} type="button" disabled={saving}>
               Cancelar
             </button>
             <button className="tp-btn-primary" type="submit" disabled={saving}>
@@ -479,19 +332,17 @@ const RoleRow = React.memo(function RoleRow({
   iconBtnBase: string;
   disabledCls: string;
 }) {
-  const code = getRoleCode(r);
-  const isOwner = code === "OWNER";
-  const canEditThis = canAdmin && !isOwner;
+  const owner = isOwnerRole(r);
+  const canEditThis = canAdmin;
   const deleteDisabled = Boolean(r.isSystem);
-
   const isEditingThis = editingRoleId === r.id;
 
   return (
     <tr className="border-t border-border">
-      <td className="px-4 py-3 font-semibold">{prettyRole(r)}</td>
+      <td className="px-4 py-3 font-semibold">{roleLabel(r)}</td>
 
       <td className="hidden sm:table-cell px-4 py-3">
-        <Badge>{r.isSystem ? "Sistema" : "Personalizado"}</Badge>
+        <TPBadge size="sm">{r.isSystem ? "Sistema" : "Personalizado"}</TPBadge>
       </td>
 
       <td className="px-4 py-3">
@@ -502,18 +353,16 @@ const RoleRow = React.memo(function RoleRow({
             disabled={!canEditThis || isEditingThis}
             onClick={() => (canEditThis ? onOpenEdit(r) : null)}
             title={
-              isOwner
-                ? "Propietario no es editable"
+              !canAdmin
+                ? "Sin permisos"
                 : isEditingThis
                 ? "Cargando..."
+                : owner
+                ? "Editar nombre (Propietario)"
                 : "Editar rol"
             }
           >
-            {isEditingThis ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : (
-              <Pencil className="h-4 w-4" />
-            )}
+            {isEditingThis ? <Loader2 className="h-4 w-4 animate-spin" /> : <Pencil className="h-4 w-4" />}
           </button>
 
           <button
@@ -521,13 +370,7 @@ const RoleRow = React.memo(function RoleRow({
             type="button"
             disabled={deleteDisabled || isEditingThis}
             onClick={() => (deleteDisabled || isEditingThis ? null : onDelete(r))}
-            title={
-              deleteDisabled
-                ? "No se puede eliminar un rol del sistema"
-                : isEditingThis
-                ? "Cargando..."
-                : "Eliminar rol"
-            }
+            title={deleteDisabled ? "No se puede eliminar un rol del sistema" : isEditingThis ? "Cargando..." : "Eliminar rol"}
           >
             <Trash2 className="h-4 w-4" />
           </button>
@@ -541,11 +384,9 @@ const RoleRow = React.memo(function RoleRow({
    PAGE
 ========================= */
 export default function RolesPage() {
-  const { permissions } = useAuth();
+  const { permissions, refreshMe } = useAuth();
 
-  // ✅ PERFORMANCE: set para includes O(1)
   const permSet = useMemo(() => new Set(permissions), [permissions]);
-
   const canView = permSet.has("USERS_ROLES:VIEW") || permSet.has("USERS_ROLES:ADMIN");
   const canAdmin = permSet.has("USERS_ROLES:ADMIN");
 
@@ -553,39 +394,31 @@ export default function RolesPage() {
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
 
-  // sorting
   const [sortBy, setSortBy] = useState<"ROLE" | "TYPE">("ROLE");
   const [sortDir, setSortDir] = useState<"ASC" | "DESC">("ASC");
 
-  // catalog permissions (lazy)
   const [allPerms, setAllPerms] = useState<Permission[]>([]);
   const [permsLoading, setPermsLoading] = useState(false);
 
-  // create/edit modals
   const [createOpen, setCreateOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
 
   const [createSaving, setCreateSaving] = useState(false);
   const [editSaving, setEditSaving] = useState(false);
 
-  // payload modal
   const [target, setTarget] = useState<RoleLite | null>(null);
   const [editInitialName, setEditInitialName] = useState("");
   const [editInitialPermIds, setEditInitialPermIds] = useState<string[]>([]);
+  const [editPermissionsDisabled, setEditPermissionsDisabled] = useState(false);
 
   const createNameRef = useRef<HTMLInputElement | null>(null);
   const editNameRef = useRef<HTMLInputElement | null>(null);
 
-  // para ignorar respuestas viejas (navegación rápida / strict mode)
   const loadReqRef = useRef(0);
   const didInitLoadRef = useRef(false);
-
   const editReqRef = useRef(0);
 
-  // loader en el botón editar
   const [editingRoleId, setEditingRoleId] = useState<string | null>(null);
-
-  // loader en el botón "Nuevo Rol"
   const [creatingOpenLoading, setCreatingOpenLoading] = useState(false);
 
   const { askDelete, dialogProps } = useConfirmDelete();
@@ -614,11 +447,7 @@ export default function RolesPage() {
     const arr = [...roles];
     arr.sort((a, b) => {
       if (sortBy === "ROLE") {
-        return (
-          prettyRole(a).localeCompare(prettyRole(b), "es", {
-            sensitivity: "base",
-          }) * dir
-        );
+        return roleLabel(a).localeCompare(roleLabel(b), "es", { sensitivity: "base" }) * dir;
       }
 
       const ta = typeLabel(a);
@@ -627,11 +456,7 @@ export default function RolesPage() {
       const byType = ta.localeCompare(tb, "es", { sensitivity: "base" }) * dir;
       if (byType !== 0) return byType;
 
-      return (
-        prettyRole(a).localeCompare(prettyRole(b), "es", {
-          sensitivity: "base",
-        }) * dir
-      );
+      return roleLabel(a).localeCompare(roleLabel(b), "es", { sensitivity: "base" }) * dir;
     });
 
     return arr;
@@ -644,10 +469,8 @@ export default function RolesPage() {
     setLoading(true);
 
     try {
-      // ✅ listRoles() ya retorna RoleLite[]
       const list = await listRoles();
 
-      // si hubo otro load después, ignoro
       if (loadReqRef.current !== reqId) return;
 
       const uniq = new Map<string, RoleLite>();
@@ -661,7 +484,6 @@ export default function RolesPage() {
     }
   }, []);
 
-  // ✅ LAZY: solo cargar permisos cuando se necesiten (modal)
   const ensurePermissionsCatalog = useCallback(async () => {
     if (allPerms.length > 0) return allPerms;
 
@@ -673,20 +495,17 @@ export default function RolesPage() {
     } finally {
       setPermsLoading(false);
     }
-  }, [allPerms.length, allPerms]);
+  }, [allPerms.length]);
 
-  // ✅ Anti doble fetch (StrictMode dev): correr solo 1 vez por “entrada” real
   useEffect(() => {
     if (!canView) return;
 
-    // cuando cambia canView de false->true, permitimos cargar de nuevo
     if (!didInitLoadRef.current) {
       didInitLoadRef.current = true;
       void loadRoles();
     }
   }, [canView, loadRoles]);
 
-  // si perdés permisos (logout o cambio), resetea guard
   useEffect(() => {
     if (canView) return;
     didInitLoadRef.current = false;
@@ -703,10 +522,11 @@ export default function RolesPage() {
     setSortDir((d) => (d === "ASC" ? "DESC" : "ASC"));
   }
 
-  function sortState(col: "ROLE" | "TYPE"): "INACTIVE" | "ASC" | "DESC" {
-    if (sortBy !== col) return "INACTIVE";
-    return sortDir === "ASC" ? "ASC" : "DESC";
+  function sortActive(col: "ROLE" | "TYPE") {
+    return sortBy === col;
   }
+
+  const sortDirForArrows: "asc" | "desc" = sortDir === "ASC" ? "asc" : "desc";
 
   /* =========================
      CREATE
@@ -749,14 +569,16 @@ export default function RolesPage() {
         }
 
         setCreateOpen(false);
+
         await loadRoles();
+        await refreshMe({ silent: true, force: true } as any);
       } catch (e: any) {
         setErr(String(e?.message || "Error creando rol"));
       } finally {
         setCreateSaving(false);
       }
     },
-    [canAdmin, loadRoles]
+    [canAdmin, loadRoles, refreshMe]
   );
 
   /* =========================
@@ -769,16 +591,18 @@ export default function RolesPage() {
 
       askDelete({
         entityName: "rol",
-        entityLabel: prettyRole(r),
+        entityLabel: roleLabel(r),
         onDelete: () => deleteRole(r.id),
-        onAfterSuccess: loadRoles,
-        confirmTitle: `Eliminar rol: ${prettyRole(r)}`,
+        onAfterSuccess: async () => {
+          await loadRoles();
+          await refreshMe({ silent: true, force: true } as any);
+        },
+        confirmTitle: `Eliminar rol: ${roleLabel(r)}`,
         confirmDescription: "Esta acción no se puede deshacer.",
-        dangerHint:
-          "Si este rol está asignado a usuarios o asociado a operaciones, puede que no se permita eliminarlo.",
+        dangerHint: "Si este rol está asignado a usuarios o asociado a operaciones, puede que no se permita eliminarlo.",
       });
     },
-    [askDelete, canAdmin, loadRoles]
+    [askDelete, canAdmin, loadRoles, refreshMe]
   );
 
   /* =========================
@@ -788,16 +612,14 @@ export default function RolesPage() {
     async (r: RoleLite) => {
       if (!canAdmin) return;
 
-      const code = getRoleCode(r);
-      if (code === "OWNER") {
-        setErr("El rol Propietario no es editable.");
-        return;
-      }
-
       setErr(null);
 
       const reqId = ++editReqRef.current;
       setEditingRoleId(r.id);
+
+      // ✅ ÚNICO “solo nombre”: OWNER
+      const nameOnly = isOwnerRole(r);
+      setEditPermissionsDisabled(nameOnly);
 
       setEditInitialName(r.name);
       setEditInitialPermIds([]);
@@ -845,18 +667,23 @@ export default function RolesPage() {
           await renameRole(target.id, clean);
         }
 
-        await updateRolePermissions(target.id, selectedPermIds);
+        // ✅ ahora se permite editar permisos en roles del sistema, excepto OWNER
+        if (!editPermissionsDisabled) {
+          await updateRolePermissions(target.id, selectedPermIds);
+        }
 
         setEditOpen(false);
         setTarget(null);
+
         await loadRoles();
+        await refreshMe({ silent: true, force: true } as any);
       } catch (e: any) {
         setErr(String(e?.message || "Error guardando cambios"));
       } finally {
         setEditSaving(false);
       }
     },
-    [canAdmin, target, loadRoles]
+    [canAdmin, target, loadRoles, refreshMe, editPermissionsDisabled]
   );
 
   if (!canView) return <div className="p-6">Sin permisos para ver roles.</div>;
@@ -899,15 +726,11 @@ export default function RolesPage() {
         )}
       </div>
 
-      {err && (
-        <div className="rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm">
-          {err}
-        </div>
-      )}
+      {err && <div className="rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm">{err}</div>}
 
       <div className="tp-card overflow-hidden w-full">
         <table className="w-full text-sm">
-          <thead className="border-b border-border">
+          <thead className="bg-surface2 text-xs uppercase text-muted border-b border-border">
             <tr>
               <th className="px-4 py-3 text-left">
                 <button
@@ -917,10 +740,7 @@ export default function RolesPage() {
                   title="Ordenar por Rol"
                 >
                   <span>Rol</span>
-                  <SortTrianglesIcon
-                    state={sortState("ROLE")}
-                    className={sortBy === "ROLE" ? "text-text" : "text-muted"}
-                  />
+                  <SortArrows dir={sortDirForArrows} active={sortActive("ROLE")} />
                 </button>
               </th>
 
@@ -932,10 +752,7 @@ export default function RolesPage() {
                   title="Ordenar por Tipo"
                 >
                   <span>Tipo</span>
-                  <SortTrianglesIcon
-                    state={sortState("TYPE")}
-                    className={sortBy === "TYPE" ? "text-text" : "text-muted"}
-                  />
+                  <SortArrows dir={sortDirForArrows} active={sortActive("TYPE")} />
                 </button>
               </th>
 
@@ -943,7 +760,7 @@ export default function RolesPage() {
             </tr>
           </thead>
 
-          <tbody>
+          <tbody className="divide-y divide-border">
             {loading ? (
               <tr>
                 <td className="px-4 py-4" colSpan={3}>
@@ -996,7 +813,7 @@ export default function RolesPage() {
       {/* EDIT */}
       <RoleEditorModal
         open={editOpen}
-        title={`Editar rol${target ? `: ${prettyRole(target)}` : ""}`}
+        title={`Editar rol${target ? `: ${roleLabel(target)}` : ""}`}
         initialName={editInitialName}
         permsByModule={permsByModule}
         initialSelectedIds={editInitialPermIds}
@@ -1004,6 +821,7 @@ export default function RolesPage() {
         saving={editSaving}
         submitLabel="Guardar"
         nameInputRef={editNameRef}
+        permissionsDisabled={editPermissionsDisabled}
         onClose={() => {
           setEditOpen(false);
           setTarget(null);

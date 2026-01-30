@@ -1,17 +1,7 @@
 import { useMemo, useState, type ReactNode } from "react";
 import { useInventory } from "../context/InventoryContext";
 import { TP_INPUT, TP_BTN_LINK_PRIMARY, cn } from "../components/ui/tp";
-import {
-  TPTableWrap,
-  TPTableHeader,
-  TPTableEl,
-  TPThead,
-  TPTbody,
-  TPTr,
-  TPTh,
-  TPTd,
-  TPEmptyRow,
-} from "../components/ui/TPTable";
+import { TPTableWrap, TPTableHeader } from "../components/ui/TPTable";
 import { TPStockBadge } from "../components/ui/TPBadges";
 
 /* ---------------- utils ---------------- */
@@ -59,6 +49,16 @@ function Modal({
   );
 }
 
+function EmptyRow({ colSpan, text }: { colSpan: number; text: string }) {
+  return (
+    <tr>
+      <td colSpan={colSpan} className="px-4 py-10 text-center text-sm text-muted">
+        {text}
+      </td>
+    </tr>
+  );
+}
+
 export default function InventarioAlmacenes() {
   const { almacenes, articulos, getStockTotal } = useInventory();
 
@@ -91,10 +91,10 @@ export default function InventarioAlmacenes() {
       const stockHere = a.stockByAlmacen?.[detailId] ?? a.stockByAlacen?.[detailId] ?? 0;
       return {
         id: a.id,
-        sku: a.sku,
-        nombre: a.nombre,
-        metal: a.metal,
-        categoria: a.categoria,
+        sku: a.sku ?? "",
+        nombre: a.nombre ?? "",
+        metal: a.metal ?? "",
+        categoria: a.categoria ?? "",
         stockHere,
         stockTotal: getStockTotal(a),
       };
@@ -104,10 +104,10 @@ export default function InventarioAlmacenes() {
 
     return rows.filter(
       (r) =>
-        r.sku.toLowerCase().includes(qq) ||
-        r.nombre.toLowerCase().includes(qq) ||
-        r.metal.toLowerCase().includes(qq) ||
-        r.categoria.toLowerCase().includes(qq)
+        String(r.sku).toLowerCase().includes(qq) ||
+        String(r.nombre).toLowerCase().includes(qq) ||
+        String(r.metal).toLowerCase().includes(qq) ||
+        String(r.categoria).toLowerCase().includes(qq)
     );
   }, [articulos, detailId, dq, getStockTotal]);
 
@@ -137,43 +137,56 @@ export default function InventarioAlmacenes() {
         />
       </div>
 
+      {/* ✅ TABLA REAL (evita warning <tbody> dentro de <div>) */}
       <TPTableWrap>
         <TPTableHeader left={`Almacenes: ${filteredAlmacenes.length}`} />
 
-        <TPTableEl>
-          <TPThead>
-            <TPTr>
-              <TPTh>Nombre</TPTh>
-              <TPTh>Código</TPTh>
-              <TPTh>Ubicación</TPTh>
-              <TPTh>Stock total</TPTh>
-              <TPTh className="text-right">Acciones</TPTh>
-            </TPTr>
-          </TPThead>
+        <div className="overflow-x-auto">
+          <table className="w-full border-collapse">
+            <thead>
+              <tr className="bg-surface2/30">
+                <th className="whitespace-nowrap px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-muted">
+                  Nombre
+                </th>
+                <th className="whitespace-nowrap px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-muted">
+                  Código
+                </th>
+                <th className="whitespace-nowrap px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-muted">
+                  Ubicación
+                </th>
+                <th className="whitespace-nowrap px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-muted">
+                  Stock total
+                </th>
+                <th className="whitespace-nowrap px-4 py-3 text-right text-xs font-semibold uppercase tracking-wide text-muted">
+                  Acciones
+                </th>
+              </tr>
+            </thead>
 
-          <TPTbody>
-            {filteredAlmacenes.map((x) => {
-              const stock = sumByAlmacen(articulos as any[], x.id);
-              return (
-                <TPTr key={x.id}>
-                  <TPTd className="font-semibold text-text">{x.nombre}</TPTd>
-                  <TPTd className="text-muted">{x.codigo}</TPTd>
-                  <TPTd className="text-muted">{x.ubicacion}</TPTd>
-                  <TPTd>
-                    <TPStockBadge n={stock} />
-                  </TPTd>
-                  <TPTd className="text-right">
-                    <button className={TP_BTN_LINK_PRIMARY} onClick={() => openAlmacen(x.id)}>
-                      Ver detalle
-                    </button>
-                  </TPTd>
-                </TPTr>
-              );
-            })}
+            <tbody className="divide-y divide-border">
+              {filteredAlmacenes.map((x) => {
+                const stock = sumByAlmacen(articulos as any[], x.id);
+                return (
+                  <tr key={x.id} className="hover:bg-surface2/25">
+                    <td className="px-4 py-3 font-semibold text-text">{x.nombre}</td>
+                    <td className="px-4 py-3 text-muted">{x.codigo}</td>
+                    <td className="px-4 py-3 text-muted">{x.ubicacion}</td>
+                    <td className="px-4 py-3">
+                      <TPStockBadge n={stock} />
+                    </td>
+                    <td className="px-4 py-3 text-right">
+                      <button className={TP_BTN_LINK_PRIMARY} onClick={() => openAlmacen(x.id)}>
+                        Ver detalle
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })}
 
-            {filteredAlmacenes.length === 0 && <TPEmptyRow colSpan={5} text="No hay almacenes." />}
-          </TPTbody>
-        </TPTableEl>
+              {filteredAlmacenes.length === 0 && <EmptyRow colSpan={5} text="No hay almacenes." />}
+            </tbody>
+          </table>
+        </div>
       </TPTableWrap>
 
       <Modal
@@ -201,40 +214,55 @@ export default function InventarioAlmacenes() {
               />
             </div>
 
+            {/* ✅ TABLA REAL (evita warning <tbody> dentro de <div>) */}
             <TPTableWrap>
               <TPTableHeader left={`Artículos en este almacén: ${detailRows.length}`} />
 
-              <TPTableEl>
-                <TPThead>
-                  <TPTr>
-                    <TPTh>SKU</TPTh>
-                    <TPTh>Nombre</TPTh>
-                    <TPTh>Categoría</TPTh>
-                    <TPTh>Metal</TPTh>
-                    <TPTh>Stock aquí</TPTh>
-                    <TPTh>Stock total</TPTh>
-                  </TPTr>
-                </TPThead>
+              <div className="overflow-x-auto">
+                <table className="w-full border-collapse">
+                  <thead>
+                    <tr className="bg-surface2/30">
+                      <th className="whitespace-nowrap px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-muted">
+                        SKU
+                      </th>
+                      <th className="whitespace-nowrap px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-muted">
+                        Nombre
+                      </th>
+                      <th className="whitespace-nowrap px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-muted">
+                        Categoría
+                      </th>
+                      <th className="whitespace-nowrap px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-muted">
+                        Metal
+                      </th>
+                      <th className="whitespace-nowrap px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-muted">
+                        Stock aquí
+                      </th>
+                      <th className="whitespace-nowrap px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-muted">
+                        Stock total
+                      </th>
+                    </tr>
+                  </thead>
 
-                <TPTbody>
-                  {detailRows.map((r) => (
-                    <TPTr key={r.id}>
-                      <TPTd className="font-semibold text-text">{r.sku}</TPTd>
-                      <TPTd className="text-muted">{r.nombre}</TPTd>
-                      <TPTd className="text-muted">{r.categoria}</TPTd>
-                      <TPTd className="text-muted">{r.metal}</TPTd>
-                      <TPTd>
-                        <TPStockBadge n={r.stockHere} />
-                      </TPTd>
-                      <TPTd>
-                        <TPStockBadge n={r.stockTotal} />
-                      </TPTd>
-                    </TPTr>
-                  ))}
+                  <tbody className="divide-y divide-border">
+                    {detailRows.map((r) => (
+                      <tr key={r.id} className="hover:bg-surface2/25">
+                        <td className="px-4 py-3 font-semibold text-text">{r.sku}</td>
+                        <td className="px-4 py-3 text-muted">{r.nombre}</td>
+                        <td className="px-4 py-3 text-muted">{r.categoria}</td>
+                        <td className="px-4 py-3 text-muted">{r.metal}</td>
+                        <td className="px-4 py-3">
+                          <TPStockBadge n={r.stockHere} />
+                        </td>
+                        <td className="px-4 py-3">
+                          <TPStockBadge n={r.stockTotal} />
+                        </td>
+                      </tr>
+                    ))}
 
-                  {detailRows.length === 0 && <TPEmptyRow colSpan={6} text="No hay resultados." />}
-                </TPTbody>
-              </TPTableEl>
+                    {detailRows.length === 0 && <EmptyRow colSpan={6} text="No hay resultados." />}
+                  </tbody>
+                </table>
+              </div>
             </TPTableWrap>
 
             <div className={cn("text-xs text-muted")}>

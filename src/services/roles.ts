@@ -52,24 +52,63 @@ function isObject(v: unknown): v is Record<string, any> {
   return !!v && typeof v === "object";
 }
 
+function toStr(v: any) {
+  return String(v ?? "").trim();
+}
+
+function isLikelyTechCode(s: string) {
+  // "OWNER", "ADMIN", "WAREHOUSE_MANAGER", etc.
+  // evita tomar displayName tipo "Propietario" / "Administrador"
+  if (!s) return false;
+  const t = s.trim();
+  if (t.length < 3) return false;
+  // mayormente mayúsculas, números y _-
+  return /^[A-Z0-9_-]+$/.test(t);
+}
+
+function normalizeRoleLite(raw: any): RoleLite | null {
+  if (!raw) return null;
+  const id = toStr(raw.id);
+  const name = toStr(raw.name);
+  if (!id || !name) return null;
+
+  const codeRaw = toStr(raw.code);
+  const code = codeRaw
+    ? codeRaw
+    : isLikelyTechCode(toStr(raw.name))
+      ? toStr(raw.name)
+      : undefined;
+
+  return {
+    id,
+    name,
+    code,
+    isSystem: Boolean(raw.isSystem),
+    usersCount: typeof raw.usersCount === "number" ? raw.usersCount : undefined,
+    permissions: Array.isArray(raw.permissions) ? raw.permissions : undefined,
+  };
+}
+
 /* =========================
    Normalizers
 ========================= */
 function normalizeRoles(resp: unknown): RoleLite[] {
-  if (Array.isArray(resp)) return resp as RoleLite[];
+  const rows: any[] = [];
 
-  if (isObject(resp) && Array.isArray((resp as any).roles)) {
-    return (resp as any).roles as RoleLite[];
-  }
+  if (Array.isArray(resp)) rows.push(...resp);
+  else if (isObject(resp) && Array.isArray((resp as any).roles)) rows.push(...((resp as any).roles as any[]));
 
-  return [];
+  return rows.map(normalizeRoleLite).filter(Boolean) as RoleLite[];
 }
 
 function normalizeRole(resp: unknown): RoleLite {
   if (!isObject(resp)) throw new Error("Respuesta inválida del servidor");
 
   const anyResp = resp as any;
-  return (anyResp.role ?? anyResp) as RoleLite;
+  const raw = anyResp.role ?? anyResp;
+  const r = normalizeRoleLite(raw);
+  if (!r) throw new Error("Respuesta inválida del servidor");
+  return r;
 }
 
 export function extractPermissionIdsFromRoleDetail(resp: RoleDetailResponse): string[] {
@@ -90,6 +129,25 @@ export function extractPermissionIdsFromRoleDetail(resp: RoleDetailResponse): st
 }
 
 /* =========================
+   Role helpers (para lógica)
+========================= */
+export function roleTechCode(role?: Pick<RoleLite, "code" | "name"> | null) {
+  // siempre devolvé algo usable para comparaciones (owner/admin)
+  const c = toStr((role as any)?.code);
+  if (c) return c.toLowerCase();
+  return toStr((role as any)?.name).toLowerCase();
+}
+
+export function isOwnerRole(role?: Pick<RoleLite, "code" | "name"> | null) {
+  return roleTechCode(role) === "owner";
+}
+
+export function isAdminRole(role?: Pick<RoleLite, "code" | "name"> | null) {
+  const c = roleTechCode(role);
+  return c === "admin" || c === "owner";
+}
+
+/* =========================
    In-memory cache (perf)
 ========================= */
 type ListCache = {
@@ -103,6 +161,11 @@ const listCache: ListCache = { ts: 0, promise: null, data: null };
 
 function now() {
   return Date.now();
+}
+
+function invalidateRolesCache() {
+  listCache.data = null;
+  listCache.ts = 0;
 }
 
 /* =========================
@@ -120,20 +183,15 @@ export async function listRoles(opts?: { force?: boolean }): Promise<RoleLite[]>
   const force = Boolean(opts?.force);
 
   if (!force) {
-    // si hay data fresca, devolvé
     if (listCache.data && now() - listCache.ts < LIST_TTL_MS) {
       return listCache.data;
     }
-
-    // si hay request en vuelo, compartilo
     if (listCache.promise) return listCache.promise;
   }
 
   const p = (async () => {
     const resp = await apiFetch("/roles", { method: "GET" });
     const roles = normalizeRoles(resp);
-
-    // guardamos data
     listCache.data = roles;
     listCache.ts = now();
     return roles;
@@ -144,7 +202,6 @@ export async function listRoles(opts?: { force?: boolean }): Promise<RoleLite[]>
   try {
     return await p;
   } finally {
-    // liberar el “in-flight”
     listCache.promise = null;
   }
 }
@@ -175,10 +232,7 @@ export async function createRole(name: string, permissionIds: string[] = []): Pr
     body: { name, permissionIds },
   });
 
-  // invalida cache
-  listCache.data = null;
-  listCache.ts = 0;
-
+  invalidateRolesCache();
   return normalizeRole(resp);
 }
 
@@ -193,22 +247,23 @@ export async function renameRole(roleId: string, name: string): Promise<RoleLite
     body: { name },
   });
 
-  // invalida cache
-  listCache.data = null;
-  listCache.ts = 0;
-
+  invalidateRolesCache();
   return normalizeRole(resp);
 }
 
 /**
  * Reemplazar permisos del rol (bulk)
  * PATCH /roles/:id/permissions
+ *
+ * Backend puede devolver:
+ * - { ok: true }
+ * - { ok: true, roleId, permissionIds }
  */
 export async function updateRolePermissions(
   roleId: string,
   permissionIds: string[]
-): Promise<{ ok: true }> {
-  return apiFetch<{ ok: true }>(`/roles/${roleId}/permissions`, {
+): Promise<{ ok: true; roleId?: string; permissionIds?: string[] }> {
+  return apiFetch<{ ok: true; roleId?: string; permissionIds?: string[] }>(`/roles/${roleId}/permissions`, {
     method: "PATCH",
     body: { permissionIds },
   });
@@ -221,8 +276,5 @@ export async function updateRolePermissions(
  */
 export async function deleteRole(roleId: string): Promise<void> {
   await apiFetch(`/roles/${roleId}`, { method: "DELETE" });
-
-  // invalida cache
-  listCache.data = null;
-  listCache.ts = 0;
+  invalidateRolesCache();
 }

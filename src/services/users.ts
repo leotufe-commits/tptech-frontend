@@ -219,16 +219,23 @@ function buildUsersQuery(params?: { q?: string; page?: number; limit?: number })
   return qs ? `/users?${qs}` : "/users";
 }
 
+/**
+ * ✅ Política de 401 para acciones ADMIN dentro del panel:
+ * - NO desloguear toda la app por un 401 puntual (cookie/cors/proxy intermitente)
+ * - dejar que la pantalla/modal muestre el error
+ */
+const ADMIN_401 = { on401: "throw" as const };
+
 /* =========================
    API calls
 ========================= */
 
 export async function createUser(body: CreateUserBody): Promise<CreateUserResponse> {
-  return apiFetch<CreateUserResponse>("/users", { method: "POST", body });
+  return apiFetch<CreateUserResponse>("/users", { method: "POST", body, ...ADMIN_401 });
 }
 
 export async function deleteUser(userId: string): Promise<OkResponse> {
-  return apiFetch<OkResponse>(`/users/${userId}`, { method: "DELETE" });
+  return apiFetch<OkResponse>(`/users/${userId}`, { method: "DELETE", ...ADMIN_401 });
 }
 
 export async function fetchUsers(params?: {
@@ -251,6 +258,7 @@ export async function updateUserProfile(
   return apiFetch<OkResponse<{ user?: UserDetail }>>(`/users/${userId}`, {
     method: "PATCH",
     body,
+    ...ADMIN_401,
   });
 }
 
@@ -261,11 +269,16 @@ export async function updateUserStatus(
   return apiFetch<OkResponse<{ user?: UserListItem }>>(`/users/${userId}/status`, {
     method: "PATCH",
     body: { status },
+    ...ADMIN_401,
   });
 }
 
 export async function assignRolesToUser(userId: string, roleIds: string[]): Promise<OkResponse> {
-  return apiFetch<OkResponse>(`/users/${userId}/roles`, { method: "PUT", body: { roleIds } });
+  return apiFetch<OkResponse>(`/users/${userId}/roles`, {
+    method: "PUT",
+    body: { roleIds },
+    ...ADMIN_401,
+  });
 }
 
 export async function setUserOverride(
@@ -276,11 +289,15 @@ export async function setUserOverride(
   return apiFetch<OkResponse<{ override?: Override }>>(`/users/${userId}/overrides`, {
     method: "POST",
     body: { permissionId, effect },
+    ...ADMIN_401,
   });
 }
 
 export async function removeUserOverride(userId: string, permissionId: string): Promise<OkResponse> {
-  return apiFetch<OkResponse>(`/users/${userId}/overrides/${permissionId}`, { method: "DELETE" });
+  return apiFetch<OkResponse>(`/users/${userId}/overrides/${permissionId}`, {
+    method: "DELETE",
+    ...ADMIN_401,
+  });
 }
 
 /* =========================
@@ -307,6 +324,7 @@ export async function updateFavoriteWarehouseForUser(
     {
       method: "PATCH",
       body: { warehouseId },
+      ...ADMIN_401,
     }
   );
 
@@ -328,6 +346,7 @@ export async function updateUserAvatar(
   const resp = await apiFetch<UpdateAvatarResponse>("/users/me/avatar", {
     method: "PUT",
     body: form,
+    on401: "throw", // ✅ NO forzar logout por un 401 del upload
   });
 
   return normalizeAvatarResponse(resp);
@@ -338,7 +357,10 @@ export async function removeMyAvatar(): Promise<{
   avatarUrl: string | null;
   user?: UserListItem;
 }> {
-  const resp = await apiFetch<UpdateAvatarResponse>("/users/me/avatar", { method: "DELETE" });
+  const resp = await apiFetch<UpdateAvatarResponse>("/users/me/avatar", {
+    method: "DELETE",
+    on401: "throw", // ✅ idem
+  });
   return normalizeAvatarResponse(resp);
 }
 
@@ -361,6 +383,7 @@ export async function updateUserAvatarForUser(
   const resp = await apiFetch<UpdateAvatarResponse>(`/users/${userId}/avatar`, {
     method: "PUT",
     body: form,
+    on401: "throw", // ✅ NO forzar logout por un 401 del upload
   });
 
   return normalizeAvatarResponse(resp);
@@ -371,6 +394,7 @@ export async function removeAvatarForUser(
 ): Promise<{ ok: true; avatarUrl: string | null; user?: UserListItem }> {
   const resp = await apiFetch<UpdateAvatarResponse>(`/users/${userId}/avatar`, {
     method: "DELETE",
+    on401: "throw", // ✅ idem
   });
 
   return normalizeAvatarResponse(resp);
@@ -405,6 +429,7 @@ export async function setUserQuickPin(userId: string, pin: string): Promise<Quic
   return apiFetch<QuickPinState>(`/users/${userId}/quick-pin`, {
     method: "PUT",
     body: { pin: clean },
+    ...ADMIN_401,
   });
 }
 
@@ -414,7 +439,7 @@ export async function resetUserQuickPin(userId: string, pin: string): Promise<Qu
 }
 
 export async function removeUserQuickPin(userId: string): Promise<QuickPinState> {
-  return apiFetch<QuickPinState>(`/users/${userId}/quick-pin`, { method: "DELETE" });
+  return apiFetch<QuickPinState>(`/users/${userId}/quick-pin`, { method: "DELETE", ...ADMIN_401 });
 }
 
 /* =========================
@@ -427,6 +452,7 @@ export async function setUserPinEnabled(userId: string, enabled: boolean): Promi
   return apiFetch<QuickPinState>(`/users/${userId}/quick-pin/enabled`, {
     method: "PATCH",
     body: { enabled },
+    ...ADMIN_401,
   });
 }
 
@@ -441,9 +467,13 @@ export async function resetUserPinForUser(userId: string, pin: string): Promise<
   return resetUserQuickPin(userId, pin);
 }
 
-export async function setUserPinEnabledForUser(userId: string, enabled: boolean): Promise<QuickPinState> {
+export async function setUserPinEnabledForUser(
+  userId: string,
+  enabled: boolean
+): Promise<QuickPinState> {
   return setUserPinEnabled(userId, enabled);
 }
+
 /* =========================
    ✅ USER ATTACHMENTS (ADMIN)
    Backend:
@@ -462,7 +492,11 @@ export async function uploadUserAttachmentsInstant(
 
   return apiFetch<OkResponse<{ attachments?: UserAttachment[]; user?: UserDetail }>>(
     `/users/${userId}/attachments`,
-    { method: "PUT", body: form }
+    {
+      method: "PUT",
+      body: form,
+      on401: "throw", // ✅ evita expulsarte por un 401 puntual en multipart
+    }
   );
 }
 
@@ -472,5 +506,6 @@ export async function deleteUserAttachmentInstant(
 ): Promise<OkResponse> {
   return apiFetch<OkResponse>(`/users/${userId}/attachments/${attachmentId}`, {
     method: "DELETE",
+    ...ADMIN_401,
   });
 }

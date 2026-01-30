@@ -3,7 +3,6 @@ import { useEffect, useMemo, useRef, useState, type ComponentType } from "react"
 import { createPortal } from "react-dom";
 import { NavLink, useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
-import { roleLabel } from "../lib/roleLabels";
 import {
   LayoutDashboard,
   Package,
@@ -464,8 +463,7 @@ export default function Sidebar({
 
   const COLLAPSED_W = 84;
 
-  const storedExpanded =
-    Number(localStorage.getItem("tptech_sidebar_last_expanded_width")) || 300;
+  const storedExpanded = Number(localStorage.getItem("tptech_sidebar_last_expanded_width")) || 300;
   const storedMini = localStorage.getItem("tptech_sidebar_mini") === "1";
   const hasStored = Boolean(localStorage.getItem("tptech_sidebar_last_expanded_width"));
 
@@ -561,71 +559,42 @@ export default function Sidebar({
   const user = auth.user ?? null;
 
   const avatarUrlRaw: string = String((user as any)?.avatarUrl ?? "").trim();
-const avatarBase = avatarUrlRaw ? absUrl(avatarUrlRaw) : "";
+  const avatarBase = avatarUrlRaw ? absUrl(avatarUrlRaw) : "";
 
-// ✅ cache-bust estable: usa updatedAt/quickPinUpdatedAt/etc si existe; si no, "1"
-const avatarBust = String(
-  (user as any)?.updatedAt ??
-    (user as any)?.avatarUpdatedAt ??
-    (user as any)?.quickPinUpdatedAt ??
-    ""
-).trim();
+  // ✅ cache-bust estable: usa updatedAt/quickPinUpdatedAt/etc si existe; si no, "1"
+  const avatarBust = String(
+    (user as any)?.updatedAt ?? (user as any)?.avatarUpdatedAt ?? (user as any)?.quickPinUpdatedAt ?? ""
+  ).trim();
 
-const avatarSrc = avatarBase
-  ? `${avatarBase}${avatarBase.includes("?") ? "&" : "?"}v=${encodeURIComponent(avatarBust || "1")}`
-  : "";
-
+  const avatarSrc = avatarBase
+    ? `${avatarBase}${avatarBase.includes("?") ? "&" : "?"}v=${encodeURIComponent(avatarBust || "1")}`
+    : "";
 
   const userName: string = (user as any)?.name || (user as any)?.email || "Usuario";
   const userEmail: string = (user as any)?.email || "";
 
-  // ✅ Rol del usuario (tolerante a distintas estructuras) + HUMANO (usa roleLabel)
+  /**
+   * ✅ Rol del usuario (NO hardcode):
+   * - Usamos auth.roles (del buildAuthResponse)
+   * - Mostramos displayName si existe, si no name
+   * - Si no hay roles, recién ahí fallback por permisos (último recurso)
+   */
   const userRoleLabel: string = useMemo(() => {
-    const u: any = user || {};
+    const roleArr = Array.isArray((auth as any)?.roles) ? ((auth as any).roles as any[]) : [];
 
-    const collected: string[] = [];
+    const names = roleArr
+      .map((r) => {
+        const dn = typeof r?.displayName === "string" ? r.displayName.trim() : "";
+        const n = typeof r?.name === "string" ? r.name.trim() : "";
+        return dn || n;
+      })
+      .filter(Boolean);
 
-    // 1) roleNames: string[]
-    if (Array.isArray(u.roleNames)) {
-      for (const x of u.roleNames) {
-        const s = String(x || "").trim();
-        if (s) collected.push(s);
-      }
-    }
+    if (names.length) return Array.from(new Set(names)).join(" • ");
 
-    // 2) roles: string[] | {name}[]
-    if (Array.isArray(u.roles)) {
-      if (u.roles.every((x: any) => typeof x === "string")) {
-        for (const x of u.roles) {
-          const s = String(x || "").trim();
-          if (s) collected.push(s);
-        }
-      } else {
-        for (const r of u.roles) {
-          const s = typeof r?.name === "string" ? r.name.trim() : "";
-          if (s) collected.push(s);
-        }
-      }
-    }
+    // 4) fallback suave por permisos (solo si no vino roles)
+    const perms = Array.isArray((auth as any)?.permissions) ? ((auth as any).permissions as string[]) : [];
 
-    // 3) campos directos
-    const direct =
-      (typeof u.role === "string" ? u.role : "") ||
-      (typeof u.roleName === "string" ? u.roleName : "") ||
-      (typeof u?.role?.name === "string" ? u.role.name : "") ||
-      (typeof u.roleLabel === "string" ? u.roleLabel : "") ||
-      "";
-
-    const d = String(direct || "").trim();
-    if (d) collected.push(d);
-
-    const uniq = Array.from(new Set(collected.map((x) => x.trim()).filter(Boolean)));
-    if (uniq.length) return uniq.map((x) => roleLabel(x)).join(" • ");
-
-    // 4) fallback suave por permisos
-    const perms = Array.isArray((auth as any)?.permissions)
-      ? ((auth as any).permissions as string[])
-      : [];
     const hasAdmin = perms.some(
       (p) => /:ADMIN$/.test(p) || p.includes("USERS_ROLES:ADMIN") || p.includes("COMPANY_SETTINGS:ADMIN")
     );
@@ -635,10 +604,10 @@ const avatarSrc = avatarBase
     if (hasEdit) return "Empleado";
 
     const hasView = perms.some((p) => /:VIEW$/.test(p) || p.includes(":READ") || p.includes(":LIST"));
-    if (hasView) return "Solo Lectura";
+    if (hasView) return "Solo lectura";
 
     return "Usuario";
-  }, [user, auth]);
+  }, [auth]);
 
   const logoUrlRaw = (auth.jewelry as any)?.logoUrl ?? "";
   const logoUrl = absUrl(logoUrlRaw);
@@ -877,7 +846,7 @@ const avatarSrc = avatarBase
               {/* ✅ Mail */}
               <div className="truncate text-xs text-muted">{userEmail}</div>
 
-              {/* ✅ Rol abajo del mail (HUMANO) */}
+              {/* ✅ Rol abajo del mail (por displayName) */}
               <div className="mt-0.5 truncate text-[11px] text-muted">{userRoleLabel}</div>
             </div>
           </div>

@@ -1,19 +1,56 @@
 // src/components/ui/TPBadges.tsx
+import React from "react";
 import { cn } from "./tp";
 import type { TipoMov } from "../../context/InventoryContext";
 
 type Size = "sm" | "md";
+type Tone = "neutral" | "primary" | "info" | "success" | "danger" | "warning";
 
 function sizeClass(size: Size) {
   return size === "sm" ? "px-2 py-0.5 text-xs" : "px-2 py-1 text-xs";
 }
 
 /* =========================
-   ✅ Segmented Pills (GLOBAL) – DISEÑO MUY SUTIL
-   - Sin contenedor
-   - Activo: color (rojo / verde) sin relleno fuerte
-   - Inactivo: gris secundario (NUNCA blanco)
-   - Jerarquía visual clara
+   ✅ TPBadge (GLOBAL ÚNICO)
+   - Usalo en toda la app en vez de crear "Badge" local
+========================= */
+export function TPBadge({
+  children,
+  tone = "neutral",
+  size = "md",
+  className,
+  title,
+}: {
+  children: React.ReactNode;
+  tone?: Tone;
+  size?: Size;
+  className?: string;
+  title?: string;
+}) {
+  const base = cn("inline-flex items-center rounded-full font-semibold border", sizeClass(size));
+
+  const toneCls =
+  tone === "primary"
+    ? "bg-primary/10 text-primary border-primary/20"
+    : tone === "info"
+    ? "bg-primary/10 text-primary border-primary/20"
+    : tone === "success"
+    ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20"
+    : tone === "danger"
+    ? "bg-red-500/10 text-red-400 border-red-500/20"
+    : tone === "warning"
+    ? "bg-amber-500/10 text-amber-300 border-amber-500/20"
+    : "bg-surface2/80 text-text/70 border-border";
+
+  return (
+    <span className={cn(base, toneCls, className)} title={title}>
+      {children}
+    </span>
+  );
+}
+
+/* =========================
+   ✅ Segmented Pills (GLOBAL)
 ========================= */
 export function TPSegmentedPills({
   value,
@@ -40,7 +77,6 @@ export function TPSegmentedPills({
     dis && "opacity-50 cursor-not-allowed"
   );
 
-  // OFF (activo cuando value=false)
   const offBtn = cn(
     base,
     !value
@@ -48,7 +84,6 @@ export function TPSegmentedPills({
       : "border-border/50 bg-surface2/60 text-muted/80 hover:bg-surface2/70"
   );
 
-  // ON (activo cuando value=true)
   const onBtn = cn(
     base,
     value
@@ -84,7 +119,6 @@ export function TPSegmentedPills({
     </div>
   );
 }
-
 /** Stock badge (0 gris / 1-5 primary / 6+ verde) */
 export function TPStockBadge({ n, size = "md" }: { n: number; size?: Size }) {
   const base = cn("rounded-full font-semibold border", sizeClass(size));
@@ -96,9 +130,7 @@ export function TPStockBadge({ n, size = "md" }: { n: number; size?: Size }) {
     return <span className={cn(base, "bg-primary/10 text-primary border-primary/20")}>{n}</span>;
   }
   return (
-    <span className={cn(base, "bg-emerald-500/10 text-emerald-400 border-emerald-500/20")}>
-      {n}
-    </span>
+    <span className={cn(base, "bg-emerald-500/10 text-emerald-400 border-emerald-500/20")}>{n}</span>
   );
 }
 
@@ -118,16 +150,10 @@ export function TPStockLabelBadge({
     return <span className={cn(base, "bg-surface2/80 text-text/70 border-border")}>Sin stock</span>;
   }
   if (n <= low) {
-    return (
-      <span className={cn(base, "bg-primary/10 text-primary border-primary/20")}>
-        Bajo ({n})
-      </span>
-    );
+    return <span className={cn(base, "bg-primary/10 text-primary border-primary/20")}>Bajo ({n})</span>;
   }
   return (
-    <span className={cn(base, "bg-emerald-500/10 text-emerald-400 border-emerald-500/20")}>
-      {n} u.
-    </span>
+    <span className={cn(base, "bg-emerald-500/10 text-emerald-400 border-emerald-500/20")}>{n} u.</span>
   );
 }
 
@@ -159,13 +185,10 @@ export function TPUserStatusBadge({
   const base = cn("rounded-full font-semibold border", sizeClass(size));
 
   if (status === "ACTIVE") {
-    return (
-      <span className={cn(base, "bg-emerald-500/10 text-emerald-400 border-emerald-500/20")}>
-        Activo
-      </span>
-    );
+    return <span className={cn(base, "bg-emerald-500/10 text-emerald-400 border-emerald-500/20")}>Activo</span>;
   }
 
+  // si querés diferenciar PENDING, lo hacemos después; por ahora mantiene el estilo anterior
   return <span className={cn(base, "bg-surface2/80 text-text/70 border-border")}>Inactivo</span>;
 }
 
@@ -174,11 +197,7 @@ export function TPTipoMovBadge({ tipo, size = "md" }: { tipo: TipoMov; size?: Si
   const base = cn("rounded-full font-semibold border", sizeClass(size));
 
   if (tipo === "Entrada") {
-    return (
-      <span className={cn(base, "bg-emerald-500/10 text-emerald-400 border-emerald-500/20")}>
-        Entrada
-      </span>
-    );
+    return <span className={cn(base, "bg-emerald-500/10 text-emerald-400 border-emerald-500/20")}>Entrada</span>;
   }
   if (tipo === "Salida") {
     return <span className={cn(base, "bg-red-500/10 text-red-400 border-red-500/20")}>Salida</span>;
