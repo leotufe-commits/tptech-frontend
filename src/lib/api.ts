@@ -202,7 +202,6 @@ export async function apiFetch<T = any>(
 ): Promise<T> {
   const headers = new Headers(options.headers as any);
 
-  // ⚠️ GET/HEAD no deberían llevar body
   const method = String(options.method || "GET").toUpperCase();
   const allowBody = method !== "GET" && method !== "HEAD";
 
@@ -213,7 +212,6 @@ export async function apiFetch<T = any>(
 
     if (isFormData(b) || isURLSearchParams(b)) {
       bodyToSend = b;
-      // ✅ NO setear Content-Type: el browser lo hace (boundary)
     } else if (typeof b === "string") {
       bodyToSend = b;
       if (!headers.has("Content-Type"))
@@ -231,7 +229,6 @@ export async function apiFetch<T = any>(
     }
   }
 
-  // ✅ Evitar datos viejos al navegar: GET sin cache por defecto
   const cacheOpt: RequestCache | undefined =
     options.cache !== undefined
       ? options.cache
@@ -241,12 +238,10 @@ export async function apiFetch<T = any>(
 
   const url = joinUrl(API_URL, path);
 
-  // ✅ timeout + signal
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const timeoutSignal = makeTimeoutSignal(timeoutMs);
   const signal = mergeSignals(options.signal, timeoutSignal);
 
-  // ✅ dedupe (solo GET/HEAD, y solo si no hay body)
   const canDedupe =
     (options.dedupe ?? true) &&
     (method === "GET" || method === "HEAD") &&
@@ -262,14 +257,23 @@ export async function apiFetch<T = any>(
   const run = (async () => {
     let res: Response;
 
+    // ✅ Quitamos props custom para no pasarlas a fetch()
+    const {
+      body: _body,
+      timeoutMs: _timeoutMs,
+      dedupe: _dedupe,
+      on401: _on401,
+      ...fetchOpts
+    } = options;
+
     try {
       res = await fetch(url, {
-        ...options,
+        ...fetchOpts,
         method,
         headers,
         body: bodyToSend,
         cache: cacheOpt,
-        credentials: "include", // ✅ clave: manda cookie httpOnly (tptech_session)
+        credentials: "include",
         signal,
       });
     } catch (err: any) {
@@ -279,14 +283,12 @@ export async function apiFetch<T = any>(
       throw new Error("Error de red. Revisá tu conexión e intentá de nuevo.");
     }
 
-    // ✅ 401: controlable por opción (default: logout)
     if (res.status === 401) {
       const mode = options.on401 ?? "logout";
       if (mode === "logout") {
         forceLogout();
         throw new Error("Sesión expirada");
       }
-      // "throw": NO desloguea, solo error
       throw new Error("No autorizado (401)");
     }
 
@@ -302,7 +304,6 @@ export async function apiFetch<T = any>(
         payload = null;
       }
     } else {
-      // ✅ algunos backends devuelven JSON con ct incorrecto
       try {
         const txt = await res.text();
         const maybeJson = tryParseJsonText(txt);

@@ -1,27 +1,17 @@
 // tptech-frontend/src/components/users/UserEditModal.tsx
 import React, { type FormEvent, useEffect, useMemo, useState } from "react";
-import { Loader2, KeyRound, ShieldOff, AlertTriangle } from "lucide-react";
+import { Loader2, AlertTriangle } from "lucide-react";
 
-import EyeIcon from "../EyeIcon";
-import { TPSegmentedPills } from "../ui/TPBadges";
-
-// ✅ Modal ya NO se importa desde users.ui
 import { Modal } from "../ui/Modal";
+import UserEditFooter from "./edit/UserEditFooter";
 
-import {
-  cn,
-  Section,
-  Tabs,
-  type TabKey,
-  initialsFrom,
-  formatBytes,
-  safeFileLabel,
-  absUrl,
-  effectLabel,
-  permLabelByModuleAction,
-} from "./users.ui";
+import SectionData from "./edit/sections/SectionData";
+import SectionConfig from "./edit/sections/SectionConfig";
+import { ConfirmModals } from "./edit/sections/ConfirmModals";
 
-import type { Override, OverrideEffect, UserAttachment, UserDetail, Role } from "../../services/users";
+import { cn, Tabs, type TabKey, initialsFrom, absUrl, permLabelByModuleAction } from "./users.ui";
+
+import type { Override, OverrideEffect, Role, UserAttachment, UserDetail } from "../../services/users";
 import type { Permission } from "../../services/permissions";
 
 /* =========================
@@ -101,7 +91,7 @@ type Props = {
   removeSavedAttachment: (id: string) => Promise<void>;
   savedAttachments: UserAttachment[];
 
-  // pin
+  // pin (draft)
   pinBusy: boolean;
   pinMsg: string | null;
   pinNew: string;
@@ -142,64 +132,8 @@ type Props = {
 };
 
 /* =========================
-   INPUT CON OJO
+   HELPERS
 ========================= */
-function InputWithEye({
-  value,
-  onChange,
-  placeholder,
-  disabled,
-  inputMode,
-  maxLength,
-  onlyDigits,
-  show,
-  setShow,
-  autoComplete,
-}: {
-  value: string;
-  onChange: (v: string) => void;
-  placeholder: string;
-  disabled?: boolean;
-  inputMode?: React.HTMLAttributes<HTMLInputElement>["inputMode"];
-  maxLength?: number;
-  onlyDigits?: boolean;
-  show: boolean;
-  setShow: (v: boolean) => void;
-  autoComplete?: string;
-}) {
-  return (
-    <div className="relative">
-      <input
-        className="tp-input pr-10"
-        type={show ? "text" : "password"}
-        value={value}
-        onChange={(e) => {
-          let next = e.target.value;
-          if (onlyDigits) next = next.replace(/\D/g, "");
-          if (typeof maxLength === "number") next = next.slice(0, maxLength);
-          onChange(next);
-        }}
-        placeholder={placeholder}
-        disabled={disabled}
-        inputMode={inputMode}
-        maxLength={maxLength}
-        autoComplete={autoComplete ?? "off"}
-        spellCheck={false}
-      />
-
-      <button
-        type="button"
-        onClick={() => setShow(!show)}
-        className="absolute right-3 top-1/2 -translate-y-1/2 text-muted hover:text-text"
-        aria-label={show ? "Ocultar" : "Mostrar"}
-        title={show ? "Ocultar" : "Mostrar"}
-      >
-        <EyeIcon open={show} />
-      </button>
-    </div>
-  );
-}
-
 function shouldHidePinMsg(msg?: string | null) {
   const m = String(msg || "").toLowerCase();
   if (!m) return true;
@@ -312,9 +246,50 @@ export default function UserEditModal(props: Props) {
     removeSpecial,
   } = props;
 
+  const isSelf = Boolean(isSelfEditing);
+  const disableAdminDangerZone = isSelf;
+
   const [showPassword, setShowPassword] = useState(false);
-  const [showPin1, setShowPin1] = useState(false);
-  const [showPin2, setShowPin2] = useState(false);
+
+  // ✅ Owner detection (para bloquear permisos especiales si es Propietario)
+  const isOwner = Boolean(
+    detail?.roles?.some((r) => String((r as any)?.code || (r as any)?.name || "").toUpperCase().trim() === "OWNER")
+  );
+
+  // ===== PIN FLOW (UI) =====
+  const [pinFlowOpen, setPinFlowOpen] = useState(false);
+  const [pinFlowStep, setPinFlowStep] = useState<"NEW" | "CONFIRM">("NEW");
+  const [pinDraft, setPinDraft] = useState("");
+  const [pinDraft2, setPinDraft2] = useState("");
+
+  function openPinFlow() {
+    setPinDraft("");
+    setPinDraft2("");
+    setPinFlowStep("NEW");
+    setPinFlowOpen(true);
+
+    // drafts limpios hasta confirmar
+    setPinNew("");
+    setPinNew2("");
+  }
+
+  function closePinFlow() {
+    if (pinBusy || pinToggling) return;
+    setPinFlowOpen(false);
+    setPinDraft("");
+    setPinDraft2("");
+    setPinFlowStep("NEW");
+  }
+
+  // ✅ BLOQUEA submit del form mientras el PIN modal está abierto
+  function handleSubmit(e?: FormEvent) {
+    if (e && pinFlowOpen) {
+      e.preventDefault();
+      e.stopPropagation();
+      return;
+    }
+    return onSubmit(e);
+  }
 
   // previews attachments draft
   const [draftPreviewByKey, setDraftPreviewByKey] = useState<Record<string, string>>({});
@@ -332,14 +307,6 @@ export default function UserEditModal(props: Props) {
   // confirm: deshabilitar PIN borra permisos especiales
   const [confirmDisablePinClearsSpecialOpen, setConfirmDisablePinClearsSpecialOpen] = useState(false);
   const [pinToggling, setPinToggling] = useState(false);
-
-  const isSelf = Boolean(isSelfEditing);
-  const disableAdminDangerZone = isSelf;
-
-  // ✅ Owner detection (para bloquear permisos especiales si es Propietario)
-  const isOwner = Boolean(
-    detail?.roles?.some((r) => String((r as any)?.code || (r as any)?.name || "").toUpperCase().trim() === "OWNER")
-  );
 
   // ✅ Mantiene sincronizados los objectURL con attachmentsDraft
   useEffect(() => {
@@ -375,16 +342,26 @@ export default function UserEditModal(props: Props) {
   // reset state cuando abre/cambia user
   useEffect(() => {
     if (!open) return;
+
     setHiddenSavedAttIds(new Set());
     setForceHideDetailAvatar(false);
+
     setConfirmDisableSpecialOpen(false);
     setSpecialClearing(false);
+
     setConfirmDisablePinClearsSpecialOpen(false);
     setPinToggling(false);
+
     setShowPassword(false);
-    setShowPin1(false);
-    setShowPin2(false);
-  }, [open, detail?.id]);
+
+    // ✅ reset PIN flow
+    setPinFlowOpen(false);
+    setPinFlowStep("NEW");
+    setPinDraft("");
+    setPinDraft2("");
+    setPinNew("");
+    setPinNew2("");
+  }, [open, detail?.id, setPinNew, setPinNew2]);
 
   function safeClose() {
     try {
@@ -400,20 +377,32 @@ export default function UserEditModal(props: Props) {
 
     setHiddenSavedAttIds(new Set());
     setForceHideDetailAvatar(false);
+
     setConfirmDisableSpecialOpen(false);
     setSpecialClearing(false);
+
     setConfirmDisablePinClearsSpecialOpen(false);
     setPinToggling(false);
+
     setShowPassword(false);
-    setShowPin1(false);
-    setShowPin2(false);
+
+    // ✅ reset PIN flow
+    setPinFlowOpen(false);
+    setPinFlowStep("NEW");
+    setPinDraft("");
+    setPinDraft2("");
+    setPinNew("");
+    setPinNew2("");
 
     onClose();
   }
 
-  const canShowPinToggle = Boolean(detail?.hasQuickPin);
+  // ✅ EL ESTADO REAL DEL PIN VIENE SOLO DEL DETAIL (no optimista)
+  const detailHasQuickPin = Boolean(detail?.hasQuickPin);
+  const detailPinEnabled = Boolean(detail?.pinEnabled);
+  const hasPin = detailHasQuickPin;
 
-  // ✅ el PIN no debe quedar “bloqueado” por permisos especiales
+  const canShowPinToggle = Boolean(detailHasQuickPin);
   const pinPillsDisabled = pinBusy || pinToggling || !canAdmin || !canShowPinToggle || disableAdminDangerZone;
 
   const detailAvatar = !forceHideDetailAvatar && detail?.avatarUrl ? absUrl(String(detail.avatarUrl)) : "";
@@ -520,7 +509,6 @@ export default function UserEditModal(props: Props) {
     try {
       await adminTogglePinEnabled(false, { confirmRemoveOverrides: true });
 
-      // reset UI permisos especiales
       setSpecialPermPick("");
       setSpecialEffectPick("ALLOW");
       setSpecialEnabled(false);
@@ -539,116 +527,30 @@ export default function UserEditModal(props: Props) {
 
   return (
     <>
-      {/* ✅ Confirm modal: deshabilitar PIN borra permisos especiales */}
-      <Modal
-        open={confirmDisablePinClearsSpecialOpen}
-        title="Deshabilitar PIN"
-        onClose={() => {
-          if (pinToggling || specialClearing) return;
-          setConfirmDisablePinClearsSpecialOpen(false);
-        }}
-        wide={false}
-        overlayClassName={confirmOverlay}
-      >
-        <div className="space-y-3">
-          <div
-            className="tp-card p-3 text-sm flex gap-3 items-start"
-            style={{
-              border: "1px solid color-mix(in oklab, #ef4444 20%, var(--border))",
-              background: "color-mix(in oklab, var(--card) 88%, var(--bg))",
-            }}
-          >
-            <AlertTriangle className="h-4 w-4 mt-0.5" />
-            <div className="min-w-0">
-              <div className="font-semibold">Se eliminarán permisos especiales</div>
-              <div className="text-xs text-muted">
-                Este usuario tiene <b>{specialListSorted.length}</b> permiso(s) especial(es). Si deshabilitás el PIN y confirmás, se
-                borrarán permanentemente. ¿Deseás continuar?
-              </div>
-            </div>
-          </div>
-
-          <div className="flex justify-end gap-2 pt-1">
-            <button
-              className="tp-btn-secondary"
-              type="button"
-              disabled={pinToggling || specialClearing}
-              onClick={() => setConfirmDisablePinClearsSpecialOpen(false)}
-            >
-              Cancelar
-            </button>
-
-            <button
-              className={cn("tp-btn-primary", (pinToggling || specialClearing) && "opacity-60")}
-              type="button"
-              disabled={pinToggling || specialClearing}
-              onClick={() => void confirmDisablePinAndClearSpecial()}
-              title="Deshabilitar PIN y borrar permisos"
-            >
-              {pinToggling || specialClearing ? "Procesando…" : "Deshabilitar y borrar"}
-            </button>
-          </div>
-        </div>
-      </Modal>
-
-      {/* ✅ Confirm modal: deshabilitar permisos especiales borra asignaciones */}
-      <Modal
-        open={confirmDisableSpecialOpen}
-        title="Deshabilitar permisos especiales"
-        onClose={() => {
-          if (specialClearing) return;
-          setConfirmDisableSpecialOpen(false);
-        }}
-        wide={false}
-        overlayClassName={confirmOverlay}
-      >
-        <div className="space-y-3">
-          <div
-            className="tp-card p-3 text-sm flex gap-3 items-start"
-            style={{
-              border: "1px solid color-mix(in oklab, #ef4444 20%, var(--border))",
-              background: "color-mix(in oklab, var(--card) 88%, var(--bg))",
-            }}
-          >
-            <AlertTriangle className="h-4 w-4 mt-0.5" />
-            <div className="min-w-0">
-              <div className="font-semibold">Se eliminarán permisos asignados</div>
-              <div className="text-xs text-muted">
-                Este usuario tiene <b>{specialListSorted.length}</b> permiso(s) especial(es). Si deshabilitás la píldora, se borrarán
-                permanentemente. ¿Deseás continuar?
-              </div>
-            </div>
-          </div>
-
-          <div className="flex justify-end gap-2 pt-1">
-            <button className="tp-btn-secondary" type="button" disabled={specialClearing} onClick={() => setConfirmDisableSpecialOpen(false)}>
-              Cancelar
-            </button>
-
-            <button
-              className={cn("tp-btn-primary", specialClearing && "opacity-60")}
-              type="button"
-              disabled={specialClearing}
-              onClick={() => void confirmDisableSpecialAndClear()}
-              title="Deshabilitar y borrar permisos"
-            >
-              {specialClearing ? "Borrando…" : "Deshabilitar y borrar"}
-            </button>
-          </div>
-        </div>
-      </Modal>
+      <ConfirmModals
+        confirmOverlay={confirmOverlay}
+        confirmDisablePinClearsSpecialOpen={confirmDisablePinClearsSpecialOpen}
+        setConfirmDisablePinClearsSpecialOpen={setConfirmDisablePinClearsSpecialOpen}
+        pinToggling={pinToggling}
+        specialClearing={specialClearing}
+        specialCount={specialListSorted.length}
+        onConfirmDisablePinAndClearSpecial={() => void confirmDisablePinAndClearSpecial()}
+        confirmDisableSpecialOpen={confirmDisableSpecialOpen}
+        setConfirmDisableSpecialOpen={setConfirmDisableSpecialOpen}
+        onConfirmDisableSpecialAndClear={() => void confirmDisableSpecialAndClear()}
+      />
 
       {/* ✅ Modal principal */}
       <Modal open={open} wide={wide} title={title} onClose={safeClose}>
         {modalLoading ? (
-          <div className="tp-card p-4 text-sm text-muted flex items-center gap-2">
+          <div className={cn("tp-card p-4 text-sm text-muted flex items-center gap-2")}>
             <Loader2 className="h-4 w-4 animate-spin" />
             Cargando…
           </div>
         ) : (
-          <form onSubmit={onSubmit} className="space-y-4">
+          <form onSubmit={handleSubmit} className="space-y-4">
             {/* Avatar */}
-            <div className="tp-card p-4">
+            <div className={cn("tp-card p-4")}>
               <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
                 <div className="flex items-center gap-4">
                   <div className="relative group">
@@ -706,7 +608,10 @@ export default function UserEditModal(props: Props) {
                       <button
                         type="button"
                         onClick={() => void handleRemoveAvatar()}
-                        className={cn("absolute top-2 right-2 h-6 w-6 rounded-full grid place-items-center", "opacity-0 group-hover:opacity-100 transition-opacity")}
+                        className={cn(
+                          "absolute top-2 right-2 h-6 w-6 rounded-full grid place-items-center",
+                          "opacity-0 group-hover:opacity-100 transition-opacity"
+                        )}
                         style={{
                           background: "rgba(255,255,255,0.75)",
                           border: "1px solid rgba(0,0,0,0.08)",
@@ -753,9 +658,9 @@ export default function UserEditModal(props: Props) {
             </div>
 
             {/* aviso self */}
-            {modalMode === "EDIT" && isSelf && (
+            {modalMode === "EDIT" && isSelf ? (
               <div
-                className="tp-card p-3 text-sm flex gap-3 items-start"
+                className={cn("tp-card p-3 text-sm flex gap-3 items-start")}
                 style={{
                   border: "1px solid color-mix(in oklab, var(--primary) 22%, var(--border))",
                   background: "color-mix(in oklab, var(--card) 88%, var(--bg))",
@@ -770,663 +675,124 @@ export default function UserEditModal(props: Props) {
                   </div>
                 </div>
               </div>
-            )}
+            ) : null}
 
             <Tabs value={tab} onChange={setTab} configBadge={disableAdminDangerZone ? "Restringida" : undefined} />
 
             {/* TAB DATA */}
             {tab === "DATA" ? (
-              <div className="space-y-4">
-                <Section title="Cuenta" desc="Email y contraseña inicial.">
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                    <div className="md:col-span-1">
-                      <label className="mb-1 block text-xs text-muted">Email</label>
-                      <input
-                        className="tp-input"
-                        value={fEmail}
-                        onChange={(e) => setFEmail(e.target.value)}
-                        placeholder="usuario@correo.com"
-                        disabled={modalMode === "EDIT"}
-                        autoComplete="email"
-                      />
-                      {modalMode === "EDIT" ? <p className="mt-1 text-[11px] text-muted">(El email no se edita desde aquí)</p> : null}
-                    </div>
-
-                    <div className="md:col-span-1">
-                      <label className="mb-1 block text-xs text-muted">
-                        {modalMode === "CREATE" ? "Contraseña (opcional)" : "Nueva contraseña (opcional)"}
-                      </label>
-
-                      <InputWithEye
-                        value={fPassword}
-                        onChange={setFPassword}
-                        placeholder={modalMode === "CREATE" ? "Si la dejás vacía, queda Inactivo" : "Dejar vacía para no cambiar"}
-                        disabled={false}
-                        show={showPassword}
-                        setShow={setShowPassword}
-                        autoComplete="new-password"
-                      />
-
-                      {modalMode === "CREATE" ? (
-                        <p className="mt-1 text-[11px] text-muted">
-                          Si la contraseña está vacía, el usuario queda <b>Inactivo</b> (PENDING en backend).
-                        </p>
-                      ) : (
-                        <p className="mt-1 text-[11px] text-muted">(Solo se cambia si escribís una nueva)</p>
-                      )}
-                    </div>
-                  </div>
-                </Section>
-
-                <Section title="Datos personales" desc="Nombre, documento y dirección (como Empresa).">
-                  <div className="grid grid-cols-1 md:grid-cols-12 gap-3">
-                    <div className="md:col-span-12">
-                      <label className="mb-1 block text-xs text-muted">Nombre y apellido *</label>
-                      <input className="tp-input" value={fName} onChange={(e) => setFName(e.target.value)} placeholder="Nombre Apellido" />
-                    </div>
-
-                    <div className="md:col-span-2">
-                      <label className="mb-1 block text-xs text-muted">Tipo doc.</label>
-                      <input className="tp-input" value={fDocType} onChange={(e) => setFDocType(e.target.value)} placeholder="DNI / PAS / CUIT" />
-                    </div>
-
-                    <div className="md:col-span-4">
-                      <label className="mb-1 block text-xs text-muted">Nro. doc.</label>
-                      <input className="tp-input" value={fDocNumber} onChange={(e) => setFDocNumber(e.target.value)} placeholder="12345678" />
-                    </div>
-
-                    <div className="md:col-span-2">
-                      <label className="mb-1 block text-xs text-muted">Tel. país</label>
-                      <input className="tp-input" value={fPhoneCountry} onChange={(e) => setFPhoneCountry(e.target.value)} placeholder="+54" />
-                    </div>
-
-                    <div className="md:col-span-4">
-                      <label className="mb-1 block text-xs text-muted">Teléfono</label>
-                      <input className="tp-input" value={fPhoneNumber} onChange={(e) => setFPhoneNumber(e.target.value)} placeholder="11 1234 5678" />
-                    </div>
-
-                    <div className="md:col-span-12 mt-2">
-                      <div className="tp-card p-4">
-                        <div className="text-sm font-semibold mb-3">Domicilio</div>
-
-                        <div className="grid grid-cols-1 md:grid-cols-12 gap-3">
-                          <div className="md:col-span-5">
-                            <label className="mb-1 block text-xs text-muted">Calle</label>
-                            <input className="tp-input" value={fStreet} onChange={(e) => setFStreet(e.target.value)} placeholder="Calle" />
-                          </div>
-
-                          <div className="md:col-span-2">
-                            <label className="mb-1 block text-xs text-muted">Número</label>
-                            <input className="tp-input" value={fNumber} onChange={(e) => setFNumber(e.target.value)} placeholder="123" />
-                          </div>
-
-                          <div className="md:col-span-5">
-                            <label className="mb-1 block text-xs text-muted">Ciudad</label>
-                            <input className="tp-input" value={fCity} onChange={(e) => setFCity(e.target.value)} placeholder="Ciudad" />
-                          </div>
-
-                          <div className="md:col-span-4">
-                            <label className="mb-1 block text-xs text-muted">Provincia</label>
-                            <input className="tp-input" value={fProvince} onChange={(e) => setFProvince(e.target.value)} placeholder="Provincia" />
-                          </div>
-
-                          <div className="md:col-span-4">
-                            <label className="mb-1 block text-xs text-muted">Código postal</label>
-                            <input className="tp-input" value={fPostalCode} onChange={(e) => setFPostalCode(e.target.value)} placeholder="1012" />
-                          </div>
-
-                          <div className="md:col-span-4">
-                            <label className="mb-1 block text-xs text-muted">País</label>
-                            <input className="tp-input" value={fCountry} onChange={(e) => setFCountry(e.target.value)} placeholder="Argentina" />
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                </Section>
-
-                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                  <Section title="Notas" desc="Notas internas.">
-                    <textarea className="tp-input min-h-[180px]" value={fNotes} onChange={(e) => setFNotes(e.target.value)} placeholder="Notas internas…" />
-                  </Section>
-
-                  <Section title="Adjuntos" desc="Archivos del usuario (PDF, imágenes, etc.).">
-                    <div className="space-y-3">
-                      <button
-                        type="button"
-                        className="block w-full cursor-pointer"
-                        onClick={() => attInputRef.current?.click()}
-                        disabled={uploadingAttachments || modalBusy}
-                      >
-                        <div
-                          className="min-h-[180px] flex items-center justify-center border border-dashed rounded-2xl"
-                          style={{
-                            borderColor: "var(--border)",
-                            background: "color-mix(in oklab, var(--card) 82%, var(--bg))",
-                            color: "var(--muted)",
-                          }}
-                        >
-                          {uploadingAttachments ? "Subiendo…" : "Click para agregar archivos +"}
-                        </div>
-                      </button>
-
-                      <input
-                        ref={attInputRef}
-                        type="file"
-                        multiple
-                        hidden
-                        onChange={(e) => {
-                          const picked = Array.from(e.currentTarget.files ?? []);
-                          e.currentTarget.value = "";
-                          void addAttachments(picked);
-                        }}
-                      />
-
-                      {attachmentsDraft.length > 0 && (
-                        <div>
-                          <div className="text-xs text-[color:var(--muted)] mb-2">Seleccionados</div>
-                          <div className="space-y-2">
-                            {attachmentsDraft.map((f, idx) => {
-                              const isImg = String((f as any)?.type || "").startsWith("image/");
-                              const k = draftKey(f);
-                              const previewUrl = isImg ? draftPreviewByKey[k] : "";
-
-                              return (
-                                <div
-                                  key={k}
-                                  className="group flex items-center justify-between gap-3 rounded-xl px-3 py-2"
-                                  style={{
-                                    border: "1px solid var(--border)",
-                                    background: "color-mix(in oklab, var(--card) 90%, var(--bg))",
-                                  }}
-                                >
-                                  <div className="flex items-center gap-3 min-w-0">
-                                    {isImg && previewUrl ? (
-                                      <img
-                                        src={previewUrl}
-                                        alt={safeFileLabel(f.name)}
-                                        className="h-10 w-10 rounded-lg object-cover border"
-                                        style={{ borderColor: "var(--border)" }}
-                                        loading="lazy"
-                                      />
-                                    ) : (
-                                      <div
-                                        className="h-10 w-10 rounded-lg grid place-items-center border text-xs"
-                                        style={{
-                                          borderColor: "var(--border)",
-                                          color: "var(--muted)",
-                                          background: "color-mix(in oklab, var(--card) 85%, var(--bg))",
-                                        }}
-                                      >
-                                        DOC
-                                      </div>
-                                    )}
-
-                                    <div className="min-w-0">
-                                      <div className="text-sm text-text truncate">{safeFileLabel(f.name)}</div>
-                                      <div className="text-xs text-muted">{formatBytes(f.size)}</div>
-                                    </div>
-                                  </div>
-
-                                  <button
-                                    type="button"
-                                    className={cn("h-8 w-8 rounded-full grid place-items-center", "opacity-0 group-hover:opacity-100 transition-opacity")}
-                                    style={{ background: "var(--card)", border: "1px solid var(--border)" }}
-                                    title="Quitar del borrador"
-                                    aria-label="Quitar del borrador"
-                                    disabled={modalBusy || uploadingAttachments}
-                                    onClick={() => removeDraftAttachmentByIndex(idx)}
-                                  >
-                                    <span className="text-xs">✕</span>
-                                  </button>
-                                </div>
-                              );
-                            })}
-                          </div>
-                        </div>
-                      )}
-
-                      {modalMode === "EDIT" && filteredSavedAttachments.length > 0 && (
-                        <div>
-                          <div className="text-xs text-[color:var(--muted)] mb-2">Guardados</div>
-                          <div className="space-y-2">
-                            {filteredSavedAttachments.map((a) => {
-                              const busy = deletingAttId === a.id;
-                              const url = absUrl(a.url || "");
-                              const isImg = String(a.mimeType || "").startsWith("image/");
-
-                              return (
-                                <div
-                                  key={a.id}
-                                  className="group flex items-center justify-between gap-3 rounded-xl px-3 py-2"
-                                  style={{
-                                    border: "1px solid var(--border)",
-                                    background: "color-mix(in oklab, var(--card) 90%, var(--bg))",
-                                  }}
-                                >
-                                  <div className="flex items-center gap-3 min-w-0">
-                                    {isImg && url ? (
-                                      <img
-                                        src={url}
-                                        alt={safeFileLabel(a.filename)}
-                                        className="h-10 w-10 rounded-lg object-cover border"
-                                        style={{ borderColor: "var(--border)" }}
-                                        loading="lazy"
-                                      />
-                                    ) : (
-                                      <div
-                                        className="h-10 w-10 rounded-lg grid place-items-center border text-xs"
-                                        style={{
-                                          borderColor: "var(--border)",
-                                          color: "var(--muted)",
-                                          background: "color-mix(in oklab, var(--card) 85%, var(--bg))",
-                                        }}
-                                      >
-                                        DOC
-                                      </div>
-                                    )}
-
-                                    <div className="min-w-0">
-                                      <div className="text-sm text-text truncate">{safeFileLabel(a.filename)}</div>
-                                      <div className="text-xs text-muted flex gap-2">
-                                        <span className="truncate">{formatBytes(a.size)}</span>
-                                        {url && (
-                                          <a
-                                            className="underline underline-offset-2"
-                                            href={url}
-                                            target="_blank"
-                                            rel="noreferrer"
-                                            onClick={(e) => e.stopPropagation()}
-                                          >
-                                            Abrir
-                                          </a>
-                                        )}
-                                      </div>
-                                    </div>
-                                  </div>
-
-                                  <button
-                                    type="button"
-                                    className={cn("h-8 w-8 rounded-full grid place-items-center", "opacity-0 group-hover:opacity-100 transition-opacity")}
-                                    style={{ background: "var(--card)", border: "1px solid var(--border)" }}
-                                    title="Eliminar adjunto"
-                                    aria-label="Eliminar adjunto"
-                                    disabled={busy}
-                                    onClick={() => void handleRemoveSavedAttachment(a.id)}
-                                  >
-                                    <span className="text-xs">{busy ? "…" : "✕"}</span>
-                                  </button>
-                                </div>
-                              );
-                            })}
-                          </div>
-                        </div>
-                      )}
-
-                      {attachmentsDraft.length === 0 && (modalMode !== "EDIT" || filteredSavedAttachments.length === 0) && !uploadingAttachments ? (
-                        <div className="text-xs text-muted">Todavía no hay adjuntos.</div>
-                      ) : null}
-                    </div>
-                  </Section>
-                </div>
-              </div>
+              <SectionData
+                modalMode={modalMode}
+                modalBusy={modalBusy}
+                fEmail={fEmail}
+                setFEmail={setFEmail}
+                fPassword={fPassword}
+                setFPassword={setFPassword}
+                showPassword={showPassword}
+                setShowPassword={setShowPassword}
+                fName={fName}
+                setFName={setFName}
+                fDocType={fDocType}
+                setFDocType={setFDocType}
+                fDocNumber={fDocNumber}
+                setFDocNumber={setFDocNumber}
+                fPhoneCountry={fPhoneCountry}
+                setFPhoneCountry={setFPhoneCountry}
+                fPhoneNumber={fPhoneNumber}
+                setFPhoneNumber={setFPhoneNumber}
+                fStreet={fStreet}
+                setFStreet={setFStreet}
+                fNumber={fNumber}
+                setFNumber={setFNumber}
+                fCity={fCity}
+                setFCity={setFCity}
+                fProvince={fProvince}
+                setFProvince={setFProvince}
+                fPostalCode={fPostalCode}
+                setFPostalCode={setFPostalCode}
+                fCountry={fCountry}
+                setFCountry={setFCountry}
+                fNotes={fNotes}
+                setFNotes={setFNotes}
+                attInputRef={attInputRef}
+                uploadingAttachments={uploadingAttachments}
+                deletingAttId={deletingAttId}
+                attachmentsDraft={attachmentsDraft}
+                removeDraftAttachmentByIndex={removeDraftAttachmentByIndex}
+                addAttachments={addAttachments}
+                filteredSavedAttachments={filteredSavedAttachments}
+                handleRemoveSavedAttachment={handleRemoveSavedAttachment}
+                draftKey={draftKey}
+                draftPreviewByKey={draftPreviewByKey}
+              />
             ) : null}
 
             {/* TAB CONFIG */}
             {tab === "CONFIG" ? (
-              <div className="w-full space-y-4">
-                {disableAdminDangerZone && (
-                  <div
-                    className="tp-card p-3 text-sm flex gap-3 items-start"
-                    style={{
-                      border: "1px solid color-mix(in oklab, var(--primary) 22%, var(--border))",
-                      background: "color-mix(in oklab, var(--card) 88%, var(--bg))",
-                    }}
-                  >
-                    <AlertTriangle className="h-4 w-4 mt-0.5" />
-                    <div className="min-w-0">
-                      <div className="font-semibold">Configuración restringida</div>
-                      <div className="text-xs text-muted">
-                        Estás editando tu propio usuario. Para evitar perder acceso o expirar la sesión, desde acá no podés cambiar
-                        roles/permisos/almacén favorito/PIN. Esto debe hacerlo otro Admin/Owner.
-                      </div>
-                    </div>
-                  </div>
-                )}
-
-                {modalMode === "EDIT" ? (
-  <Section
-    title="Clave rápida (PIN)"
-    desc="PIN de 4 dígitos para desbloqueo rápido."
-    right={
-      detail?.hasQuickPin ? (
-        <TPSegmentedPills
-          value={Boolean(detail?.pinEnabled)}
-          disabled={pinPillsDisabled}
-          onChange={(v) => {
-            if (pinBusy || pinToggling) return;
-            if (!canAdmin || disableAdminDangerZone) return;
-
-            if (!v && specialListSorted.length > 0) {
-              setConfirmDisablePinClearsSpecialOpen(true);
-              return;
-            }
-
-            setPinToggling(true);
-            void adminTogglePinEnabled(v).finally(() => setPinToggling(false));
-          }}
-          labels={{ on: "Activo", off: "Inactivo" }}
-        />
-      ) : (
-        <span className="text-xs text-muted">Sin PIN</span>
-      )
-    }
-  >
-    <div className="space-y-3">
-      {/* Inputs PIN */}
-      <div
-        className={cn(
-          "flex items-center gap-2",
-          (!canAdmin || disableAdminDangerZone) && "opacity-60"
-        )}
-      >
-        <input
-          className="tp-input text-center tracking-[0.3em] w-[120px]"
-          placeholder="••••"
-          value={pinNew}
-          onChange={(e) => setPinNew(e.target.value.replace(/\D/g, "").slice(0, 4))}
-          disabled={pinBusy || pinToggling || !canAdmin || disableAdminDangerZone}
-          inputMode="numeric"
-        />
-
-        <input
-          className="tp-input text-center tracking-[0.3em] w-[120px]"
-          placeholder="••••"
-          value={pinNew2}
-          onChange={(e) => setPinNew2(e.target.value.replace(/\D/g, "").slice(0, 4))}
-          disabled={pinBusy || pinToggling || !canAdmin || disableAdminDangerZone}
-          inputMode="numeric"
-        />
-      </div>
-
-      {/* Acciones sutiles */}
-      <div className="flex items-center gap-3 text-xs">
-        <button
-          type="button"
-          className={cn(
-            "underline underline-offset-2 hover:opacity-80",
-            (pinBusy || pinToggling || !canAdmin || disableAdminDangerZone) && "opacity-50"
-          )}
-          disabled={pinBusy || pinToggling || !canAdmin || disableAdminDangerZone}
-          onClick={() => void adminSetOrResetPin()}
-        >
-          {detail?.hasQuickPin ? "Actualizar PIN" : "Crear PIN"}
-        </button>
-
-        {detail?.hasQuickPin && (
-          <button
-            type="button"
-            className="text-muted hover:text-red-400 underline underline-offset-2"
-            disabled={pinBusy || pinToggling || !canAdmin || disableAdminDangerZone}
-            onClick={() => {
-              if (specialListSorted.length > 0) {
-                setConfirmDisablePinClearsSpecialOpen(true);
-                return;
-              }
-              void adminRemovePin();
-            }}
-          >
-            Eliminar
-          </button>
-        )}
-      </div>
-    </div>
-  </Section>
-) : null}
-
-
-                <Section title="Almacén favorito" desc="Se usará por defecto en operaciones.">
-                  <select
-                    className="tp-input"
-                    value={fFavWarehouseId}
-                    onChange={(e) => setFFavWarehouseId(e.target.value)}
-                    disabled={!canAdmin || disableAdminDangerZone}
-                    title={disableAdminDangerZone ? "No se puede cambiar en tu propio usuario (evita perder acceso)." : undefined}
-                  >
-                    <option value="">Sin favorito</option>
-                    {activeAlmacenes.map((a) => {
-                      const isSelected = String(fFavWarehouseId) === String(a.id);
-                      return (
-                        <option key={a.id} value={a.id} disabled={isSelected}>
-                          {a.nombre} {a.codigo ? `(${a.codigo})` : ""}
-                          {isSelected ? " (seleccionado)" : ""}
-                        </option>
-                      );
-                    })}
-                  </select>
-
-                  <div className="mt-2 text-xs text-muted">
-                    {disableAdminDangerZone
-                      ? "Bloqueado al editar tu usuario."
-                      : fFavWarehouseId
-                      ? `Seleccionado: ${warehouseLabelById(fFavWarehouseId) ?? fFavWarehouseId}`
-                      : "Sin almacén favorito"}
-                  </div>
-                </Section>
-
-                <Section title="Roles del usuario" desc="Selección múltiple.">
-                  <div className={cn("tp-card p-3 max-h-[260px] overflow-auto tp-scroll", disableAdminDangerZone && "opacity-60")}>
-                    {rolesLoading ? (
-                      <div className="text-sm text-muted flex items-center gap-2">
-                        <Loader2 className="h-4 w-4 animate-spin" />
-                        Cargando roles…
-                      </div>
-                    ) : roles.length === 0 ? (
-                      <div className="text-sm text-muted">No hay roles.</div>
-                    ) : (
-                      <div className="grid grid-cols-1 gap-2">
-                        {roles.map((r) => {
-                          const rid = String((r as any).id);
-                          const checked = fRoleIds.includes(rid);
-
-                          const disableThis =
-                            disableAdminDangerZone || Boolean(isSelf && ownerRoleId && rid === ownerRoleId && selfOwnerChecked);
-
-                          return (
-                            <label key={rid} className={cn("flex items-center gap-2 text-sm", disableThis && "cursor-not-allowed")}>
-                              <input
-                                type="checkbox"
-                                className="h-4 w-4"
-                                checked={checked}
-                                disabled={disableThis}
-                                onChange={(e) => setFRoleIds((prev) => (e.target.checked ? [...prev, rid] : prev.filter((id) => id !== rid)))}
-                              />
-                              <span className={cn(disableThis && "text-muted")}>{roleLabel(r as any)}</span>
-                              {isSelf && ownerRoleId && rid === ownerRoleId && selfOwnerChecked ? (
-                                <span className="ml-2 text-[11px] text-muted">(obligatorio)</span>
-                              ) : null}
-                            </label>
-                          );
-                        })}
-                      </div>
-                    )}
-                  </div>
-
-                  {disableAdminDangerZone ? (
-                    <p className="mt-2 text-xs text-muted">Para cambiar tus roles necesitás que otro Admin/Owner lo haga por vos.</p>
-                  ) : (
-                    <p className="mt-2 text-xs text-muted">Si no seleccionás roles, queda sin permisos hasta asignar.</p>
-                  )}
-                </Section>
-
-                {/* ⛔️ PARTE 1/2 termina aquí (antes de "Permisos especiales") */}
-                <Section
-                  title={<span className="inline-flex items-center gap-2">Permisos especiales</span>}
-                  right={
-                    <div className="ml-auto">
-                      <TPSegmentedPills
-                        value={specialEnabled}
-                        onChange={(next) => {
-                          if (!canAdmin) return;
-                          if (specialBlocked) return;
-
-                          if (!next && specialListSorted.length > 0) {
-                            setConfirmDisableSpecialOpen(true);
-                            return;
-                          }
-
-                          setSpecialEnabled(next);
-
-                          if (!next) {
-                            setSpecialPermPick("");
-                            setSpecialEffectPick("ALLOW");
-                          }
-                        }}
-                        disabled={!canAdmin || specialBlocked || specialClearing}
-                        labels={{
-                          on: "Permisos habilitados",
-                          off: isOwner ? "Bloqueado (Propietario)" : "Permisos deshabilitados",
-                        }}
-                      />
-                    </div>
-                  }
-                  desc="Opcional: Permitir/Denegar por permiso."
-                >
-                  <div className="space-y-3">
-                    {isOwner ? (
-                      <div className="rounded-xl border border-border bg-bg px-3 py-2 text-sm text-muted">
-                        Los <b>Propietarios</b> no pueden tener permisos especiales (overrides). Se gestionan únicamente por roles.
-                      </div>
-                    ) : disableAdminDangerZone ? (
-                      <div className="rounded-xl border border-border bg-bg px-3 py-2 text-sm text-muted">
-                        Bloqueado al editar tu usuario (evita invalidar permisos y expirar sesión).
-                      </div>
-                    ) : null}
-
-                    <div className={cn("grid grid-cols-1 md:grid-cols-3 gap-2", specialBlocked && "opacity-60")}>
-                      <div className="md:col-span-2">
-                        <label className="mb-1 block text-xs text-muted">Permiso</label>
-                        <select
-                          className="tp-input"
-                          value={specialPermPick}
-                          onChange={(e) => setSpecialPermPick(e.target.value)}
-                          disabled={permsLoading || !specialEnabled || specialBlocked || specialClearing}
-                        >
-                          <option value="">{specialEnabled ? "Seleccionar…" : "Permisos especiales deshabilitados"}</option>
-                          {allPerms.map((p) => {
-                            const alreadyAdded = specialListSorted.some((x) => x.permissionId === p.id);
-                            return (
-                              <option key={p.id} value={p.id} disabled={alreadyAdded}>
-                                {permLabelByModuleAction(p.module, p.action)}
-                                {alreadyAdded ? " (ya agregado)" : ""}
-                              </option>
-                            );
-                          })}
-                        </select>
-                      </div>
-
-                      <div>
-                        <label className="mb-1 block text-xs text-muted">Acción</label>
-                        <select
-                          className="tp-input"
-                          value={specialEffectPick}
-                          onChange={(e) => setSpecialEffectPick(e.target.value as any)}
-                          disabled={!specialEnabled || specialBlocked || specialClearing}
-                        >
-                          <option value="ALLOW">Permitir</option>
-                          <option value="DENY">Denegar</option>
-                        </select>
-                      </div>
-
-                      <div className="md:col-span-3">
-                        <button
-                          className={cn(
-                            "tp-btn-primary w-full",
-                            (!specialEnabled || !specialPermPick || specialSaving || specialBlocked || specialClearing) && "opacity-60"
-                          )}
-                          type="button"
-                          disabled={!specialEnabled || !specialPermPick || specialSaving || specialBlocked || specialClearing}
-                          onClick={() => void addOrUpdateSpecial()}
-                        >
-                          {specialSaving ? "Guardando…" : "Agregar / Actualizar"}
-                        </button>
-
-                        <p className="mt-2 text-xs text-muted">* Denegar pisa Permitir y pisa permisos heredados por roles.</p>
-                      </div>
-                    </div>
-
-                    <div className="tp-card overflow-hidden">
-                      <table className="w-full text-sm">
-                        <thead className="border-b border-border">
-                          <tr>
-                            <th className="px-3 py-2 text-left">Permiso</th>
-                            <th className="px-3 py-2 text-left">Acción</th>
-                            <th className="px-3 py-2 text-right">Quitar</th>
-                          </tr>
-                        </thead>
-
-                        <tbody>
-                          {!specialEnabled ? (
-                            <tr>
-                              <td className="px-3 py-3 text-muted" colSpan={3}>
-                                Permisos especiales deshabilitados.
-                              </td>
-                            </tr>
-                          ) : specialListSorted.length === 0 ? (
-                            <tr>
-                              <td className="px-3 py-3 text-muted" colSpan={3}>
-                                Sin permisos especiales.
-                              </td>
-                            </tr>
-                          ) : (
-                            specialListSorted.map((ov) => (
-                              <tr key={ov.permissionId} className="border-t border-border">
-                                <td className="px-3 py-2">{labelByPermId(ov.permissionId)}</td>
-
-                                <td className="px-3 py-2">
-                                  <span
-                                    className={cn(
-                                      "inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-semibold",
-                                      ov.effect === "ALLOW"
-                                        ? "border-emerald-500/30 bg-emerald-500/15 text-emerald-300"
-                                        : "border-red-500/30 bg-red-500/15 text-red-300"
-                                    )}
-                                  >
-                                    {effectLabel(ov.effect)}
-                                  </span>
-                                </td>
-
-                                <td className="px-3 py-2 text-right">
-                                  <button
-                                    className={cn("tp-btn", (specialSaving || specialBlocked || specialClearing) && "opacity-60")}
-                                    type="button"
-                                    disabled={specialSaving || specialBlocked || specialClearing}
-                                    onClick={() => void removeSpecial(ov.permissionId)}
-                                    title={specialBlocked ? "No disponible para Propietario / Self edit." : "Quitar"}
-                                  >
-                                    Quitar
-                                  </button>
-                                </td>
-                              </tr>
-                            ))
-                          )}
-                        </tbody>
-                      </table>
-                    </div>
-                  </div>
-                </Section>
-              </div>
+              <SectionConfig
+                modalMode={modalMode}
+                disableAdminDangerZone={disableAdminDangerZone}
+                confirmOverlay={confirmOverlay}
+                canAdmin={canAdmin}
+                isOwner={isOwner}
+                detailHasQuickPin={detailHasQuickPin}
+                detailPinEnabled={detailPinEnabled}
+                pinFlowOpen={pinFlowOpen}
+                openPinFlow={openPinFlow}
+                closePinFlow={closePinFlow}
+                hasPin={hasPin}
+                pinFlowStep={pinFlowStep}
+                setPinFlowStep={setPinFlowStep}
+                pinDraft={pinDraft}
+                setPinDraft={setPinDraft}
+                pinDraft2={pinDraft2}
+                setPinDraft2={setPinDraft2}
+                pinBusy={pinBusy}
+                pinToggling={pinToggling}
+                pinPillsDisabled={pinPillsDisabled}
+                pinMsg={pinMsg}
+                showPinMessage={showPinMessage}
+                setPinNew={setPinNew}
+                setPinNew2={setPinNew2}
+                pinNew={pinNew}
+                pinNew2={pinNew2}
+                adminSetOrResetPin={adminSetOrResetPin}
+                adminTogglePinEnabled={adminTogglePinEnabled}
+                adminRemovePin={adminRemovePin}
+                specialListSorted={specialListSorted}
+                setConfirmDisablePinClearsSpecialOpen={setConfirmDisablePinClearsSpecialOpen}
+                specialBlocked={specialBlocked}
+                specialEnabled={specialEnabled}
+                setSpecialEnabled={setSpecialEnabled}
+                specialPermPick={specialPermPick}
+                setSpecialPermPick={setSpecialPermPick}
+                specialEffectPick={specialEffectPick}
+                setSpecialEffectPick={setSpecialEffectPick}
+                specialSaving={specialSaving}
+                specialClearing={specialClearing}
+                allPerms={allPerms}
+                permsLoading={permsLoading}
+                addOrUpdateSpecial={addOrUpdateSpecial}
+                removeSpecial={removeSpecial}
+                labelByPermId={labelByPermId}
+                setConfirmDisableSpecialOpen={setConfirmDisableSpecialOpen}
+                fFavWarehouseId={fFavWarehouseId}
+                setFFavWarehouseId={setFFavWarehouseId}
+                activeAlmacenes={activeAlmacenes}
+                warehouseLabelById={warehouseLabelById}
+                roles={roles}
+                rolesLoading={rolesLoading}
+                fRoleIds={fRoleIds}
+                setFRoleIds={setFRoleIds}
+                roleLabel={roleLabel}
+                isSelf={isSelf}
+                ownerRoleId={ownerRoleId}
+                selfOwnerChecked={selfOwnerChecked}
+              />
             ) : null}
 
-            <div className="flex justify-end gap-2 pt-2">
-              <button className="tp-btn-secondary" type="button" onClick={safeClose} disabled={modalBusy}>
-                Cancelar
-              </button>
-
-              <button className={cn("tp-btn-primary", modalBusy && "opacity-60")} type="submit" disabled={modalBusy}>
-                {modalBusy ? "Guardando…" : modalMode === "CREATE" ? "Crear" : "Guardar"}
-              </button>
-            </div>
+            {/* footer */}
+            <UserEditFooter modalBusy={modalBusy} modalMode={modalMode} onCancel={safeClose} />
           </form>
         )}
       </Modal>

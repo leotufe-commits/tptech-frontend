@@ -1,21 +1,26 @@
 // tptech-frontend/src/components/users/UsersTable.tsx
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { Loader2, Pencil, Trash2, ShieldBan, ShieldCheck, X, Paperclip, KeyRound, Shield } from "lucide-react";
+import { useNavigate } from "react-router-dom";
+import {
+  Loader2,
+  Pencil,
+  Trash2,
+  ShieldBan,
+  ShieldCheck,
+  X,
+  Paperclip,
+  KeyRound,
+  Shield,
+  ChevronLeft,
+  ChevronRight,
+  Eye, // ✅ view icon
+} from "lucide-react";
 
 import { cn, initialsFrom, absUrl } from "./users.ui";
 import { SortArrows } from "../ui/TPSort";
 import { TPBadge } from "../ui/TPBadges";
 
-import {
-  TPTableWrap,
-  TPTableEl,
-  TPThead,
-  TPTbody,
-  TPTr,
-  TPTh,
-  TPTd,
-  TPEmptyRow,
-} from "../ui/TPTable";
+import { TPTableWrap, TPTableEl, TPThead, TPTbody, TPTh, TPEmptyRow } from "../ui/TPTable";
 
 import type { UserListItem } from "../../services/users";
 
@@ -69,7 +74,6 @@ function specialCount(u: any): number {
   if (Number.isFinite(c)) return c;
 
   if (typeof u?.hasSpecialPermissions === "boolean") return u.hasSpecialPermissions ? 1 : 0;
-
   if (Array.isArray(u?.permissionOverrides)) return u.permissionOverrides.length;
 
   return 0;
@@ -113,7 +117,7 @@ function formatBytes(n?: number) {
 }
 
 /* ======================================================
-   OWNER helpers (👑)
+   OWNER / ADMIN helpers (columna Roles)
 ====================================================== */
 function isOwnerRole(r: any, roleLabelFn?: (r: any) => string) {
   const code = String(r?.code ?? "").trim().toUpperCase();
@@ -127,9 +131,22 @@ function isOwnerRole(r: any, roleLabelFn?: (r: any) => string) {
   return false;
 }
 
-function userHasOwner(u: any, roleLabelFn?: (r: any) => string) {
-  const roles = Array.isArray(u?.roles) ? u.roles : [];
-  return roles.some((r: any) => isOwnerRole(r, roleLabelFn));
+function isAdminRole(r: any, roleLabelFn?: (r: any) => string) {
+  const code = String(r?.code ?? "").trim().toUpperCase();
+  const name = String(r?.name ?? "").trim().toUpperCase();
+  if (code === "ADMIN" || name === "ADMIN") return true;
+
+  const label = roleLabelFn ? String(roleLabelFn(r) || "") : "";
+  const l = label.trim().toLowerCase();
+  if (l.includes("admin")) return true;
+
+  return false;
+}
+
+function roleTone(r: any, roleLabelFn?: (r: any) => string) {
+  if (isOwnerRole(r, roleLabelFn)) return "warning";
+  if (isAdminRole(r, roleLabelFn)) return "info";
+  return "neutral";
 }
 
 /* ======================================================
@@ -179,6 +196,8 @@ export default function UsersTable(props: Props) {
     prefetchUserDetail,
   } = props;
 
+  const nav = useNavigate();
+
   const [sortBy, setSortBy] = useState<SortCol>("USER");
   const [sortDir, setSortDir] = useState<SortDir>("asc");
 
@@ -214,8 +233,8 @@ export default function UsersTable(props: Props) {
       } else if (sortBy === "ROLES") {
         const aRoles = ((a?.roles ?? []) as any[]).map((r) => roleLabel(r)).join(" ").trim();
         const bRoles = ((b?.roles ?? []) as any[]).map((r) => roleLabel(r)).join(" ").trim();
-        ak = norm(aRoles + (userHasOwner(a, roleLabel) ? " owner propietario" : "") + (hasSpecial(a) ? " permiso especial" : ""));
-        bk = norm(bRoles + (userHasOwner(b, roleLabel) ? " owner propietario" : "") + (hasSpecial(b) ? " permiso especial" : ""));
+        ak = norm(aRoles + (hasSpecial(a) ? " permiso especial" : ""));
+        bk = norm(bRoles + (hasSpecial(b) ? " permiso especial" : ""));
       } else {
         const aFav = a?.favoriteWarehouseId ? warehouseLabelById(a.favoriteWarehouseId) ?? a.favoriteWarehouseId : "";
         const bFav = b?.favoriteWarehouseId ? warehouseLabelById(b.favoriteWarehouseId) ?? b.favoriteWarehouseId : "";
@@ -242,6 +261,10 @@ export default function UsersTable(props: Props) {
     "focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-primary/20";
 
   const disabledCls = "opacity-40 cursor-not-allowed hover:bg-transparent";
+
+  // ✅ Pill violeta para “permisos especiales”
+  const specialPillCls =
+    "border-violet-500/30 bg-violet-500/10 text-violet-300 dark:text-violet-200";
 
   /* ======================================================
      Attachments panel (clic en 📎)
@@ -328,8 +351,200 @@ export default function UsersTable(props: Props) {
 
   const attPanelLoading = Boolean(attPanelUserId && attInFlightRef.current.has(attPanelUserId));
 
+  function openView(u: any) {
+    const id = String(u?.id || "");
+    if (!id) return;
+    nav(`/configuracion/usuarios/${id}`);
+  }
+
   return (
     <TPTableWrap className="w-full">
+      {/* =========================
+          MOBILE (cards)
+         ========================= */}
+      <div className="sm:hidden space-y-2">
+        {loading ? (
+          <div className="tp-card p-4 text-sm text-muted flex items-center gap-2">
+            <Loader2 className="h-4 w-4 animate-spin" />
+            Cargando…
+          </div>
+        ) : sortedUsers.length === 0 ? (
+          <div className="tp-card p-4 text-sm text-muted">Sin resultados.</div>
+        ) : (
+          sortedUsers.map((u: any) => {
+            const status = String(u.status || "").toUpperCase();
+            const isActive = status === "ACTIVE";
+            const isPending = status === "PENDING";
+            const isMe = Boolean(meId && u.id === meId);
+
+            const canToggleThis = canEditStatus && !isMe;
+            const canEditThis = (canAdmin || isMe) && true;
+            const canDeleteThis = canAdmin && !isMe;
+
+            const avatarSrc = u.avatarUrl ? absUrl(u.avatarUrl) : "";
+            const initials = initialsFrom(u.name || u.email || "U");
+
+            const attCount = listAttCount(u);
+
+            const pinHas = Boolean(u.hasQuickPin);
+            const pinEnabled = Boolean(u.pinEnabled);
+
+            return (
+              <div
+                key={u.id}
+                className={cn("tp-card w-full text-left p-3 rounded-2xl border border-border")}
+              >
+                <div className="flex items-start gap-3">
+                  {/* ✅ “columna usuario” (en mobile: encabezado) clickeable para ver */}
+                  <button
+                    type="button"
+                    onClick={() => openView(u)}
+                    className={cn(
+                      "flex items-start gap-3 min-w-0 flex-1 text-left",
+                      "hover:opacity-95 active:scale-[0.99] transition"
+                    )}
+                    title="Ver usuario"
+                  >
+                    <div className="h-10 w-10 rounded-full overflow-hidden border border-border bg-surface shrink-0">
+                      {avatarSrc ? (
+                        <img src={avatarSrc} alt="Avatar" className="h-full w-full object-cover" />
+                      ) : (
+                        <div className="grid h-full w-full place-items-center text-xs font-bold text-primary">{initials}</div>
+                      )}
+                    </div>
+
+                    <div className="min-w-0 flex-1">
+                      <div className="font-semibold truncate">
+                        {u.name || "Sin nombre"} {isMe && <span className="text-[11px] text-muted">(vos)</span>}
+                      </div>
+                      <div className="text-xs text-muted truncate">{u.email}</div>
+                      {u.createdAt && <div className="text-[11px] text-muted">Creado: {formatDateTime(u.createdAt)}</div>}
+
+                      <div className="mt-2 flex flex-wrap gap-2">
+                        <TPBadge tone={isActive ? "success" : isPending ? "warning" : "danger"}>
+                          {isActive ? "Activo" : isPending ? "Pendiente" : "Inactivo"}
+                        </TPBadge>
+
+                        {pinHas ? (
+                          <TPBadge tone={pinEnabled ? "success" : "danger"} className="gap-1">
+                            {pinEnabled ? <KeyRound className="h-3.5 w-3.5" /> : <Shield className="h-3.5 w-3.5" />}
+                            {pinEnabled ? "PIN habilitado" : "PIN deshabilitado"}
+                          </TPBadge>
+                        ) : (
+                          <TPBadge tone="danger">Sin PIN</TPBadge>
+                        )}
+
+                        {u.favoriteWarehouseId ? (
+                          <TPBadge tone="neutral">⭐ {warehouseLabelById(u.favoriteWarehouseId) ?? u.favoriteWarehouseId}</TPBadge>
+                        ) : (
+                          <TPBadge tone="neutral">⭐ —</TPBadge>
+                        )}
+                      </div>
+
+                      <div className="mt-2 flex flex-wrap gap-2">
+                        {(u.roles || []).length ? (
+                          u.roles.map((r: any) => (
+                            <TPBadge key={r.id ?? r.name} tone={roleTone(r, roleLabel) as any}>
+                              {roleLabel(r)}
+                            </TPBadge>
+                          ))
+                        ) : (
+                          <span className="text-muted text-sm">Sin roles</span>
+                        )}
+
+                        {hasSpecial(u) && (
+                          <TPBadge tone="neutral" className={specialPillCls} title="Tiene permisos especiales">
+                            Permiso especial
+                          </TPBadge>
+                        )}
+                      </div>
+                    </div>
+                  </button>
+
+                  {/* ✅ Acciones en orden: View – Editar – PDF – Activo/Inactivo – Eliminar */}
+                  <div className="shrink-0 flex flex-col gap-2">
+                    <button
+                      type="button"
+                      className={cn(iconBtnBase)}
+                      onClick={() => openView(u)}
+                      title="Ver"
+                    >
+                      <Eye className="h-4 w-4" />
+                    </button>
+
+                    <button
+                      type="button"
+                      className={cn(iconBtnBase, !canEditThis && disabledCls)}
+                      disabled={!canEditThis}
+                      onClick={() => {
+                        if (canEditThis) void openEdit(u);
+                      }}
+                      title={isMe ? "Editar tu perfil" : "Editar usuario"}
+                    >
+                      <Pencil className="h-4 w-4" />
+                    </button>
+
+                    <button
+                      type="button"
+                      className={cn(iconBtnBase, attCount <= 0 && disabledCls)}
+                      disabled={attCount <= 0}
+                      onClick={() => {
+                        if (attCount > 0) void openAttPanel(u);
+                      }}
+                      title={attCount > 0 ? `PDF/Adjuntos (${attCount})` : "Sin adjuntos"}
+                    >
+                      <Paperclip className="h-4 w-4" />
+                    </button>
+
+                    <button
+                      type="button"
+                      className={cn(iconBtnBase, !canToggleThis && disabledCls)}
+                      disabled={!canToggleThis}
+                      onClick={() => {
+                        if (canToggleThis) void toggleStatus(u);
+                      }}
+                      title={!canEditStatus ? "Sin permisos" : isMe ? "No podés cambiar tu propio estado" : isActive ? "Inactivar" : "Activar"}
+                    >
+                      {isActive ? <ShieldBan className="h-4 w-4" /> : <ShieldCheck className="h-4 w-4" />}
+                    </button>
+
+                    <button
+                      type="button"
+                      className={cn(iconBtnBase, !canDeleteThis && disabledCls)}
+                      disabled={!canDeleteThis}
+                      onClick={() => {
+                        if (canDeleteThis) askDelete(u);
+                      }}
+                      title={!canAdmin ? "Sin permisos" : isMe ? "No podés eliminarte" : "Eliminar"}
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </button>
+                  </div>
+                </div>
+              </div>
+            );
+          })
+        )}
+
+        <div className="border-t border-border px-2 py-3 flex items-center justify-between">
+          <div className="text-xs text-muted">{totalLabel}</div>
+
+          <div className="flex items-center gap-2">
+            <button className={cn(iconBtnBase, page <= 1 && disabledCls)} type="button" disabled={page <= 1} onClick={onPrev} title="Anterior">
+              <ChevronLeft className="h-4 w-4" />
+            </button>
+
+            <div className="text-xs text-muted">
+              <b className="text-text">{page}</b> / {totalPages}
+            </div>
+
+            <button className={cn(iconBtnBase, page >= totalPages && disabledCls)} type="button" disabled={page >= totalPages} onClick={onNext} title="Siguiente">
+              <ChevronRight className="h-4 w-4" />
+            </button>
+          </div>
+        </div>
+      </div>
+
       {/* =========================
           DESKTOP
          ========================= */}
@@ -427,50 +642,53 @@ export default function UsersTable(props: Props) {
                   const initials = initialsFrom(u.name || u.email || "U");
 
                   const attCount = listAttCount(u);
-                  const showClip = attCount > 0;
 
                   const pinHas = Boolean(u.hasQuickPin);
                   const pinEnabled = Boolean(u.pinEnabled);
 
-                  const isOwner = userHasOwner(u, roleLabel);
-
                   return (
-                    <TPTr key={u.id} className="border-t border-border">
-                      {/* Usuario */}
-                      <TPTd>
-                        <div className="flex items-start gap-3">
-                          <div className="h-10 w-10 rounded-full overflow-hidden border border-border bg-surface shrink-0 mt-0.5">
-                            {avatarSrc ? (
-                              <img src={avatarSrc} alt="Avatar" className="h-full w-full object-cover" />
-                            ) : (
-                              <div className="grid h-full w-full place-items-center text-xs font-bold text-primary">
-                                {initials}
-                              </div>
-                            )}
-                          </div>
-
-                          <div className="min-w-0">
-                            <div className="font-semibold truncate flex items-center gap-2">
-                              <span className="truncate">{u.name || "Sin nombre"}</span>
-
-                              {isOwner && (
-                                <TPBadge tone="warning" title="Propietario (OWNER)">
-                                  👑 Propietario
-                                </TPBadge>
+                    <tr key={u.id} className={cn("border-t border-border hover:bg-surface2/40")}>
+                      {/* ✅ Usuario (ÚNICA columna clickeable para View) */}
+                      <td className="px-5 py-3 align-top">
+                        <button
+                          type="button"
+                          className={cn(
+                            "w-full text-left",
+                            "rounded-xl",
+                            "hover:opacity-95 active:scale-[0.995] transition"
+                          )}
+                          onClick={() => openView(u)}
+                          title="Ver usuario"
+                        >
+                          <div className="flex items-start gap-3">
+                            <div className="h-10 w-10 rounded-full overflow-hidden border border-border bg-surface shrink-0 mt-0.5">
+                              {avatarSrc ? (
+                                <img src={avatarSrc} alt="Avatar" className="h-full w-full object-cover" />
+                              ) : (
+                                <div className="grid h-full w-full place-items-center text-xs font-bold text-primary">
+                                  {initials}
+                                </div>
                               )}
-
-                              {isMe && <span className="text-[11px] text-muted">(vos)</span>}
                             </div>
 
-                            <div className="text-xs text-muted truncate">{u.email}</div>
+                            <div className="min-w-0">
+                              <div className="font-semibold truncate flex items-center gap-2">
+                                <span className="truncate">{u.name || "Sin nombre"}</span>
+                                {isMe && <span className="text-[11px] text-muted">(vos)</span>}
+                              </div>
 
-                            {u.createdAt && <div className="text-[11px] text-muted">Creado: {formatDateTime(u.createdAt)}</div>}
+                              <div className="text-xs text-muted truncate">{u.email}</div>
+
+                              {u.createdAt && (
+                                <div className="text-[11px] text-muted">Creado: {formatDateTime(u.createdAt)}</div>
+                              )}
+                            </div>
                           </div>
-                        </div>
-                      </TPTd>
+                        </button>
+                      </td>
 
                       {/* Estado */}
-                      <TPTd>
+                      <td className="px-5 py-3 align-top">
                         <TPBadge
                           tone={isActive ? "success" : isPending ? "warning" : "danger"}
                           title={
@@ -485,10 +703,10 @@ export default function UsersTable(props: Props) {
                         >
                           {isActive ? "Activo" : isPending ? "Pendiente" : "Inactivo"}
                         </TPBadge>
-                      </TPTd>
+                      </td>
 
                       {/* PIN */}
-                      <TPTd>
+                      <td className="px-5 py-3 align-top">
                         {pinHas ? (
                           <TPBadge
                             tone={pinEnabled ? "success" : "danger"}
@@ -499,60 +717,86 @@ export default function UsersTable(props: Props) {
                             {pinEnabled ? "Habilitado" : "Deshabilitado"}
                           </TPBadge>
                         ) : (
-                          <span className="text-xs text-muted">Sin PIN</span>
+                          <TPBadge tone="danger" title="Sin PIN">
+                            Sin PIN
+                          </TPBadge>
                         )}
-                      </TPTd>
+                      </td>
+
                       {/* Roles */}
-                      <TPTd>
+                      <td className="px-5 py-3 align-top">
                         <div className="flex flex-wrap gap-2">
                           {(u.roles || []).length ? (
                             u.roles.map((r: any) => (
-                              <TPBadge key={r.id ?? r.name}>{roleLabel(r)}</TPBadge>
+                              <TPBadge key={r.id ?? r.name} tone={roleTone(r, roleLabel) as any}>
+                                {roleLabel(r)}
+                              </TPBadge>
                             ))
                           ) : (
                             <span className="text-muted">Sin roles</span>
                           )}
 
+                          {/* ✅ permisos especiales en violeta */}
                           {hasSpecial(u) && (
-                            <TPBadge tone="info" title="Tiene permisos especiales">
+                            <TPBadge tone="neutral" className={specialPillCls} title="Tiene permisos especiales">
                               Permiso especial
                             </TPBadge>
                           )}
                         </div>
-                      </TPTd>
+                      </td>
 
                       {/* Almacén */}
-                      <TPTd>
+                      <td className="px-5 py-3 align-top">
                         {u.favoriteWarehouseId ? (
-                          <TPBadge tone="neutral">
-                            ⭐ {warehouseLabelById(u.favoriteWarehouseId) ?? u.favoriteWarehouseId}
-                          </TPBadge>
+                          <TPBadge tone="neutral">⭐ {warehouseLabelById(u.favoriteWarehouseId) ?? u.favoriteWarehouseId}</TPBadge>
                         ) : (
                           <span className="text-muted">—</span>
                         )}
-                      </TPTd>
+                      </td>
 
-                      {/* Acciones */}
-                      <TPTd className="text-right">
+                      {/* ✅ Acciones: View – Editar – PDF – Activo/Inactivo – Eliminar */}
+                      <td className="px-5 py-3 align-top text-right">
                         <div className="flex justify-end gap-2">
-                          {/* 📎 Adjuntos */}
-                          {showClip && (
-                            <button
-                              type="button"
-                              className={cn(iconBtnBase)}
-                              onClick={() => void openAttPanel(u)}
-                              title={`Ver adjuntos (${attCount})`}
-                            >
-                              <Paperclip className="h-4 w-4" />
-                            </button>
-                          )}
+                          <button
+                            type="button"
+                            className={cn(iconBtnBase)}
+                            onClick={() => openView(u)}
+                            title="Ver"
+                          >
+                            <Eye className="h-4 w-4" />
+                          </button>
 
-                          {/* Activar / Inactivar */}
+                          <button
+                            type="button"
+                            className={cn(iconBtnBase, !canEditThis && disabledCls)}
+                            disabled={!canEditThis}
+                            onClick={() => {
+                              if (canEditThis) void openEdit(u);
+                            }}
+                            title={!canAdmin && !isMe ? "Sin permisos" : isMe ? "Editar tu perfil" : "Editar usuario"}
+                          >
+                            <Pencil className="h-4 w-4" />
+                          </button>
+
+                          <button
+                            type="button"
+                            className={cn(iconBtnBase, attCount <= 0 && disabledCls)}
+                            disabled={attCount <= 0}
+                            onClick={() => {
+                              if (attCount > 0) void openAttPanel(u);
+                            }}
+                            title={attCount > 0 ? `PDF/Adjuntos (${attCount})` : "Sin adjuntos"}
+                          >
+                            <Paperclip className="h-4 w-4" />
+                          </button>
+
                           <button
                             type="button"
                             className={cn(iconBtnBase, !canToggleThis && disabledCls)}
                             disabled={!canToggleThis}
-                            onClick={() => (canToggleThis ? toggleStatus(u) : null)}
+                            onClick={() => {
+                              if (canToggleThis) void toggleStatus(u);
+                            }}
                             title={
                               !canEditStatus
                                 ? "Sin permisos para cambiar estado"
@@ -563,49 +807,23 @@ export default function UsersTable(props: Props) {
                                 : "Activar usuario"
                             }
                           >
-                            {isActive ? (
-                              <ShieldBan className="h-4 w-4" />
-                            ) : (
-                              <ShieldCheck className="h-4 w-4" />
-                            )}
+                            {isActive ? <ShieldBan className="h-4 w-4" /> : <ShieldCheck className="h-4 w-4" />}
                           </button>
 
-                          {/* Editar */}
-                          <button
-                            type="button"
-                            className={cn(iconBtnBase, !canEditThis && disabledCls)}
-                            disabled={!canEditThis}
-                            onClick={() => (canEditThis ? openEdit(u) : null)}
-                            title={
-                              !canAdmin && !isMe
-                                ? "Sin permisos"
-                                : isMe
-                                ? "Editar tu perfil"
-                                : "Editar usuario"
-                            }
-                          >
-                            <Pencil className="h-4 w-4" />
-                          </button>
-
-                          {/* Eliminar */}
                           <button
                             type="button"
                             className={cn(iconBtnBase, !canDeleteThis && disabledCls)}
                             disabled={!canDeleteThis}
-                            onClick={() => (canDeleteThis ? askDelete(u) : null)}
-                            title={
-                              !canAdmin
-                                ? "Sin permisos de administrador"
-                                : isMe
-                                ? "No podés eliminar tu propio usuario"
-                                : "Eliminar usuario"
-                            }
+                            onClick={() => {
+                              if (canDeleteThis) askDelete(u);
+                            }}
+                            title={!canAdmin ? "Sin permisos de administrador" : isMe ? "No podés eliminar tu propio usuario" : "Eliminar usuario"}
                           >
                             <Trash2 className="h-4 w-4" />
                           </button>
                         </div>
-                      </TPTd>
-                    </TPTr>
+                      </td>
+                    </tr>
                   );
                 })
               )}
@@ -614,57 +832,41 @@ export default function UsersTable(props: Props) {
         </TPTableEl>
       </div>
 
-      {/* Footer */}
-      <div className="border-t border-border px-4 py-3 flex items-center justify-between">
+      {/* Footer desktop */}
+      <div className="hidden sm:flex border-t border-border px-4 py-3 items-center justify-between">
         <div className="text-xs text-muted">{totalLabel}</div>
 
         <div className="flex items-center gap-2">
-          <button
-            className={cn("tp-btn", page <= 1 && "opacity-50 cursor-not-allowed")}
-            type="button"
-            disabled={page <= 1}
-            onClick={onPrev}
-          >
-            Anterior
+          <button className={cn(iconBtnBase, page <= 1 && disabledCls)} type="button" disabled={page <= 1} onClick={onPrev} title="Anterior">
+            <ChevronLeft className="h-4 w-4" />
           </button>
 
           <div className="text-xs text-muted">
-            Página <b className="text-text">{page}</b> / {totalPages}
+            <b className="text-text">{page}</b> / {totalPages}
           </div>
 
-          <button
-            className={cn("tp-btn", page >= totalPages && "opacity-50 cursor-not-allowed")}
-            type="button"
-            disabled={page >= totalPages}
-            onClick={onNext}
-          >
-            Siguiente
+          <button className={cn(iconBtnBase, page >= totalPages && disabledCls)} type="button" disabled={page >= totalPages} onClick={onNext} title="Siguiente">
+            <ChevronRight className="h-4 w-4" />
           </button>
         </div>
       </div>
 
       {/* Panel de adjuntos */}
       {attPanelUserId && (
-        <div className="fixed inset-0 z-[85] flex items-center justify-center px-4">
-          <div className="absolute inset-0 bg-black/40" onClick={closeAttPanel} />
+        <div className="fixed inset-0 z-[85] flex items-center justify-center px-4" onClick={closeAttPanel}>
+          <div className="absolute inset-0 bg-black/40" />
 
-          <div className="relative w-full max-w-xl rounded-2xl border border-border bg-card shadow-soft overflow-hidden">
+          <div
+            className="relative w-full max-w-xl rounded-2xl border border-border bg-card shadow-soft overflow-hidden"
+            onClick={(e) => e.stopPropagation()}
+          >
             <div className="px-4 py-3 border-b border-border flex items-center justify-between gap-2">
               <div className="min-w-0">
-                <div className="text-sm font-semibold truncate">
-                  Adjuntos — {attPanelUser ? userLabel(attPanelUser as any) : "Usuario"}
-                </div>
-                <div className="text-xs text-muted truncate">
-                  {attPanelUser ? String((attPanelUser as any).email || "") : ""}
-                </div>
+                <div className="text-sm font-semibold truncate">Adjuntos — {attPanelUser ? userLabel(attPanelUser as any) : "Usuario"}</div>
+                <div className="text-xs text-muted truncate">{attPanelUser ? String((attPanelUser as any).email || "") : ""}</div>
               </div>
 
-              <button
-                type="button"
-                className={cn(iconBtnBase)}
-                onClick={closeAttPanel}
-                title="Cerrar"
-              >
+              <button type="button" className={cn(iconBtnBase)} onClick={closeAttPanel} title="Cerrar">
                 <X className="h-4 w-4" />
               </button>
             </div>
@@ -679,40 +881,23 @@ export default function UsersTable(props: Props) {
                 <div className="text-sm text-muted">Este usuario no tiene adjuntos.</div>
               ) : (
                 <div className="space-y-2">
-                  <div className="text-xs text-muted">
-                    {attPanelInfo?.count != null
-                      ? `${attPanelInfo.count} archivo(s)`
-                      : "Archivos"}
-                  </div>
+                  <div className="text-xs text-muted">{attPanelInfo?.count != null ? `${attPanelInfo.count} archivo(s)` : "Archivos"}</div>
 
                   <div className="divide-y divide-border rounded-xl border border-border overflow-hidden">
                     {(attPanelInfo?.items ?? []).map((a) => {
                       const url = absUrl(String(a.url || ""));
                       const fname = String(a.filename || "archivo");
                       const sz = formatBytes(a.size);
-                      const meta = [sz || "", a.mimeType ? String(a.mimeType) : ""]
-                        .filter(Boolean)
-                        .join(" • ");
+                      const meta = [sz || "", a.mimeType ? String(a.mimeType) : ""].filter(Boolean).join(" • ");
 
                       return (
-                        <div
-                          key={a.id}
-                          className="p-3 flex items-center justify-between gap-3 bg-card"
-                        >
+                        <div key={a.id} className="p-3 flex items-center justify-between gap-3 bg-card">
                           <div className="min-w-0">
                             <div className="text-sm font-semibold truncate">{fname}</div>
-                            <div className="text-xs text-muted truncate">
-                              {meta || "Archivo"}
-                            </div>
+                            <div className="text-xs text-muted truncate">{meta || "Archivo"}</div>
                           </div>
 
-                          <a
-                            href={url}
-                            className={cn("tp-btn", "shrink-0")}
-                            target="_blank"
-                            rel="noreferrer"
-                            download
-                          >
+                          <a href={url} className={cn("tp-btn", "shrink-0")} target="_blank" rel="noreferrer" download>
                             Descargar
                           </a>
                         </div>
@@ -720,9 +905,7 @@ export default function UsersTable(props: Props) {
                     })}
                   </div>
 
-                  <div className="text-[11px] text-muted">
-                    Tip: “Descargar” abre el archivo en una pestaña (o descarga según tu navegador).
-                  </div>
+                  <div className="text-[11px] text-muted">Tip: “Descargar” abre el archivo en una pestaña (o descarga según tu navegador).</div>
                 </div>
               )}
             </div>

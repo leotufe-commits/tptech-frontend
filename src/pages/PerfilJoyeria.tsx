@@ -3,9 +3,8 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { apiFetch } from "../lib/api";
 import { useMe } from "../hooks/useMe";
-import { RequirePermission } from "../components/RequirePermission";
-import { useNavigate } from "react-router-dom";
-import { X } from "lucide-react";
+import { useNavigate, useSearchParams } from "react-router-dom";
+import { X, ChevronLeft, Pencil, Save } from "lucide-react";
 
 /* ================== TIPOS ================== */
 
@@ -164,7 +163,6 @@ function setFaviconPersisted(url: string) {
     const href = String(url || "").trim();
     if (!href) return;
 
-    // persistimos (index.html lo usa antes de React)
     try {
       localStorage.setItem("tptech_favicon_href", href);
     } catch {}
@@ -183,11 +181,8 @@ function setFaviconPersisted(url: string) {
     }
     link.id = "tptech-favicon";
 
-    // cache-bust SOLO para http/https o rutas
     const needsBust = /^https?:\/\//i.test(href) || href.startsWith("/");
-    const finalHref = needsBust
-      ? `${href}${href.includes("?") ? "&" : "?"}v=${Date.now()}`
-      : href;
+    const finalHref = needsBust ? `${href}${href.includes("?") ? "&" : "?"}v=${Date.now()}` : href;
 
     link.href = finalHref;
   } catch {}
@@ -203,12 +198,14 @@ function TpSelect({
   options,
   placeholder = "Seleccionar...",
   className,
+  disabled = false,
 }: {
   value: string;
   onChange: (v: string) => void;
   options: SelectOption[];
   placeholder?: string;
   className?: string;
+  disabled?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const btnRef = useRef<HTMLButtonElement | null>(null);
@@ -238,6 +235,7 @@ function TpSelect({
   }, [open]);
 
   function onButtonKeyDown(e: React.KeyboardEvent) {
+    if (disabled) return;
     if (e.key === "Escape") {
       setOpen(false);
       return;
@@ -265,85 +263,90 @@ function TpSelect({
   const topUp = clamp((r?.top ?? 0) - gap - maxH, viewportPad, window.innerHeight - viewportPad - maxH);
   const top = openDown ? topDown : topUp;
 
-  const menu = open ? (
-    <>
-      <div
-        style={{ position: "fixed", inset: 0, zIndex: 10000 }}
-        onMouseDown={() => setOpen(false)}
-        aria-hidden="true"
-      />
-      <div
-        ref={menuRef}
-        role="listbox"
-        aria-label="Selector"
-        style={{ position: "fixed", left, top, width, maxHeight: maxH, zIndex: 10001 }}
-        className="overflow-hidden rounded-xl border border-border bg-card shadow-soft"
-        onMouseDown={(e) => e.stopPropagation()}
-      >
-        <div className="tp-scroll overflow-auto" style={{ maxHeight: maxH }}>
-          <button
-            type="button"
-            role="option"
-            aria-selected={value === ""}
-            onClick={() => {
-              onChange("");
-              setOpen(false);
-            }}
-            className={cn(
-              "w-full px-3 py-2 text-left text-sm transition-colors",
-              value === ""
-                ? "bg-[var(--primary)] text-[var(--primary-foreground,#fff)]"
-                : "text-text hover:bg-[color-mix(in_oklab,var(--primary)_12%,transparent)]"
-            )}
-          >
-            {placeholder}
-          </button>
+  const menu =
+    open && !disabled ? (
+      <>
+        <div
+          style={{ position: "fixed", inset: 0, zIndex: 10000 }}
+          onMouseDown={() => setOpen(false)}
+          aria-hidden="true"
+        />
+        <div
+          ref={menuRef}
+          role="listbox"
+          aria-label="Selector"
+          style={{ position: "fixed", left, top, width, maxHeight: maxH, zIndex: 10001 }}
+          className="overflow-hidden rounded-xl border border-border bg-card shadow-soft"
+          onMouseDown={(e) => e.stopPropagation()}
+        >
+          <div className="tp-scroll overflow-auto" style={{ maxHeight: maxH }}>
+            <button
+              type="button"
+              role="option"
+              aria-selected={value === ""}
+              onClick={() => {
+                onChange("");
+                setOpen(false);
+              }}
+              className={cn(
+                "w-full px-3 py-2 text-left text-sm transition-colors",
+                value === ""
+                  ? "bg-[var(--primary)] text-[var(--primary-foreground,#fff)]"
+                  : "text-text hover:bg-[color-mix(in_oklab,var(--primary)_12%,transparent)]"
+              )}
+            >
+              {placeholder}
+            </button>
 
-          {options.map((o) => {
-            const active = o.value === value;
-            return (
-              <button
-                key={o.value}
-                type="button"
-                role="option"
-                aria-selected={active}
-                onClick={() => {
-                  onChange(o.value);
-                  setOpen(false);
-                }}
-                className={cn(
-                  "w-full px-3 py-2 text-left text-sm transition-colors",
-                  active
-                    ? "bg-[var(--primary)] text-[var(--primary-foreground,#fff)]"
-                    : "text-text hover:bg-[color-mix(in_oklab,var(--primary)_12%,transparent)]"
-                )}
-              >
-                {o.label}
-              </button>
-            );
-          })}
+            {options.map((o) => {
+              const active = o.value === value;
+              return (
+                <button
+                  key={o.value}
+                  type="button"
+                  role="option"
+                  aria-selected={active}
+                  onClick={() => {
+                    onChange(o.value);
+                    setOpen(false);
+                  }}
+                  className={cn(
+                    "w-full px-3 py-2 text-left text-sm transition-colors",
+                    active
+                      ? "bg-[var(--primary)] text-[var(--primary-foreground,#fff)]"
+                      : "text-text hover:bg-[color-mix(in_oklab,var(--primary)_12%,transparent)]"
+                  )}
+                >
+                  {o.label}
+                </button>
+              );
+            })}
+          </div>
         </div>
-      </div>
-    </>
-  ) : null;
+      </>
+    ) : null;
 
   return (
     <div className={cn("relative w-full", className)}>
       <button
         ref={btnRef}
         type="button"
-        onClick={() => setOpen((v) => !v)}
+        onClick={() => {
+          if (disabled) return;
+          setOpen((v) => !v);
+        }}
         onKeyDown={onButtonKeyDown}
         aria-haspopup="listbox"
         aria-expanded={open}
-        className={cn("tp-input text-left cursor-pointer select-none relative !py-2 !px-3 !pr-9")}
+        disabled={disabled}
+        className={cn(
+          "tp-input text-left cursor-pointer select-none relative !py-2 !px-3 !pr-9",
+          disabled && "opacity-70 cursor-not-allowed"
+        )}
         title={current?.label ?? placeholder}
       >
         <span className="text-sm">{current?.label ?? placeholder}</span>
-        <span
-          className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-muted"
-          aria-hidden="true"
-        >
+        <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-muted" aria-hidden="true">
           ▾
         </span>
       </button>
@@ -357,6 +360,11 @@ function TpSelect({
 
 export default function PerfilJoyeria() {
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
+
+  // ✅ por defecto VIEW (solo lectura). Para editar: ?edit=1
+  const isEditMode = searchParams.get("edit") === "1";
+
   const { me, loading, error, refresh } = useMe();
   const jewelryFromContext = pickJewelryFromMe(me);
 
@@ -386,14 +394,19 @@ export default function PerfilJoyeria() {
 
     setServerJewelry(jewelryFromContext);
 
-    if (!existing || !company || !dirty) {
+    // ✅ en VIEW siempre hidrata desde server (no deja “sucio”)
+    // ✅ en EDIT hidrata solo si no hay draft todavía
+    const shouldHydrate = !existing || !company || (!isEditMode && dirty);
+
+    if (shouldHydrate) {
       const d = jewelryToDraft(jewelryFromContext);
       setExisting(d.existing);
       setCompany(d.company);
-      if (!dirty) setMsg(null);
+      setDirty(false);
+      setMsg(null);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [jewelryFromContext?.id, jewelryFromContext?.updatedAt]);
+  }, [jewelryFromContext?.id, jewelryFromContext?.updatedAt, isEditMode]);
 
   useEffect(() => {
     return () => {
@@ -416,12 +429,27 @@ export default function PerfilJoyeria() {
     return !!existing && !!company && existing.name.trim().length > 0;
   }, [existing, company]);
 
+  function goToViewMode() {
+    const next = new URLSearchParams(searchParams);
+    next.delete("edit");
+    setSearchParams(next, { replace: true });
+  }
+
+  function goToEditMode() {
+    const next = new URLSearchParams(searchParams);
+    next.set("edit", "1");
+    setSearchParams(next, { replace: true });
+    setMsg(null);
+  }
+
   function setExistingField<K extends keyof ExistingBody>(key: K, value: ExistingBody[K]) {
+    if (!isEditMode) return;
     setDirty(true);
     setExisting((p) => (p ? { ...p, [key]: value } : p));
   }
 
   function setCompanyField<K extends keyof CompanyBody>(key: K, value: CompanyBody[K]) {
+    if (!isEditMode) return;
     if (key !== "logoUrl") setDirty(true);
     setCompany((p) => (p ? { ...p, [key]: value } : p));
   }
@@ -438,14 +466,28 @@ export default function PerfilJoyeria() {
     setLogoPreview("");
   }
 
-  function onCancel() {
-    if (saving || uploadingLogo || deletingLogo || uploadingAttachments || deletingAttId) return;
+  function confirmDiscardIfDirty(): boolean {
+    if (!dirty) return true;
+    return window.confirm("Tenés cambios sin guardar. ¿Querés descartarlos?");
+  }
 
-    if (dirty) resetToServerValues();
+  function onBackOrCancel() {
+    const busyAny = saving || uploadingLogo || deletingLogo || uploadingAttachments || Boolean(deletingAttId);
+    if (busyAny) return;
+
+    if (isEditMode) {
+      if (!confirmDiscardIfDirty()) return;
+      resetToServerValues();
+      goToViewMode();
+      return;
+    }
+
+    // VIEW: volver a la pantalla anterior
     navigate(-1);
   }
 
   async function uploadLogoInstant(file: File) {
+    if (!isEditMode) return;
     if (!existing || !company) return;
 
     const okType = /^image\/(png|jpeg|jpg|webp|gif|svg\+xml)$/i.test(file.type);
@@ -483,13 +525,13 @@ export default function PerfilJoyeria() {
       const newLogo = updated?.logoUrl || "";
       setCompany((p) => (p ? { ...p, logoUrl: newLogo } : p));
 
-      // ✅ persiste favicon con el logo final del backend
       const fav = absUrl(newLogo || "");
       if (fav) setFaviconPersisted(fav);
 
       if (localPreview?.startsWith("blob:")) URL.revokeObjectURL(localPreview);
       setLogoPreview("");
 
+      setDirty(true);
       setMsg("Logo actualizado ✅");
       await refresh();
     } catch (e: any) {
@@ -500,6 +542,8 @@ export default function PerfilJoyeria() {
   }
 
   async function deleteLogoInstant() {
+    if (!isEditMode) return;
+
     try {
       setMsg(null);
       setDeletingLogo(true);
@@ -512,6 +556,7 @@ export default function PerfilJoyeria() {
       if (logoPreview?.startsWith("blob:")) URL.revokeObjectURL(logoPreview);
       setLogoPreview("");
 
+      setDirty(true);
       setMsg("Logo eliminado ✅");
       await refresh();
     } catch (e: any) {
@@ -521,26 +566,13 @@ export default function PerfilJoyeria() {
     }
   }
 
-  // ✅ FIX PROFESIONAL:
-  // - Recibe File[] (snapshot) para evitar FileList "live" que se vacía al limpiar el input
   async function uploadAttachmentsInstant(files: File[]) {
+    if (!isEditMode) return;
     if (!files.length || !existing || !company) return;
 
     const arr = files;
 
     devLog("[ATTACH] received count:", arr.length);
-    try {
-      if (import.meta.env.DEV) {
-        console.table(
-          arr.map((f) => ({
-            name: f.name,
-            type: f.type,
-            sizeBytes: f.size,
-            sizeMB: Number((f.size / 1024 / 1024).toFixed(2)),
-          }))
-        );
-      }
-    } catch {}
 
     const MAX = 20 * 1024 * 1024;
 
@@ -549,12 +581,8 @@ export default function PerfilJoyeria() {
 
     if (filtered.length === 0) {
       if (rejected.length > 0) {
-        const detail = rejected
-          .map((f) => `${f.name} (${(f.size / 1024 / 1024).toFixed(2)} MB)`)
-          .join(", ");
-        setMsg(
-          `No se pudieron adjuntar los archivos: ${detail}. Máximo permitido: 20 MB por archivo.`
-        );
+        const detail = rejected.map((f) => `${f.name} (${(f.size / 1024 / 1024).toFixed(2)} MB)`).join(", ");
+        setMsg(`No se pudieron adjuntar los archivos: ${detail}. Máximo permitido: 20 MB por archivo.`);
       } else {
         setMsg("No se recibió ningún archivo desde el selector. Volvé a intentar y revisá la consola.");
       }
@@ -580,6 +608,7 @@ export default function PerfilJoyeria() {
 
       setServerJewelry(updated);
 
+      setDirty(true);
       setMsg(
         rejected.length > 0
           ? `Adjuntos cargados ✅ (Se omitieron: ${rejected.map((f) => f.name).join(", ")} por superar 20 MB).`
@@ -595,16 +624,17 @@ export default function PerfilJoyeria() {
   }
 
   async function deleteSavedAttachment(id: string) {
+    if (!isEditMode) return;
+
     try {
       setMsg(null);
       setDeletingAttId(id);
 
       await apiFetch(`/auth/me/jewelry/attachments/${id}`, { method: "DELETE" });
 
-      setServerJewelry((p: any) =>
-        p ? { ...p, attachments: (p.attachments ?? []).filter((a: any) => a.id !== id) } : p
-      );
+      setServerJewelry((p: any) => (p ? { ...p, attachments: (p.attachments ?? []).filter((a: any) => a.id !== id) } : p));
 
+      setDirty(true);
       setMsg("Adjunto eliminado ✅");
       await refresh();
     } catch (e: any) {
@@ -616,6 +646,7 @@ export default function PerfilJoyeria() {
 
   async function onSave() {
     if (!existing || !company) return;
+    if (!isEditMode) return;
 
     try {
       setMsg(null);
@@ -636,7 +667,6 @@ export default function PerfilJoyeria() {
       setExisting(d.existing);
       setCompany(d.company);
 
-      // ✅ si backend devolvió logo, asegura favicon persistido
       const fav = absUrl(d.company.logoUrl || "");
       if (fav) setFaviconPersisted(fav);
 
@@ -644,6 +674,9 @@ export default function PerfilJoyeria() {
       setMsg("Guardado correctamente ✅");
 
       await refresh();
+
+      // ✅ luego de guardar, volvemos a VIEW
+      goToViewMode();
     } catch (e: any) {
       setMsg(e?.message || "Error al guardar.");
     } finally {
@@ -685,16 +718,70 @@ export default function PerfilJoyeria() {
   const headerLogoSrc = logoPreview || absUrl(company.logoUrl || "");
   const hasLogo = !!headerLogoSrc;
 
-  const busyAny =
-    saving || uploadingLogo || deletingLogo || uploadingAttachments || Boolean(deletingAttId);
+  const busyAny = saving || uploadingLogo || deletingLogo || uploadingAttachments || Boolean(deletingAttId);
 
   const initials = getInitials(existing.name || company.legalName || "TPTech");
 
+  const readonly = !isEditMode;
+
   return (
     <div className="mx-auto max-w-6xl p-4 sm:p-6">
-      <h2 className="text-xl font-semibold text-text">Datos de la empresa</h2>
+      <div className="flex items-center justify-between gap-3">
+        <h2 className="text-xl font-semibold text-text">Datos de la empresa</h2>
 
-    
+        {/* ✅ Header actions: VIEW -> Editar | EDIT -> Cancelar + Guardar */}
+        <div className="flex items-center gap-2">
+          {isEditMode ? (
+            <>
+              <button
+                type="button"
+                disabled={busyAny}
+                onClick={onBackOrCancel}
+                className="inline-flex items-center gap-2 rounded-xl border-2 border-border bg-transparent px-4 py-2 text-sm font-semibold text-text hover:bg-surface2 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-primary/20 disabled:opacity-60"
+                title="Cancelar edición"
+              >
+                <X className="h-4 w-4" />
+                Cancelar
+              </button>
+
+              <button
+                type="button"
+                onClick={onSave}
+                disabled={!canSave || saving}
+                className="tp-btn-primary px-6 py-2 inline-flex items-center justify-center gap-2"
+                title="Guardar cambios"
+              >
+                <Save className="h-4 w-4" />
+                {saving ? "Guardando..." : dirty ? "Guardar cambios" : "Guardar"}
+              </button>
+            </>
+          ) : (
+            <>
+              <button
+                type="button"
+                disabled={busyAny}
+                onClick={onBackOrCancel}
+                className="inline-flex items-center gap-2 rounded-xl border-2 border-border bg-transparent px-4 py-2 text-sm font-semibold text-text hover:bg-surface2 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-primary/20 disabled:opacity-60"
+                title="Volver"
+              >
+                <ChevronLeft className="h-4 w-4" />
+                Volver
+              </button>
+
+              <button
+                type="button"
+                onClick={goToEditMode}
+                className="tp-btn-primary px-6 py-2 inline-flex items-center justify-center gap-2"
+                title="Editar"
+              >
+                <Pencil className="h-4 w-4" />
+                Editar
+              </button>
+            </>
+          )}
+        </div>
+      </div>
+
       <div
         className="mt-6 rounded-2xl p-4 sm:p-6"
         style={{
@@ -712,7 +799,9 @@ export default function PerfilJoyeria() {
               type="file"
               accept="image/*"
               hidden
+              disabled={readonly}
               onChange={(e) => {
+                if (readonly) return;
                 const f = e.target.files?.[0] ?? null;
                 e.currentTarget.value = "";
                 if (f) uploadLogoInstant(f);
@@ -724,28 +813,26 @@ export default function PerfilJoyeria() {
                 type="button"
                 className={cn(
                   "h-20 w-20 rounded-2xl grid place-items-center relative overflow-hidden",
-                  "focus:outline-none focus:ring-2 focus:ring-[color:var(--primary)]"
+                  "focus:outline-none focus:ring-2 focus:ring-[color:var(--primary)]",
+                  readonly && "cursor-default"
                 )}
                 style={{
                   border: "1px solid var(--border)",
                   background: "color-mix(in oklab, var(--card) 80%, var(--bg))",
                   color: "var(--muted)",
                 }}
-                title={hasLogo ? "Editar logo" : "Agregar logo"}
-                onClick={() => logoInputRef.current?.click()}
-                disabled={uploadingLogo || deletingLogo}
+                title={readonly ? "Logo" : hasLogo ? "Editar logo" : "Agregar logo"}
+                onClick={() => {
+                  if (readonly) return;
+                  logoInputRef.current?.click();
+                }}
+                disabled={readonly || uploadingLogo || deletingLogo}
               >
                 {hasLogo ? (
                   <>
                     {(uploadingLogo || logoImgLoading) && (
-                      <div
-                        className="absolute inset-0 grid place-items-center"
-                        style={{ background: "rgba(0,0,0,0.22)" }}
-                      >
-                        <div
-                          className="h-7 w-7 rounded-full border-2 border-white/40 border-t-white animate-spin"
-                          aria-label="Cargando logo"
-                        />
+                      <div className="absolute inset-0 grid place-items-center" style={{ background: "rgba(0,0,0,0.22)" }}>
+                        <div className="h-7 w-7 rounded-full border-2 border-white/40 border-t-white animate-spin" aria-label="Cargando logo" />
                       </div>
                     )}
 
@@ -759,36 +846,29 @@ export default function PerfilJoyeria() {
                     />
                   </>
                 ) : (
-                  // ✅ SIN LOGO: iniciales (como el sidebar)
-                  <span className="text-lg font-extrabold tracking-tight text-text select-none">
-                    {initials}
-                  </span>
+                  <span className="text-lg font-extrabold tracking-tight text-text select-none">{initials}</span>
                 )}
 
-                <div
-                  className={cn(
-                    "absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity",
-                    "grid place-items-center"
-                  )}
-                  style={{ background: "rgba(0,0,0,0.28)" }}
-                  aria-hidden="true"
-                >
-                  <span className="text-white text-[11px] px-2 text-center leading-tight">
-                    {uploadingLogo ? "SUBIENDO…" : hasLogo ? "EDITAR" : "AGREGAR"}
-                  </span>
-                </div>
+                {!readonly && (
+                  <div
+                    className={cn("absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity", "grid place-items-center")}
+                    style={{ background: "rgba(0,0,0,0.28)" }}
+                    aria-hidden="true"
+                  >
+                    <span className="text-white text-[11px] px-2 text-center leading-tight">
+                      {uploadingLogo ? "SUBIENDO…" : hasLogo ? "EDITAR" : "AGREGAR"}
+                    </span>
+                  </div>
+                )}
               </button>
 
-              {hasLogo && (
+              {!readonly && hasLogo && (
                 <button
                   type="button"
                   onClick={() => {
                     if (!deletingLogo && !uploadingLogo) deleteLogoInstant();
                   }}
-                  className={cn(
-                    "absolute top-2 right-2 h-6 w-6 rounded-full grid place-items-center",
-                    "opacity-0 group-hover:opacity-100 transition-opacity"
-                  )}
+                  className={cn("absolute top-2 right-2 h-6 w-6 rounded-full grid place-items-center", "opacity-0 group-hover:opacity-100 transition-opacity")}
                   style={{
                     background: "rgba(255,255,255,0.75)",
                     border: "1px solid rgba(0,0,0,0.08)",
@@ -805,9 +885,7 @@ export default function PerfilJoyeria() {
 
             <div className="min-w-0">
               <div className="text-2xl font-semibold text-text truncate">{existing.name}</div>
-              {company.legalName && (
-                <div className="text-sm text-[color:var(--muted)] truncate">{company.legalName}</div>
-              )}
+              {company.legalName && <div className="text-sm text-[color:var(--muted)] truncate">{company.legalName}</div>}
             </div>
           </div>
         </div>
@@ -816,82 +894,49 @@ export default function PerfilJoyeria() {
         <div className="mt-6 grid grid-cols-1 gap-8 lg:grid-cols-2">
           <div className="space-y-4">
             <Field label="Razón social">
-              <input
-                className="tp-input"
-                value={company.legalName}
-                onChange={(e) => setCompanyField("legalName", e.target.value)}
-              />
+              <input className="tp-input" value={company.legalName} onChange={(e) => setCompanyField("legalName", e.target.value)} readOnly={readonly} disabled={readonly} />
             </Field>
 
             <div className="grid grid-cols-1 sm:grid-cols-12 gap-3">
               <div className="sm:col-span-5">
                 <Field label="Condición de IVA">
-                  <TpSelect
-                    value={company.ivaCondition}
-                    onChange={(v) => setCompanyField("ivaCondition", v)}
-                    options={ivaOptions}
-                    placeholder="Seleccionar..."
-                  />
+                  <TpSelect value={company.ivaCondition} onChange={(v) => setCompanyField("ivaCondition", v)} options={ivaOptions} placeholder="Seleccionar..." disabled={readonly} />
                 </Field>
               </div>
 
               <div className="sm:col-span-7">
                 <Field label="CUIT">
-                  <input
-                    className="tp-input"
-                    value={company.cuit}
-                    onChange={(e) => setCompanyField("cuit", onlyDigits(e.target.value))}
-                  />
+                  <input className="tp-input" value={company.cuit} onChange={(e) => setCompanyField("cuit", onlyDigits(e.target.value))} readOnly={readonly} disabled={readonly} />
                 </Field>
               </div>
             </div>
 
             <Field label="Sitio web">
-              <input
-                className="tp-input"
-                value={company.website}
-                onChange={(e) => setCompanyField("website", e.target.value)}
-              />
+              <input className="tp-input" value={company.website} onChange={(e) => setCompanyField("website", e.target.value)} readOnly={readonly} disabled={readonly} />
             </Field>
           </div>
 
           <div className="space-y-4">
             <Field label="Nombre de Fantasía">
-              <input
-                className="tp-input"
-                value={existing.name}
-                onChange={(e) => setExistingField("name", e.target.value)}
-              />
+              <input className="tp-input" value={existing.name} onChange={(e) => setExistingField("name", e.target.value)} readOnly={readonly} disabled={readonly} />
             </Field>
 
             <div className="grid grid-cols-1 sm:grid-cols-12 gap-3">
               <div className="sm:col-span-4">
                 <Field label="Prefijo">
-                  <input
-                    className="tp-input"
-                    value={existing.phoneCountry}
-                    onChange={(e) => setExistingField("phoneCountry", e.target.value)}
-                  />
+                  <input className="tp-input" value={existing.phoneCountry} onChange={(e) => setExistingField("phoneCountry", e.target.value)} readOnly={readonly} disabled={readonly} />
                 </Field>
               </div>
 
               <div className="sm:col-span-8">
                 <Field label="Teléfono">
-                  <input
-                    className="tp-input"
-                    value={existing.phoneNumber}
-                    onChange={(e) => setExistingField("phoneNumber", e.target.value)}
-                  />
+                  <input className="tp-input" value={existing.phoneNumber} onChange={(e) => setExistingField("phoneNumber", e.target.value)} readOnly={readonly} disabled={readonly} />
                 </Field>
               </div>
             </div>
 
             <Field label="Correo electrónico">
-              <input
-                className="tp-input"
-                value={company.email}
-                onChange={(e) => setCompanyField("email", e.target.value)}
-              />
+              <input className="tp-input" value={company.email} onChange={(e) => setCompanyField("email", e.target.value)} readOnly={readonly} disabled={readonly} />
             </Field>
           </div>
         </div>
@@ -909,61 +954,37 @@ export default function PerfilJoyeria() {
           <div className="grid grid-cols-1 md:grid-cols-12 gap-4">
             <div className="md:col-span-5">
               <Field label="Calle">
-                <input
-                  className="tp-input"
-                  value={existing.street}
-                  onChange={(e) => setExistingField("street", e.target.value)}
-                />
+                <input className="tp-input" value={existing.street} onChange={(e) => setExistingField("street", e.target.value)} readOnly={readonly} disabled={readonly} />
               </Field>
             </div>
 
             <div className="md:col-span-2">
               <Field label="Número">
-                <input
-                  className="tp-input"
-                  value={existing.number}
-                  onChange={(e) => setExistingField("number", e.target.value)}
-                />
+                <input className="tp-input" value={existing.number} onChange={(e) => setExistingField("number", e.target.value)} readOnly={readonly} disabled={readonly} />
               </Field>
             </div>
 
             <div className="md:col-span-5">
               <Field label="Ciudad">
-                <input
-                  className="tp-input"
-                  value={existing.city}
-                  onChange={(e) => setExistingField("city", e.target.value)}
-                />
+                <input className="tp-input" value={existing.city} onChange={(e) => setExistingField("city", e.target.value)} readOnly={readonly} disabled={readonly} />
               </Field>
             </div>
 
             <div className="md:col-span-4">
               <Field label="Provincia">
-                <input
-                  className="tp-input"
-                  value={existing.province}
-                  onChange={(e) => setExistingField("province", e.target.value)}
-                />
+                <input className="tp-input" value={existing.province} onChange={(e) => setExistingField("province", e.target.value)} readOnly={readonly} disabled={readonly} />
               </Field>
             </div>
 
             <div className="md:col-span-3">
               <Field label="Código Postal">
-                <input
-                  className="tp-input"
-                  value={existing.postalCode}
-                  onChange={(e) => setExistingField("postalCode", e.target.value)}
-                />
+                <input className="tp-input" value={existing.postalCode} onChange={(e) => setExistingField("postalCode", e.target.value)} readOnly={readonly} disabled={readonly} />
               </Field>
             </div>
 
             <div className="md:col-span-5">
               <Field label="País">
-                <input
-                  className="tp-input"
-                  value={existing.country}
-                  onChange={(e) => setExistingField("country", e.target.value)}
-                />
+                <input className="tp-input" value={existing.country} onChange={(e) => setExistingField("country", e.target.value)} readOnly={readonly} disabled={readonly} />
               </Field>
             </div>
           </div>
@@ -971,22 +992,12 @@ export default function PerfilJoyeria() {
 
         {/* NOTAS + ADJUNTOS */}
         <div className="mt-6 grid grid-cols-1 lg:grid-cols-2 gap-6">
-          <div
-            className="rounded-2xl p-4 sm:p-5"
-            style={{ border: "1px solid var(--border)", background: "var(--card)" }}
-          >
+          <div className="rounded-2xl p-4 sm:p-5" style={{ border: "1px solid var(--border)", background: "var(--card)" }}>
             <div className="font-semibold text-sm mb-3 text-text">Notas</div>
-            <textarea
-              className="tp-input min-h-[160px]"
-              value={company.notes}
-              onChange={(e) => setCompanyField("notes", e.target.value)}
-            />
+            <textarea className="tp-input min-h-[160px]" value={company.notes} onChange={(e) => setCompanyField("notes", e.target.value)} readOnly={readonly} disabled={readonly} />
           </div>
 
-          <div
-            className="rounded-2xl p-4 sm:p-5"
-            style={{ border: "1px solid var(--border)", background: "var(--card)" }}
-          >
+          <div className="rounded-2xl p-4 sm:p-5" style={{ border: "1px solid var(--border)", background: "var(--card)" }}>
             <div className="font-semibold text-sm mb-3 text-text flex items-center justify-between">
               <span>Adjuntos</span>
               {uploadingAttachments && <span className="text-xs text-muted">Subiendo…</span>}
@@ -994,9 +1005,13 @@ export default function PerfilJoyeria() {
 
             <button
               type="button"
-              className="block w-full cursor-pointer"
-              onClick={() => attInputRef.current?.click()}
-              disabled={uploadingAttachments}
+              className={cn("block w-full", readonly && "cursor-default")}
+              onClick={() => {
+                if (readonly) return;
+                attInputRef.current?.click();
+              }}
+              disabled={readonly || uploadingAttachments}
+              title={readonly ? "Solo lectura" : "Agregar adjuntos"}
             >
               <div
                 className="min-h-[120px] sm:min-h-[160px] flex items-center justify-center border border-dashed rounded-2xl"
@@ -1006,7 +1021,7 @@ export default function PerfilJoyeria() {
                   color: "var(--muted)",
                 }}
               >
-                {uploadingAttachments ? "Subiendo…" : "Click para agregar archivos +"}
+                {readonly ? "Vista (solo lectura)" : uploadingAttachments ? "Subiendo…" : "Click para agregar archivos +"}
               </div>
             </button>
 
@@ -1015,7 +1030,9 @@ export default function PerfilJoyeria() {
               type="file"
               multiple
               hidden
+              disabled={readonly}
               onChange={(e) => {
+                if (readonly) return;
                 const picked = Array.from(e.currentTarget.files ?? []);
                 e.currentTarget.value = "";
                 uploadAttachmentsInstant(picked);
@@ -1066,13 +1083,7 @@ export default function PerfilJoyeria() {
                             <div className="text-xs text-muted flex gap-2">
                               <span className="truncate">{formatBytes(a.size)}</span>
                               {url && (
-                                <a
-                                  className="underline underline-offset-2"
-                                  href={url}
-                                  target="_blank"
-                                  rel="noreferrer"
-                                  onClick={(e) => e.stopPropagation()}
-                                >
+                                <a className="underline underline-offset-2" href={url} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()}>
                                   Abrir
                                 </a>
                               )}
@@ -1080,22 +1091,21 @@ export default function PerfilJoyeria() {
                           </div>
                         </div>
 
-                        <button
-                          type="button"
-                          className={cn(
-                            "h-8 w-8 rounded-full grid place-items-center",
-                            "opacity-0 group-hover:opacity-100 transition-opacity"
-                          )}
-                          style={{ background: "var(--card)", border: "1px solid var(--border)" }}
-                          title="Eliminar adjunto"
-                          aria-label="Eliminar adjunto"
-                          disabled={busy}
-                          onClick={() => {
-                            if (!busy) deleteSavedAttachment(a.id);
-                          }}
-                        >
-                          <span className="text-xs">{busy ? "…" : "✕"}</span>
-                        </button>
+                        {!readonly && (
+                          <button
+                            type="button"
+                            className={cn("h-8 w-8 rounded-full grid place-items-center", "opacity-0 group-hover:opacity-100 transition-opacity")}
+                            style={{ background: "var(--card)", border: "1px solid var(--border)" }}
+                            title="Eliminar adjunto"
+                            aria-label="Eliminar adjunto"
+                            disabled={busy}
+                            onClick={() => {
+                              if (!busy) deleteSavedAttachment(a.id);
+                            }}
+                          >
+                            <span className="text-xs">{busy ? "…" : "✕"}</span>
+                          </button>
+                        )}
                       </div>
                     );
                   })}
@@ -1103,32 +1113,8 @@ export default function PerfilJoyeria() {
               </div>
             )}
 
-            {savedAttachments.length === 0 && !uploadingAttachments && (
-              <div className="mt-3 text-xs text-muted">Todavía no hay adjuntos.</div>
-            )}
+            {savedAttachments.length === 0 && !uploadingAttachments && <div className="mt-3 text-xs text-muted">Todavía no hay adjuntos.</div>}
           </div>
-        </div>
-
-        {/* ✅ Acciones (Cancelar + Guardar) */}
-        <div className="mt-8 flex items-center justify-end gap-3">
-          <button
-            type="button"
-            disabled={busyAny}
-            onClick={onCancel}
-            className="inline-flex items-center gap-2 rounded-xl border-2 border-border bg-transparent px-4 py-2 text-sm font-semibold text-text hover:bg-surface2 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-primary/20 disabled:opacity-60"
-          >
-            <X className="h-4 w-4" />
-            Cancelar
-          </button>
-
-          <button
-            type="button"
-            onClick={onSave}
-            disabled={!canSave || saving}
-            className="tp-btn-primary px-6 py-2 inline-flex items-center justify-center"
-          >
-            {saving ? "Guardando..." : dirty ? "Guardar cambios" : "Guardar"}
-          </button>
         </div>
 
         {msg && (

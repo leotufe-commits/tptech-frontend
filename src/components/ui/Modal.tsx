@@ -7,9 +7,12 @@ import { cn } from "./tp";
  * - Si hay 2 modales abiertos, el overlay no se duplica fuerte
  * - Solo el modal TOP responde al click en backdrop / ESC
  *
- * ✅ NUEVO: overlayClassName (opcional)
+ * ✅ overlayClassName (opcional)
  * - Permite oscurecer SOLO algunos modales (ej: confirms destructivos)
  * - Si no se pasa, usa el overlay por defecto (y respeta stack)
+ *
+ * ✅ NUEVO: busy (opcional)
+ * - Si busy=true, bloquea cierre por ESC / backdrop / botón "Cerrar"
  */
 let __tp_modal_stack: string[] = [];
 
@@ -19,14 +22,18 @@ export function Modal({
   children,
   onClose,
   wide,
-  overlayClassName, // ✅ NUEVO
+  overlayClassName,
+  className,
+  busy, // ✅ NUEVO
 }: {
   open: boolean;
   title: string;
   children: React.ReactNode;
   onClose: () => void;
   wide?: boolean;
-  overlayClassName?: string; // ✅ NUEVO
+  overlayClassName?: string;
+  className?: string;
+  busy?: boolean; // ✅ NUEVO
 }) {
   const modalRef = useRef<HTMLDivElement | null>(null);
   const headerRef = useRef<HTMLDivElement | null>(null);
@@ -61,6 +68,13 @@ export function Modal({
 
   const isTopMost = open && __tp_modal_stack[__tp_modal_stack.length - 1] === instanceId;
 
+  const canClose = () => {
+    if (!isTopMost) return false;
+    if (busy) return false;
+    if (drag.current.active) return false;
+    return true;
+  };
+
   useEffect(() => {
     if (!open) return;
     setPos({ x: 0, y: 0 });
@@ -72,6 +86,10 @@ export function Modal({
     function onKeyDown(e: KeyboardEvent) {
       if (e.key === "Escape") {
         if (!isTopMost) return; // ✅ solo el top
+        if (busy) {
+          e.preventDefault();
+          return;
+        }
         if (drag.current.active) return;
         e.preventDefault();
         onClose();
@@ -80,7 +98,7 @@ export function Modal({
 
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [open, onClose, isTopMost]);
+  }, [open, onClose, isTopMost, busy]);
 
   useEffect(() => {
     function onMove(e: PointerEvent) {
@@ -151,10 +169,10 @@ export function Modal({
         onMouseDown={(e) => {
           if (!isTopMost) return;
           if (drag.current.active) e.preventDefault();
+          if (busy) e.preventDefault();
         }}
         onClick={() => {
-          if (!isTopMost) return; // ✅ solo el top
-          if (drag.current.active) return;
+          if (!canClose()) return;
           if (recentlyDragged()) return;
           onClose();
         }}
@@ -168,7 +186,8 @@ export function Modal({
         className={cn(
           "relative w-full rounded-2xl border border-border bg-card shadow-soft",
           wide ? "max-w-6xl" : "max-w-4xl",
-          "max-h-[85vh] flex flex-col"
+          "max-h-[85vh] flex flex-col",
+          className
         )}
         style={{
           position: "absolute",
@@ -185,6 +204,7 @@ export function Modal({
           className="p-6 pb-4 border-b border-border flex items-center justify-between gap-3 cursor-move select-none"
           onPointerDown={(e) => {
             if (!isTopMost) return; // ✅ solo el top arrastra
+            if (busy) return;
             if ((e as any).button != null && (e as any).button !== 0) return;
 
             drag.current.active = true;
@@ -198,13 +218,16 @@ export function Modal({
           <h2 className="text-lg font-semibold">{title}</h2>
 
           <button
-            className="tp-btn cursor-pointer"
+            className={cn("tp-btn cursor-pointer", (busy || !isTopMost) && "opacity-60")}
             onClick={(e) => {
               e.stopPropagation();
               if (!isTopMost) return;
+              if (busy) return;
               onClose();
             }}
             type="button"
+            disabled={busy || !isTopMost}
+            title={busy ? "Hay una operación en curso" : "Cerrar"}
           >
             Cerrar
           </button>

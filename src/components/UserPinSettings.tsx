@@ -1,10 +1,11 @@
 // tptech-frontend/src/components/UserPinSettings.tsx
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import { KeyRound, Save } from "lucide-react";
+
 import { apiFetch } from "../lib/api";
 import { useAuth } from "../context/AuthContext";
 import { usePermissions } from "../hooks/usePermissions";
 import { TPSegmentedPills } from "./ui/TPBadges";
-import { KeyRound, Save } from "lucide-react";
 
 type SecuritySettings = {
   quickSwitchEnabled: boolean;
@@ -50,6 +51,8 @@ export default function UserPinSettings() {
   const [pinLockRequireOnUserSwitch, setPinLockRequireOnUserSwitch] = useState(false);
   const [timeoutMin, setTimeoutMin] = useState(5);
 
+  const busy = loading || saving;
+
   // ✅ snapshot para "Cancelar" prolijo (volver a lo cargado, no recargar)
   const snapRef = useRef<Snapshot>({
     quickSwitchEnabled: false,
@@ -57,6 +60,14 @@ export default function UserPinSettings() {
     pinLockRequireOnUserSwitch: false,
     timeoutMin: 5,
   });
+
+  // ✅ timer ok autoclear (evita timers colgados si desmonta)
+  const okTimerRef = useRef<number | null>(null);
+  useEffect(() => {
+    return () => {
+      if (okTimerRef.current) window.clearTimeout(okTimerRef.current);
+    };
+  }, []);
 
   const timeoutOptions = useMemo(() => [1, 2, 3, 5, 10, 15, 20, 30, 45, 60, 90, 120, 240, 360, 720], []);
 
@@ -72,8 +83,6 @@ export default function UserPinSettings() {
       ? { off: "No aplica", on: "Requerir" }
       : { off: "No requerir", on: "Requerir" };
 
-  const busy = loading || saving;
-
   function applySnapshot(s: Snapshot) {
     setQuickSwitchEnabled(Boolean(s.quickSwitchEnabled));
     setPinLockEnabled(Boolean(s.pinLockEnabled));
@@ -82,9 +91,12 @@ export default function UserPinSettings() {
   }
 
   async function load() {
+    if (busy) return;
+
     setErr(null);
     setOk(null);
     setLoading(true);
+
     try {
       const data = await apiFetch<{ security: SecuritySettings }>("/company/settings/security", {
         method: "GET",
@@ -124,6 +136,7 @@ export default function UserPinSettings() {
     setErr(null);
     setOk(null);
     setSaving(true);
+
     try {
       const safeTimeoutMin = clamp(Math.floor(Number(timeoutMin) || 1), 1, 720);
 
@@ -131,9 +144,7 @@ export default function UserPinSettings() {
         // ✅ dependencias: si apagan PIN global, apagamos lo demás
         pinLockEnabled: Boolean(pinLockEnabled),
         quickSwitchEnabled: Boolean(pinLockEnabled ? quickSwitchEnabled : false),
-        pinLockRequireOnUserSwitch: Boolean(
-          pinLockEnabled && quickSwitchEnabled ? pinLockRequireOnUserSwitch : false
-        ),
+        pinLockRequireOnUserSwitch: Boolean(pinLockEnabled && quickSwitchEnabled ? pinLockRequireOnUserSwitch : false),
         pinLockTimeoutSec: safeTimeoutMin * 60,
       };
 
@@ -153,13 +164,19 @@ export default function UserPinSettings() {
         pinLockRequireOnUserSwitch: Boolean(body.pinLockRequireOnUserSwitch),
         timeoutMin: safeTimeoutMin,
       };
+
       snapRef.current = nextSnap;
       applySnapshot(nextSnap);
+
+      if (okTimerRef.current) window.clearTimeout(okTimerRef.current);
+      okTimerRef.current = window.setTimeout(() => {
+        setOk(null);
+        okTimerRef.current = null;
+      }, 2500);
     } catch (e: any) {
       setErr(friendlyError(e, "Error guardando configuración."));
     } finally {
       setSaving(false);
-      window.setTimeout(() => setOk(null), 2500);
     }
   }
 
@@ -183,10 +200,7 @@ export default function UserPinSettings() {
 
         <button
           type="button"
-          className={cn(
-            "h-9 px-3 rounded-xl border border-border bg-card text-sm",
-            busy && "opacity-60 pointer-events-none"
-          )}
+          className={cn("h-9 px-3 rounded-xl border border-border bg-card text-sm", busy && "opacity-60 pointer-events-none")}
           onClick={() => void load()}
         >
           Recargar
@@ -203,9 +217,7 @@ export default function UserPinSettings() {
         <div
           className={cn(
             "rounded-xl px-3 py-2 text-sm border",
-            err
-              ? "text-red-400 bg-red-500/10 border-red-500/15"
-              : "text-emerald-400 bg-emerald-500/10 border-emerald-500/15"
+            err ? "text-red-400 bg-red-500/10 border-red-500/15" : "text-emerald-400 bg-emerald-500/10 border-emerald-500/15"
           )}
         >
           {err || ok}
@@ -249,9 +261,7 @@ export default function UserPinSettings() {
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0">
               <div className="text-sm font-semibold text-text">Cambio rápido de usuario</div>
-              <div className="text-xs text-muted mt-1">
-                Permite cambiar de usuario desde la pantalla bloqueada.
-              </div>
+              <div className="text-xs text-muted mt-1">Permite cambiar de usuario desde la pantalla bloqueada.</div>
             </div>
 
             <TPSegmentedPills
@@ -279,9 +289,7 @@ export default function UserPinSettings() {
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0">
               <div className="text-sm font-semibold text-text">Requerir PIN al cambiar usuario</div>
-              <div className="text-xs text-muted mt-1">
-                Exige PIN cuando se usa el cambio rápido.
-              </div>
+              <div className="text-xs text-muted mt-1">Exige PIN cuando se usa el cambio rápido.</div>
             </div>
 
             <TPSegmentedPills
@@ -322,10 +330,7 @@ export default function UserPinSettings() {
           </div>
 
           <select
-            className={cn(
-              "tp-input w-full mt-2",
-              (!canEdit || !pinLockEnabled || busy) && "opacity-60 pointer-events-none"
-            )}
+            className={cn("tp-input w-full mt-2", (!canEdit || !pinLockEnabled || busy) && "opacity-60 pointer-events-none")}
             value={timeoutMin}
             onChange={(e) => {
               setErr(null);
@@ -357,10 +362,7 @@ export default function UserPinSettings() {
 
         <button
           type="button"
-          className={cn(
-            "tp-btn-primary inline-flex items-center justify-center gap-2",
-            (!canEdit || busy) && "opacity-60 pointer-events-none"
-          )}
+          className={cn("tp-btn-primary inline-flex items-center justify-center gap-2", (!canEdit || busy) && "opacity-60 pointer-events-none")}
           onClick={() => void save()}
         >
           <Save className="h-4 w-4" />

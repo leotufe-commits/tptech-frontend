@@ -27,9 +27,15 @@ import Placeholder from "./pages/Placeholder";
 import Usuarios from "./pages/Users";
 import Roles from "./pages/Roles";
 
+// ✅ IMPORT CORRECTO SEGÚN TU ESTRUCTURA ACTUAL
+import UserView from "./components/users/UserView";
+
 import ConfiguracionSistema from "./pages/ConfiguracionSistema";
 import SystemPinSettings from "./pages/SystemPinSettings";
 import SystemThemeSettings from "./pages/SystemThemeSettings";
+
+// ✅ NUEVO: pantalla placeholder "Vendedor"
+import ConfiguracionSistemaVendedor from "./pages/ConfiguracionSistemaVendedor";
 
 import ProtectedRoute from "./components/ProtectedRoute";
 
@@ -114,7 +120,7 @@ const router = createBrowserRouter([
           { path: "ventas/paquetes", element: <Placeholder title="Paquetes" /> },
           { path: "ventas/remitos", element: <Placeholder title="Remitos" /> },
           { path: "ventas/pagos-recibidos", element: <Placeholder title="Pagos recibidos" /> },
-          { path: "ventas/devoluciones", element: <Placeholder title="Devoluciones de venta" /> },
+          { path: "ventas/devoluciones-venta", element: <Placeholder title="Devoluciones de venta" /> },
           { path: "ventas/notas-credito", element: <Placeholder title="Notas de crédito" /> },
 
           // compat rutas viejas
@@ -135,10 +141,14 @@ const router = createBrowserRouter([
           // ===== FINANZAS =====
           { path: "finanzas", element: <Placeholder title="Finanzas" /> },
 
-          // ===== CONFIGURACIÓN (pantallas existentes) =====
+          // ===== CONFIGURACIÓN =====
           { path: "configuracion/joyeria", element: <PerfilJoyeria /> },
           { path: "configuracion/cuenta", element: <Cuenta /> },
+
+          // ✅ USERS list + ✅ USERS view REAL
           { path: "configuracion/usuarios", element: <Usuarios /> },
+          { path: "configuracion/usuarios/:id", element: <UserView /> },
+
           { path: "configuracion/roles", element: <Roles /> },
 
           // ✅ HUB (Configuración del Sistema)
@@ -146,48 +156,24 @@ const router = createBrowserRouter([
           { path: "configuracion-sistema/pin", element: <SystemPinSettings /> },
           { path: "configuracion-sistema/tema", element: <SystemThemeSettings /> },
 
+          // ✅ NUEVO: VENDEDOR (placeholder por ahora)
+          { path: "configuracion-sistema/vendedor", element: <ConfiguracionSistemaVendedor /> },
+
           // ✅ NUEVAS SECCIONES (placeholders por ahora)
-          {
-            path: "configuracion-sistema/impuestos",
-            element: <Placeholder title="Impuestos y tributos" />,
-          },
-          {
-            path: "configuracion-sistema/pagos",
-            element: <Placeholder title="Pagos y cobros" />,
-          },
-          {
-            path: "configuracion-sistema/envios",
-            element: <Placeholder title="Envíos y logística" />,
-          },
-          {
-            path: "configuracion-sistema/listas-precios",
-            element: <Placeholder title="Listas de precios" />,
-          },
-          {
-            path: "configuracion-sistema/categorias",
-            element: <Placeholder title="Categorías de artículos" />,
-          },
-          {
-            path: "configuracion-sistema/numeracion",
-            element: <Placeholder title="Numeración de comprobantes" />,
-          },
-          {
-            path: "configuracion-sistema/etiquetas",
-            element: <Placeholder title="Impresión de etiquetas" />,
-          },
+          { path: "configuracion-sistema/impuestos", element: <Placeholder title="Impuestos y tributos" /> },
+          { path: "configuracion-sistema/pagos", element: <Placeholder title="Pagos y cobros" /> },
+          { path: "configuracion-sistema/envios", element: <Placeholder title="Envíos y logística" /> },
+          { path: "configuracion-sistema/listas-precios", element: <Placeholder title="Listas de precios" /> },
+          { path: "configuracion-sistema/categorias", element: <Placeholder title="Categorías de artículos" /> },
+          { path: "configuracion-sistema/numeracion", element: <Placeholder title="Numeración de comprobantes" /> },
+          { path: "configuracion-sistema/etiquetas", element: <Placeholder title="Impresión de etiquetas" /> },
 
           /* =====================
              COMPAT: RUTAS VIEJAS
           ===================== */
           { path: "configuracion/sistema", element: <Navigate to="/configuracion-sistema" replace /> },
-          {
-            path: "configuracion/sistema/pin",
-            element: <Navigate to="/configuracion-sistema/pin" replace />,
-          },
-          {
-            path: "configuracion/sistema/tema",
-            element: <Navigate to="/configuracion-sistema/tema" replace />,
-          },
+          { path: "configuracion/sistema/pin", element: <Navigate to="/configuracion-sistema/pin" replace /> },
+          { path: "configuracion/sistema/tema", element: <Navigate to="/configuracion-sistema/tema" replace /> },
           { path: "configuracion", element: <Navigate to="/configuracion-sistema" replace /> },
 
           // ✅ COMPAT: aliases que usaste antes

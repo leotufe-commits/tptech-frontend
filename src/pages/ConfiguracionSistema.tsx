@@ -17,6 +17,7 @@ import {
   Layers,
   Hash,
   Printer,
+  Store,
 } from "lucide-react";
 
 function cn(...classes: Array<string | false | null | undefined>) {
@@ -118,6 +119,9 @@ export default function ConfiguracionSistema() {
   const inNumeracion = location.pathname.startsWith("/configuracion-sistema/numeracion");
   const inEtiquetas = location.pathname.startsWith("/configuracion-sistema/etiquetas");
 
+  // ✅ Vendedor
+  const inVendedor = location.pathname.startsWith("/configuracion-sistema/vendedor");
+
   // Config (usuarios/roles/joyeria)
   const inUsers = location.pathname.startsWith("/configuracion/usuarios");
   const inRoles = location.pathname.startsWith("/configuracion/roles");
@@ -196,6 +200,14 @@ export default function ConfiguracionSistema() {
         {/* ================= OPERACIONES ================= */}
         <Section title="Operaciones" desc="Reglas comerciales del negocio y parámetros del día a día.">
           <CardLink
+            to="/configuracion-sistema/vendedor"
+            title="Vendedor"
+            desc="Parámetros de vendedor, comisiones, objetivos y reglas comerciales."
+            icon={<Store size={20} />}
+            active={inVendedor}
+          />
+
+          <CardLink
             to="/configuracion-sistema/impuestos"
             title="Impuestos y tributos"
             desc="Impuestos, alícuotas, percepciones/retenciones y configuración fiscal."
@@ -249,10 +261,9 @@ export default function ConfiguracionSistema() {
           <CardLink
             to="/configuracion-sistema/etiquetas"
             title="Impresión de etiquetas"
-            desc="Diseño e impresión de etiquetas para anillos y artículos."
+            desc="Diseño e impresión de etiquetas para artículos."
             icon={<Printer size={20} />}
             active={inEtiquetas}
-            badge={<Pill>Anillos</Pill>}
           />
         </Section>
 
