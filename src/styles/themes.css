@@ -1,40 +1,36 @@
-/* tptech-frontend/src/styles/themes.css */
-
 /* =====================================================
-   THEME: CLÁSICO (DEFAULT)
-   - Definimos en :root (fallback)
-   - y también en [data-theme="classic"] (compat con ThemeContext)
+   THEME: CLÁSICO (DEFAULT) — REFINADO
+   Más luminoso, menos apagado
    ===================================================== */
 :root,
 [data-theme="classic"] {
-  --bg: #ffffff;
-  --surface: #f4f6f8;
-  --surface2: #eef2f7;
-  --card: #ffffff;
+  --bg: #f3f4f6;        /* gris claro luminoso */
+  --surface: #edf0f4;
+  --surface2: #e6eaf0;
+  --card: #fafbfc;      /* cards casi blancas */
 
   --text: #0f172a;
 
-  /* ✅ Texto secundario */
-  --muted: rgba(15, 23, 42, 0.65);
-  --text-muted: rgba(15, 23, 42, 0.65);
+  --muted: rgba(15, 23, 42, 0.62);
+  --text-muted: rgba(15, 23, 42, 0.62);
 
-  /* ✅ Útil si tenés un header oscuro aun en theme claro */
   --text-on-dark: #f9fafb;
   --text-on-dark-muted: rgba(249, 250, 251, 0.72);
 
-  /* ✅ Primary */
-  --primary: #f97316;              /* naranja TPTech */
-  --primary-rgb: 249 115 22;       /* ✅ NECESARIO para accent-color/caret */
+  --primary: #f97316;
+  --primary-rgb: 249 115 22;
   --primary-foreground: #ffffff;
 
   --secondary: #fde68a;
 
   --border: rgba(2, 6, 23, 0.12);
-  --shadow: 0 10px 28px rgba(2, 6, 23, 0.08);
+  --shadow: 0 10px 26px rgba(2, 6, 23, 0.09);
 }
 
+
 /* =====================================================
-   THEME: DARK → GRIS OSCURO LEGIBLE (NO NEGRO)
+   THEME: DARK
+   (sin cambios)
    ===================================================== */
 [data-theme="dark"] {
   --bg: #0f141c;
@@ -44,17 +40,14 @@
 
   --text: #f9fafb;
 
-  /* ✅ Texto secundario */
   --muted: rgba(249, 250, 251, 0.72);
   --text-muted: rgba(249, 250, 251, 0.72);
 
-  /* ✅ Header oscuro */
   --text-on-dark: #f9fafb;
   --text-on-dark-muted: rgba(249, 250, 251, 0.72);
 
-  /* ✅ Primary */
-  --primary: #60a5fa;              /* azul suave */
-  --primary-rgb: 96 165 250;       /* ✅ */
+  --primary: #60a5fa;
+  --primary-rgb: 96 165 250;
   --primary-foreground: #0b1220;
 
   --secondary: #93c5fd;
@@ -64,13 +57,14 @@
 }
 
 /* =====================================================
-   THEME: BLUE (corporativo moderno)
+   THEME: BLUE
+   (sin cambios)
    ===================================================== */
 [data-theme="blue"] {
-  --bg: #f5f9ff;
-  --surface: #eaf1fb;
-  --surface2: #dbe7f7;
-  --card: #ffffff;
+  --bg: #eef4ff;
+  --surface: #e4edfb;
+  --surface2: #d7e4f7;
+  --card: #f6f9ff;
 
   --text: #0b1a33;
 
@@ -80,25 +74,25 @@
   --text-on-dark: #f9fafb;
   --text-on-dark-muted: rgba(249, 250, 251, 0.72);
 
-  /* ✅ Primary */
-  --primary: #2563eb;              /* blue-600 */
-  --primary-rgb: 37 99 235;        /* ✅ */
+  --primary: #2563eb;
+  --primary-rgb: 37 99 235;
   --primary-foreground: #ffffff;
 
   --secondary: #93c5fd;
 
-  --border: rgba(37, 99, 235, 0.16);
+  --border: rgba(37, 99, 235, 0.18);
   --shadow: 0 14px 32px rgba(37, 99, 235, 0.14);
 }
 
 /* =====================================================
    THEME: GRAY (corporativo)
+   → más profundo, menos “hospital”
    ===================================================== */
 [data-theme="gray"] {
-  --bg: #eef2f6;
-  --surface: #e2e8f0;
-  --surface2: #cfd8e6;
-  --card: #ffffff;
+  --bg: #e3e7ee;        /* ⬅ más oscuro */
+  --surface: #d9dee7;
+  --surface2: #cbd3e1;
+  --card: #eceff4;      /* ⬅ card gris claro */
 
   --text: #0b1220;
 
@@ -108,25 +102,25 @@
   --text-on-dark: #f9fafb;
   --text-on-dark-muted: rgba(249, 250, 251, 0.72);
 
-  /* ✅ Primary */
-  --primary: #334155;              /* slate-700 */
-  --primary-rgb: 51 65 85;         /* ✅ */
+  --primary: #334155;
+  --primary-rgb: 51 65 85;
   --primary-foreground: #ffffff;
 
   --secondary: #94a3b8;
 
-  --border: rgba(15, 23, 42, 0.18);
-  --shadow: 0 14px 34px rgba(15, 23, 42, 0.12);
+  --border: rgba(15, 23, 42, 0.2);
+  --shadow: 0 14px 32px rgba(15, 23, 42, 0.14);
 }
 
 /* =====================================================
-   THEME: EMERALD (moderno)
+   THEME: EMERALD
+   (sin cambios)
    ===================================================== */
 [data-theme="emerald"] {
-  --bg: #ecfdf5;
-  --surface: #d1fae5;
-  --surface2: #bbf7d0;
-  --card: #ffffff;
+  --bg: #e7f8f1;
+  --surface: #d9f3e8;
+  --surface2: #c6eddc;
+  --card: #f1fbf7;
 
   --text: #064e3b;
 
@@ -136,13 +130,12 @@
   --text-on-dark: #f9fafb;
   --text-on-dark-muted: rgba(249, 250, 251, 0.72);
 
-  /* ✅ Primary */
   --primary: #059669;
-  --primary-rgb: 5 150 105;        /* ✅ */
+  --primary-rgb: 5 150 105;
   --primary-foreground: #ffffff;
 
   --secondary: #86efac;
 
-  --border: rgba(6, 78, 59, 0.14);
+  --border: rgba(6, 78, 59, 0.16);
   --shadow: 0 12px 28px rgba(6, 78, 59, 0.18);
 }

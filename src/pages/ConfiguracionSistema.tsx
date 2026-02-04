@@ -18,6 +18,8 @@ import {
   Hash,
   Printer,
   Store,
+  Database,
+  BarChart3,
 } from "lucide-react";
 
 function cn(...classes: Array<string | false | null | undefined>) {
@@ -106,7 +108,6 @@ function Pill({ children }: { children: React.ReactNode }) {
 export default function ConfiguracionSistema() {
   const location = useLocation();
 
-  // Config sistema
   const inPin = location.pathname.startsWith("/configuracion-sistema/pin");
   const inTheme = location.pathname.startsWith("/configuracion-sistema/tema");
 
@@ -119,17 +120,17 @@ export default function ConfiguracionSistema() {
   const inNumeracion = location.pathname.startsWith("/configuracion-sistema/numeracion");
   const inEtiquetas = location.pathname.startsWith("/configuracion-sistema/etiquetas");
 
-  // ✅ Vendedor
   const inVendedor = location.pathname.startsWith("/configuracion-sistema/vendedor");
 
-  // Config (usuarios/roles/joyeria)
   const inUsers = location.pathname.startsWith("/configuracion/usuarios");
   const inRoles = location.pathname.startsWith("/configuracion/roles");
   const inCompany = location.pathname.startsWith("/configuracion/joyeria");
 
-  // Módulos existentes
   const inWarehouses = location.pathname.startsWith("/inventario/almacenes");
   const inCurrencies = location.pathname.startsWith("/divisas");
+
+  const inItems = location.pathname.startsWith("/configuracion-sistema/items");
+  const inReports = location.pathname.startsWith("/configuracion-sistema/informes");
 
   return (
     <div className="p-6">
@@ -218,7 +219,7 @@ export default function ConfiguracionSistema() {
           <CardLink
             to="/configuracion-sistema/pagos"
             title="Pagos y cobros"
-            desc="Medios de pago, condiciones, recargos/descuentos, cuotas y reglas."
+            desc="Medios de pago, condiciones, recargos/descuentos y cuotas."
             icon={<CreditCard size={20} />}
             active={inPagos}
           />
@@ -226,7 +227,7 @@ export default function ConfiguracionSistema() {
           <CardLink
             to="/configuracion-sistema/envios"
             title="Envíos y logística"
-            desc="Transportistas, métodos de envío, costos y parámetros de despacho."
+            desc="Transportistas, métodos de envío, costos y parámetros."
             icon={<Truck size={20} />}
             active={inEnvios}
           />
@@ -234,7 +235,7 @@ export default function ConfiguracionSistema() {
           <CardLink
             to="/configuracion-sistema/listas-precios"
             title="Listas de precios"
-            desc="Creá y administrá múltiples listas, márgenes y reglas por cliente."
+            desc="Administración de listas, márgenes y reglas."
             icon={<Tags size={20} />}
             active={inListasPrecios}
           />
@@ -242,9 +243,28 @@ export default function ConfiguracionSistema() {
           <CardLink
             to="/configuracion-sistema/categorias"
             title="Categorías de artículos"
-            desc="Estructura de catálogo: categorías y organización del inventario."
+            desc="Estructura del catálogo y organización."
             icon={<Layers size={20} />}
             active={inCategorias}
+          />
+        </Section>
+
+        {/* ================= ADMINISTRACIÓN ================= */}
+        <Section title="Administración del sistema" desc="Estructura base, catálogos y análisis.">
+          <CardLink
+            to="/configuracion-sistema/items"
+            title="Ítems del sistema"
+            desc="Catálogos base utilizados por todo el sistema (combos y selecciones)."
+            icon={<Database size={20} />}
+            active={inItems}
+          />
+
+          <CardLink
+            to="/configuracion-sistema/informes"
+            title="Informes"
+            desc="Reportes, estadísticas y análisis del negocio."
+            icon={<BarChart3 size={20} />}
+            active={inReports}
           />
         </Section>
 
@@ -253,7 +273,7 @@ export default function ConfiguracionSistema() {
           <CardLink
             to="/configuracion-sistema/numeracion"
             title="Numeración de comprobantes"
-            desc="Series, prefijos, puntos de venta y próximo número por documento."
+            desc="Series, prefijos y numeración por documento."
             icon={<Hash size={20} />}
             active={inNumeracion}
           />
@@ -261,7 +281,7 @@ export default function ConfiguracionSistema() {
           <CardLink
             to="/configuracion-sistema/etiquetas"
             title="Impresión de etiquetas"
-            desc="Diseño e impresión de etiquetas para artículos."
+            desc="Diseño e impresión de etiquetas."
             icon={<Printer size={20} />}
             active={inEtiquetas}
           />
@@ -272,7 +292,7 @@ export default function ConfiguracionSistema() {
           <CardLink
             to="/configuracion-sistema/tema"
             title="Tema"
-            desc="Elegí el estilo visual del sistema (por usuario)."
+            desc="Elegí el estilo visual del sistema."
             icon={<Palette size={20} />}
             active={inTheme}
           />

@@ -1,11 +1,10 @@
 import React from "react";
+import { cn } from "../ui/tp";
+import { absUrl } from "../../lib/url";
 
-/* =========================
-   Utils
-========================= */
-export function cn(...classes: Array<string | false | null | undefined>) {
-  return classes.filter(Boolean).join(" ");
-}
+// 👇 re-export de compatibilidad (MUY IMPORTANTE)
+export { cn, absUrl };
+
 
 /* =========================
    Sort arrows (como Roles)
@@ -24,10 +23,7 @@ export function SortArrows({
   const dnOn = isActive && dir === "desc";
 
   return (
-    <span
-      className={cn("inline-flex flex-col leading-none ml-1 -mt-0.5", className)}
-      aria-hidden="true"
-    >
+    <span className={cn("inline-flex flex-col leading-none ml-1 -mt-0.5", className)} aria-hidden="true">
       <svg width="10" height="10" viewBox="0 0 10 10">
         <path d="M5 2 L8 5 H2 Z" fill="currentColor" opacity={upOn ? 1 : 0.35} />
       </svg>
@@ -188,17 +184,6 @@ export function safeFileLabel(name: string) {
   return String(name || "").trim() || "Archivo";
 }
 
-export function absUrl(u: string) {
-  const raw = String(u || "").trim();
-  if (!raw) return "";
-  if (/^https?:\/\//i.test(raw)) return raw;
-
-  const base = (import.meta.env.VITE_API_URL as string) || "http://localhost:3001";
-  const API = base.replace(/\/+$/, "");
-  const p = raw.startsWith("/") ? raw : `/${raw}`;
-  return `${API}${p}`;
-}
-
 /* =========================
    Tabs UI
 ========================= */
@@ -235,9 +220,7 @@ export function Tabs({
         onClick={() => onChange("DATA")}
         className={cn(
           "flex-1 rounded-xl px-3 py-2 text-sm font-semibold transition-colors inline-flex items-center justify-center",
-          value === "DATA"
-            ? "bg-[var(--primary)] text-[var(--primary-foreground,#fff)]"
-            : "hover:bg-surface2"
+          value === "DATA" ? "bg-[var(--primary)] text-[var(--primary-foreground,#fff)]" : "hover:bg-surface2"
         )}
       >
         Datos del usuario
@@ -249,9 +232,7 @@ export function Tabs({
         onClick={() => onChange("CONFIG")}
         className={cn(
           "flex-1 rounded-xl px-3 py-2 text-sm font-semibold transition-colors inline-flex items-center justify-center",
-          value === "CONFIG"
-            ? "bg-[var(--primary)] text-[var(--primary-foreground,#fff)]"
-            : "hover:bg-surface2"
+          value === "CONFIG" ? "bg-[var(--primary)] text-[var(--primary-foreground,#fff)]" : "hover:bg-surface2"
         )}
       >
         Configuración del usuario

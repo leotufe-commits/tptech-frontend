@@ -1,7 +1,6 @@
 // tptech-frontend/src/lib/api.ts
 
-const RAW_API_URL =
-  (import.meta.env.VITE_API_URL as string) || "http://localhost:3001";
+const RAW_API_URL = (import.meta.env.VITE_API_URL as string) || "http://localhost:3001";
 
 // normaliza: sin slash final
 const API_URL = RAW_API_URL.replace(/\/+$/, "");
@@ -63,6 +62,24 @@ function joinUrl(base: string, path: string) {
 }
 
 /**
+ * ✅ Lee token guardado (preferimos sessionStorage, fallback localStorage)
+ * Esto permite enviar Authorization Bearer además de cookie httpOnly.
+ */
+function readStoredToken(): string | null {
+  try {
+    const ss = sessionStorage.getItem(SS_TOKEN_KEY);
+    if (ss && ss.trim()) return ss.trim();
+  } catch {}
+
+  try {
+    const ls = localStorage.getItem(LS_TOKEN_KEY);
+    if (ls && ls.trim()) return ls.trim();
+  } catch {}
+
+  return null;
+}
+
+/**
  * Extensión de RequestInit que permite:
  * - body como objeto/array (lo serializa a JSON)
  * - body como string/FormData/etc (lo manda tal cual)
@@ -120,8 +137,7 @@ function isJsonSerializable(body: any) {
   if (typeof body !== "object") return false;
   if (Array.isArray(body)) return true;
 
-  if (isFormData(body) || isURLSearchParams(body) || isBlob(body) || isArrayBuffer(body))
-    return false;
+  if (isFormData(body) || isURLSearchParams(body) || isBlob(body) || isArrayBuffer(body)) return false;
 
   return true;
 }
@@ -182,9 +198,29 @@ function tryParseJsonText(s: string) {
 }
 
 /**
+ * ✅ Error enriquecido: preserva status + data (JSON del backend)
+ * para poder manejar flujos como 409 HAS_SPECIAL_PERMISSIONS.
+ */
+class ApiError extends Error {
+  status: number;
+  data: any;
+  url?: string;
+  method?: string;
+
+  constructor(message: string, opts: { status: number; data?: any; url?: string; method?: string }) {
+    super(message);
+    this.name = "ApiError";
+    this.status = opts.status;
+    this.data = opts.data;
+    this.url = opts.url;
+    this.method = opts.method;
+  }
+}
+
+/**
  * apiFetch
  * - ✅ Auth por COOKIE httpOnly (credentials: "include")
- * - ❌ NO agrega Authorization Bearer
+ * - ✅ Auth por Bearer (si hay token en storage)
  * - si options.body es objeto/array -> JSON.stringify
  * - si 401 -> (por default) forceLogout (multi-tab) + throw
  * - soporta FormData (avatar/logo/adjuntos) sin setear Content-Type
@@ -196,11 +232,14 @@ function tryParseJsonText(s: string) {
  * - dedupe GET/HEAD en vuelo (evita duplicados)
  * - timeout (AbortController)
  */
-export async function apiFetch<T = any>(
-  path: string,
-  options: ApiFetchOptions = {}
-): Promise<T> {
+export async function apiFetch<T = any>(path: string, options: ApiFetchOptions = {}): Promise<T> {
   const headers = new Headers(options.headers as any);
+
+  // ✅ Inyectar Authorization Bearer si existe token guardado (sin pisar si ya vino)
+  const token = readStoredToken();
+  if (token && !headers.has("Authorization")) {
+    headers.set("Authorization", `Bearer ${token}`);
+  }
 
   const method = String(options.method || "GET").toUpperCase();
   const allowBody = method !== "GET" && method !== "HEAD";
@@ -214,27 +253,21 @@ export async function apiFetch<T = any>(
       bodyToSend = b;
     } else if (typeof b === "string") {
       bodyToSend = b;
-      if (!headers.has("Content-Type"))
-        headers.set("Content-Type", "text/plain;charset=UTF-8");
+      if (!headers.has("Content-Type")) headers.set("Content-Type", "text/plain;charset=UTF-8");
     } else if (isBlob(b)) {
       bodyToSend = b;
     } else if (isArrayBuffer(b)) {
       bodyToSend = b as any;
     } else if (isJsonSerializable(b)) {
       bodyToSend = JSON.stringify(b);
-      if (!headers.has("Content-Type"))
-        headers.set("Content-Type", "application/json");
+      if (!headers.has("Content-Type")) headers.set("Content-Type", "application/json");
     } else {
       bodyToSend = b as any;
     }
   }
 
   const cacheOpt: RequestCache | undefined =
-    options.cache !== undefined
-      ? options.cache
-      : method === "GET"
-        ? "no-store"
-        : undefined;
+    options.cache !== undefined ? options.cache : method === "GET" ? "no-store" : undefined;
 
   const url = joinUrl(API_URL, path);
 
@@ -242,10 +275,7 @@ export async function apiFetch<T = any>(
   const timeoutSignal = makeTimeoutSignal(timeoutMs);
   const signal = mergeSignals(options.signal, timeoutSignal);
 
-  const canDedupe =
-    (options.dedupe ?? true) &&
-    (method === "GET" || method === "HEAD") &&
-    bodyToSend === undefined;
+  const canDedupe = (options.dedupe ?? true) && (method === "GET" || method === "HEAD") && bodyToSend === undefined;
 
   const key = canDedupe ? `${method}:${url}` : "";
 
@@ -258,13 +288,7 @@ export async function apiFetch<T = any>(
     let res: Response;
 
     // ✅ Quitamos props custom para no pasarlas a fetch()
-    const {
-      body: _body,
-      timeoutMs: _timeoutMs,
-      dedupe: _dedupe,
-      on401: _on401,
-      ...fetchOpts
-    } = options;
+    const { body: _body, timeoutMs: _timeoutMs, dedupe: _dedupe, on401: _on401, ...fetchOpts } = options;
 
     try {
       res = await fetch(url, {
@@ -283,17 +307,9 @@ export async function apiFetch<T = any>(
       throw new Error("Error de red. Revisá tu conexión e intentá de nuevo.");
     }
 
-    if (res.status === 401) {
-      const mode = options.on401 ?? "logout";
-      if (mode === "logout") {
-        forceLogout();
-        throw new Error("Sesión expirada");
-      }
-      throw new Error("No autorizado (401)");
-    }
-
     if (res.status === 204) return undefined as T;
 
+    // ✅ Parse payload SIEMPRE (sirve para errores 4xx/5xx con JSON)
     let payload: any = null;
     const ct = res.headers.get("content-type") || "";
 
@@ -313,12 +329,24 @@ export async function apiFetch<T = any>(
       }
     }
 
+    // ✅ 401 con modo configurable
+    if (res.status === 401) {
+      const mode = options.on401 ?? "logout";
+      if (mode === "logout") {
+        forceLogout();
+        throw new ApiError("Sesión expirada", { status: 401, data: payload, url, method });
+      }
+      throw new ApiError("No autorizado (401)", { status: 401, data: payload, url, method });
+    }
+
     if (!res.ok) {
       const msg =
-        (payload && typeof payload === "object" && payload.message) ||
+        (payload && typeof payload === "object" && (payload as any).message) ||
         (typeof payload === "string" && payload) ||
         `HTTP ${res.status}`;
-      throw new Error(msg);
+
+      // ✅ CRÍTICO: mantenemos status + data para flujos tipo 409
+      throw new ApiError(msg, { status: res.status, data: payload, url, method });
     }
 
     return payload as T;

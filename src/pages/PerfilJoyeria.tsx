@@ -1,10 +1,12 @@
 // tptech-frontend/src/pages/PerfilJoyeria.tsx
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { createPortal } from "react-dom";
 import { apiFetch } from "../lib/api";
 import { useMe } from "../hooks/useMe";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { X, ChevronLeft, Pencil, Save } from "lucide-react";
+
+import TPComboCreatable from "../components/ui/TPComboCreatable";
+import { listCatalog, createCatalogItem, type CatalogItem, type CatalogType } from "../services/catalogs";
 
 /* ================== TIPOS ================== */
 
@@ -60,10 +62,6 @@ function onlyDigits(v: string) {
 
 function cn(...classes: Array<string | false | null | undefined>) {
   return classes.filter(Boolean).join(" ");
-}
-
-function clamp(n: number, min: number, max: number) {
-  return Math.max(min, Math.min(max, n));
 }
 
 function formatBytes(bytes: number) {
@@ -188,174 +186,6 @@ function setFaviconPersisted(url: string) {
   } catch {}
 }
 
-/* ================== SELECT ================== */
-
-type SelectOption = { value: string; label: string };
-
-function TpSelect({
-  value,
-  onChange,
-  options,
-  placeholder = "Seleccionar...",
-  className,
-  disabled = false,
-}: {
-  value: string;
-  onChange: (v: string) => void;
-  options: SelectOption[];
-  placeholder?: string;
-  className?: string;
-  disabled?: boolean;
-}) {
-  const [open, setOpen] = useState(false);
-  const btnRef = useRef<HTMLButtonElement | null>(null);
-  const menuRef = useRef<HTMLDivElement | null>(null);
-
-  const current = useMemo(() => options.find((o) => o.value === value), [options, value]);
-
-  useEffect(() => {
-    function onDoc(e: MouseEvent) {
-      if (!open) return;
-      const target = e.target as Node;
-      if (menuRef.current?.contains(target)) return;
-      if (btnRef.current?.contains(target)) return;
-      setOpen(false);
-    }
-    document.addEventListener("mousedown", onDoc);
-    return () => document.removeEventListener("mousedown", onDoc);
-  }, [open]);
-
-  useEffect(() => {
-    if (!open) return;
-    function onKeyDown(e: KeyboardEvent) {
-      if (e.key === "Escape") setOpen(false);
-    }
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [open]);
-
-  function onButtonKeyDown(e: React.KeyboardEvent) {
-    if (disabled) return;
-    if (e.key === "Escape") {
-      setOpen(false);
-      return;
-    }
-    if (e.key === "Enter" || e.key === " ") {
-      e.preventDefault();
-      setOpen((v) => !v);
-    }
-  }
-
-  const r = btnRef.current?.getBoundingClientRect();
-  const viewportPad = 10;
-  const gap = 8;
-
-  const width = r?.width ?? 320;
-  const leftWanted = r?.left ?? viewportPad;
-  const left = clamp(leftWanted, viewportPad, window.innerWidth - viewportPad - width);
-
-  const maxH = 320;
-  const spaceBelow = window.innerHeight - viewportPad - (r?.bottom ?? 0);
-  const spaceAbove = (r?.top ?? 0) - viewportPad;
-  const openDown = spaceBelow >= 200 || spaceBelow >= spaceAbove;
-
-  const topDown = clamp((r?.bottom ?? 0) + gap, viewportPad, window.innerHeight - viewportPad - maxH);
-  const topUp = clamp((r?.top ?? 0) - gap - maxH, viewportPad, window.innerHeight - viewportPad - maxH);
-  const top = openDown ? topDown : topUp;
-
-  const menu =
-    open && !disabled ? (
-      <>
-        <div
-          style={{ position: "fixed", inset: 0, zIndex: 10000 }}
-          onMouseDown={() => setOpen(false)}
-          aria-hidden="true"
-        />
-        <div
-          ref={menuRef}
-          role="listbox"
-          aria-label="Selector"
-          style={{ position: "fixed", left, top, width, maxHeight: maxH, zIndex: 10001 }}
-          className="overflow-hidden rounded-xl border border-border bg-card shadow-soft"
-          onMouseDown={(e) => e.stopPropagation()}
-        >
-          <div className="tp-scroll overflow-auto" style={{ maxHeight: maxH }}>
-            <button
-              type="button"
-              role="option"
-              aria-selected={value === ""}
-              onClick={() => {
-                onChange("");
-                setOpen(false);
-              }}
-              className={cn(
-                "w-full px-3 py-2 text-left text-sm transition-colors",
-                value === ""
-                  ? "bg-[var(--primary)] text-[var(--primary-foreground,#fff)]"
-                  : "text-text hover:bg-[color-mix(in_oklab,var(--primary)_12%,transparent)]"
-              )}
-            >
-              {placeholder}
-            </button>
-
-            {options.map((o) => {
-              const active = o.value === value;
-              return (
-                <button
-                  key={o.value}
-                  type="button"
-                  role="option"
-                  aria-selected={active}
-                  onClick={() => {
-                    onChange(o.value);
-                    setOpen(false);
-                  }}
-                  className={cn(
-                    "w-full px-3 py-2 text-left text-sm transition-colors",
-                    active
-                      ? "bg-[var(--primary)] text-[var(--primary-foreground,#fff)]"
-                      : "text-text hover:bg-[color-mix(in_oklab,var(--primary)_12%,transparent)]"
-                  )}
-                >
-                  {o.label}
-                </button>
-              );
-            })}
-          </div>
-        </div>
-      </>
-    ) : null;
-
-  return (
-    <div className={cn("relative w-full", className)}>
-      <button
-        ref={btnRef}
-        type="button"
-        onClick={() => {
-          if (disabled) return;
-          setOpen((v) => !v);
-        }}
-        onKeyDown={onButtonKeyDown}
-        aria-haspopup="listbox"
-        aria-expanded={open}
-        disabled={disabled}
-        className={cn(
-          "tp-input text-left cursor-pointer select-none relative !py-2 !px-3 !pr-9",
-          disabled && "opacity-70 cursor-not-allowed"
-        )}
-        title={current?.label ?? placeholder}
-      >
-        <span className="text-sm">{current?.label ?? placeholder}</span>
-        <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-muted" aria-hidden="true">
-          ▾
-        </span>
-      </button>
-
-      {open ? createPortal(menu, document.body) : null}
-    </div>
-  );
-}
-
 /* ================== COMPONENTE ================== */
 
 export default function PerfilJoyeria() {
@@ -389,16 +219,73 @@ export default function PerfilJoyeria() {
 
   const attInputRef = useRef<HTMLInputElement | null>(null);
 
+  // ================== CATALOGS (combos) ==================
+  const [catIva, setCatIva] = useState<CatalogItem[]>([]);
+  const [catPrefix, setCatPrefix] = useState<CatalogItem[]>([]);
+  const [catCity, setCatCity] = useState<CatalogItem[]>([]);
+  const [catProvince, setCatProvince] = useState<CatalogItem[]>([]);
+  const [catCountry, setCatCountry] = useState<CatalogItem[]>([]);
+
+  const [catLoading, setCatLoading] = useState<Record<string, boolean>>({});
+
+  async function ensureCatalog(type: CatalogType, force = false) {
+    const k = String(type);
+
+    // ✅ guard robusto contra doble-disparo
+    let shouldFetch = true;
+    setCatLoading((prev) => {
+      if (prev[k]) {
+        shouldFetch = false;
+        return prev;
+      }
+      return { ...prev, [k]: true };
+    });
+    if (!shouldFetch) return;
+
+    try {
+      const resp = await listCatalog(type, { force });
+      const items = (resp as any)?.items ?? [];
+
+
+      if (type === "IVA_CONDITION") setCatIva(items);
+      else if (type === "PHONE_PREFIX") setCatPrefix(items);
+      else if (type === "CITY") setCatCity(items);
+      else if (type === "PROVINCE") setCatProvince(items);
+      else if (type === "COUNTRY") setCatCountry(items);
+    } catch (e: any) {
+      setMsg(e?.message || "No se pudo cargar un catálogo.");
+    } finally {
+      setCatLoading((p) => ({ ...p, [k]: false }));
+    }
+  }
+
+  async function createAndRefresh(type: CatalogType, label: string) {
+  try {
+    await createCatalogItem(type, label);
+    await ensureCatalog(type, true);
+    setMsg(`Agregado “${label}” ✅`);
+  } catch (e: any) {
+    setMsg(e?.message || "No se pudo agregar el ítem al catálogo.");
+  }
+}
+
+  // ✅ Hidratación estable: VIEW siempre desde server; EDIT solo si no hay draft aún
   useEffect(() => {
     if (!jewelryFromContext) return;
 
     setServerJewelry(jewelryFromContext);
 
-    // ✅ en VIEW siempre hidrata desde server (no deja “sucio”)
-    // ✅ en EDIT hidrata solo si no hay draft todavía
-    const shouldHydrate = !existing || !company || (!isEditMode && dirty);
+    if (!isEditMode) {
+      const d = jewelryToDraft(jewelryFromContext);
+      setExisting(d.existing);
+      setCompany(d.company);
+      setDirty(false);
+      setMsg(null);
+      return;
+    }
 
-    if (shouldHydrate) {
+    // EDIT: solo primera vez (o si todavía no hay draft)
+    if (!existing || !company) {
       const d = jewelryToDraft(jewelryFromContext);
       setExisting(d.existing);
       setCompany(d.company);
@@ -407,6 +294,17 @@ export default function PerfilJoyeria() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [jewelryFromContext?.id, jewelryFromContext?.updatedAt, isEditMode]);
+
+  // ✅ Pre-carga de catálogos al entrar en EDIT (mejor UX)
+  useEffect(() => {
+    if (!isEditMode) return;
+    ensureCatalog("IVA_CONDITION");
+    ensureCatalog("PHONE_PREFIX");
+    ensureCatalog("CITY");
+    ensureCatalog("PROVINCE");
+    ensureCatalog("COUNTRY");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isEditMode]);
 
   useEffect(() => {
     return () => {
@@ -708,13 +606,6 @@ export default function PerfilJoyeria() {
     );
   }
 
-  const ivaOptions: SelectOption[] = [
-    { value: "Responsable Inscripto", label: "Responsable Inscripto" },
-    { value: "Monotributo", label: "Monotributo" },
-    { value: "Exento", label: "Exento" },
-    { value: "Consumidor Final", label: "Consumidor Final" },
-  ];
-
   const headerLogoSrc = logoPreview || absUrl(company.logoUrl || "");
   const hasLogo = !!headerLogoSrc;
 
@@ -723,6 +614,9 @@ export default function PerfilJoyeria() {
   const initials = getInitials(existing.name || company.legalName || "TPTech");
 
   const readonly = !isEditMode;
+
+  // Por ahora: permitir crear solo en edit.
+  const allowCreate = isEditMode;
 
   return (
     <div className="mx-auto max-w-6xl p-4 sm:p-6">
@@ -768,12 +662,7 @@ export default function PerfilJoyeria() {
                 Volver
               </button>
 
-              <button
-                type="button"
-                onClick={goToEditMode}
-                className="tp-btn-primary px-6 py-2 inline-flex items-center justify-center gap-2"
-                title="Editar"
-              >
+              <button type="button" onClick={goToEditMode} className="tp-btn-primary px-6 py-2 inline-flex items-center justify-center gap-2" title="Editar">
                 <Pencil className="h-4 w-4" />
                 Editar
               </button>
@@ -855,9 +744,7 @@ export default function PerfilJoyeria() {
                     style={{ background: "rgba(0,0,0,0.28)" }}
                     aria-hidden="true"
                   >
-                    <span className="text-white text-[11px] px-2 text-center leading-tight">
-                      {uploadingLogo ? "SUBIENDO…" : hasLogo ? "EDITAR" : "AGREGAR"}
-                    </span>
+                    <span className="text-white text-[11px] px-2 text-center leading-tight">{uploadingLogo ? "SUBIENDO…" : hasLogo ? "EDITAR" : "AGREGAR"}</span>
                   </div>
                 )}
               </button>
@@ -900,7 +787,18 @@ export default function PerfilJoyeria() {
             <div className="grid grid-cols-1 sm:grid-cols-12 gap-3">
               <div className="sm:col-span-5">
                 <Field label="Condición de IVA">
-                  <TpSelect value={company.ivaCondition} onChange={(v) => setCompanyField("ivaCondition", v)} options={ivaOptions} placeholder="Seleccionar..." disabled={readonly} />
+                  <TPComboCreatable
+                    type="IVA_CONDITION"
+                    items={catIva}
+                    loading={!!catLoading["IVA_CONDITION"]}
+                    onRefresh={() => ensureCatalog("IVA_CONDITION")}
+                    value={company.ivaCondition}
+                    onChange={(v) => setCompanyField("ivaCondition", v)}
+                    allowCreate={allowCreate}
+                    onCreate={(label) => createAndRefresh("IVA_CONDITION", label)}
+                    disabled={readonly}
+                    placeholder="Seleccionar…"
+                  />
                 </Field>
               </div>
 
@@ -924,7 +822,18 @@ export default function PerfilJoyeria() {
             <div className="grid grid-cols-1 sm:grid-cols-12 gap-3">
               <div className="sm:col-span-4">
                 <Field label="Prefijo">
-                  <input className="tp-input" value={existing.phoneCountry} onChange={(e) => setExistingField("phoneCountry", e.target.value)} readOnly={readonly} disabled={readonly} />
+                  <TPComboCreatable
+                    type="PHONE_PREFIX"
+                    items={catPrefix}
+                    loading={!!catLoading["PHONE_PREFIX"]}
+                    onRefresh={() => ensureCatalog("PHONE_PREFIX")}
+                    value={existing.phoneCountry}
+                    onChange={(v) => setExistingField("phoneCountry", v)}
+                    allowCreate={allowCreate}
+                    onCreate={(label) => createAndRefresh("PHONE_PREFIX", label)}
+                    disabled={readonly}
+                    placeholder="Ej: +54"
+                  />
                 </Field>
               </div>
 
@@ -966,13 +875,35 @@ export default function PerfilJoyeria() {
 
             <div className="md:col-span-5">
               <Field label="Ciudad">
-                <input className="tp-input" value={existing.city} onChange={(e) => setExistingField("city", e.target.value)} readOnly={readonly} disabled={readonly} />
+                <TPComboCreatable
+                  type="CITY"
+                  items={catCity}
+                  loading={!!catLoading["CITY"]}
+                  onRefresh={() => ensureCatalog("CITY")}
+                  value={existing.city}
+                  onChange={(v) => setExistingField("city", v)}
+                  allowCreate={allowCreate}
+                  onCreate={(label) => createAndRefresh("CITY", label)}
+                  disabled={readonly}
+                  placeholder="Seleccionar…"
+                />
               </Field>
             </div>
 
             <div className="md:col-span-4">
               <Field label="Provincia">
-                <input className="tp-input" value={existing.province} onChange={(e) => setExistingField("province", e.target.value)} readOnly={readonly} disabled={readonly} />
+                <TPComboCreatable
+                  type="PROVINCE"
+                  items={catProvince}
+                  loading={!!catLoading["PROVINCE"]}
+                  onRefresh={() => ensureCatalog("PROVINCE")}
+                  value={existing.province}
+                  onChange={(v) => setExistingField("province", v)}
+                  allowCreate={allowCreate}
+                  onCreate={(label) => createAndRefresh("PROVINCE", label)}
+                  disabled={readonly}
+                  placeholder="Seleccionar…"
+                />
               </Field>
             </div>
 
@@ -984,7 +915,18 @@ export default function PerfilJoyeria() {
 
             <div className="md:col-span-5">
               <Field label="País">
-                <input className="tp-input" value={existing.country} onChange={(e) => setExistingField("country", e.target.value)} readOnly={readonly} disabled={readonly} />
+                <TPComboCreatable
+                  type="COUNTRY"
+                  items={catCountry}
+                  loading={!!catLoading["COUNTRY"]}
+                  onRefresh={() => ensureCatalog("COUNTRY")}
+                  value={existing.country}
+                  onChange={(v) => setExistingField("country", v)}
+                  allowCreate={allowCreate}
+                  onCreate={(label) => createAndRefresh("COUNTRY", label)}
+                  disabled={readonly}
+                  placeholder="Seleccionar…"
+                />
               </Field>
             </div>
           </div>

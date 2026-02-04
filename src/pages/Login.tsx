@@ -14,14 +14,8 @@ function EyeIcon({ open }: { open: boolean }) {
         strokeLinecap="round"
         strokeLinejoin="round"
       />
-      <path
-        d="M12 15.5A3.5 3.5 0 1 0 12 8a3.5 3.5 0 0 0 0 7.5Z"
-        stroke="currentColor"
-        strokeWidth="1.8"
-      />
-      {!open && (
-        <path d="M4 20 20 4" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
-      )}
+      <path d="M12 15.5A3.5 3.5 0 1 0 12 8a3.5 3.5 0 0 0 0 7.5Z" stroke="currentColor" strokeWidth="1.8" />
+      {!open && <path d="M4 20 20 4" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />}
     </svg>
   );
 }
@@ -44,31 +38,13 @@ function XIcon() {
 function ChevronDownIcon() {
   return (
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-      <path
-        d="M6 9l6 6 6-6"
-        stroke="currentColor"
-        strokeWidth="2"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
+      <path d="M6 9l6 6 6-6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   );
 }
 
-type LoginResponse = {
-  accessToken?: string;
-  token?: string;
-};
-
-type TenantOption = {
-  id: string;
-  name: string;
-};
-
-type LoginOptionsResponse = {
-  email: string;
-  tenants: TenantOption[];
-};
+type TenantOption = { id: string; name: string };
+type LoginOptionsResponse = { email: string; tenants: TenantOption[] };
 
 function isValidEmail(v: string) {
   const s = v.trim();
@@ -90,9 +66,18 @@ function safeSet(key: string, value: string) {
   }
 }
 
+function getErrMessage(err: any, fallback: string) {
+  const data = err?.data;
+  if (data && typeof data === "object" && typeof data.message === "string" && data.message.trim()) {
+    return data.message.trim();
+  }
+  const msg = String(err?.message || "").trim();
+  return msg || fallback;
+}
+
 export default function Login() {
   const navigate = useNavigate();
-  const { setTokenOnly, refreshMe } = useAuth();
+  const { refreshMe } = useAuth();
 
   const [email, setEmail] = useState("");
   const [pass, setPass] = useState("");
@@ -173,6 +158,7 @@ export default function Login() {
         method: "POST",
         body: { email: e },
         timeoutMs: 8000,
+        // acá da igual, es POST
       })
         .then((resp) => {
           const list = Array.isArray(resp?.tenants) ? resp.tenants : [];
@@ -230,26 +216,77 @@ export default function Login() {
     try {
       setLoading(true);
 
-      const resp = await apiFetch<LoginResponse>("/auth/login", {
+      /**
+       * ✅ Login con apiFetch:
+       * - credentials:"include" ya viene en apiFetch
+       * - soporta errores con status/data (ApiError)
+       * - IMPORTANTÍSIMO: on401:"throw" para NO disparar forceLogout (no tiene sentido en login)
+       */
+      await apiFetch("/auth/login", {
         method: "POST",
         body: {
           tenantId: effectiveTenantId,
           email: email.trim().toLowerCase(),
           password: pass,
         },
+        timeoutMs: 10_000,
+        on401: "throw",
       });
 
       // recordar “última joyería” para este email (solo si vino por options/selección)
       if (lastTenantKey && tenants.length > 0 && tenantId) safeSet(lastTenantKey, tenantId);
 
-      const token = resp?.accessToken || resp?.token || null;
-      if (token) setTokenOnly(token);
-
-      await refreshMe({ force: true, silent: true });
+      // ✅ CRÍTICO: refrescar /me con force para no reutilizar dedupe/promesa vieja
+      await refreshMe({ force: true, silent: true } as any);
       navigate("/dashboard", { replace: true });
+
+
+      /**
+       * ✅ Normalmente NO hace falta navegar:
+       * tu router tiene PublicOnly, y al setear user, te redirige solo.
+       * Si querés fallback explícito, descomentá:
+       */
+      // navigate("/dashboard", { replace: true });
     } catch (err: any) {
+      // 409 TENANT_REQUIRED (o conflictos)
+      const status = Number(err?.status);
+
+      if (status === 409) {
+        const payload = err?.data ?? {};
+
+        if (payload?.code === "TENANT_REQUIRED" && Array.isArray(payload?.tenants)) {
+          const list: TenantOption[] = payload.tenants
+            .map((t: any) => ({ id: String(t?.id || ""), name: String(t?.name || "Joyería") }))
+            .filter((t: TenantOption) => t.id);
+
+          setDidLookup(true);
+          setTenants(list);
+
+          if (list.length > 0) {
+            const saved = lastTenantKey ? safeGet(lastTenantKey) : null;
+            const savedId = saved ? String(saved) : "";
+            const exists = savedId && list.some((x) => x.id === savedId);
+            setTenantId(exists ? savedId : list[0].id);
+          } else {
+            setTenantId("");
+          }
+
+          setError("Seleccioná la joyería para iniciar sesión.");
+          return;
+        }
+
+        setError(getErrMessage(err, "No se pudo iniciar sesión."));
+        return;
+      }
+
+      // 401 (credenciales inválidas)
+      if (status === 401) {
+        setError(getErrMessage(err, "Email o contraseña incorrectos."));
+        return;
+      }
+
       setEmail((v) => v.trim());
-      setError(String(err?.message || "Email o contraseña incorrectos."));
+      setError(getErrMessage(err, "Error de red. Revisá tu conexión e intentá de nuevo."));
     } finally {
       setLoading(false);
     }
@@ -262,8 +299,7 @@ export default function Login() {
 
   // ✅ wrapper para flecha del select (look similar al Theme selector)
   const selectWrapClass = "relative";
-  const selectChevronClass =
-    "pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-muted";
+  const selectChevronClass = "pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-muted";
 
   return (
     <div className="min-h-screen bg-surface text-text flex items-center justify-center px-4 py-10">
@@ -273,9 +309,7 @@ export default function Login() {
         <p className="mt-1 text-sm text-muted">Ingresá tus credenciales para continuar.</p>
 
         {error && (
-          <div className="mt-6 rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm">
-            {error}
-          </div>
+          <div className="mt-6 rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm">{error}</div>
         )}
 
         <form onSubmit={onSubmit} className="mt-8 space-y-5">
@@ -289,13 +323,15 @@ export default function Login() {
                 value={email}
                 onChange={(e) => {
                   setEmail(e.target.value);
+
                   // reset lookup
                   lastLookupEmailRef.current = "";
+
                   // si cambia email, limpiamos selección/manual
                   setTenants([]);
                   setTenantId("");
                   setManualTenantId("");
-                  setDidLookup(false); // ✅ FIX parpadeo: hasta que arranque lookup real
+                  setDidLookup(false); // ✅ hasta que arranque lookup real
                 }}
                 className={`tp-input ${hasEmail ? "pr-11" : ""}`}
                 autoComplete="email"
@@ -326,11 +362,7 @@ export default function Login() {
                 loadingTenants ? (
                   <span>Buscando joyerías…</span>
                 ) : tenants.length === 0 ? (
-                  <span>
-                    {didLookup
-                      ? "Si no aparece joyería, ingresá el código manual."
-                      : "—"}
-                  </span>
+                  <span>{didLookup ? "Si no aparece joyería, ingresá el código manual." : "—"}</span>
                 ) : tenants.length === 1 ? (
                   <span>Joyería detectada: {tenants[0].name}</span>
                 ) : (
@@ -394,9 +426,7 @@ export default function Login() {
                 </span>
               </div>
 
-              <p className="mt-2 text-xs text-muted">
-                Se recuerda la última joyería usada para este email.
-              </p>
+              <p className="mt-2 text-xs text-muted">Se recuerda la última joyería usada para este email.</p>
             </div>
           )}
 

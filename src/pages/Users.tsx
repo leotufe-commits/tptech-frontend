@@ -1004,7 +1004,6 @@ export default function UsersPage() {
           }
         }
       }
-
       await refreshDetailAndList(targetId, { hydrate: false });
 
       setModalOpen(false);

@@ -39,6 +39,9 @@ import ConfiguracionSistemaVendedor from "./pages/ConfiguracionSistemaVendedor";
 
 import ProtectedRoute from "./components/ProtectedRoute";
 
+import ConfiguracionSistemaItems from "./pages/ConfiguracionSistemaItems";
+import ConfiguracionSistemaInformes from "./pages/ConfiguracionSistemaInformes";
+
 function LoadingGate() {
   return <div className="p-6 text-sm text-muted">Cargando…</div>;
 }
@@ -167,6 +170,14 @@ const router = createBrowserRouter([
           { path: "configuracion-sistema/categorias", element: <Placeholder title="Categorías de artículos" /> },
           { path: "configuracion-sistema/numeracion", element: <Placeholder title="Numeración de comprobantes" /> },
           { path: "configuracion-sistema/etiquetas", element: <Placeholder title="Impresión de etiquetas" /> },
+
+          // ✅ NUEVO: ADMINISTRACIÓN
+          
+
+          { path: "configuracion-sistema/items", element: <ConfiguracionSistemaItems /> },
+          { path: "configuracion-sistema/informes", element: <ConfiguracionSistemaInformes /> },
+
+ 
 
           /* =====================
              COMPAT: RUTAS VIEJAS

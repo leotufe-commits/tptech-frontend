@@ -5,6 +5,11 @@ import type { UserAttachment } from "../../../../services/users";
 
 import { TPCard, InputWithEye } from "../helpers/ui";
 
+// ✅ nuevo: combo + hook
+import TPComboCreatable from "../../../ui/TPComboCreatable";
+import { useCatalog } from "../../../../hooks/useCatalog";
+import type { CatalogType } from "../../../../services/catalogs";
+
 type Props = {
   modalMode: "CREATE" | "EDIT";
   modalBusy: boolean;
@@ -65,60 +70,74 @@ type Props = {
   draftPreviewByKey: Record<string, string>;
 };
 
-export default function SectionData({
-  modalMode,
-  modalBusy,
+function asCatalogType(t: CatalogType): CatalogType {
+  return t;
+}
 
-  fEmail,
-  setFEmail,
-  fPassword,
-  setFPassword,
-  showPassword,
-  setShowPassword,
+export default function SectionData(props: Props) {
+  const {
+    modalMode,
+    modalBusy,
 
-  fName,
-  setFName,
+    fEmail,
+    setFEmail,
+    fPassword,
+    setFPassword,
+    showPassword,
+    setShowPassword,
 
-  fDocType,
-  setFDocType,
-  fDocNumber,
-  setFDocNumber,
+    fName,
+    setFName,
 
-  fPhoneCountry,
-  setFPhoneCountry,
-  fPhoneNumber,
-  setFPhoneNumber,
+    fDocType,
+    setFDocType,
+    fDocNumber,
+    setFDocNumber,
 
-  fStreet,
-  setFStreet,
-  fNumber,
-  setFNumber,
-  fCity,
-  setFCity,
-  fProvince,
-  setFProvince,
-  fPostalCode,
-  setFPostalCode,
-  fCountry,
-  setFCountry,
+    fPhoneCountry,
+    setFPhoneCountry,
+    fPhoneNumber,
+    setFPhoneNumber,
 
-  fNotes,
-  setFNotes,
+    fStreet,
+    setFStreet,
+    fNumber,
+    setFNumber,
+    fCity,
+    setFCity,
+    fProvince,
+    setFProvince,
+    fPostalCode,
+    setFPostalCode,
+    fCountry,
+    setFCountry,
 
-  attInputRef,
-  uploadingAttachments,
-  deletingAttId,
-  attachmentsDraft,
-  removeDraftAttachmentByIndex,
-  addAttachments,
+    fNotes,
+    setFNotes,
 
-  filteredSavedAttachments,
-  handleRemoveSavedAttachment,
+    attInputRef,
+    uploadingAttachments,
+    deletingAttId,
+    attachmentsDraft,
+    removeDraftAttachmentByIndex,
+    addAttachments,
 
-  draftKey,
-  draftPreviewByKey,
-}: Props) {
+    filteredSavedAttachments,
+    handleRemoveSavedAttachment,
+
+    draftKey,
+    draftPreviewByKey,
+  } = props;
+
   const busyAttachments = modalBusy || uploadingAttachments || Boolean(deletingAttId);
+
+  // ✅ Catálogos (combos globales por joyería/tenant)
+  // ⚠️ DOCUMENT_TYPE requiere backend/prisma (ver abajo). Igual dejamos el combo listo.
+  const docTypeCat = useCatalog(asCatalogType("DOCUMENT_TYPE"));
+  const prefixCat = useCatalog(asCatalogType("PHONE_PREFIX"));
+  const cityCat = useCatalog(asCatalogType("CITY"));
+  const provCat = useCatalog(asCatalogType("PROVINCE"));
+  const countryCat = useCatalog(asCatalogType("COUNTRY"));
 
   return (
     <div className="space-y-4">
@@ -167,57 +186,60 @@ export default function SectionData({
         <div className="grid grid-cols-1 md:grid-cols-12 gap-3">
           <div className="md:col-span-12">
             <label className="mb-1 block text-xs text-muted">Nombre y apellido *</label>
-            <input
-              className="tp-input"
-              value={fName}
-              onChange={(e) => setFName(e.target.value)}
-              placeholder="Nombre Apellido"
-              disabled={modalBusy}
-            />
+            <input className="tp-input" value={fName} onChange={(e) => setFName(e.target.value)} placeholder="Nombre Apellido" disabled={modalBusy} />
           </div>
 
-          <div className="md:col-span-2">
+          {/* ✅ Tipo doc: combo global (requiere DOCUMENT_TYPE en backend/prisma) */}
+          <div className="md:col-span-3">
             <label className="mb-1 block text-xs text-muted">Tipo doc.</label>
-            <input
-              className="tp-input"
+            <TPComboCreatable
+              type="DOCUMENT_TYPE"
+              items={docTypeCat.items}
+              loading={docTypeCat.loading}
               value={fDocType}
-              onChange={(e) => setFDocType(e.target.value)}
+              onChange={setFDocType}
               placeholder="DNI / PAS / CUIT"
               disabled={modalBusy}
+              allowCreate
+              onRefresh={() => void docTypeCat.refresh()}
+              onCreate={async (label) => {
+                await docTypeCat.createItem(label);
+                setFDocType(label);
+              }}
             />
+            {/* opcional: mostrar error si no existe el catálogo en backend */}
+            {docTypeCat.error ? <div className="mt-1 text-[11px] text-red-600">{docTypeCat.error}</div> : null}
           </div>
 
-          <div className="md:col-span-4">
+          <div className="md:col-span-3">
             <label className="mb-1 block text-xs text-muted">Nro. doc.</label>
-            <input
-              className="tp-input"
-              value={fDocNumber}
-              onChange={(e) => setFDocNumber(e.target.value)}
-              placeholder="12345678"
-              disabled={modalBusy}
-            />
+            <input className="tp-input" value={fDocNumber} onChange={(e) => setFDocNumber(e.target.value)} placeholder="12345678" disabled={modalBusy} />
           </div>
 
+          {/* ✅ Prefijo país: combo global */}
           <div className="md:col-span-2">
             <label className="mb-1 block text-xs text-muted">Tel. país</label>
-            <input
-              className="tp-input"
+            <TPComboCreatable
+              type="PHONE_PREFIX"
+              items={prefixCat.items}
+              loading={prefixCat.loading}
               value={fPhoneCountry}
-              onChange={(e) => setFPhoneCountry(e.target.value)}
+              onChange={setFPhoneCountry}
               placeholder="+54"
               disabled={modalBusy}
+              allowCreate
+              onRefresh={() => void prefixCat.refresh()}
+              onCreate={async (label) => {
+                await prefixCat.createItem(label);
+                setFPhoneCountry(label);
+              }}
             />
+            {prefixCat.error ? <div className="mt-1 text-[11px] text-red-600">{prefixCat.error}</div> : null}
           </div>
 
           <div className="md:col-span-4">
             <label className="mb-1 block text-xs text-muted">Teléfono</label>
-            <input
-              className="tp-input"
-              value={fPhoneNumber}
-              onChange={(e) => setFPhoneNumber(e.target.value)}
-              placeholder="11 1234 5678"
-              disabled={modalBusy}
-            />
+            <input className="tp-input" value={fPhoneNumber} onChange={(e) => setFPhoneNumber(e.target.value)} placeholder="11 1234 5678" disabled={modalBusy} />
           </div>
 
           <div className="md:col-span-12 mt-2">
@@ -227,68 +249,80 @@ export default function SectionData({
               <div className="grid grid-cols-1 md:grid-cols-12 gap-3">
                 <div className="md:col-span-5">
                   <label className="mb-1 block text-xs text-muted">Calle</label>
-                  <input
-                    className="tp-input"
-                    value={fStreet}
-                    onChange={(e) => setFStreet(e.target.value)}
-                    placeholder="Calle"
-                    disabled={modalBusy}
-                  />
+                  <input className="tp-input" value={fStreet} onChange={(e) => setFStreet(e.target.value)} placeholder="Calle" disabled={modalBusy} />
                 </div>
 
                 <div className="md:col-span-2">
                   <label className="mb-1 block text-xs text-muted">Número</label>
-                  <input
-                    className="tp-input"
-                    value={fNumber}
-                    onChange={(e) => setFNumber(e.target.value)}
-                    placeholder="123"
-                    disabled={modalBusy}
-                  />
+                  <input className="tp-input" value={fNumber} onChange={(e) => setFNumber(e.target.value)} placeholder="123" disabled={modalBusy} />
                 </div>
 
+                {/* ✅ Ciudad: combo global */}
                 <div className="md:col-span-5">
                   <label className="mb-1 block text-xs text-muted">Ciudad</label>
-                  <input
-                    className="tp-input"
+                  <TPComboCreatable
+                    type="CITY"
+                    items={cityCat.items}
+                    loading={cityCat.loading}
                     value={fCity}
-                    onChange={(e) => setFCity(e.target.value)}
+                    onChange={setFCity}
                     placeholder="Ciudad"
                     disabled={modalBusy}
+                    allowCreate
+                    onRefresh={() => void cityCat.refresh()}
+                    onCreate={async (label) => {
+                      await cityCat.createItem(label);
+                      setFCity(label);
+                    }}
                   />
+                  {cityCat.error ? <div className="mt-1 text-[11px] text-red-600">{cityCat.error}</div> : null}
                 </div>
 
+                {/* ✅ Provincia: combo global */}
                 <div className="md:col-span-4">
                   <label className="mb-1 block text-xs text-muted">Provincia</label>
-                  <input
-                    className="tp-input"
+                  <TPComboCreatable
+                    type="PROVINCE"
+                    items={provCat.items}
+                    loading={provCat.loading}
                     value={fProvince}
-                    onChange={(e) => setFProvince(e.target.value)}
+                    onChange={setFProvince}
                     placeholder="Provincia"
                     disabled={modalBusy}
+                    allowCreate
+                    onRefresh={() => void provCat.refresh()}
+                    onCreate={async (label) => {
+                      await provCat.createItem(label);
+                      setFProvince(label);
+                    }}
                   />
+                  {provCat.error ? <div className="mt-1 text-[11px] text-red-600">{provCat.error}</div> : null}
                 </div>
 
                 <div className="md:col-span-4">
                   <label className="mb-1 block text-xs text-muted">Código postal</label>
-                  <input
-                    className="tp-input"
-                    value={fPostalCode}
-                    onChange={(e) => setFPostalCode(e.target.value)}
-                    placeholder="1012"
-                    disabled={modalBusy}
-                  />
+                  <input className="tp-input" value={fPostalCode} onChange={(e) => setFPostalCode(e.target.value)} placeholder="1012" disabled={modalBusy} />
                 </div>
 
+                {/* ✅ País: combo global */}
                 <div className="md:col-span-4">
                   <label className="mb-1 block text-xs text-muted">País</label>
-                  <input
-                    className="tp-input"
+                  <TPComboCreatable
+                    type="COUNTRY"
+                    items={countryCat.items}
+                    loading={countryCat.loading}
                     value={fCountry}
-                    onChange={(e) => setFCountry(e.target.value)}
+                    onChange={setFCountry}
                     placeholder="Argentina"
                     disabled={modalBusy}
+                    allowCreate
+                    onRefresh={() => void countryCat.refresh()}
+                    onCreate={async (label) => {
+                      await countryCat.createItem(label);
+                      setFCountry(label);
+                    }}
                   />
+                  {countryCat.error ? <div className="mt-1 text-[11px] text-red-600">{countryCat.error}</div> : null}
                 </div>
               </div>
             </TPCard>
@@ -298,13 +332,7 @@ export default function SectionData({
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <Section title="Notas" desc="Notas internas.">
-          <textarea
-            className="tp-input min-h-[180px]"
-            value={fNotes}
-            onChange={(e) => setFNotes(e.target.value)}
-            placeholder="Notas internas…"
-            disabled={modalBusy}
-          />
+          <textarea className="tp-input min-h-[180px]" value={fNotes} onChange={(e) => setFNotes(e.target.value)} placeholder="Notas internas…" disabled={modalBusy} />
         </Section>
 
         <Section title="Adjuntos" desc="Archivos del usuario (PDF, imágenes, etc.).">
@@ -458,13 +486,7 @@ export default function SectionData({
                             <div className="text-xs text-muted flex gap-2">
                               <span className="truncate">{formatBytes(a.size)}</span>
                               {url && (
-                                <a
-                                  className="underline underline-offset-2"
-                                  href={url}
-                                  target="_blank"
-                                  rel="noreferrer"
-                                  onClick={(e) => e.stopPropagation()}
-                                >
+                                <a className="underline underline-offset-2" href={url} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()}>
                                   Abrir
                                 </a>
                               )}
@@ -474,11 +496,7 @@ export default function SectionData({
 
                         <button
                           type="button"
-                          className={cn(
-                            "h-8 w-8 rounded-full grid place-items-center",
-                            "opacity-0 group-hover:opacity-100 transition-opacity",
-                            busy && "opacity-60"
-                          )}
+                          className={cn("h-8 w-8 rounded-full grid place-items-center", "opacity-0 group-hover:opacity-100 transition-opacity", busy && "opacity-60")}
                           style={{ background: "var(--card)", border: "1px solid var(--border)" }}
                           title="Eliminar adjunto"
                           aria-label="Eliminar adjunto"
