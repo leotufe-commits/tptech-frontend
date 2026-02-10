@@ -1,66 +1,53 @@
-// src/components/ui/ConfirmActionDialog.tsx
-import React from "react";
-import { Loader2, CircleHelp, AlertTriangle } from "lucide-react";
+// src/components/ui/ConfirmDeleteDialog.tsx
+import React, { useEffect, useMemo, useState } from "react";
+import { Loader2, Trash2 } from "lucide-react";
 
 function cn(...classes: Array<string | false | null | undefined>) {
   return classes.filter(Boolean).join(" ");
 }
 
-type Tone = "primary" | "danger";
-
 type Props = {
   open: boolean;
-
-  title: string;
+  title?: string;
   description?: string;
-  hint?: string;
-
-  confirmText?: string; // default: "Confirmar"
+  confirmText?: string; // default: "Eliminar"
   cancelText?: string; // default: "Cancelar"
-
-  tone?: Tone; // default: "primary"
-  icon?: "help" | "warning"; // default: "help"
-
   requireTypeToConfirm?: boolean;
-  typeToConfirmText?: string; // default: "CONFIRMAR"
-
+  typeToConfirmText?: string; // default: "ELIMINAR"
+  dangerHint?: string; // texto adicional opcional
   loading?: boolean;
 
   onClose: () => void;
   onConfirm: () => void;
 };
 
-export default function ConfirmActionDialog({
+export default function ConfirmDeleteDialog({
   open,
-  title,
-  description,
-  hint,
-
-  confirmText = "Confirmar",
+  title = "Eliminar",
+  description = "Esta acción no se puede deshacer.",
+  confirmText = "Eliminar",
   cancelText = "Cancelar",
-
-  tone = "primary",
-  icon = "help",
-
   requireTypeToConfirm = false,
-  typeToConfirmText = "CONFIRMAR",
-
+  typeToConfirmText = "ELIMINAR",
+  dangerHint,
   loading = false,
   onClose,
   onConfirm,
 }: Props) {
-  if (!open) return null;
+  const [typed, setTyped] = useState("");
 
-  const inputId = "tptech-action-confirm-input";
+  useEffect(() => {
+    if (!open) setTyped("");
+  }, [open]);
 
-  const canConfirm = () => {
+  const expected = useMemo(() => String(typeToConfirmText || "ELIMINAR").trim().toUpperCase(), [typeToConfirmText]);
+
+  const canConfirm = useMemo(() => {
     if (!requireTypeToConfirm) return true;
-    const el = document.getElementById(inputId) as HTMLInputElement | null;
-    const v = (el?.value || "").trim().toUpperCase();
-    return v === typeToConfirmText.toUpperCase();
-  };
+    return typed.trim().toUpperCase() === expected;
+  }, [requireTypeToConfirm, typed, expected]);
 
-  const Icon = icon === "warning" ? AlertTriangle : CircleHelp;
+  if (!open) return null;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center px-4">
@@ -69,19 +56,15 @@ export default function ConfirmActionDialog({
       <div className="relative w-full max-w-lg rounded-2xl border border-border bg-surface p-5 shadow-xl">
         <div className="flex items-start gap-3">
           <div className="mt-0.5 rounded-xl border border-border p-2">
-            <Icon className="h-5 w-5" />
+            <Trash2 className="h-5 w-5" />
           </div>
 
           <div className="min-w-0 flex-1">
             <div className="text-base font-semibold">{title}</div>
-            {description ? (
-              <div className="mt-1 text-sm text-muted-foreground">{description}</div>
-            ) : null}
+            <div className="mt-1 text-sm text-muted-foreground">{description}</div>
 
-            {hint ? (
-              <div className="mt-2 rounded-xl border border-border bg-black/5 p-3 text-sm">
-                {hint}
-              </div>
+            {dangerHint ? (
+              <div className="mt-2 rounded-xl border border-border bg-black/5 p-3 text-sm">{dangerHint}</div>
             ) : null}
           </div>
         </div>
@@ -89,17 +72,18 @@ export default function ConfirmActionDialog({
         {requireTypeToConfirm ? (
           <div className="mt-4">
             <label className="block text-sm font-medium">
-              Escribí <span className="font-semibold">{typeToConfirmText}</span> para confirmar
+              Escribí <span className="font-semibold">{expected}</span> para confirmar
             </label>
             <input
-              id={inputId}
+              value={typed}
+              onChange={(e) => setTyped(e.target.value)}
               disabled={loading}
               autoFocus
               className={cn(
                 "mt-2 w-full rounded-xl border border-border bg-transparent px-3 py-2 text-sm outline-none",
                 "focus:ring-2 focus:ring-primary/30"
               )}
-              placeholder={typeToConfirmText}
+              placeholder={expected}
             />
           </div>
         ) : null}
@@ -116,11 +100,10 @@ export default function ConfirmActionDialog({
 
           <button
             type="button"
-            disabled={loading || !canConfirm()}
+            disabled={loading || !canConfirm}
             className={cn(
               "inline-flex items-center gap-2 rounded-xl px-4 py-2 text-sm text-white",
-              tone === "danger" ? "bg-red-600 hover:opacity-90" : "bg-primary hover:opacity-90",
-              "disabled:opacity-50"
+              "bg-primary hover:opacity-90 disabled:opacity-50"
             )}
             onClick={onConfirm}
           >

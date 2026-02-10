@@ -29,7 +29,10 @@ export default function Topbar({
   const { theme, themes } = useTheme();
   const jewelryName = auth.jewelry?.name ?? (auth.loading ? "Cargando..." : "Sin joyería");
 
-  const currentThemeLabel = useMemo(() => themes.find((t) => t.value === theme)?.label ?? "Tema", [themes, theme]);
+  const currentThemeLabel = useMemo(
+    () => themes.find((t) => t.value === theme)?.label ?? "Tema",
+    [themes, theme]
+  );
 
   const [settingsOpen, setSettingsOpen] = useState(false);
   const settingsBtnRef = useRef<HTMLButtonElement | null>(null);
@@ -68,13 +71,15 @@ export default function Topbar({
     (auth as any).pinLockRequireOnUserSwitch ?? (auth as any)?.jewelry?.pinLockRequireOnUserSwitch ?? true
   );
 
-  const quickSwitchEnabled = Boolean((auth as any).quickSwitchEnabled ?? (auth as any)?.jewelry?.quickSwitchEnabled ?? false);
+  const quickSwitchEnabled = Boolean(
+    (auth as any).quickSwitchEnabled ?? (auth as any)?.jewelry?.quickSwitchEnabled ?? false
+  );
 
-  // ✅ Estado del PIN del usuario actual (compat) — FIX PRECEDENCIA
+  // ✅ Estado del PIN del usuario actual (compat) — FIX TS2881 (usar OR, no ?? con boolean)
   const meHasQuickPin = Boolean(
-    (auth as any)?.me?.hasQuickPin ??
-      ((auth as any)?.me?.quickPinHash != null) ??
-      (auth as any)?.user?.hasQuickPin ??
+    (auth as any)?.me?.hasQuickPin ||
+      (auth as any)?.me?.quickPinHash != null ||
+      (auth as any)?.user?.hasQuickPin ||
       false
   );
 
@@ -208,7 +213,12 @@ export default function Topbar({
               <Settings className="h-5 w-5" />
             </button>
 
-            <PortalMenu open={settingsOpen} anchorRef={settingsAnchorRef} onClose={() => setSettingsOpen(false)} width={360}>
+            <PortalMenu
+              open={settingsOpen}
+              anchorRef={settingsAnchorRef}
+              onClose={() => setSettingsOpen(false)}
+              width={360}
+            >
               <div className="p-3 space-y-3">
                 <div className="px-1">
                   <div className="text-sm font-semibold text-text">Configuración</div>
@@ -285,8 +295,8 @@ export default function Topbar({
 
                   {/* (opcional) debug visual mínimo */}
                   <div className="pt-2 text-[10px] text-muted/70">
-                    Estado: {pinLockEnabled ? "PIN ON" : "PIN OFF"} · Usuario PIN: {meHasQuickPin && mePinEnabled ? "OK" : "NO"} ·
-                    Bloquear ahora: {canLockNow ? "Sí" : "No"}
+                    Estado: {pinLockEnabled ? "PIN ON" : "PIN OFF"} · Usuario PIN:{" "}
+                    {meHasQuickPin && mePinEnabled ? "OK" : "NO"} · Bloquear ahora: {canLockNow ? "Sí" : "No"}
                   </div>
                 </div>
               </div>

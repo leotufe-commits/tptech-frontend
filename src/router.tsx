@@ -20,7 +20,8 @@ import InventarioMovimientos from "./pages/InventarioMovimientos";
 import VentasClientes from "./pages/VentasClientes";
 import ComprasProveedores from "./pages/ComprasProveedores";
 
-import PerfilJoyeria from "./pages/PerfilJoyeria.tsx";
+import PerfilJoyeria from "./pages/PerfilJoyeria";
+
 
 import Cuenta from "./pages/Cuenta";
 import Placeholder from "./pages/Placeholder";
@@ -45,6 +46,7 @@ import ProtectedRoute from "./components/ProtectedRoute";
 
 import ConfiguracionSistemaItems from "./pages/ConfiguracionSistemaItems";
 import ConfiguracionSistemaInformes from "./pages/ConfiguracionSistemaInformes";
+
 
 function LoadingGate() {
   return <div className="p-6 text-sm text-muted">Cargando…</div>;

@@ -9,9 +9,9 @@ import {
   Settings,
 } from "lucide-react";
 
-// ✅ FORZAMOS .tsx para evitar que resuelva a un .ts fantasma
-import type { IconType } from "./sidebar.icons.tsx";
-import { GoldBarsIcon } from "./sidebar.icons.tsx";
+// ✅ IMPORT SIN EXTENSIÓN (correcto para Vite + TS)
+import type { IconType } from "./sidebar.icons";
+import { GoldBarsIcon } from "./sidebar.icons";
 
 export type GroupItem = { label: string; to: string };
 
@@ -59,7 +59,7 @@ export const SIDEBAR_NAV: NavItem[] = [
       { label: "Remitos", to: "/ventas/remitos" },
       { label: "Pagos Recibidos", to: "/ventas/pagos-recibidos" },
       { label: "Devoluciones de Venta", to: "/ventas/devoluciones" },
-      { label: "Nota de Credito", to: "/ventas/notas-credito" },
+      { label: "Nota de Crédito", to: "/ventas/notas-credito" },
     ],
   },
 
@@ -71,10 +71,10 @@ export const SIDEBAR_NAV: NavItem[] = [
       { label: "Proveedores", to: "/compras/proveedores" },
       { label: "Orden de Compra", to: "/compras/ordenes-compra" },
       { label: "Factura de Proveedor", to: "/compras/facturas-proveedor" },
-      { label: "Recepcion de Compras", to: "/compras/recepciones" },
+      { label: "Recepción de Compras", to: "/compras/recepciones" },
       { label: "Pagos Realizados", to: "/compras/pagos-realizados" },
-      { label: "Devolucion", to: "/compras/devoluciones" },
-      { label: "Creditos del Proveedor", to: "/compras/creditos-proveedor" },
+      { label: "Devolución", to: "/compras/devoluciones" },
+      { label: "Créditos del Proveedor", to: "/compras/creditos-proveedor" },
     ],
   },
 
