@@ -109,9 +109,13 @@ function normalizeLogoUrl(u: any): string {
   if (/^https?:\/\//i.test(raw)) return raw;
 
   const base = (import.meta.env.VITE_API_URL as string) || "http://localhost:3001";
-  const api = String(base).replace(/\/+$/, "");
-  if (raw.startsWith("/")) return api + raw;
-  return api + "/" + raw;
+  const clean = String(base).replace(/\/+$/, "");
+
+  // ✅ si base termina en /api, lo sacamos para construir assets (/uploads)
+  const origin = clean.replace(/\/api$/i, "");
+
+  if (raw.startsWith("/")) return origin + raw;
+  return origin + "/" + raw;
 }
 
 function initialsFromName(name: string): string {
@@ -131,13 +135,18 @@ function initialsFromName(name: string): string {
  * Entonces:
  * - AUTH favicon si hay user/jewelry
  * - PUBLIC si no hay sesión (no user)
+ *
+ * ✅ FIX NUEVO:
+ * - Durante "loading" (refresh/navegación) NO tocamos el favicon,
+ *   así evitamos el "mundito" por estados intermedios.
  */
-function applyAppFavicon(args: { user?: any; jewelry?: any }) {
+function applyAppFavicon(args: { user?: any; jewelry?: any; loading?: boolean }) {
   try {
+    if (args.loading) return;
+
     const j = args.jewelry || null;
     const u = args.user || null;
 
-    // ✅ Sin usuario -> PUBLIC favicon
     if (!u) {
       setFaviconHref(toDataUri(buildPublicTptFaviconSvg()), "image/svg+xml");
       return;
@@ -165,6 +174,80 @@ function applyAppFavicon(args: { user?: any; jewelry?: any }) {
       letterSpacing: -1.1,
     });
     setFaviconHref(toDataUri(svg), "image/svg+xml");
+  } catch {
+    // ignore
+  }
+}
+
+/* =========================
+   ✅ EVENTO GLOBAL: logo joyería cambiado (instant sync)
+========================= */
+const JEWELRY_LOGO_EVENT = "tptech:jewelry_logo_changed";
+
+function readLogoFromEvent(ev: Event): string {
+  const anyEv = ev as any;
+  const d = anyEv?.detail ?? {};
+  return String(d?.logoUrl ?? d?.url ?? "").trim();
+}
+
+function applyAuthFaviconOverrideLogo(args: { user: any; jewelry: any; logoUrl: string }) {
+  const u = args.user;
+  const j = args.jewelry;
+  const raw = String(args.logoUrl || "").trim();
+  const normalized = normalizeLogoUrl(raw);
+
+  if (normalized) {
+    try {
+      localStorage.setItem("TPTECH_FAVICON_URL", normalized);
+    } catch {}
+    setFaviconHref(normalized);
+    return;
+  }
+
+  try {
+    localStorage.removeItem("TPTECH_FAVICON_URL");
+  } catch {}
+
+  const nameSource =
+    String(j?.name || "").trim() ||
+    String(u?.name || "").trim() ||
+    String(u?.email || "").trim();
+
+  const initials = initialsFromName(nameSource) || "TP";
+  const svg = buildSvgTextBadge({
+    text: initials,
+    bg: "#0b0b0d",
+    fg: "#ffffff",
+    rx: 18,
+    fontSize: 28,
+    fontWeight: 900,
+    letterSpacing: -1.1,
+  });
+  setFaviconHref(toDataUri(svg), "image/svg+xml");
+}
+
+/* =========================
+   ✅ EVENTO GLOBAL: avatar de usuario cambiado (instant sync sidebar)
+========================= */
+export const USER_AVATAR_EVENT = "tptech:user_avatar_changed";
+
+function readAvatarFromEvent(ev: Event): { userId: string; avatarUrl: string; updatedAt?: string } {
+  const anyEv = ev as any;
+  const d = anyEv?.detail ?? {};
+  const userId = String(d?.userId ?? d?.id ?? "").trim();
+  const avatarUrl = String(d?.avatarUrl ?? d?.url ?? "").trim();
+  const updatedAtRaw = String(d?.avatarUpdatedAt ?? d?.updatedAt ?? "").trim();
+  return { userId, avatarUrl, updatedAt: updatedAtRaw || undefined };
+}
+
+/* =========================
+   ✅ QUICK SWITCH EVENT (UI)
+========================= */
+export const QUICK_SWITCH_OPEN_EVENT = "tptech:open_quick_switch";
+
+export function emitOpenQuickSwitch() {
+  try {
+    window.dispatchEvent(new CustomEvent(QUICK_SWITCH_OPEN_EVENT));
   } catch {
     // ignore
   }
@@ -232,18 +315,12 @@ function clearLockedPersisted() {
 
 /**
  * ✅ Con cookie httpOnly, NO podemos “ver” la sesión desde JS.
- * Igual intentamos /auth/me; si falla 401, quedamos públicos.
+ * Antes intentábamos /auth/me en boot SIEMPRE.
+ *
+ * ✅ Nuevo enfoque:
+ * - En boot NO llamamos /auth/me (evita ruido en /login).
+ * - La validación se hace al entrar a rutas protegidas (ProtectedRoute).
  */
-function shouldBootTryMe(): boolean {
-  try {
-    // Podés decidir en el futuro no llamar /me en /login,
-    // pero con el fix de 401 silencioso ya no rompe.
-    return true;
-  } catch {
-    return true;
-  }
-}
-
 export type User = {
   id: string;
   email: string;
@@ -355,6 +432,9 @@ export type AuthState = {
 
   /** ✅ bloquear manualmente (candado del topbar) */
   lockNow: () => void;
+
+  /** ✅ abrir UI de Quick Switch (LockScreen/Modal) */
+  openQuickSwitch: () => void;
 
   /** lock efectivo (server si existe, sino local) */
   lockEnabled: boolean;
@@ -504,9 +584,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [jewelry, setJewelry] = useState<Jewelry | null>(null);
   const [roles, setRoles] = useState<Role[]>([]);
   const [permissions, setPermissions] = useState<string[]>([]);
-  const [loading, setLoading] = useState(true);
 
-  // ✅ inicia con el lock persistido (para que F5 NO saltee el lock)
+  // ✅ en vez de “bloquear” la app al boot, arrancamos público y validamos en ProtectedRoute
+  const [loading, setLoading] = useState(false);
+
+  // ✅ inicia con el lock persistido (F5 NO saltea el lock)
   const [locked, setLockedState] = useState<boolean>(() => readLockedPersisted());
 
   const [lockEnabledLocal, setLockEnabledLocalState] = useState(readLockEnabledLocal);
@@ -518,19 +600,22 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const timerRef = useRef<number | null>(null);
   const refreshPromiseRef = useRef<Promise<void> | null>(null);
 
+  /* =========================
+     LOCK EFECTIVO (SERVER > LOCAL)
+  ========================= */
   const effectiveLock = useMemo(() => {
     const server = getServerLockFromJewelry(jewelry);
     return {
       enabled: typeof server.enabled === "boolean" ? server.enabled : lockEnabledLocal,
       timeoutMin: typeof server.timeoutMin === "number" ? server.timeoutMin : lockTimeoutMinutesLocal,
-      requireOnUserSwitch:
-        typeof server.requireOnUserSwitch === "boolean" ? server.requireOnUserSwitch : true,
-      quickSwitchEnabled:
-        typeof server.quickSwitchEnabled === "boolean" ? server.quickSwitchEnabled : false,
+      requireOnUserSwitch: typeof server.requireOnUserSwitch === "boolean" ? server.requireOnUserSwitch : true,
+      quickSwitchEnabled: typeof server.quickSwitchEnabled === "boolean" ? server.quickSwitchEnabled : false,
     };
   }, [jewelry, lockEnabledLocal, lockTimeoutMinutesLocal]);
 
-  // ✅ setLocked con persistencia
+  /* =========================
+     LOCK STATE
+  ========================= */
   const setLocked = useCallback((v: boolean) => {
     setLockedState(v);
     writeLockedPersisted(v);
@@ -540,21 +625,31 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     lastActivityRef.current = Date.now();
   }, []);
 
-  /** ✅ bloqueo manual (candado topbar)
-   *  FIX: si está activo el bypass DEV, lo apagamos para que el candado funcione.
+  /** 🔒 Bloqueo manual (candado topbar)
+   *  - Si había bypass DEV, se limpia
    */
   const lockNow = useCallback(() => {
     if (DEV) clearDevLockBypass();
     setLocked(true);
   }, [setLocked]);
 
+  /** 👥 Abrir Quick Switch / Lock UI
+   *  - Limpia bypass DEV para forzar UI real
+   */
+  const openQuickSwitch = useCallback(() => {
+    if (DEV) clearDevLockBypass();
+    emitOpenQuickSwitch();
+  }, []);
+
+  /* =========================
+     LIMPIEZA DE SESIÓN
+  ========================= */
+
   /**
-   * ✅ Limpia estado LOCAL sin emitir logout global.
-   * - NO toca tptech_logout (LS_LOGOUT_KEY)
-   * - Evita el bug del “numerito corriendo” y el auto-logout al loguear.
+   * Limpia estado LOCAL sin emitir logout global.
+   * - Evita loops multi-tab
    */
   const clearSessionLocalOnly = useCallback(() => {
-    // limpiar tokens legacy (sin emitir LS_LOGOUT_KEY)
     try {
       sessionStorage.removeItem(SS_TOKEN_KEY);
     } catch {}
@@ -585,25 +680,21 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [setLocked]);
 
   /**
-   * ✅ Limpia sesión “FULL” y emite logout global (multi-tab).
-   * Usar para:
-   * - click logout
-   * - 401 reales en rutas privadas
+   * Limpia sesión FULL + emite logout global
    */
   const clearSession = useCallback(() => {
-    // borra tokens + evento multi-tab logout (en lib/api)
     forceLogout();
-
     clearSessionLocalOnly();
   }, [clearSessionLocalOnly]);
 
+  /* =========================
+     TOKEN / SESSION
+  ========================= */
+
   const setTokenOnly = useCallback((t: string | null) => {
     if (!t) {
-      // logout global (si esto se usa explícito)
       forceLogout();
       setToken(null);
-
-      // favicon público
       applyAppFavicon({ user: null, jewelry: null });
       return;
     }
@@ -611,24 +702,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     storeTokenEverywhere(t);
     setToken(t);
     emitAuthEvent({ type: "LOGIN", at: Date.now() });
-
     // Nota: el favicon final se setea con setSession/refreshMe
   }, []);
 
   const setSession = useCallback(
-    (p: {
-      token?: string | null;
-      user: User;
-      jewelry?: Jewelry | null;
-      roles?: Role[];
-      permissions?: string[];
-    }) => {
-      let nextToken: string | null = token;
-
+    (p: { token?: string | null; user: User; jewelry?: Jewelry | null; roles?: Role[]; permissions?: string[] }) => {
       if (p.token) {
         storeTokenEverywhere(p.token);
         setToken(p.token);
-        nextToken = p.token;
       }
 
       setUser(p.user);
@@ -640,18 +721,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         if (p.user?.id) localStorage.setItem("tptech_current_user_id", String(p.user.id));
       } catch {}
 
-      // al iniciar sesión/switch, nunca heredar un lock persistido viejo
       clearLockedPersisted();
       setLocked(false);
 
       bumpActivity();
       emitAuthEvent({ type: "LOGIN", at: Date.now() });
 
-      // favicon AUTH (logo o iniciales) — sin depender de token
-      void nextToken;
-      applyAppFavicon({ user: p.user, jewelry: p.jewelry ?? null });
+      applyAppFavicon({ user: p.user, jewelry: p.jewelry ?? null, loading: false });
     },
-    [bumpActivity, setLocked, token]
+    [bumpActivity, setLocked]
   );
 
   const refreshMe = useCallback(
@@ -659,10 +737,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       const force = Boolean(opts?.force);
       const silent = Boolean(opts?.silent);
 
-      // si NO es force y ya hay refresh en curso, reutilizamos
       if (refreshPromiseRef.current && !force) return refreshPromiseRef.current;
-
-      // si es force, rompemos cualquier promesa anterior
       if (force) refreshPromiseRef.current = null;
 
       if (!silent) setLoading(true);
@@ -672,10 +747,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           const data = await apiFetch<MeResponse>("/auth/me", {
             method: "GET",
             cache: "no-store",
-            // CLAVE: en boot/login, si hay 401 NO queremos forceLogout desde apiFetch
             on401: "throw",
-            // evitar dedupe si force
-            dedupe: force ? false : true,
+            // ✅ aunque sea force, podemos dedupear GET si StrictMode dispara doble
+            dedupe: true,
           });
 
           const backendToken = data.accessToken || data.token || null;
@@ -694,29 +768,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           } catch {}
 
           const serverFlags = getServerLockFromJewelry(data.jewelry);
-          const qs =
-            typeof serverFlags.quickSwitchEnabled === "boolean"
-              ? serverFlags.quickSwitchEnabled
-              : false;
-          setQuickSwitchEnabled(Boolean(qs));
+          setQuickSwitchEnabled(Boolean(serverFlags.quickSwitchEnabled));
 
-          // bypass DEV nunca bloquea
           if (hasDevLockBypass()) setLocked(false);
 
-          // si PIN global está apagado, no bloqueamos
-          const pinEnabled =
-            typeof serverFlags.enabled === "boolean"
-              ? serverFlags.enabled
-              : readLockEnabledLocal();
-          if (!pinEnabled) setLocked(false);
+          // si el server apagó el pin lock, salimos del lock sí o sí
+          if (serverFlags.enabled === false) setLocked(false);
 
-          // favicon AUTH
-          applyAppFavicon({ user: data.user, jewelry: data.jewelry ?? null });
+          applyAppFavicon({ user: data.user, jewelry: data.jewelry ?? null, loading: false });
         } catch (e: any) {
           const status = Number(e?.status || 0);
           const msg = String(e?.message || "");
 
-          // ✅ 401 en /auth/me (esperable en /login) => limpiar LOCAL sin emitir logout global
           if (status === 401 || msg.includes("401") || msg.toLowerCase().includes("unauthorized")) {
             clearSessionLocalOnly();
             return;
@@ -735,6 +798,70 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     [setLocked, clearSessionLocalOnly]
   );
 
+  /* =========================
+     ✅ ESCUCHAR EVENTO LOGO CAMBIADO
+     - al borrar logo en Perfil Joyeria, favicon vuelve a iniciales INSTANTE
+  ========================= */
+  useEffect(() => {
+    const onLogoChanged = (ev: Event) => {
+      try {
+        if (!user) return;
+        const nextLogo = readLogoFromEvent(ev);
+
+        setJewelry((prev) => ({ ...(prev || {}), logoUrl: nextLogo }));
+
+        applyAuthFaviconOverrideLogo({
+          user,
+          jewelry: { ...(jewelry || {}), logoUrl: nextLogo },
+          logoUrl: nextLogo,
+        });
+      } catch {
+        // ignore
+      }
+    };
+
+    window.addEventListener(JEWELRY_LOGO_EVENT, onLogoChanged as any);
+    return () => window.removeEventListener(JEWELRY_LOGO_EVENT, onLogoChanged as any);
+  }, [user, jewelry]);
+
+  /* =========================
+     ✅ ESCUCHAR EVENTO AVATAR CAMBIADO
+     - actualiza AuthContext.user al instante
+     - IMPORTANTÍSIMO para que el Sidebar re-renderice con el avatar nuevo
+  ========================= */
+  useEffect(() => {
+    const onUserAvatarChanged = (ev: Event) => {
+      try {
+        const { userId, avatarUrl, updatedAt } = readAvatarFromEvent(ev);
+        if (!userId) return;
+
+        setUser((prev) => {
+          if (!prev) return prev;
+          if (String(prev.id) !== String(userId)) return prev;
+
+          const nowIso = new Date().toISOString();
+          const bustIso = updatedAt || nowIso;
+
+          return {
+            ...prev,
+            avatarUrl: avatarUrl || null,
+            // ✅ forzamos bust para que el Sidebar no quede pegado al cache
+            avatarUpdatedAt: bustIso,
+            updatedAt: bustIso,
+          };
+        });
+      } catch {
+        // ignore
+      }
+    };
+
+    window.addEventListener(USER_AVATAR_EVENT, onUserAvatarChanged as any);
+    return () => window.removeEventListener(USER_AVATAR_EVENT, onUserAvatarChanged as any);
+  }, []);
+
+  /* =========================
+     PIN API
+  ========================= */
   const pinSet = useCallback(
     async (pin: PinArg) => {
       const p = normalizePinArg(pin);
@@ -774,6 +901,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const users: QuickUser[] = Array.isArray(data?.users)
       ? data.users.map((u: any) => {
           const rawRoles = u?.roles;
+
           const roleNames =
             Array.isArray(u?.roleNames) && u.roleNames.length
               ? u.roleNames
@@ -785,9 +913,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
               : [];
 
           const roleLabel =
-            (typeof u?.roleLabel === "string" && u.roleLabel.trim()
-              ? u.roleLabel.trim()
-              : "") ||
+            (typeof u?.roleLabel === "string" && u.roleLabel.trim() ? u.roleLabel.trim() : "") ||
             (roleNames.length ? roleNames.join(" • ") : "") ||
             (typeof u?.roleName === "string" ? u.roleName : "") ||
             (typeof u?.role === "string" ? u.role : "") ||
@@ -833,18 +959,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         roles: data.roles ?? [],
         permissions: data.permissions ?? [],
       });
+
       bumpActivity();
     },
     [setSession, bumpActivity]
   );
 
+  /* =========================
+     PIN LOCK SETTINGS (JOYERÍA)
+  ========================= */
   const setPinLockSettingsForJewelry = useCallback(
-    async (args: {
-      enabled: boolean;
-      timeoutMinutes: number;
-      requireOnUserSwitch: boolean;
-      quickSwitchEnabled: boolean;
-    }) => {
+    async (args: { enabled: boolean; timeoutMinutes: number; requireOnUserSwitch: boolean; quickSwitchEnabled: boolean }) => {
       const timeoutMinutes = clamp(Math.floor(Number(args.timeoutMinutes) || 1), 1, 60 * 12);
 
       await apiFetch("/auth/company/security/pin-lock", {
@@ -860,43 +985,73 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
       await refreshMe({ silent: true, force: true } as any);
 
+      // si se apaga el pin, salir sí o sí del lock
       if (!args.enabled) setLocked(false);
     },
     [refreshMe, setLocked]
   );
 
   const setPinLockSettings = useCallback(
-    async (args: {
-      enabled: boolean;
-      timeoutMinutes: number;
-      requireOnUserSwitch: boolean;
-      quickSwitchEnabled: boolean;
-    }) => {
+    async (args: { enabled: boolean; timeoutMinutes: number; requireOnUserSwitch: boolean; quickSwitchEnabled: boolean }) => {
       await setPinLockSettingsForJewelry(args);
     },
     [setPinLockSettingsForJewelry]
   );
 
-  /* -------------------------
+  /* =========================
      MULTI-TAB / GLOBAL AUTH EVENTS
-     - Si otra pestaña hace logout, acá limpiamos estado local
-     - ✅ IMPORTANTE: NO re-emitimos logout (evita loops)
-  ------------------------- */
+  ========================= */
+  const lastCrossTabAtRef = useRef<number>(0);
+
   useEffect(() => {
+    const shouldIgnore = (at?: number) => {
+      const t = Number(at || 0);
+      if (!Number.isFinite(t) || t <= 0) return false;
+      if (t <= lastCrossTabAtRef.current) return true;
+      lastCrossTabAtRef.current = t;
+      return false;
+    };
+
+    const handleLogin = async (at?: number) => {
+      if (shouldIgnore(at)) return;
+      try {
+        await refreshMe({ silent: true, force: true } as any);
+      } catch {
+        // queda público
+      }
+    };
+
+    const handleLogout = (at?: number) => {
+      if (shouldIgnore(at)) return;
+      clearSessionLocalOnly();
+    };
+
     const onStorage = (e: StorageEvent) => {
       try {
         if (e.key === LS_LOGOUT_KEY) {
-          // otra pestaña deslogueó => limpiar local sin re-emitir
-          clearSessionLocalOnly();
+          const at = Number(e.newValue || 0) || Date.now();
+          handleLogout(at);
           return;
         }
 
         if (e.key === LS_AUTH_EVENT_KEY && typeof e.newValue === "string" && e.newValue.trim()) {
           const ev = JSON.parse(e.newValue) as AuthEvent;
           if (ev?.type === "LOGOUT") {
-            clearSessionLocalOnly();
+            handleLogout(ev.at);
             return;
           }
+          if (ev?.type === "LOGIN") {
+            void handleLogin(ev.at);
+            return;
+          }
+        }
+
+        if (e.key === LS_TOKEN_KEY) {
+          if (!e.newValue) {
+            handleLogout(Date.now());
+            return;
+          }
+          void handleLogin(Date.now());
         }
       } catch {
         // ignore
@@ -904,10 +1059,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     };
 
     let bc: BroadcastChannel | null = null;
+
     const onBC = (msg: MessageEvent) => {
       try {
         const ev = msg?.data as AuthEvent;
-        if (ev?.type === "LOGOUT") clearSessionLocalOnly();
+        if (ev?.type === "LOGOUT") handleLogout(ev.at);
+        if (ev?.type === "LOGIN") void handleLogin(ev.at);
       } catch {
         // ignore
       }
@@ -935,11 +1092,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         // ignore
       }
     };
-  }, [clearSessionLocalOnly]);
+  }, [clearSessionLocalOnly, refreshMe]);
 
-  /* -------------------------
-     AUTO LOCK
-  ------------------------- */
+  /* =========================
+     AUTO LOCK (INACTIVIDAD)
+  ========================= */
   useEffect(() => {
     if (!user || !effectiveLock.enabled) return;
 
@@ -984,40 +1141,28 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     };
   }, [user, effectiveLock.enabled, effectiveLock.timeoutMin, locked, setLocked]);
 
-  /* -------------------------
+  /* =========================
      BOOT
-     - Siempre intentamos /auth/me (cookie httpOnly)
-     - Si no hay cookie => 401 => clearSessionLocalOnly()
-  ------------------------- */
+  ========================= */
   useEffect(() => {
+    // ✅ siempre arrancamos con favicon público
     applyAppFavicon({ user: null, jewelry: null });
 
-    if (!shouldBootTryMe()) {
-      setLoading(false);
-      return;
-    }
-
-    refreshMe({ force: true } as any).catch(() => {
-      setLoading(false);
-    });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // ✅ NO hacemos /auth/me acá (evita ruido en /login)
+    // La validación pasa por ProtectedRoute (cuando corresponde).
   }, []);
 
-  const logout = useCallback(
-    async () => {
-      // favicon inmediato (evita flash del logo viejo)
-      applyAppFavicon({ user: null, jewelry: null });
+  const logout = useCallback(async () => {
+    applyAppFavicon({ user: null, jewelry: null });
+    try {
+      await apiFetch("/auth/logout", { method: "POST" });
+    } catch {}
+    clearSession();
+  }, [clearSession]);
 
-      try {
-        await apiFetch("/auth/logout", { method: "POST" });
-      } catch {}
-
-      // logout real => emite logout global
-      clearSession();
-    },
-    [clearSession]
-  );
-
+  /* =========================
+     CONTEXT VALUE
+  ========================= */
   const value = useMemo<AuthState>(
     () => ({
       token,
@@ -1030,6 +1175,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       locked,
       setLocked,
       lockNow,
+      openQuickSwitch,
 
       lockEnabled: effectiveLock.enabled,
       lockTimeoutMinutes: effectiveLock.timeoutMin,
@@ -1075,11 +1221,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       permissions,
       loading,
       locked,
-      setLocked,
       lockNow,
-      effectiveLock.enabled,
-      effectiveLock.timeoutMin,
-      effectiveLock.requireOnUserSwitch,
+      openQuickSwitch,
+      effectiveLock,
       quickSwitchEnabled,
       pinSet,
       pinRemove,
@@ -1093,6 +1237,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       refreshMe,
       logout,
       clearSession,
+      setLocked,
     ]
   );
 

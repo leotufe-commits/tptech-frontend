@@ -1,7 +1,7 @@
 // tptech-frontend/src/pages/Login.tsx
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { apiFetch } from "../lib/api";
+import * as API from "../lib/api"; // ✅ evita el error de export faltante
 import { useAuth } from "../context/AuthContext";
 
 function EyeIcon({ open }: { open: boolean }) {
@@ -14,7 +14,11 @@ function EyeIcon({ open }: { open: boolean }) {
         strokeLinecap="round"
         strokeLinejoin="round"
       />
-      <path d="M12 15.5A3.5 3.5 0 1 0 12 8a3.5 3.5 0 0 0 0 7.5Z" stroke="currentColor" strokeWidth="1.8" />
+      <path
+        d="M12 15.5A3.5 3.5 0 1 0 12 8a3.5 3.5 0 0 0 0 7.5Z"
+        stroke="currentColor"
+        strokeWidth="1.8"
+      />
       {!open && <path d="M4 20 20 4" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />}
     </svg>
   );
@@ -46,6 +50,9 @@ function ChevronDownIcon() {
 type TenantOption = { id: string; name: string };
 type LoginOptionsResponse = { email: string; tenants: TenantOption[] };
 
+// (por si /auth/login devuelve token)
+type LoginResponseMaybe = { token?: string; accessToken?: string } & Record<string, any>;
+
 function isValidEmail(v: string) {
   const s = v.trim();
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s);
@@ -66,10 +73,35 @@ function safeSet(key: string, value: string) {
   }
 }
 
+// ✅ fallback local si no existe storeTokenAndEmitLogin exportado
+function storeTokenAndEmitLoginFallback(token: string) {
+  const LS_TOKEN_KEY = (API as any).LS_TOKEN_KEY || "tptech_token";
+  const SS_TOKEN_KEY = (API as any).SS_TOKEN_KEY || "tptech_access_token";
+
+  try {
+    // preferimos sessionStorage (más seguro) y dejamos legacy en localStorage
+    sessionStorage.setItem(SS_TOKEN_KEY, token);
+  } catch {
+    // ignore
+  }
+  try {
+    localStorage.setItem(LS_TOKEN_KEY, token);
+  } catch {
+    // ignore
+  }
+
+  // evento multi-tab
+  try {
+    (API as any).emitLogin?.();
+  } catch {
+    // ignore
+  }
+}
+
 function getErrMessage(err: any, fallback: string) {
   const data = err?.data;
-  if (data && typeof data === "object" && typeof data.message === "string" && data.message.trim()) {
-    return data.message.trim();
+  if (data && typeof data === "object" && typeof (data as any).message === "string" && (data as any).message.trim()) {
+    return String((data as any).message).trim();
   }
   const msg = String(err?.message || "").trim();
   return msg || fallback;
@@ -154,13 +186,13 @@ export default function Login() {
       setDidLookup(true);
       setLoadingTenants(true);
 
-      apiFetch<LoginOptionsResponse>("/auth/login/options", {
-        method: "POST",
-        body: { email: e },
-        timeoutMs: 8000,
-        // acá da igual, es POST
-      })
-        .then((resp) => {
+      (API as any)
+        .apiFetch<LoginOptionsResponse>("/auth/login/options", {
+          method: "POST",
+          body: { email: e },
+          timeoutMs: 8000,
+        })
+        .then((resp: LoginOptionsResponse) => {
           const list = Array.isArray(resp?.tenants) ? resp.tenants : [];
           setTenants(list);
 
@@ -216,13 +248,8 @@ export default function Login() {
     try {
       setLoading(true);
 
-      /**
-       * ✅ Login con apiFetch:
-       * - credentials:"include" ya viene en apiFetch
-       * - soporta errores con status/data (ApiError)
-       * - IMPORTANTÍSIMO: on401:"throw" para NO disparar forceLogout (no tiene sentido en login)
-       */
-      await apiFetch("/auth/login", {
+      // ✅ Login (cookie httpOnly). Si el backend devuelve token, lo aprovechamos.
+      const resp = await (API as any).apiFetch<LoginResponseMaybe>("/auth/login", {
         method: "POST",
         body: {
           tenantId: effectiveTenantId,
@@ -236,19 +263,22 @@ export default function Login() {
       // recordar “última joyería” para este email (solo si vino por options/selección)
       if (lastTenantKey && tenants.length > 0 && tenantId) safeSet(lastTenantKey, tenantId);
 
-      // ✅ CRÍTICO: refrescar /me con force para no reutilizar dedupe/promesa vieja
+      // ✅ si vino token, guardamos y emitimos LOGIN (multi-tab)
+      const maybeToken = String(resp?.accessToken || resp?.token || "").trim();
+      if (maybeToken) {
+        const fn = (API as any).storeTokenAndEmitLogin;
+        if (typeof fn === "function") fn(maybeToken);
+        else storeTokenAndEmitLoginFallback(maybeToken);
+      } else {
+        // ✅ cookie-only: emitimos login igualmente
+        (API as any).emitLogin?.();
+      }
+
+      // ✅ refrescar /me con force para no reutilizar dedupe/promesa vieja
       await refreshMe({ force: true, silent: true } as any);
+
       navigate("/dashboard", { replace: true });
-
-
-      /**
-       * ✅ Normalmente NO hace falta navegar:
-       * tu router tiene PublicOnly, y al setear user, te redirige solo.
-       * Si querés fallback explícito, descomentá:
-       */
-      // navigate("/dashboard", { replace: true });
     } catch (err: any) {
-      // 409 TENANT_REQUIRED (o conflictos)
       const status = Number(err?.status);
 
       if (status === 409) {
@@ -279,7 +309,6 @@ export default function Login() {
         return;
       }
 
-      // 401 (credenciales inválidas)
       if (status === 401) {
         setError(getErrMessage(err, "Email o contraseña incorrectos."));
         return;
@@ -297,7 +326,6 @@ export default function Login() {
     "rounded-md bg-transparent text-text/70 hover:text-text " +
     "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30";
 
-  // ✅ wrapper para flecha del select (look similar al Theme selector)
   const selectWrapClass = "relative";
   const selectChevronClass = "pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-muted";
 
@@ -324,14 +352,12 @@ export default function Login() {
                 onChange={(e) => {
                   setEmail(e.target.value);
 
-                  // reset lookup
                   lastLookupEmailRef.current = "";
 
-                  // si cambia email, limpiamos selección/manual
                   setTenants([]);
                   setTenantId("");
                   setManualTenantId("");
-                  setDidLookup(false); // ✅ hasta que arranque lookup real
+                  setDidLookup(false);
                 }}
                 className={`tp-input ${hasEmail ? "pr-11" : ""}`}
                 autoComplete="email"
@@ -401,7 +427,7 @@ export default function Login() {
             </div>
           </div>
 
-          {/* 3) JOYERÍA (al final) */}
+          {/* 3) JOYERÍA */}
           {showTenantSelect && (
             <div>
               <label className="mb-2 block text-sm text-muted">Joyería</label>
@@ -420,7 +446,6 @@ export default function Login() {
                   ))}
                 </select>
 
-                {/* ✅ Flecha visual (no clickeable) */}
                 <span className={selectChevronClass} aria-hidden="true">
                   <ChevronDownIcon />
                 </span>
@@ -442,9 +467,7 @@ export default function Login() {
                 placeholder="Código de joyería"
                 disabled={!emailOk || loadingTenants || loading}
               />
-              <p className="mt-2 text-xs text-muted">
-                No se detectó joyería automáticamente. Podés ingresar el código manual.
-              </p>
+              <p className="mt-2 text-xs text-muted">No se detectó joyería automáticamente. Podés ingresar el código manual.</p>
             </div>
           )}
 

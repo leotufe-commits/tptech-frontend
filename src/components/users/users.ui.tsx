@@ -5,7 +5,6 @@ import { absUrl } from "../../lib/url";
 // 👇 re-export de compatibilidad (MUY IMPORTANTE)
 export { cn, absUrl };
 
-
 /* =========================
    Sort arrows (como Roles)
 ========================= */
@@ -139,15 +138,50 @@ export function effectLabel(e: "ALLOW" | "DENY") {
 ========================= */
 export function normalizeUsersResponse(resp: unknown) {
   const r = resp as any;
-  if (r && typeof r === "object" && Array.isArray(r.users)) {
+
+  const normalizeUser = (u: any) => {
+    // 👉 Detectar si TIENE PIN
+    const hasQuickPin =
+      typeof u?.hasQuickPin === "boolean"
+        ? u.hasQuickPin
+        : u?.quickPinHash != null
+        ? true
+        : typeof u?.quickPinEnabled === "boolean"
+        ? Boolean(u.quickPinEnabled)
+        : false;
+
+    // 👉 Detectar si el PIN está habilitado
+    const pinEnabledRaw =
+      typeof u?.pinEnabled === "boolean"
+        ? u.pinEnabled
+        : typeof u?.quickPinEnabled === "boolean"
+        ? u.quickPinEnabled
+        : false;
+
+    const pinEnabled = Boolean(hasQuickPin) && Boolean(pinEnabledRaw);
+
     return {
-      users: r.users,
-      total: Number(r.total ?? r.users.length ?? 0),
+      ...u,
+      hasQuickPin: Boolean(hasQuickPin),
+      pinEnabled,
+    };
+  };
+
+  if (r && typeof r === "object" && Array.isArray(r.users)) {
+    const users = r.users.map(normalizeUser);
+    return {
+      users,
+      total: Number(r.total ?? users.length ?? 0),
       page: Number(r.page ?? 1),
-      limit: Number(r.limit ?? r.users.length ?? 30),
+      limit: Number(r.limit ?? users.length ?? 30),
     };
   }
-  if (Array.isArray(r)) return { users: r, total: r.length, page: 1, limit: r.length };
+
+  if (Array.isArray(r)) {
+    const users = r.map(normalizeUser);
+    return { users, total: users.length, page: 1, limit: users.length };
+  }
+
   return { users: [], total: 0, page: 1, limit: 30 };
 }
 

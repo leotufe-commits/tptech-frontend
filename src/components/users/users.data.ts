@@ -1,8 +1,16 @@
 // tptech-frontend/src/components/users/users.data.ts
 import { apiFetch } from "../../lib/api";
-import { fetchUser, type UserDetail, type Role } from "../../services/users";
+import type { UserDetail, Role } from "../../services/users";
 import { fetchRoles } from "../../services/roles";
 import { fetchPermissions, type Permission } from "../../services/permissions";
+
+// ✅ FIX: NO usar "@/..." si tu alias @ no está configurado en Vite/TS
+import {
+  uploadMyUserAttachments,
+  uploadUserAttachments,
+  deleteMyUserAttachment,
+  deleteUserAttachment,
+} from "../../lib/users.api";
 
 /* =========================
    Cache + Prefetch
@@ -50,6 +58,18 @@ export function invalidateUserDetail(userId: string) {
   if (!userId) return;
   bumpGen(userId);
   userDetailCache.delete(userId);
+  userDetailInFlight.delete(userId);
+}
+
+/**
+ * ✅ NUEVO:
+ * Cuando vamos a mutar algo sensible (PIN, roles, overrides, etc.),
+ * cortamos cualquier fetch en vuelo y subimos la generación para
+ * que NO pueda re-cachear un snapshot viejo.
+ */
+function beginUserMutation(userId: string) {
+  if (!userId) return;
+  bumpGen(userId);
   userDetailInFlight.delete(userId);
 }
 
@@ -140,10 +160,21 @@ export async function prefetchUserDetail(userId: string): Promise<UserDetail | n
 
   const p: Promise<UserDetail | null> = (async () => {
     try {
-      const resp = await fetchUser(userId);
+      /**
+       * ✅ CRÍTICO:
+       * - dedupe:false + cache-buster
+       * - on401:"throw" (no logout global)
+       */
+      const resp = await apiFetch<any>(`/users/${userId}?_ts=${Date.now()}`, {
+        method: "GET",
+        dedupe: false,
+        on401: "throw",
+        timeoutMs: 20_000,
+      });
+
       const d: UserDetail = (resp as any)?.user ?? (resp as any);
 
-      // ✅ si invalidaron mientras estaba en vuelo, NO cachear
+      // ✅ si invalidaron/mutaron mientras estaba en vuelo, NO cachear
       if (getGen(userId) !== startGen) return d;
 
       userDetailCache.set(userId, { ts: now(), data: d });
@@ -166,9 +197,31 @@ export async function prefetchUserDetail(userId: string): Promise<UserDetail | n
 /* =========================
    Adjuntos (API helpers)
 ========================= */
-export async function uploadUserAttachmentsInstant(userId: string, files: File[]) {
+
+/**
+ * ✅ Firma usada por Users.tsx (ADMIN):
+ * uploadUserAttachmentsInstant(userId, files)
+ */
+export async function uploadUserAttachmentsInstant(userId: string, files: File[]): Promise<{
+  omitted: string[];
+  user: UserDetail | null;
+}>;
+/**
+ * ✅ Firma opcional (ME vs ADMIN):
+ * uploadUserAttachmentsInstant(actorId, userId, files)
+ */
+export async function uploadUserAttachmentsInstant(actorId: string, userId: string, files: File[]): Promise<{
+  omitted: string[];
+  user: UserDetail | null;
+}>;
+export async function uploadUserAttachmentsInstant(a: string, b: any, c?: any) {
+  const isTwoArgs = Array.isArray(b);
+  const actorId = isTwoArgs ? null : String(a || "");
+  const userId = isTwoArgs ? String(a || "") : String(b || "");
+  const files: File[] = (isTwoArgs ? (b as File[]) : (c as File[])) ?? [];
+
   const arr = files ?? [];
-  if (!userId || arr.length === 0) return;
+  if (!userId || arr.length === 0) return { omitted: [], user: null };
 
   const MAX = 20 * 1024 * 1024; // 20MB por archivo
   const filtered = arr.filter((f) => f.size <= MAX);
@@ -186,15 +239,14 @@ export async function uploadUserAttachmentsInstant(userId: string, files: File[]
   const fd = new FormData();
   filtered.forEach((f) => fd.append("attachments", f));
 
-  // ✅ backend: PUT /users/:id/attachments => { ok, createdCount, user }
-  const resp = await apiFetch(`/users/${userId}/attachments`, { method: "PUT", body: fd as any });
+  // ✅ Si lo llaman con 2 args, asumimos ADMIN (Users.tsx).
+  // ✅ Si lo llaman con 3 args, hacemos ME vs ADMIN.
+  const resp = actorId && userId === actorId ? await uploadMyUserAttachments(fd) : await uploadUserAttachments(userId, fd);
 
   const updated: UserDetail | null = (resp as any)?.user ?? null;
 
-  // ✅ si viene user parcial, mergea; si viene completo, merge también sirve
   if (updated) {
     mergeUserDetailCache(userId, updated);
-    // refresca timestamp por “instant update”
     const cur = userDetailCache.get(userId)?.data;
     if (cur) userDetailCache.set(userId, { ts: now(), data: cur });
     userDetailInFlight.delete(userId);
@@ -208,27 +260,51 @@ export async function uploadUserAttachmentsInstant(userId: string, files: File[]
   };
 }
 
-export async function deleteUserAttachmentInstant(userId: string, attachmentId: string) {
-  if (!userId || !attachmentId) return;
+/**
+ * ✅ Firma usada por Users.tsx (ADMIN):
+ * deleteUserAttachmentInstant(userId, attachmentId)
+ */
+export async function deleteUserAttachmentInstant(userId: string, attachmentId: string): Promise<{ user: UserDetail | null }>;
+/**
+ * ✅ Firma opcional (ME vs ADMIN):
+ * deleteUserAttachmentInstant(actorId, userId, attachmentId)
+ */
+export async function deleteUserAttachmentInstant(
+  actorId: string,
+  userId: string,
+  attachmentId: string
+): Promise<{ user: UserDetail | null }>;
+export async function deleteUserAttachmentInstant(a: string, b: any, c?: any) {
+  const isTwoArgs = typeof c === "undefined";
+  const actorId = isTwoArgs ? null : String(a || "");
+  const userId = isTwoArgs ? String(a || "") : String(b || "");
+  const attachmentId = isTwoArgs ? String(b || "") : String(c || "");
 
-  // ✅ Optimistic UX: lo ocultamos al toque (evita “lag” y requests extra)
+  if (!userId || !attachmentId) return { user: userDetailCache.get(userId)?.data ?? null };
+
+  // ✅ optimistic update cache
   const prev = userDetailCache.get(userId)?.data as any;
   const prevAttachments = (prev?.attachments as any[]) ?? null;
 
   if (prev && Array.isArray(prevAttachments)) {
     const next = {
       ...(prev as any),
-      attachments: prevAttachments.filter((a) => String(a?.id) !== String(attachmentId)),
+      attachments: prevAttachments.filter((x) => String(x?.id) !== String(attachmentId)),
     } as UserDetail;
     userDetailCache.set(userId, { ts: now(), data: next });
   }
 
   try {
-    await apiFetch(`/users/${userId}/attachments/${attachmentId}`, { method: "DELETE" });
-    // ✅ ya está actualizado localmente; si el backend tiene más cambios, el TTL lo refresca luego
+    // ✅ 2 args => ADMIN (Users.tsx)
+    // ✅ 3 args => ME vs ADMIN
+    if (actorId && userId === actorId) {
+      await deleteMyUserAttachment(attachmentId);
+    } else {
+      await deleteUserAttachment(userId, attachmentId);
+    }
+
     return { user: userDetailCache.get(userId)?.data ?? null };
   } catch (e) {
-    // rollback: invalida y re-fetch
     invalidateUserDetail(userId);
     const d = await prefetchUserDetail(userId);
     return { user: d };
@@ -236,9 +312,7 @@ export async function deleteUserAttachmentInstant(userId: string, attachmentId: 
 }
 
 /* =========================
-   ✅ QUICK PIN (ADMIN) helpers (con confirmRemoveOverrides)
-   - soporta 409 HAS_SPECIAL_PERMISSIONS
-   - actualiza cache optimistamente si hay respuesta OK
+   ✅ QUICK PIN (ADMIN) helpers
 ========================= */
 
 export type HasSpecialPermissionsError = {
@@ -249,16 +323,24 @@ export type HasSpecialPermissionsError = {
   requireConfirmRemoveOverrides: true;
 };
 
+/**
+ * ✅ FIX OWNER:
+ * Si el backend marca targetIsOwner=true, NO corresponde pedir confirmación
+ * de borrado de overrides.
+ */
 function isHasSpecialPermissionsError(e: any): e is HasSpecialPermissionsError {
   const status = Number((e as any)?.status ?? (e as any)?.response?.status ?? NaN);
   const data = (e as any)?.data ?? (e as any)?.response?.data ?? (e as any)?.body ?? null;
 
-  return (
-    status === 409 &&
-    data &&
-    String((data as any).code || "") === "HAS_SPECIAL_PERMISSIONS" &&
-    Boolean((data as any).requireConfirmRemoveOverrides) === true
-  );
+  if (status !== 409 || !data) return false;
+
+  const code = String((data as any).code || "");
+  const needsConfirm = Boolean((data as any).requireConfirmRemoveOverrides) === true;
+  const targetIsOwner = Boolean((data as any).targetIsOwner) === true;
+
+  if (targetIsOwner) return false;
+
+  return code === "HAS_SPECIAL_PERMISSIONS" && needsConfirm;
 }
 
 function throwAsHasSpecialPermissions(e: any): never {
@@ -279,13 +361,21 @@ function applyPinPatchToCache(userId: string, patch: Partial<UserDetail>) {
     const cur = userDetailCache.get(userId)?.data;
     if (cur) userDetailCache.set(userId, { ts: now(), data: cur });
   } catch {
-    // si no hay cache, no pasa nada
+    // ignore
   }
+}
+
+function pickOptionalBool(obj: any, key: string): boolean | undefined {
+  if (!obj || typeof obj !== "object") return undefined;
+  if (!(key in obj)) return undefined;
+  const v = (obj as any)[key];
+  return typeof v === "boolean" ? v : undefined;
 }
 
 /**
  * PATCH /users/:id/quick-pin/enabled
- * body: { enabled: boolean, confirmRemoveOverrides?: boolean }
+ * ✅ IMPORTANTE: este endpoint puede NO devolver hasQuickPin.
+ * No hay que pisar el cache con false si viene undefined.
  */
 export async function setUserQuickPinEnabledAdmin(
   userId: string,
@@ -294,6 +384,8 @@ export async function setUserQuickPinEnabledAdmin(
 ) {
   if (!userId) throw new Error("userId requerido.");
 
+  beginUserMutation(userId);
+
   try {
     const resp = await apiFetch(`/users/${userId}/quick-pin/enabled`, {
       method: "PATCH",
@@ -301,18 +393,30 @@ export async function setUserQuickPinEnabledAdmin(
         enabled: Boolean(enabled),
         ...(opts?.confirmRemoveOverrides ? { confirmRemoveOverrides: true } : {}),
       },
-      timeoutMs: 12000,
+      on401: "throw",
+      timeoutMs: 12_000,
     });
 
-    const hasQuickPin = Boolean((resp as any)?.hasQuickPin);
-    const pinEnabled = Boolean((resp as any)?.pinEnabled);
-    const overridesCleared = Boolean((resp as any)?.overridesCleared);
+    const hasQuickPinOpt = pickOptionalBool(resp, "hasQuickPin");
+    const pinEnabledOpt = pickOptionalBool(resp, "pinEnabled");
 
-    applyPinPatchToCache(userId, {
-      hasQuickPin,
-      pinEnabled,
-      ...(overridesCleared ? { permissionOverrides: [] as any } : {}),
-    } as any);
+    const overridesCleared = Boolean((resp as any)?.overridesCleared);
+    const overridesCount = Number((resp as any)?.overridesCount ?? NaN);
+    const targetIsOwner = (resp as any)?.targetIsOwner;
+    const targetIsOwnerOpt = typeof targetIsOwner === "boolean" ? targetIsOwner : undefined;
+
+    applyPinPatchToCache(
+      userId,
+      {
+        ...(hasQuickPinOpt !== undefined ? ({ hasQuickPin: hasQuickPinOpt } as any) : {}),
+        ...(pinEnabledOpt !== undefined ? ({ pinEnabled: pinEnabledOpt } as any) : {}),
+        ...(overridesCleared ? { permissionOverrides: [] as any } : {}),
+        ...(Number.isFinite(overridesCount)
+          ? ({ overridesCount, hasSpecialPermissions: overridesCount > 0 } as any)
+          : {}),
+        ...(targetIsOwnerOpt !== undefined ? ({ targetIsOwner: targetIsOwnerOpt } as any) : {}),
+      } as any
+    );
 
     return resp as any;
   } catch (e: any) {
@@ -323,31 +427,120 @@ export async function setUserQuickPinEnabledAdmin(
 
 /**
  * DELETE /users/:id/quick-pin
- * body: { confirmRemoveOverrides?: boolean }
  */
 export async function removeUserQuickPinAdmin(userId: string, opts?: { confirmRemoveOverrides?: boolean }) {
   if (!userId) throw new Error("userId requerido.");
+
+  beginUserMutation(userId);
 
   try {
     const resp = await apiFetch(`/users/${userId}/quick-pin`, {
       method: "DELETE",
       body: opts?.confirmRemoveOverrides ? { confirmRemoveOverrides: true } : undefined,
-      timeoutMs: 12000,
+      on401: "throw",
+      timeoutMs: 12_000,
     });
 
-    const hasQuickPin = Boolean((resp as any)?.hasQuickPin);
-    const pinEnabled = Boolean((resp as any)?.pinEnabled);
-    const overridesCleared = Boolean((resp as any)?.overridesCleared);
+    const hasQuickPinOpt = pickOptionalBool(resp, "hasQuickPin");
+    const pinEnabledOpt = pickOptionalBool(resp, "pinEnabled");
 
-    applyPinPatchToCache(userId, {
-      hasQuickPin,
-      pinEnabled,
-      ...(overridesCleared ? { permissionOverrides: [] as any } : {}),
-    } as any);
+    const overridesCleared = Boolean((resp as any)?.overridesCleared);
+    const overridesCount = Number((resp as any)?.overridesCount ?? NaN);
+    const targetIsOwner = (resp as any)?.targetIsOwner;
+    const targetIsOwnerOpt = typeof targetIsOwner === "boolean" ? targetIsOwner : undefined;
+
+    applyPinPatchToCache(
+      userId,
+      {
+        ...(hasQuickPinOpt !== undefined ? ({ hasQuickPin: hasQuickPinOpt } as any) : {}),
+        ...(pinEnabledOpt !== undefined ? ({ pinEnabled: pinEnabledOpt } as any) : {}),
+        ...(overridesCleared ? { permissionOverrides: [] as any } : {}),
+        ...(Number.isFinite(overridesCount)
+          ? ({ overridesCount, hasSpecialPermissions: overridesCount > 0 } as any)
+          : {}),
+        ...(targetIsOwnerOpt !== undefined ? ({ targetIsOwner: targetIsOwnerOpt } as any) : {}),
+      } as any
+    );
 
     return resp as any;
   } catch (e: any) {
     if (isHasSpecialPermissionsError(e)) throwAsHasSpecialPermissions(e);
     throw e;
   }
+}
+
+/* =========================
+   ✅ QUICK PIN (ME)
+========================= */
+
+function only4Digits(pin: string) {
+  const s = String(pin || "").replace(/\D/g, "").slice(0, 4);
+  if (!/^\d{4}$/.test(s)) throw new Error("El PIN debe tener 4 dígitos.");
+  return s;
+}
+
+export async function setMyQuickPin(pin: string, currentPin?: string) {
+  const body: any = { pin: only4Digits(pin) };
+
+  if (currentPin !== undefined) {
+    body.currentPin = only4Digits(currentPin);
+  }
+
+  return apiFetch(`/users/me/quick-pin`, {
+    method: "PUT",
+    body,
+    timeoutMs: 12_000,
+  });
+}
+
+export async function removeMyQuickPin(currentPin?: string) {
+  const has = currentPin !== undefined && String(currentPin).trim() !== "";
+
+  return apiFetch(`/users/me/quick-pin`, {
+    method: "DELETE",
+    body: has ? { currentPin: only4Digits(currentPin as string) } : undefined,
+    timeoutMs: 12_000,
+  });
+}
+
+/**
+ * ✅ QUICK PIN (ADMIN) SET PIN
+ */
+export async function setUserQuickPinAdmin(userId: string, pin: string) {
+  if (!userId) throw new Error("userId requerido.");
+
+  beginUserMutation(userId);
+
+  const only4DigitsLocal = (v: string) => {
+    const s = String(v || "").replace(/\D/g, "").slice(0, 4);
+    if (!/^\d{4}$/.test(s)) throw new Error("El PIN debe tener 4 dígitos.");
+    return s;
+  };
+
+  const resp = await apiFetch(`/users/${userId}/quick-pin?_ts=${Date.now()}`, {
+    method: "PUT",
+    body: { pin: only4DigitsLocal(pin) },
+    dedupe: false,
+    on401: "throw",
+    timeoutMs: 12_000,
+  });
+
+  const hasQuickPinOpt = pickOptionalBool(resp, "hasQuickPin");
+  const pinEnabledOpt = pickOptionalBool(resp, "pinEnabled");
+  const quickPinUpdatedAt = (resp as any)?.quickPinUpdatedAt ?? null;
+
+  applyPinPatchToCache(
+    userId,
+    {
+      ...(hasQuickPinOpt !== undefined ? ({ hasQuickPin: hasQuickPinOpt } as any) : { hasQuickPin: true as any }),
+      ...(pinEnabledOpt !== undefined ? ({ pinEnabled: pinEnabledOpt } as any) : {}),
+      quickPinUpdatedAt,
+    } as any
+  );
+
+  // ✅ refresh fuerte
+  invalidateUserDetail(userId);
+  await prefetchUserDetail(userId);
+
+  return resp as any;
 }

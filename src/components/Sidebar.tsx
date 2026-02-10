@@ -1,92 +1,22 @@
 // tptech-frontend/src/components/Sidebar.tsx
-import { useEffect, useMemo, useRef, useState, type ComponentType } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { NavLink, useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
+import Avatar from "./ui/Avatar";
+import { ChevronDown, PanelLeftOpen, PanelLeftClose } from "lucide-react";
+
+import { SIDEBAR_NAV, type NavItem, type GroupItem } from "./sidebar/sidebar.nav";
+import type { IconType } from "./sidebar/sidebar.icons";
 import {
-  LayoutDashboard,
-  Package,
-  Boxes,
-  ShoppingCart,
-  ShoppingBag,
-  Landmark,
-  Settings,
-  ChevronDown,
-  PanelLeftOpen,
-  PanelLeftClose,
-} from "lucide-react";
-
-/* ---------------- utils ---------------- */
-function cn(...classes: Array<string | false | null | undefined>) {
-  return classes.filter(Boolean).join(" ");
-}
-
-/**
- * Convierte URLs relativas ("/uploads/...") en absolutas hacia el backend.
- * Si ya es "http/https", la deja igual.
- */
-function absUrl(u: string) {
-  const raw = String(u || "").trim();
-  if (!raw) return "";
-  if (/^https?:\/\//i.test(raw)) return raw;
-
-  const base = (import.meta.env.VITE_API_URL as string) || "http://localhost:3001";
-  const API = base.replace(/\/+$/, "");
-  const p = raw.startsWith("/") ? raw : `/${raw}`;
-  return `${API}${p}`;
-}
-
-function getInitials(name: string) {
-  const s = String(name || "").trim();
-  if (!s) return "TP";
-  const parts = s.split(/\s+/).filter(Boolean);
-  const a = parts[0]?.[0] ?? "T";
-  const b = (parts[1]?.[0] ?? parts[0]?.[1] ?? "P") || "P";
-  return (a + b).toUpperCase();
-}
-
-/* ---------------- types ---------------- */
-type IconType = ComponentType<{ size?: number; className?: string }>;
-type GroupItem = { label: string; to: string };
-
-type NavItem =
-  | { kind: "link"; label: string; to: string; icon?: IconType }
-  | { kind: "group"; label: string; icon?: IconType; children: GroupItem[] }
-  | { kind: "divider" };
-
-/* ---------------- custom icons ---------------- */
-/** Icono “Lingotes” (sin depender de lucide) */
-const GoldBarsIcon: IconType = ({ size = 20, className }) => (
-  <svg
-    width={size}
-    height={size}
-    viewBox="0 0 24 24"
-    fill="none"
-    className={className}
-    aria-hidden="true"
-  >
-    <path
-      d="M4.8 12.2 9.2 10.4c.5-.2 1.1-.2 1.6 0l4.4 1.8c.8.3 1.3 1.1 1.1 2l-1.1 5c-.2.9-1 1.6-2 1.6H7.8c-1 0-1.8-.7-2-1.6l-1.1-5c-.2-.9.3-1.7 1.1-2Z"
-      stroke="currentColor"
-      strokeWidth="1.8"
-      strokeLinejoin="round"
-    />
-    <path
-      d="M7.4 5.9 11 4.6c.6-.2 1.3-.2 1.9 0l3.6 1.3c.8.3 1.4 1.2 1.2 2.1l-.3 1.4"
-      stroke="currentColor"
-      strokeWidth="1.8"
-      strokeLinejoin="round"
-      opacity="0.9"
-    />
-    <path
-      d="M9 14.2h6"
-      stroke="currentColor"
-      strokeWidth="1.8"
-      strokeLinecap="round"
-      opacity="0.9"
-    />
-  </svg>
-);
+  cn,
+  absUrl,
+  getInitials,
+  JEWELRY_LOGO_EVENT,
+  USER_AVATAR_EVENT,
+  COLLAPSED_W,
+  isChildPathActive,
+} from "./sidebar/sidebar.utils";
 
 /* ---------------- components ---------------- */
 function Divider({ collapsed }: { collapsed: boolean }) {
@@ -244,13 +174,12 @@ function Group({
   onNavigate?: () => void;
 }) {
   const { pathname } = useLocation();
-  const active = children.some((c) => pathname === c.to || pathname.startsWith(c.to + "/"));
+  const active = children.some((c) => isChildPathActive(pathname, c.to));
 
   const btnRef = useRef<HTMLButtonElement | null>(null);
 
   useEffect(() => {
     if (!collapsed || !popoverOpen) return;
-
     function onKeyDown(e: KeyboardEvent) {
       if (e.key === "Escape") setPopoverOpen(false);
     }
@@ -261,7 +190,6 @@ function Group({
   const [, forcePosTick] = useState(0);
   useEffect(() => {
     if (!collapsed || !popoverOpen) return;
-
     const onRecalc = () => forcePosTick((t) => t + 1);
     window.addEventListener("resize", onRecalc);
     window.addEventListener("scroll", onRecalc, true);
@@ -361,10 +289,7 @@ function Group({
                   </div>
                 </div>
 
-                <div
-                  className="p-2 tp-scroll"
-                  style={{ maxHeight: "calc(var(--popover-max, 560px) - 1px)" }}
-                >
+                <div className="p-2 tp-scroll" style={{ maxHeight: "calc(var(--popover-max, 560px) - 1px)" }}>
                   <div className="max-h-[60vh] overflow-auto tp-scroll">
                     {children.map((c) => (
                       <NavLink
@@ -432,10 +357,15 @@ function Group({
         <div className="relative ml-10 space-y-3">
           {children.map((c, idx) => {
             const isLast = idx === children.length - 1;
+            const isFirst = idx === 0;
+
             return (
               <div key={c.to} className="relative">
+                {isFirst && <div className="absolute left-5 -top-3 h-3 w-px bg-border" />}
+
                 <div className={cn("absolute left-5 top-0 w-px bg-border", isLast ? "h-1/2" : "h-full")} />
                 <div className="absolute left-5 top-1/2 h-px w-5 bg-border" />
+
                 <div className="pl-10">
                   <Leaf to={c.to} label={c.label} collapsed={false} onNavigate={onNavigate} />
                 </div>
@@ -461,20 +391,16 @@ export default function Sidebar({
   const locked = auth.locked;
   const { pathname } = useLocation();
 
-  const COLLAPSED_W = 84;
-
   const storedExpanded = Number(localStorage.getItem("tptech_sidebar_last_expanded_width")) || 300;
   const storedMini = localStorage.getItem("tptech_sidebar_mini") === "1";
   const hasStored = Boolean(localStorage.getItem("tptech_sidebar_last_expanded_width"));
 
   const [width, setWidth] = useState(hasStored ? storedExpanded : COLLAPSED_W);
   const [mini, setMini] = useState(hasStored ? storedMini : false);
-
   const [isResizing, setIsResizing] = useState(false);
 
   const [openGroup, setOpenGroup] = useState<string | null>(null);
   const [popoverGroup, setPopoverGroup] = useState<string | null>(null);
-
   const resizing = useRef(false);
 
   const desktopActualWidth = mini ? 180 : width;
@@ -482,6 +408,37 @@ export default function Sidebar({
 
   const collapsed = !mini && actualWidth <= COLLAPSED_W;
   const headerTextHidden = mini || collapsed;
+
+  // ✅ overrides instant (logo/avatar)
+  const [localLogoUrlRaw, setLocalLogoUrlRaw] = useState("");
+  const [logoTick, setLogoTick] = useState(0);
+  const [localAvatarUrlRaw, setLocalAvatarUrlRaw] = useState("");
+  const [avatarTick, setAvatarTick] = useState(0);
+
+  useEffect(() => {
+    function onLogoChanged(e: any) {
+      const next = String(e?.detail?.logoUrl || "");
+      setLocalLogoUrlRaw(next);
+      setLogoTick((t) => t + 1);
+    }
+    window.addEventListener(JEWELRY_LOGO_EVENT, onLogoChanged as any);
+    return () => window.removeEventListener(JEWELRY_LOGO_EVENT, onLogoChanged as any);
+  }, []);
+
+  useEffect(() => {
+    function onAvatarChanged(e: any) {
+      const detail = e?.detail ?? {};
+      const nextUserId = String(detail?.userId || "");
+      const myId = String((auth.user as any)?.id || "");
+      if (!nextUserId || !myId || nextUserId !== myId) return;
+
+      const nextUrl = String(detail?.avatarUrl || "");
+      setLocalAvatarUrlRaw(nextUrl);
+      setAvatarTick((t) => t + 1);
+    }
+    window.addEventListener(USER_AVATAR_EVENT, onAvatarChanged as any);
+    return () => window.removeEventListener(USER_AVATAR_EVENT, onAvatarChanged as any);
+  }, [auth.user]);
 
   const [isMobile, setIsMobile] = useState(() => window.innerWidth < 1024);
   useEffect(() => {
@@ -491,8 +448,7 @@ export default function Sidebar({
   }, []);
 
   useEffect(() => {
-    if (!isMobile) return;
-    if (!drawerOpen) return;
+    if (!isMobile || !drawerOpen) return;
     const prev = document.body.style.overflow;
     document.body.style.overflow = "hidden";
     return () => {
@@ -511,10 +467,8 @@ export default function Sidebar({
 
   useEffect(() => {
     if (!locked) return;
-
     setPopoverGroup(null);
     setOpenGroup(null);
-
     if (isMobile) setDrawerOpen(false);
   }, [locked, isMobile, setDrawerOpen]);
 
@@ -554,34 +508,14 @@ export default function Sidebar({
     document.documentElement.style.setProperty("--sidebar-w", `${actualWidth}px`);
   }, [actualWidth]);
 
+  // --- derived UI data ---
   const jewelryName = auth.jewelry?.name ?? (auth.loading ? "Cargando..." : "Sin joyería");
-
   const user = auth.user ?? null;
-
-  const avatarUrlRaw: string = String((user as any)?.avatarUrl ?? "").trim();
-  const avatarBase = avatarUrlRaw ? absUrl(avatarUrlRaw) : "";
-
-  // ✅ cache-bust estable: usa updatedAt/quickPinUpdatedAt/etc si existe; si no, "1"
-  const avatarBust = String(
-    (user as any)?.updatedAt ?? (user as any)?.avatarUpdatedAt ?? (user as any)?.quickPinUpdatedAt ?? ""
-  ).trim();
-
-  const avatarSrc = avatarBase
-    ? `${avatarBase}${avatarBase.includes("?") ? "&" : "?"}v=${encodeURIComponent(avatarBust || "1")}`
-    : "";
-
   const userName: string = (user as any)?.name || (user as any)?.email || "Usuario";
   const userEmail: string = (user as any)?.email || "";
 
-  /**
-   * ✅ Rol del usuario (NO hardcode):
-   * - Usamos auth.roles (del buildAuthResponse)
-   * - Mostramos displayName si existe, si no name
-   * - Si no hay roles, recién ahí fallback por permisos (último recurso)
-   */
   const userRoleLabel: string = useMemo(() => {
     const roleArr = Array.isArray((auth as any)?.roles) ? ((auth as any).roles as any[]) : [];
-
     const names = roleArr
       .map((r) => {
         const dn = typeof r?.displayName === "string" ? r.displayName.trim() : "";
@@ -592,7 +526,6 @@ export default function Sidebar({
 
     if (names.length) return Array.from(new Set(names)).join(" • ");
 
-    // 4) fallback suave por permisos (solo si no vino roles)
     const perms = Array.isArray((auth as any)?.permissions) ? ((auth as any).permissions as string[]) : [];
 
     const hasAdmin = perms.some(
@@ -609,10 +542,18 @@ export default function Sidebar({
     return "Usuario";
   }, [auth]);
 
-  const logoUrlRaw = (auth.jewelry as any)?.logoUrl ?? "";
-  const logoUrl = absUrl(logoUrlRaw);
+  const logoUrlRaw = (localLogoUrlRaw || (auth.jewelry as any)?.logoUrl || "").trim();
+  const logoBase = absUrl(logoUrlRaw);
+  const jewelryBust = String((auth.jewelry as any)?.updatedAt ?? "").trim();
+  const logoBust = jewelryBust || String(logoTick || 1);
+  const logoSrc = logoBase ? `${logoBase}${logoBase.includes("?") ? "&" : "?"}v=${encodeURIComponent(logoBust)}` : "";
 
   const initials = getInitials(auth.jewelry?.name || jewelryName || "TPTech");
+
+  const avatarUrlFinalRaw = String(localAvatarUrlRaw || (user as any)?.avatarUrl || "").trim();
+  const avatarBustFinal = String(
+    (user as any)?.avatarUpdatedAt ?? (user as any)?.updatedAt ?? (user as any)?.quickPinUpdatedAt ?? avatarTick ?? 1
+  ).trim();
 
   async function onLogout() {
     try {
@@ -622,82 +563,15 @@ export default function Sidebar({
     }
   }
 
-  const nav: NavItem[] = useMemo(() => {
-    return [
-      { kind: "link", label: "Dashboard", to: "/dashboard", icon: LayoutDashboard },
-      { kind: "link", label: "Divisas", to: "/divisas", icon: GoldBarsIcon },
-
-      { kind: "divider" },
-
-      {
-        kind: "group",
-        label: "Artículos",
-        icon: Boxes,
-        children: [
-          { label: "Artículos", to: "/articulos/articulos" },
-          { label: "Artículos compuestos", to: "/articulos/compuestos" },
-          { label: "Grupos de artículos", to: "/articulos/grupos" },
-        ],
-      },
-
-      {
-        kind: "group",
-        label: "Inventario",
-        icon: Package,
-        children: [
-          { label: "Almacenes", to: "/inventario/almacenes" },
-          { label: "Movimientos", to: "/inventario/movimientos" },
-        ],
-      },
-
-      {
-        kind: "group",
-        label: "Ventas",
-        icon: ShoppingCart,
-        children: [
-          { label: "Cliente", to: "/ventas/clientes" },
-          { label: "Orden de Venta", to: "/ventas/ordenes-venta" },
-          { label: "Factura de Clientes", to: "/ventas/facturas-clientes" },
-          { label: "Paquetes", to: "/ventas/paquetes" },
-          { label: "Remitos", to: "/ventas/remitos" },
-          { label: "Pagos Recibidos", to: "/ventas/pagos-recibidos" },
-          { label: "Devoluciones de Venta", to: "/ventas/devoluciones" },
-          { label: "Nota de Credito", to: "/ventas/notas-credito" },
-        ],
-      },
-
-      {
-        kind: "group",
-        label: "Compras",
-        icon: ShoppingBag,
-        children: [
-          { label: "Proveedores", to: "/compras/proveedores" },
-          { label: "Orden de Compra", to: "/compras/ordenes-compra" },
-          { label: "Factura de Proveedor", to: "/compras/facturas-proveedor" },
-          { label: "Recepcion de Compras", to: "/compras/recepciones" },
-          { label: "Pagos Realizados", to: "/compras/pagos-realizados" },
-          { label: "Devolucion", to: "/compras/devoluciones" },
-          { label: "Creditos del Proveedor", to: "/compras/creditos-proveedor" },
-        ],
-      },
-
-      { kind: "divider" },
-
-      { kind: "link", label: "Finanzas", to: "/finanzas", icon: Landmark },
-
-      // ✅ ÚNICO botón de Configuración → abre Configuración del Sistema
-      { kind: "link", label: "Configuración", to: "/configuracion-sistema", icon: Settings },
-    ];
-  }, []);
-
+  // --- auto open active group ---
   useEffect(() => {
-    const firstMatch = nav.find((it) => {
+    const firstMatch = SIDEBAR_NAV.find((it) => {
       if (it.kind !== "group") return false;
-      return it.children.some((c) => pathname === c.to || pathname.startsWith(c.to + "/"));
+      return it.children.some((c) => isChildPathActive(pathname, c.to));
     });
     if (firstMatch?.kind === "group") setOpenGroup(firstMatch.label);
     else setOpenGroup(null);
-  }, [pathname, nav]);
+  }, [pathname]);
 
   function collapseToMobile() {
     setMini(false);
@@ -724,35 +598,27 @@ export default function Sidebar({
   return (
     <>
       {isMobile && drawerOpen && (
-        <div
-          className="fixed inset-0 z-40 bg-black/40"
-          onMouseDown={() => setDrawerOpen(false)}
-          aria-hidden="true"
-        />
+        <div className="fixed inset-0 z-40 bg-black/40" onMouseDown={() => setDrawerOpen(false)} aria-hidden="true" />
       )}
 
       <aside
         className={cn(
           "fixed left-0 top-0 z-50 flex h-screen flex-col border-r border-border bg-bg",
           isMobile
-            ? cn(
-                "transition-transform duration-200 will-change-transform",
-                drawerOpen ? "translate-x-0" : "-translate-x-full"
-              )
+            ? cn("transition-transform duration-200 will-change-transform", drawerOpen ? "translate-x-0" : "-translate-x-full")
             : ""
         )}
         style={{ width: asideWidth }}
       >
+        {/* HEADER */}
         <div className={cn("border-b border-border px-4 py-4", effectiveCollapsed && !isMobile && "px-3")}>
           <div className="flex items-center justify-between gap-3">
             <div className="flex items-center gap-3 min-w-0">
               <div className="grid h-11 w-11 place-items-center overflow-hidden rounded-xl border border-border bg-surface2">
-                {logoUrl ? (
-                  <img src={logoUrl} alt="Logo" className="h-full w-full object-cover" />
+                {logoSrc ? (
+                  <img src={logoSrc} alt="Logo" className="h-full w-full object-cover" />
                 ) : (
-                  <span className="font-extrabold text-primary text-[13px] tracking-tight select-none">
-                    {initials}
-                  </span>
+                  <span className="font-extrabold text-primary text-[13px] tracking-tight select-none">{initials}</span>
                 )}
               </div>
 
@@ -783,8 +649,9 @@ export default function Sidebar({
           </div>
         </div>
 
+        {/* NAV */}
         <nav className="flex-1 space-y-3 overflow-y-auto px-3 py-4 tp-scroll">
-          {nav.map((item, idx) => {
+          {SIDEBAR_NAV.map((item: NavItem, idx: number) => {
             if (item.kind === "divider") return <Divider key={idx} collapsed={effectiveCollapsed} />;
 
             if (item.kind === "group") {
@@ -828,25 +695,14 @@ export default function Sidebar({
           })}
         </nav>
 
-        <div className="mt-auto border-t border-border bg-bg p-4">
-          <div className="mb-3 flex items-center gap-3">
-            <div className="h-10 w-10 overflow-hidden rounded-full border border-border bg-card">
-              {avatarBase ? (
-                <img src={avatarSrc} alt="Avatar" className="h-full w-full object-cover" />
-              ) : (
-                <div className="grid h-full w-full place-items-center text-sm font-bold text-primary">
-                  {(userName || "U").charAt(0).toUpperCase()}
-                </div>
-              )}
-            </div>
+        {/* FOOTER */}
+        <div className="border-t border-border px-4 py-4">
+          <div className="flex items-center gap-3 mb-3">
+            <Avatar src={avatarUrlFinalRaw} name={userName} email={userEmail} size={40} bust={avatarBustFinal} />
 
             <div className="min-w-0">
               <div className="truncate text-sm font-semibold text-text">{userName}</div>
-
-              {/* ✅ Mail */}
               <div className="truncate text-xs text-muted">{userEmail}</div>
-
-              {/* ✅ Rol abajo del mail (por displayName) */}
               <div className="mt-0.5 truncate text-[11px] text-muted">{userRoleLabel}</div>
             </div>
           </div>
@@ -860,6 +716,7 @@ export default function Sidebar({
           </button>
         </div>
 
+        {/* RESIZER */}
         {!mini && !collapsed && (
           <div
             onMouseDown={() => {

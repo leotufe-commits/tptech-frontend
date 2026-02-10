@@ -12,19 +12,20 @@ function PinBoxes({
   disabled,
   autoFocus,
   focusKey,
-  onEnter,
 }: {
   value: string;
   onChange: (v: string) => void;
   disabled?: boolean;
   autoFocus?: boolean;
   focusKey?: number;
-  onEnter?: () => void;
 }) {
   const digits = (value || "").replace(/\D/g, "").slice(0, 4);
   const cells = [0, 1, 2, 3].map((i) => digits[i] ?? "");
 
-  const refs = React.useMemo(() => Array.from({ length: 4 }, () => React.createRef<HTMLInputElement>()), []);
+  const refs = React.useMemo(
+    () => Array.from({ length: 4 }, () => React.createRef<HTMLInputElement>()),
+    []
+  );
 
   function setDigitAt(i: number, d: string) {
     const next = digits.split("");
@@ -76,14 +77,6 @@ function PinBoxes({
             focusCell(i + 1);
           }}
           onKeyDown={(e) => {
-            // ✅ ENTER: ejecuta acción primaria del modal (Continuar/Guardar)
-            if (e.key === "Enter") {
-              e.preventDefault();
-              e.stopPropagation();
-              onEnter?.();
-              return;
-            }
-
             if (e.key === "Backspace") {
               e.preventDefault();
               if (cells[i]) {
@@ -92,6 +85,7 @@ function PinBoxes({
                 focusCell(i - 1);
                 setDigitAt(Math.max(0, i - 1), "");
               }
+              return;
             }
           }}
           onPaste={(e) => {
@@ -134,22 +128,25 @@ export function PinFlowModal({
   pinFlowStep: "NEW" | "CONFIRM";
   setPinFlowStep: (v: "NEW" | "CONFIRM") => void;
 
+  // ✅ nuevo PIN
   pinDraft: string;
   setPinDraft: (v: string) => void;
+
+  // ✅ confirmación nuevo PIN
   pinDraft2: string;
   setPinDraft2: (v: string) => void;
 
   pinBusy: boolean;
   pinToggling: boolean;
 
-  onConfirm: () => void;
+  // ✅ ahora permite recibir payload (no rompe si tu handler no usa params)
+  onConfirm: (payload?: { pin: string; currentPin?: string }) => Promise<void> | void;
 }) {
   const busy = pinBusy || pinToggling;
 
-  // ✅ fuerza focus en el primer campo cuando:
-  // - se abre el modal
-  // - cambiás de paso (NEW/CONFIRM)
-  // - tocás "Limpiar"
+  // ✅ PIN actual (solo si hasPin=true)
+  const [currentPinDraft, setCurrentPinDraft] = React.useState("");
+
   const [focusKey, setFocusKey] = React.useState(0);
 
   React.useEffect(() => {
@@ -162,13 +159,38 @@ export function PinFlowModal({
     setFocusKey((k) => k + 1);
   }, [pinFlowStep, open]);
 
+  React.useEffect(() => {
+    if (!open) return;
+    // cada vez que abre, reseteo el pin actual (evita “pin viejo” en pantalla)
+    setCurrentPinDraft("");
+  }, [open]);
+
   const pinMismatch =
-    pinFlowStep === "CONFIRM" && pinDraft.length === 4 && pinDraft2.length === 4 && pinDraft !== pinDraft2;
+    pinFlowStep === "CONFIRM" &&
+    pinDraft.length === 4 &&
+    pinDraft2.length === 4 &&
+    pinDraft !== pinDraft2;
 
-  const canContinue = !busy && pinDraft.length === 4;
-  const canConfirm = !busy && pinDraft.length === 4 && pinDraft2.length === 4 && pinDraft === pinDraft2;
+  // ✅ si ya tenía PIN, en NEW primero debe estar el PIN actual
+  const canContinue = !busy && pinDraft.length === 4 && (!hasPin || currentPinDraft.length === 4);
 
-  function doPrimaryAction() {
+  const canConfirm =
+    !busy &&
+    pinDraft.length === 4 &&
+    pinDraft2.length === 4 &&
+    pinDraft === pinDraft2 &&
+    (!hasPin || currentPinDraft.length === 4);
+
+  function resetAll() {
+    setCurrentPinDraft("");
+    setPinDraft("");
+    setPinDraft2("");
+    setPinFlowStep("NEW");
+    setFocusKey((k) => k + 1);
+  }
+
+  // ✅ Acción primaria: NEW -> confirmar; CONFIRM -> confirmar y cerrar (si OK)
+  async function doPrimaryAction() {
     if (busy) return;
 
     if (pinFlowStep === "NEW") {
@@ -178,7 +200,18 @@ export function PinFlowModal({
     }
 
     if (!canConfirm) return;
-    onConfirm();
+
+    // ✅ NO cerrar si falla
+    try {
+      await onConfirm({
+        pin: pinDraft,
+        ...(hasPin ? { currentPin: currentPinDraft } : {}),
+      });
+      onClose();
+    } catch {
+      // el error lo maneja el padre (toast / setErr)
+      // mantenemos abierto
+    }
   }
 
   return (
@@ -190,28 +223,24 @@ export function PinFlowModal({
       overlayClassName={overlayClassName}
       className="max-w-[380px]"
     >
-      {/* ✅ Capturamos ENTER para que NO dispare el submit del form de atrás */}
       <div
         className="w-full min-h-[300px] px-4"
         onKeyDownCapture={(e) => {
           if (!open) return;
 
-          // Enter: simula Continuar/Guardar
           if (e.key === "Enter") {
             e.preventDefault();
             e.stopPropagation();
-            doPrimaryAction();
+            void doPrimaryAction();
             return;
           }
 
-          // (Opcional) Escape para cerrar, si no está busy
           if (e.key === "Escape") {
             if (busy) {
               e.preventDefault();
               e.stopPropagation();
               return;
             }
-            // dejamos que el Modal maneje su cierre; pero evitamos burbujeo al form padre
             e.preventDefault();
             e.stopPropagation();
             onClose();
@@ -221,51 +250,74 @@ export function PinFlowModal({
         <div className="flex min-h-[300px] items-center justify-center">
           <div className="w-full max-w-[320px] text-center">
             <div
-              className="tp-card rounded-2xl px-4 py-5"
+              className="tp-card rounded-2xl px-4 py-5 space-y-4"
               style={{
                 border: "1px solid var(--border)",
                 background: "color-mix(in oklab, var(--card) 92%, var(--bg))",
               }}
             >
-              {/* ✅ único texto (sin label duplicado) */}
-              <div className="text-xs text-muted mb-3">{pinFlowStep === "NEW" ? "Ingresá el nuevo PIN." : "Confirmá el PIN."}</div>
+              {/* STEP NEW */}
+              {pinFlowStep === "NEW" ? (
+                <>
+                  {hasPin ? (
+                    <div>
+                      <div className="text-xs text-muted mb-2">Ingresá tu PIN actual.</div>
+                      <div className="flex justify-center">
+                        <PinBoxes
+                          value={currentPinDraft}
+                          onChange={(v) => setCurrentPinDraft(v)}
+                          disabled={busy}
+                          autoFocus
+                          focusKey={focusKey}
+                        />
+                      </div>
+                      {currentPinDraft.length > 0 && currentPinDraft.length < 4 ? (
+                        <div className="text-[11px] text-muted mt-2">Debe tener 4 dígitos.</div>
+                      ) : null}
+                    </div>
+                  ) : null}
 
-              <div className="flex justify-center">
-                <PinBoxes
-                  value={pinFlowStep === "NEW" ? pinDraft : pinDraft2}
-                  onChange={(v) => {
-                    if (pinFlowStep === "NEW") {
-                      setPinDraft(v);
+                  <div className={cn(hasPin && currentPinDraft.length !== 4 && "opacity-55")}>
+                    <div className="text-xs text-muted mb-2">
+                      {hasPin ? "Ingresá el nuevo PIN." : "Ingresá el nuevo PIN."}
+                    </div>
 
-                      // ✅ si completa 4 dígitos, pasa a confirmar (mantengo tu comportamiento)
-                      if (v.length === 4) setPinFlowStep("CONFIRM");
-                    } else {
-                      setPinDraft2(v);
-                    }
-                  }}
-                  disabled={busy}
-                  autoFocus
-                  focusKey={focusKey}
-                  onEnter={doPrimaryAction} // ✅ Enter dentro de casillas
-                />
-              </div>
+                    <div className="flex justify-center">
+                      <PinBoxes
+                        value={pinDraft}
+                        onChange={(v) => setPinDraft(v)}
+                        disabled={busy || (hasPin && currentPinDraft.length !== 4)}
+                        autoFocus={!hasPin}
+                        focusKey={focusKey + (hasPin ? 999 : 0)}
+                      />
+                    </div>
 
-              {/* ✅ SOLO muestra mismatch cuando ambos tienen 4 dígitos */}
-              {pinMismatch ? <div className="text-xs text-red-400 mt-3">El PIN no coincide</div> : null}
+                    {hasPin && currentPinDraft.length !== 4 ? (
+                      <div className="text-[11px] text-muted mt-2">Primero completá el PIN actual.</div>
+                    ) : null}
+                  </div>
+                </>
+              ) : (
+                /* STEP CONFIRM */
+                <>
+                  <div className="text-xs text-muted mb-2">Confirmá el PIN.</div>
+                  <div className="flex justify-center">
+                    <PinBoxes
+                      value={pinDraft2}
+                      onChange={(v) => setPinDraft2(v)}
+                      disabled={busy}
+                      autoFocus
+                      focusKey={focusKey}
+                    />
+                  </div>
+
+                  {pinMismatch ? <div className="text-xs text-red-400 mt-2">El PIN no coincide</div> : null}
+                </>
+              )}
             </div>
 
             <div className="mt-10 flex justify-center gap-2">
-              <button
-                type="button"
-                className="tp-btn-secondary"
-                disabled={busy}
-                onClick={() => {
-                  setPinDraft("");
-                  setPinDraft2("");
-                  setPinFlowStep("NEW");
-                  setFocusKey((k) => k + 1); // ✅ focus al primero al limpiar
-                }}
-              >
+              <button type="button" className="tp-btn-secondary" disabled={busy} onClick={resetAll}>
                 Limpiar
               </button>
 
@@ -273,9 +325,13 @@ export function PinFlowModal({
                 type="button"
                 className={cn("tp-btn-primary", busy && "opacity-60")}
                 disabled={pinFlowStep === "NEW" ? !canContinue : !canConfirm}
-                onClick={doPrimaryAction}
+                onClick={() => void doPrimaryAction()}
               >
-                {pinFlowStep === "NEW" ? "Continuar" : hasPin ? "Actualizar PIN" : "Crear PIN"}
+                {pinFlowStep === "NEW"
+                  ? "Continuar"
+                  : hasPin
+                  ? "Actualizar PIN"
+                  : "Crear PIN"}
               </button>
             </div>
           </div>

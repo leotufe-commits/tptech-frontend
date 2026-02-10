@@ -22,6 +22,15 @@ export type Override = {
 
 export type UserStatus = "ACTIVE" | "PENDING" | "BLOCKED";
 
+/**
+ * ✅ Extra info que ahora devuelve el backend en PIN admin flows
+ */
+export type PinAdminMeta = {
+  overridesCleared?: boolean;
+  overridesCount?: number;
+  targetIsOwner?: boolean;
+};
+
 export type UserListItem = {
   id: string;
   email: string;
@@ -33,9 +42,10 @@ export type UserListItem = {
   updatedAt?: string;
   roles?: Role[];
 
-  /** ✅ para LockScreen / UX (si lo devolvés en list) */
+  /** ✅ quick pin */
   pinEnabled?: boolean;
   hasQuickPin?: boolean;
+  quickPinUpdatedAt?: string | null;
 
   /** ✅ tolerancias para “conteos” si el backend los manda */
   overridesCount?: number;
@@ -44,6 +54,9 @@ export type UserListItem = {
   attachmentCount?: number;
   hasAttachments?: boolean;
   hasSpecialPermissions?: boolean;
+
+  /** ✅ si querés mostrar “OWNER” special-case en UI */
+  targetIsOwner?: boolean;
 };
 
 export type UserAttachment = {
@@ -93,6 +106,11 @@ export type UserDetail = {
 
   /** ✅ habilitar/deshabilitar acceso por PIN */
   pinEnabled?: boolean;
+
+  /** ✅ si querés guardarlo en cache/estado */
+  overridesCount?: number;
+  hasSpecialPermissions?: boolean;
+  targetIsOwner?: boolean;
 };
 
 /* =========================
@@ -146,13 +164,24 @@ export type UpdateUserProfileBody = {
   notes?: string;
 };
 
+/**
+ * ✅ QUICK PIN state (ME + ADMIN)
+ * - En admin ahora también puede traer meta: overridesCleared/overridesCount/targetIsOwner
+ */
 export type QuickPinState = {
   ok?: true;
   hasQuickPin: boolean;
   quickPinUpdatedAt?: string | null;
   pinEnabled?: boolean;
+
+  // opcional: algunos endpoints devuelven user
   user?: UserListItem;
-};
+
+  // ✅ admin meta
+  overridesCleared?: boolean;
+  overridesCount?: number;
+  targetIsOwner?: boolean;
+} & PinAdminMeta;
 
 /* =========================
    Helpers
@@ -171,13 +200,11 @@ function isObj(v: any) {
 function pickUserFromUnknown(resp: any): any | null {
   if (!resp) return null;
 
-  // 1) wrapper clásico
   if (isObj(resp) && isObj((resp as any).user)) return (resp as any).user;
 
-  // 2) wrapper data.user
-  if (isObj(resp) && isObj((resp as any).data) && isObj((resp as any).data.user)) return (resp as any).data.user;
+  if (isObj(resp) && isObj((resp as any).data) && isObj((resp as any).data.user))
+    return (resp as any).data.user;
 
-  // 3) si el “resp” ya parece user (tiene id + email)
   if (isObj(resp) && ("id" in resp || "email" in resp)) return resp;
 
   return null;
@@ -188,21 +215,13 @@ function pickUsersListFromUnknown(resp: any): { users: any[]; total?: number; pa
 
   if (!resp) return empty;
 
-  // { users: [] }
   if (isObj(resp) && Array.isArray((resp as any).users)) {
     const r: any = resp;
     return { users: r.users ?? [], total: r.total, page: r.page, limit: r.limit };
   }
 
-  // { data: { users: [] } }
   if (isObj(resp) && isObj((resp as any).data) && Array.isArray((resp as any).data.users)) {
     const r: any = (resp as any).data;
-    return { users: r.users ?? [], total: r.total, page: r.page, limit: r.limit };
-  }
-
-  // { ok:true, users: [] }
-  if (isObj(resp) && Array.isArray((resp as any).users)) {
-    const r: any = resp;
     return { users: r.users ?? [], total: r.total, page: r.page, limit: r.limit };
   }
 
@@ -271,6 +290,9 @@ function buildUsersQuery(params?: { q?: string; page?: number; limit?: number })
   if (typeof page === "number" && Number.isFinite(page) && page > 0) sp.set("page", String(page));
   if (typeof limit === "number" && Number.isFinite(limit) && limit > 0) sp.set("limit", String(limit));
 
+  // ✅ cache-buster para evitar “revive” por dedupe/inFlight
+  sp.set("_ts", String(Date.now()));
+
   const qs = sp.toString();
   return qs ? `/users?${qs}` : "/users";
 }
@@ -288,7 +310,6 @@ const ADMIN_401 = { on401: "throw" as const };
 export async function createUser(body: CreateUserBody): Promise<CreateUserResponse> {
   const resp = await apiFetch<any>("/users", { method: "POST", body, ...ADMIN_401 });
 
-  // tolerancias: { user }, { ok,user }, etc.
   const u = pickUserFromUnknown(resp);
   if (!u) return resp as CreateUserResponse;
 
@@ -301,21 +322,26 @@ export async function deleteUser(userId: string): Promise<OkResponse> {
 
 export async function fetchUsers(params?: { q?: string; page?: number; limit?: number }): Promise<UsersListResponse> {
   const url = buildUsersQuery(params);
-  const resp = await apiFetch<any>(url, { method: "GET" });
 
-  // ✅ normaliza a { users, total?, page?, limit? }
+  // ✅ IMPORTANTE: dedupe:false (evita reutilizar GET en vuelo con data vieja)
+  // ✅ FIX: 401 no debe forzar logout global en pantallas admin
+  const resp = await apiFetch<any>(url, { method: "GET", dedupe: false, ...ADMIN_401 });
+
   const norm = pickUsersListFromUnknown(resp);
   return norm as UsersListResponse;
 }
 
 export async function fetchUser(userId: string): Promise<UserDetailResponse> {
-  const resp = await apiFetch<any>(`/users/${userId}`, { method: "GET" });
+  // ✅ IMPORTANTE: cache-buster + dedupe:false
+  // ✅ FIX: 401 no debe forzar logout global en pantallas admin
+  const resp = await apiFetch<any>(`/users/${userId}?_ts=${Date.now()}`, {
+    method: "GET",
+    dedupe: false,
+    ...ADMIN_401,
+  });
 
   const u = pickUserFromUnknown(resp);
-  if (!u) {
-    // fallback: resp ya viene tipado, o backend cambió, devolvemos lo que haya para no romper
-    return resp as UserDetailResponse;
-  }
+  if (!u) return resp as UserDetailResponse;
 
   return { user: u as UserDetail };
 }
@@ -326,7 +352,6 @@ export async function updateUserProfile(
 ): Promise<OkResponse<{ user?: UserDetail }>> {
   const resp = await apiFetch<any>(`/users/${userId}`, { method: "PATCH", body, ...ADMIN_401 });
 
-  // tolerancias: puede venir { user }, { ok,user }, o user plano
   const u = pickUserFromUnknown(resp);
   if (u) return { ...(resp as any), user: u as UserDetail };
 
@@ -337,7 +362,11 @@ export async function updateUserStatus(
   userId: string,
   status: Extract<UserStatus, "ACTIVE" | "BLOCKED">
 ): Promise<OkResponse<{ user?: UserListItem }>> {
-  const resp = await apiFetch<any>(`/users/${userId}/status`, { method: "PATCH", body: { status }, ...ADMIN_401 });
+  const resp = await apiFetch<any>(`/users/${userId}/status`, {
+    method: "PATCH",
+    body: { status },
+    ...ADMIN_401,
+  });
 
   const u = pickUserFromUnknown(resp);
   if (u) return { ...(resp as any), user: u as UserListItem };
@@ -397,7 +426,9 @@ export async function updateFavoriteWarehouseForUser(
    AVATAR (ME) multipart/form-data
 ========================= */
 
-export async function updateUserAvatar(file: File): Promise<{ ok: true; avatarUrl: string | null; user?: UserListItem }> {
+export async function updateUserAvatar(
+  file: File
+): Promise<{ ok: true; avatarUrl: string | null; user?: UserListItem }> {
   assertImageFile(file);
 
   const form = new FormData();
@@ -456,12 +487,21 @@ export async function removeAvatarForUser(
    ✅ QUICK PIN (ME)
 ========================= */
 
-export async function setMyQuickPin(pin: string): Promise<QuickPinState> {
+export async function setMyQuickPin(pin: string, currentPin?: string): Promise<QuickPinState> {
   const clean = assertPin4(pin);
-  return apiFetch<QuickPinState>("/users/me/quick-pin", { method: "PUT", body: { pin: clean } });
+
+  const body: any = { pin: clean };
+  if (currentPin !== undefined) body.currentPin = assertPin4(currentPin);
+
+  return apiFetch<QuickPinState>("/users/me/quick-pin", { method: "PUT", body });
 }
 
-export async function removeMyQuickPin(currentPin: string): Promise<QuickPinState> {
+export async function removeMyQuickPin(currentPin?: string): Promise<QuickPinState> {
+  // ✅ si no mandás currentPin, no mandamos body
+  if (currentPin === undefined || String(currentPin).trim() === "") {
+    return apiFetch<QuickPinState>("/users/me/quick-pin", { method: "DELETE" });
+  }
+
   const cur = assertPin4(currentPin);
   return apiFetch<QuickPinState>("/users/me/quick-pin", { method: "DELETE", body: { currentPin: cur } });
 }
@@ -472,25 +512,43 @@ export async function removeMyQuickPin(currentPin: string): Promise<QuickPinStat
 
 export async function setUserQuickPin(userId: string, pin: string): Promise<QuickPinState> {
   const clean = assertPin4(pin);
-  return apiFetch<QuickPinState>(`/users/${userId}/quick-pin`, { method: "PUT", body: { pin: clean }, ...ADMIN_401 });
+  return apiFetch<QuickPinState>(`/users/${userId}/quick-pin`, {
+    method: "PUT",
+    body: { pin: clean },
+    ...ADMIN_401,
+  });
 }
 
 export async function resetUserQuickPin(userId: string, pin: string): Promise<QuickPinState> {
   return setUserQuickPin(userId, pin);
 }
 
-export async function removeUserQuickPin(userId: string): Promise<QuickPinState> {
-  return apiFetch<QuickPinState>(`/users/${userId}/quick-pin`, { method: "DELETE", ...ADMIN_401 });
+export async function removeUserQuickPin(
+  userId: string,
+  opts?: { confirmRemoveOverrides?: boolean }
+): Promise<QuickPinState> {
+  return apiFetch<QuickPinState>(`/users/${userId}/quick-pin`, {
+    method: "DELETE",
+    body: opts?.confirmRemoveOverrides ? { confirmRemoveOverrides: true } : undefined,
+    ...ADMIN_401,
+  });
 }
 
 /* =========================
    ✅ PIN ENABLED (ADMIN)
 ========================= */
 
-export async function setUserPinEnabled(userId: string, enabled: boolean): Promise<QuickPinState> {
+export async function setUserPinEnabled(
+  userId: string,
+  enabled: boolean,
+  opts?: { confirmRemoveOverrides?: boolean }
+): Promise<QuickPinState> {
   return apiFetch<QuickPinState>(`/users/${userId}/quick-pin/enabled`, {
     method: "PATCH",
-    body: { enabled },
+    body: {
+      enabled: Boolean(enabled),
+      ...(opts?.confirmRemoveOverrides ? { confirmRemoveOverrides: true } : {}),
+    },
     ...ADMIN_401,
   });
 }

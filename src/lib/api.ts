@@ -1,32 +1,65 @@
 // tptech-frontend/src/lib/api.ts
 
-const RAW_API_URL = (import.meta.env.VITE_API_URL as string) || "http://localhost:3001";
+// ✅ DEV: usar proxy /api (evita problemas SameSite/CORS con cookie httpOnly)
+const RAW_API_URL = (import.meta.env.VITE_API_URL as string) || "/api";
 
-// normaliza: sin slash final
-const API_URL = RAW_API_URL.replace(/\/+$/, "");
+// =========================
+// API URL NORMALIZATION
+// - Si es absoluta (https://...), aseguramos que incluya /api
+// - Si es relativa (/api), la dejamos
+// =========================
+function normalizeApiBase(raw: string) {
+  const s = String(raw || "").trim();
+  if (!s) return "/api";
 
-// ✅ legacy keys (por si en algún momento guardaste tokens)
+  // relativa: "/api"
+  if (s.startsWith("/")) return s.replace(/\/+$/, "");
+
+  // absoluta: "https://host" o "https://host/api"
+  if (/^https?:\/\//i.test(s)) {
+    const noTrail = s.replace(/\/+$/, "");
+    if (/(\/api)$/i.test(noTrail)) return noTrail;
+    return `${noTrail}/api`;
+  }
+
+  return s.replace(/\/+$/, "");
+}
+
+// normaliza: sin slash final + asegura /api en absolutos
+const API_URL = normalizeApiBase(RAW_API_URL);
+
+// =========================
+// LEGACY TOKEN KEYS (solo compat)
+// =========================
 export const LS_TOKEN_KEY = "tptech_token";
 export const SS_TOKEN_KEY = "tptech_access_token";
 
-// ✅ multi-tab events
+// =========================
+// MULTI-TAB EVENTS
+// =========================
 export const LS_LOGOUT_KEY = "tptech_logout";
 export const LS_AUTH_EVENT_KEY = "tptech_auth_event";
 
 type AuthEvent = { type: "LOGIN" | "LOGOUT"; at: number };
 
-/**
- * ✅ Dedupe de requests GET/HEAD en vuelo
- * Evita duplicados (muy común en dev por StrictMode o renders dobles).
- */
+// =========================
+// REQUEST DEDUPE (GET/HEAD)
+// =========================
 const inFlight = new Map<string, Promise<any>>();
 
-/** Timeout default (ms) */
+// =========================
+// DEFAULT TIMEOUT
+// =========================
 const DEFAULT_TIMEOUT_MS = 25_000;
 
+// =========================
+// AUTH EVENTS
+// =========================
 function emitAuthEvent(ev: AuthEvent) {
   try {
-    if (ev.type === "LOGOUT") localStorage.setItem(LS_LOGOUT_KEY, String(ev.at));
+    if (ev.type === "LOGOUT") {
+      localStorage.setItem(LS_LOGOUT_KEY, String(ev.at));
+    }
     localStorage.setItem(LS_AUTH_EVENT_KEY, JSON.stringify(ev));
 
     if ("BroadcastChannel" in window) {
@@ -35,36 +68,35 @@ function emitAuthEvent(ev: AuthEvent) {
       bc.close();
     }
   } catch {
-    // si storage está bloqueado, no rompemos
+    // ignore
   }
 }
 
-/**
- * Limpia tokens legacy (si existieran) y emite evento LOGOUT global (multi-tab).
- * ✅ Importante: aunque el backend use cookie, esto ayuda a limpiar estados viejos.
- */
+export function emitLogin() {
+  emitAuthEvent({ type: "LOGIN", at: Date.now() });
+}
+
 export function forceLogout() {
   try {
     sessionStorage.removeItem(SS_TOKEN_KEY);
-  } catch {}
-
-  try {
     localStorage.removeItem(LS_TOKEN_KEY);
   } catch {}
 
   emitAuthEvent({ type: "LOGOUT", at: Date.now() });
 }
 
+// =========================
+// URL HELPERS
+// =========================
 function joinUrl(base: string, path: string) {
   if (/^https?:\/\//i.test(path)) return path;
   const p = path.startsWith("/") ? path : `/${path}`;
   return `${base}${p}`;
 }
 
-/**
- * ✅ Lee token guardado (preferimos sessionStorage, fallback localStorage)
- * Esto permite enviar Authorization Bearer además de cookie httpOnly.
- */
+// =========================
+// LEGACY TOKEN READ (solo si se fuerza Bearer)
+// =========================
 function readStoredToken(): string | null {
   try {
     const ss = sessionStorage.getItem(SS_TOKEN_KEY);
@@ -79,69 +111,56 @@ function readStoredToken(): string | null {
   return null;
 }
 
-/**
- * Extensión de RequestInit que permite:
- * - body como objeto/array (lo serializa a JSON)
- * - body como string/FormData/etc (lo manda tal cual)
- */
+// =========================
+// TYPES
+// =========================
 export type ApiFetchOptions = Omit<RequestInit, "body" | "signal"> & {
   body?: any;
-
-  /**
-   * ✅ Timeout por request (ms)
-   * - si no se pasa, usa DEFAULT_TIMEOUT_MS
-   * - si querés desactivar, pasá timeoutMs: 0
-   */
   timeoutMs?: number;
-
-  /**
-   * ✅ Deduplicación (solo aplica a GET/HEAD).
-   * Default: true
-   */
   dedupe?: boolean;
-
-  /**
-   * ✅ AbortSignal opcional (se combina con timeout)
-   */
   signal?: AbortSignal;
 
   /**
-   * ✅ Control de qué hacer ante 401
-   * - "logout" (default): fuerza logout global + error "Sesión expirada"
-   * - "throw": NO desloguea, solo lanza error (ideal para uploads como avatar)
+   * 401 handling
+   * - logout (default)
+   * - throw
    */
   on401?: "logout" | "throw";
+
+  /**
+   * 🔑 IMPORTANTE
+   * Bearer SOLO si se pide explícitamente
+   */
+  forceBearer?: boolean;
 };
 
+// =========================
+// BODY HELPERS
+// =========================
 function isFormData(body: any): body is FormData {
   return typeof FormData !== "undefined" && body instanceof FormData;
 }
-
 function isURLSearchParams(body: any): body is URLSearchParams {
   return typeof URLSearchParams !== "undefined" && body instanceof URLSearchParams;
 }
-
 function isBlob(body: any): body is Blob {
   return typeof Blob !== "undefined" && body instanceof Blob;
 }
-
 function isArrayBuffer(body: any): body is ArrayBuffer {
   return typeof ArrayBuffer !== "undefined" && body instanceof ArrayBuffer;
 }
 
-/**
- * “JSON-serializable”: objetos y arrays (pero NO FormData/Blob/etc)
- */
 function isJsonSerializable(body: any) {
   if (body === null || body === undefined) return false;
   if (typeof body !== "object") return false;
   if (Array.isArray(body)) return true;
-
   if (isFormData(body) || isURLSearchParams(body) || isBlob(body) || isArrayBuffer(body)) return false;
-
   return true;
 }
 
+// =========================
+// SIGNAL / TIMEOUT
+// =========================
 function mergeSignals(a?: AbortSignal, b?: AbortSignal): AbortSignal | undefined {
   if (!a) return b;
   if (!b) return a;
@@ -189,6 +208,9 @@ function isAbortError(err: any) {
   return err?.name === "AbortError";
 }
 
+// =========================
+// RESPONSE PARSE
+// =========================
 function tryParseJsonText(s: string) {
   try {
     return JSON.parse(s);
@@ -197,10 +219,29 @@ function tryParseJsonText(s: string) {
   }
 }
 
-/**
- * ✅ Error enriquecido: preserva status + data (JSON del backend)
- * para poder manejar flujos como 409 HAS_SPECIAL_PERMISSIONS.
- */
+async function parsePayload(res: Response) {
+  if (res.status === 204) return undefined;
+
+  const ct = res.headers.get("content-type") || "";
+  if (ct.includes("application/json")) {
+    try {
+      return await res.json();
+    } catch {
+      return null;
+    }
+  }
+
+  try {
+    const txt = await res.text();
+    return tryParseJsonText(txt) ?? txt;
+  } catch {
+    return null;
+  }
+}
+
+// =========================
+// API ERROR
+// =========================
 class ApiError extends Error {
   status: number;
   data: any;
@@ -217,35 +258,24 @@ class ApiError extends Error {
   }
 }
 
-/**
- * apiFetch
- * - ✅ Auth por COOKIE httpOnly (credentials: "include")
- * - ✅ Auth por Bearer (si hay token en storage)
- * - si options.body es objeto/array -> JSON.stringify
- * - si 401 -> (por default) forceLogout (multi-tab) + throw
- * - soporta FormData (avatar/logo/adjuntos) sin setear Content-Type
- *
- * ✅ IMPORTANTÍSIMO: GET por defecto va con cache:"no-store"
- * para evitar pantallas con datos viejos al navegar.
- *
- * ✅ Performance:
- * - dedupe GET/HEAD en vuelo (evita duplicados)
- * - timeout (AbortController)
- */
+// =========================
+// apiFetch
+// =========================
 export async function apiFetch<T = any>(path: string, options: ApiFetchOptions = {}): Promise<T> {
-  const headers = new Headers(options.headers as any);
-
-  // ✅ Inyectar Authorization Bearer si existe token guardado (sin pisar si ya vino)
-  const token = readStoredToken();
-  if (token && !headers.has("Authorization")) {
-    headers.set("Authorization", `Bearer ${token}`);
-  }
-
   const method = String(options.method || "GET").toUpperCase();
   const allowBody = method !== "GET" && method !== "HEAD";
 
-  let bodyToSend: BodyInit | undefined = undefined;
+  // ✅ default SIEMPRE include (cookie httpOnly)
+  const credentials: RequestCredentials = (options.credentials as any) ?? "include";
+  const url = joinUrl(API_URL, path);
 
+  const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const signal = mergeSignals(options.signal, makeTimeoutSignal(timeoutMs));
+
+  let bodyToSend: BodyInit | undefined;
+  const headers = new Headers(options.headers as any);
+
+  // BODY
   if (allowBody && options.body !== undefined) {
     const b = options.body;
 
@@ -253,109 +283,69 @@ export async function apiFetch<T = any>(path: string, options: ApiFetchOptions =
       bodyToSend = b;
     } else if (typeof b === "string") {
       bodyToSend = b;
-      if (!headers.has("Content-Type")) headers.set("Content-Type", "text/plain;charset=UTF-8");
-    } else if (isBlob(b)) {
-      bodyToSend = b;
-    } else if (isArrayBuffer(b)) {
+      if (!headers.has("Content-Type")) {
+        headers.set("Content-Type", "text/plain;charset=UTF-8");
+      }
+    } else if (isBlob(b) || isArrayBuffer(b)) {
       bodyToSend = b as any;
     } else if (isJsonSerializable(b)) {
       bodyToSend = JSON.stringify(b);
-      if (!headers.has("Content-Type")) headers.set("Content-Type", "application/json");
+      if (!headers.has("Content-Type")) {
+        headers.set("Content-Type", "application/json");
+      }
     } else {
       bodyToSend = b as any;
     }
   }
 
-  const cacheOpt: RequestCache | undefined =
-    options.cache !== undefined ? options.cache : method === "GET" ? "no-store" : undefined;
-
-  const url = joinUrl(API_URL, path);
-
-  const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-  const timeoutSignal = makeTimeoutSignal(timeoutMs);
-  const signal = mergeSignals(options.signal, timeoutSignal);
-
-  const canDedupe = (options.dedupe ?? true) && (method === "GET" || method === "HEAD") && bodyToSend === undefined;
-
-  const key = canDedupe ? `${method}:${url}` : "";
-
-  if (canDedupe) {
-    const existing = inFlight.get(key);
-    if (existing) return existing as Promise<T>;
+  // 🔑 Bearer SOLO si se pide explícitamente
+  if (options.forceBearer === true) {
+    const token = readStoredToken();
+    if (token && !headers.has("Authorization")) {
+      headers.set("Authorization", `Bearer ${token}`);
+    }
   }
 
-  const run = (async () => {
-    let res: Response;
+  let res: Response;
+  let payload: any;
 
-    // ✅ Quitamos props custom para no pasarlas a fetch()
-    const { body: _body, timeoutMs: _timeoutMs, dedupe: _dedupe, on401: _on401, ...fetchOpts } = options;
+  try {
+    res = await fetch(url, {
+      ...options,
+      method,
+      headers,
+      body: bodyToSend,
+      credentials,
+      cache: method === "GET" ? "no-store" : options.cache,
+      signal,
+    });
 
-    try {
-      res = await fetch(url, {
-        ...fetchOpts,
-        method,
-        headers,
-        body: bodyToSend,
-        cache: cacheOpt,
-        credentials: "include",
-        signal,
-      });
-    } catch (err: any) {
-      if (isAbortError(err)) {
-        throw new Error("Tiempo de espera agotado. Revisá tu conexión e intentá de nuevo.");
-      }
-      throw new Error("Error de red. Revisá tu conexión e intentá de nuevo.");
-    }
-
-    if (res.status === 204) return undefined as T;
-
-    // ✅ Parse payload SIEMPRE (sirve para errores 4xx/5xx con JSON)
-    let payload: any = null;
-    const ct = res.headers.get("content-type") || "";
-
-    if (ct.includes("application/json")) {
-      try {
-        payload = await res.json();
-      } catch {
-        payload = null;
-      }
-    } else {
-      try {
-        const txt = await res.text();
-        const maybeJson = tryParseJsonText(txt);
-        payload = maybeJson ?? txt;
-      } catch {
-        payload = null;
-      }
-    }
-
-    // ✅ 401 con modo configurable
-    if (res.status === 401) {
-      const mode = options.on401 ?? "logout";
-      if (mode === "logout") {
-        forceLogout();
-        throw new ApiError("Sesión expirada", { status: 401, data: payload, url, method });
-      }
-      throw new ApiError("No autorizado (401)", { status: 401, data: payload, url, method });
-    }
-
-    if (!res.ok) {
-      const msg =
-        (payload && typeof payload === "object" && (payload as any).message) ||
-        (typeof payload === "string" && payload) ||
-        `HTTP ${res.status}`;
-
-      // ✅ CRÍTICO: mantenemos status + data para flujos tipo 409
-      throw new ApiError(msg, { status: res.status, data: payload, url, method });
-    }
-
-    return payload as T;
-  })();
-
-  if (canDedupe) {
-    inFlight.set(key, run);
-    run.finally(() => inFlight.delete(key));
+    payload = await parsePayload(res);
+  } catch (err: any) {
+    if (isAbortError(err)) throw new Error("Tiempo de espera agotado.");
+    throw new Error("Error de red.");
   }
 
-  return run;
+  // 401
+  if (res.status === 401) {
+    const mode = options.on401 ?? "logout";
+
+    if (mode === "logout") {
+      forceLogout();
+      throw new ApiError("Sesión expirada", { status: 401, data: payload, url, method });
+    }
+
+    throw new ApiError("No autorizado (401)", { status: 401, data: payload, url, method });
+  }
+
+  if (!res.ok) {
+    const msg =
+      (payload && typeof payload === "object" && payload.message) ||
+      (typeof payload === "string" && payload) ||
+      `HTTP ${res.status}`;
+
+    throw new ApiError(msg, { status: res.status, data: payload, url, method });
+  }
+
+  return payload as T;
 }

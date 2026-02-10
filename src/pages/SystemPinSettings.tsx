@@ -39,12 +39,8 @@ export default function SystemPinSettings() {
   // ✅ state local (UI)
   const [enabled, setEnabled] = useState<boolean>(Boolean(auth.pinLockEnabled));
   const [timeoutMin, setTimeoutMin] = useState<number>(Number(auth.pinLockTimeoutMinutes || 5));
-  const [quickSwitchEnabled, setQuickSwitchEnabled] = useState<boolean>(
-    Boolean(auth.quickSwitchEnabled)
-  );
-  const [requireOnSwitch, setRequireOnSwitch] = useState<boolean>(
-    Boolean(auth.pinLockRequireOnUserSwitch)
-  );
+  const [quickSwitchEnabled, setQuickSwitchEnabled] = useState<boolean>(Boolean(auth.quickSwitchEnabled));
+  const [requireOnSwitch, setRequireOnSwitch] = useState<boolean>(Boolean(auth.pinLockRequireOnUserSwitch));
 
   const [busy, setBusy] = useState(false);
   const [saved, setSaved] = useState<string | null>(null);
@@ -53,6 +49,9 @@ export default function SystemPinSettings() {
   // ✅ confirmación “salir a Usuarios con cambios”
   const [showLeaveConfirm, setShowLeaveConfirm] = useState(false);
   const [leaveBusy, setLeaveBusy] = useState(false);
+
+  // ✅ modal: “no podés activar lock sin PIN”
+  const [showNeedPinConfirm, setShowNeedPinConfirm] = useState(false);
 
   const savedTimerRef = useRef<number | null>(null);
 
@@ -97,10 +96,7 @@ export default function SystemPinSettings() {
     );
   }
 
-  const dirty = useMemo(
-    () => computeDirty(),
-    [enabled, timeoutMin, quickSwitchEnabled, requireOnSwitch]
-  );
+  const dirty = useMemo(() => computeDirty(), [enabled, timeoutMin, quickSwitchEnabled, requireOnSwitch]);
 
   function resetToServerValues() {
     const snap = computeServerSnapshot();
@@ -115,6 +111,7 @@ export default function SystemPinSettings() {
     setSaved(null);
     setShowLeaveConfirm(false);
     setLeaveBusy(false);
+    setShowNeedPinConfirm(false);
   }
 
   // ✅ sincroniza cuando cambia el "server snapshot" (AuthContext)
@@ -133,6 +130,28 @@ export default function SystemPinSettings() {
     return () => clearSavedTimer();
   }, []);
 
+  /** ✅ Heurística tolerante para detectar si MI usuario tiene PIN */
+  const meId = String((auth.user as any)?.id || "");
+  const meHasQuickPin = useMemo(() => {
+    const u: any = auth.user || {};
+    // intentamos varias claves comunes para no depender 100% de una sola
+    if (typeof u.hasQuickPin === "boolean") return u.hasQuickPin;
+    if (typeof u.quickPinEnabled === "boolean") return u.quickPinEnabled;
+    if (typeof u.pinEnabled === "boolean") return u.pinEnabled;
+    if (u.quickPinHash) return true;
+    if (u.pinHash) return true;
+    return false;
+  }, [auth.user]);
+
+  function goToMyUserPin() {
+    // ✅ ya tenés implementado /configuracion/usuarios?edit=<id> en Users.tsx
+    if (!meId) {
+      navigate(USERS_ROUTE);
+      return;
+    }
+    navigate(`${USERS_ROUTE}?edit=${encodeURIComponent(meId)}`);
+  }
+
   async function onSave(): Promise<boolean> {
     if (!canEdit || busy) return false;
 
@@ -141,6 +160,13 @@ export default function SystemPinSettings() {
     clearSavedTimer();
 
     const safeMin = clamp(Math.floor(Number(timeoutMin) || 1), 1, 60 * 12);
+
+    // ✅ BLOQUEO DURO: no permitir guardar enabled=true si el usuario actual no tiene PIN
+    if (Boolean(enabled) && !meHasQuickPin) {
+      setErr("No podés activar el bloqueo por PIN si tu usuario no tiene un PIN configurado. Crealo primero.");
+      setShowNeedPinConfirm(true);
+      return false;
+    }
 
     setBusy(true);
     try {
@@ -229,13 +255,64 @@ export default function SystemPinSettings() {
 
   return (
     <div className="p-6 space-y-5">
+      {/* ✅ Modal: no permitir activar lock sin PIN propio */}
+      {showNeedPinConfirm && (
+        <div className="fixed inset-0 z-50">
+          <div className="absolute inset-0 bg-black/40" onClick={() => !busy && setShowNeedPinConfirm(false)} />
+          <div className="absolute left-1/2 top-1/2 w-[92vw] max-w-lg -translate-x-1/2 -translate-y-1/2 rounded-2xl border border-border bg-card p-5 shadow-soft">
+            <div className="flex items-start gap-3">
+              <div className="grid h-10 w-10 place-items-center rounded-2xl border border-border bg-surface2 text-primary">
+                <AlertTriangle className="h-5 w-5" />
+              </div>
+              <div className="min-w-0">
+                <div className="text-base font-semibold text-text">Falta tu PIN</div>
+                <div className="mt-1 text-sm text-muted">
+                  Para evitar quedarte encerrado en la pantalla de bloqueo, antes de activar el{" "}
+                  <b>Bloqueo por PIN</b> necesitás configurar el PIN de tu usuario.
+                </div>
+                <div className="mt-2 text-xs text-muted">
+                  Ruta: <b>Usuarios → Editar tu usuario → Clave rápida (PIN)</b>
+                </div>
+              </div>
+            </div>
+
+            <div className="mt-4 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => setShowNeedPinConfirm(false)}
+                className="inline-flex items-center justify-center gap-2 rounded-xl border-2 border-border bg-transparent px-4 py-2 text-sm font-semibold text-text hover:bg-surface2 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-primary/20 disabled:opacity-60"
+              >
+                <X className="h-4 w-4" />
+                Cancelar
+              </button>
+
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => {
+                  // ✅ forzamos el switch en OFF en UI
+                  setEnabled(false);
+                  setQuickSwitchEnabled(false);
+                  setRequireOnSwitch(false);
+                  setShowNeedPinConfirm(false);
+                  goToMyUserPin();
+                }}
+                className="inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2 text-sm font-semibold text-white bg-primary hover:opacity-95 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-primary/20 disabled:opacity-60"
+              >
+                <Users className="h-4 w-4" />
+                Configurar mi PIN
+                <ArrowRight className="h-4 w-4" />
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* ✅ Modal confirmación “cambios sin guardar” */}
       {showLeaveConfirm && (
         <div className="fixed inset-0 z-50">
-          <div
-            className="absolute inset-0 bg-black/40"
-            onClick={() => !leaveBusy && setShowLeaveConfirm(false)}
-          />
+          <div className="absolute inset-0 bg-black/40" onClick={() => !leaveBusy && setShowLeaveConfirm(false)} />
           <div className="absolute left-1/2 top-1/2 w-[92vw] max-w-lg -translate-x-1/2 -translate-y-1/2 rounded-2xl border border-border bg-card p-5 shadow-soft">
             <div className="flex items-start gap-3">
               <div className="grid h-10 w-10 place-items-center rounded-2xl border border-border bg-surface2 text-primary">
@@ -347,6 +424,17 @@ export default function SystemPinSettings() {
                     setRequireOnSwitch(false);
                     return;
                   }
+
+                  // ✅ BLOQUEO: no permitir prender si MI usuario no tiene PIN
+                  if (!meHasQuickPin) {
+                    // mantenemos OFF visualmente
+                    setEnabled(false);
+                    setQuickSwitchEnabled(false);
+                    setRequireOnSwitch(false);
+                    setShowNeedPinConfirm(true);
+                    return;
+                  }
+
                   setEnabled(true);
                 }}
                 disabled={!canEdit || busy}
@@ -354,6 +442,13 @@ export default function SystemPinSettings() {
                 size="sm"
               />
             </div>
+
+            {/* ✅ hint si falta PIN */}
+            {!meHasQuickPin ? (
+              <div className="mt-3 text-[11px] text-muted">
+                Para activar el bloqueo por PIN, primero configurá <b>tu</b> PIN en Usuarios.
+              </div>
+            ) : null}
           </div>
 
           {/* Cambio rápido */}
@@ -477,9 +572,7 @@ export default function SystemPinSettings() {
           <div
             className={cn(
               "text-sm rounded-xl px-3 py-2 border",
-              err
-                ? "text-red-400 bg-red-500/10 border-red-500/15"
-                : "text-emerald-400 bg-emerald-500/10 border-emerald-500/15"
+              err ? "text-red-400 bg-red-500/10 border-red-500/15" : "text-emerald-400 bg-emerald-500/10 border-emerald-500/15"
             )}
           >
             {err || saved}

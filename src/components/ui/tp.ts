@@ -7,12 +7,14 @@ export function cn(...classes: Array<string | false | null | undefined>) {
 /** Inputs / Selects */
 export const TP_INPUT =
   "mt-1 w-full rounded-xl border border-border bg-surface px-3 py-2 text-sm " +
-  "text-text placeholder:text-muted outline-none " +
+  // ✅ el texto del input y el placeholder ahora vienen del theme (themes.css)
+  "text-[color:var(--input-text)] placeholder:text-[color:var(--placeholder)] placeholder:opacity-100 outline-none " +
   "focus:border-primary/40 focus:ring-4 focus:ring-primary/20";
 
 export const TP_SELECT =
   "mt-1 w-full rounded-xl border border-border bg-surface px-3 py-2 text-sm " +
-  "text-text outline-none " +
+  // ✅ select también usa el mismo color de input (theme)
+  "text-[color:var(--input-text)] outline-none " +
   "focus:border-primary/40 focus:ring-4 focus:ring-primary/20";
 
 /** Buttons */

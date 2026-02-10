@@ -130,7 +130,13 @@ function ModuleCheckbox({
 
   return (
     <label className={cn("flex items-center gap-2", disabled && "opacity-60")}>
-      <input ref={ref} type="checkbox" checked={checked} disabled={disabled} onChange={(e) => onChange(e.target.checked)} />
+      <input
+        ref={ref}
+        type="checkbox"
+        checked={checked}
+        disabled={disabled}
+        onChange={(e) => onChange(e.target.checked)}
+      />
       <span className="text-sm font-semibold underline underline-offset-4">{label}</span>
     </label>
   );
@@ -152,6 +158,7 @@ function RoleEditorModal({
   onClose,
   onSubmit,
   permissionsDisabled,
+  errorMsg,
 }: {
   open: boolean;
   title: string;
@@ -165,6 +172,7 @@ function RoleEditorModal({
   onClose: () => void;
   onSubmit: (name: string, selectedIds: string[]) => Promise<void>;
   permissionsDisabled?: boolean;
+  errorMsg?: string | null;
 }) {
   const [name, setName] = useState(initialName);
   const [selectedSet, setSelectedSet] = useState<Set<string>>(() => new Set(initialSelectedIds));
@@ -217,6 +225,11 @@ function RoleEditorModal({
         </div>
       ) : (
         <form onSubmit={submit} className="space-y-4">
+          {/* ✅ error dentro del modal (para que no quede atrás) */}
+          {errorMsg ? (
+            <div className="rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm">{errorMsg}</div>
+          ) : null}
+
           <div>
             <label className="mb-1 block text-xs text-muted">Nombre del rol</label>
             <input
@@ -239,7 +252,9 @@ function RoleEditorModal({
               </div>
             </div>
           ) : (
-            <div className="text-xs text-muted">Tip: el checkbox del título del módulo selecciona/deselecciona todo el módulo.</div>
+            <div className="text-xs text-muted">
+              Tip: el checkbox del título del módulo selecciona/deselecciona todo el módulo.
+            </div>
           )}
 
           <div
@@ -392,7 +407,11 @@ export default function RolesPage() {
 
   const [roles, setRoles] = useState<RoleLite[]>([]);
   const [loading, setLoading] = useState(true);
-  const [err, setErr] = useState<string | null>(null);
+
+  // ✅ error de página (carga/listado)
+  const [pageErr, setPageErr] = useState<string | null>(null);
+  // ✅ error dentro de modales (crear/editar)
+  const [modalErr, setModalErr] = useState<string | null>(null);
 
   const [sortBy, setSortBy] = useState<"ROLE" | "TYPE">("ROLE");
   const [sortDir, setSortDir] = useState<"ASC" | "DESC">("ASC");
@@ -435,6 +454,11 @@ export default function RolesPage() {
     return () => window.clearTimeout(t);
   }, [editOpen]);
 
+  // limpiar error modal al abrir/cerrar
+  useEffect(() => {
+    if (createOpen || editOpen) setModalErr(null);
+  }, [createOpen, editOpen]);
+
   const permsByModule = useMemo(() => groupPermsByModule(allPerms), [allPerms]);
 
   const sortedRoles = useMemo(() => {
@@ -465,7 +489,7 @@ export default function RolesPage() {
   const loadRoles = useCallback(async () => {
     const reqId = ++loadReqRef.current;
 
-    setErr(null);
+    setPageErr(null);
     setLoading(true);
 
     try {
@@ -478,7 +502,7 @@ export default function RolesPage() {
       setRoles(Array.from(uniq.values()));
     } catch (e: any) {
       if (loadReqRef.current !== reqId) return;
-      setErr(String(e?.message || "Error cargando roles"));
+      setPageErr(String(e?.message || "Error cargando roles"));
     } finally {
       if (loadReqRef.current === reqId) setLoading(false);
     }
@@ -534,14 +558,15 @@ export default function RolesPage() {
   const openCreateModal = useCallback(async () => {
     if (!canAdmin) return;
 
-    setErr(null);
+    setPageErr(null);
+    setModalErr(null);
     setCreatingOpenLoading(true);
 
     try {
       await ensurePermissionsCatalog();
       setCreateOpen(true);
     } catch (e: any) {
-      setErr(String(e?.message || "No se pudieron cargar permisos"));
+      setPageErr(String(e?.message || "No se pudieron cargar permisos"));
     } finally {
       setCreatingOpenLoading(false);
     }
@@ -553,12 +578,12 @@ export default function RolesPage() {
 
       const clean = name.trim();
       if (!clean) {
-        setErr("Escribí el nombre del rol.");
+        setModalErr("Escribí el nombre del rol.");
         return;
       }
 
       setCreateSaving(true);
-      setErr(null);
+      setModalErr(null);
       try {
         const created = await createRole(clean);
         const roleId = created?.id;
@@ -573,7 +598,7 @@ export default function RolesPage() {
         await loadRoles();
         await refreshMe({ silent: true, force: true } as any);
       } catch (e: any) {
-        setErr(String(e?.message || "Error creando rol"));
+        setModalErr(String(e?.message || "Error creando rol"));
       } finally {
         setCreateSaving(false);
       }
@@ -612,12 +637,13 @@ export default function RolesPage() {
     async (r: RoleLite) => {
       if (!canAdmin) return;
 
-      setErr(null);
+      setPageErr(null);
+      setModalErr(null);
 
       const reqId = ++editReqRef.current;
       setEditingRoleId(r.id);
 
-      // ✅ ÚNICO “solo nombre”: OWNER
+      // ✅ ÚNICO “solo permisos bloqueados”: OWNER (pero nombre sí editable)
       const nameOnly = isOwnerRole(r);
       setEditPermissionsDisabled(nameOnly);
 
@@ -638,7 +664,7 @@ export default function RolesPage() {
         setEditOpen(true);
       } catch (e: any) {
         if (editReqRef.current !== reqId) return;
-        setErr(String(e?.message || "No se pudieron cargar permisos del rol"));
+        setPageErr(String(e?.message || "No se pudieron cargar permisos del rol"));
       } finally {
         if (editReqRef.current === reqId) {
           setPermsLoading(false);
@@ -655,19 +681,19 @@ export default function RolesPage() {
 
       const clean = name.trim();
       if (!clean) {
-        setErr("El nombre no puede estar vacío.");
+        setModalErr("El nombre no puede estar vacío.");
         return;
       }
 
       setEditSaving(true);
-      setErr(null);
+      setModalErr(null);
 
       try {
         if (clean !== target.name) {
           await renameRole(target.id, clean);
         }
 
-        // ✅ ahora se permite editar permisos en roles del sistema, excepto OWNER
+        // ✅ permisos: permitido en todos excepto OWNER
         if (!editPermissionsDisabled) {
           await updateRolePermissions(target.id, selectedPermIds);
         }
@@ -678,7 +704,7 @@ export default function RolesPage() {
         await loadRoles();
         await refreshMe({ silent: true, force: true } as any);
       } catch (e: any) {
-        setErr(String(e?.message || "Error guardando cambios"));
+        setModalErr(String(e?.message || "Error guardando cambios"));
       } finally {
         setEditSaving(false);
       }
@@ -726,7 +752,8 @@ export default function RolesPage() {
         )}
       </div>
 
-      {err && <div className="rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm">{err}</div>}
+      {/* ✅ solo errores de página (listado/carga). Los de crear/editar van dentro del modal */}
+      {pageErr && <div className="rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm">{pageErr}</div>}
 
       <div className="tp-card overflow-hidden w-full">
         <table className="w-full text-sm">
@@ -806,7 +833,11 @@ export default function RolesPage() {
         saving={createSaving}
         submitLabel="Crear"
         nameInputRef={createNameRef}
-        onClose={() => setCreateOpen(false)}
+        errorMsg={modalErr}
+        onClose={() => {
+          setCreateOpen(false);
+          setModalErr(null);
+        }}
         onSubmit={onCreateSubmit}
       />
 
@@ -822,9 +853,11 @@ export default function RolesPage() {
         submitLabel="Guardar"
         nameInputRef={editNameRef}
         permissionsDisabled={editPermissionsDisabled}
+        errorMsg={modalErr}
         onClose={() => {
           setEditOpen(false);
           setTarget(null);
+          setModalErr(null);
         }}
         onSubmit={onEditSubmit}
       />

@@ -1,5 +1,4 @@
-// tptech-frontend/src/hooks/useCatalog.ts
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import type { CatalogItem, CatalogType } from "../services/catalogs";
 import { createCatalogItem, listCatalog } from "../services/catalogs";
 
@@ -18,8 +17,8 @@ export function useCatalog(type: CatalogType, opts?: { auto?: boolean }) {
     setLoading(true);
     setError(null);
     try {
-      const resp = await listCatalog(type);
-      setItems(Array.isArray(resp?.items) ? resp.items : []);
+      const arr = await listCatalog(type);
+      setItems(Array.isArray(arr) ? arr : []);
     } catch (e: any) {
       setError(String(e?.message || "Error cargando catálogo."));
       setItems([]);
@@ -33,11 +32,8 @@ export function useCatalog(type: CatalogType, opts?: { auto?: boolean }) {
       const clean = normLabel(label);
       if (!clean) return;
 
-      // ✅ dejamos que backend maneje duplicados (P2002 => devuelve existente)
-      // para evitar depender de 'items' del render (stale).
+      // backend maneja duplicados
       await createCatalogItem(type, clean, 0);
-
-      // refresco para traer el item (nuevo o existente)
       await refresh();
     },
     [type, refresh]
@@ -48,5 +44,18 @@ export function useCatalog(type: CatalogType, opts?: { auto?: boolean }) {
     void refresh();
   }, [auto, refresh]);
 
-  return { items, loading, error, refresh, createItem };
+  // 👉 solo lectura: el hook NO decide defaults
+  const favoriteItem = useMemo(
+    () => items.find((i) => i.isFavorite),
+    [items]
+  );
+
+  return {
+    items,
+    favoriteItem, // opcional para CREATE, nunca auto-aplicado
+    loading,
+    error,
+    refresh,
+    createItem,
+  };
 }

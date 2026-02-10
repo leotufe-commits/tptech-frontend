@@ -3,7 +3,6 @@ import React, { useEffect, useMemo, useState } from "react";
 import { apiFetch } from "../lib/api";
 import { useMe } from "../hooks/useMe";
 import { useNavigate } from "react-router-dom";
-import { useAuth } from "../context/AuthContext";
 
 /* =========================
    TYPES
@@ -33,7 +32,6 @@ function onlyPin4(v: string) {
 ========================= */
 export default function Cuenta() {
   const navigate = useNavigate();
-  const auth = useAuth();
   const { me, loading, error, refresh } = useMe();
 
   const [form, setForm] = useState<AccountBody>({
@@ -46,6 +44,7 @@ export default function Cuenta() {
   const [msg, setMsg] = useState<string | null>(null);
 
   // 🔐 PIN
+  const [pinCurrent, setPinCurrent] = useState("");
   const [pinNew, setPinNew] = useState("");
   const [pinBusy, setPinBusy] = useState(false);
   const [pinMsg, setPinMsg] = useState<string | null>(null);
@@ -56,8 +55,10 @@ export default function Cuenta() {
   const pinState = useMemo(() => {
     const anyMe: any = me;
     return {
-      hasQuickPin: Boolean(anyMe?.hasQuickPin ?? anyMe?.user?.hasQuickPin),
-      pinEnabled: Boolean(anyMe?.pinEnabled ?? anyMe?.user?.pinEnabled),
+      // useMe devuelve { user, jewelry, roles, permissions }
+      // pero el backend a veces devolvía directo; por eso fallback
+      hasQuickPin: Boolean(anyMe?.user?.hasQuickPin ?? anyMe?.hasQuickPin),
+      pinEnabled: Boolean(anyMe?.user?.pinEnabled ?? anyMe?.pinEnabled),
     };
   }, [me]);
 
@@ -70,9 +71,9 @@ export default function Cuenta() {
     const anyMe: any = me;
 
     setForm({
-      firstName: String(anyMe.firstName ?? anyMe.user?.firstName ?? ""),
-      lastName: String(anyMe.lastName ?? anyMe.user?.lastName ?? ""),
-      email: String(anyMe.email ?? anyMe.user?.email ?? ""),
+      firstName: String(anyMe.user?.firstName ?? anyMe.firstName ?? ""),
+      lastName: String(anyMe.user?.lastName ?? anyMe.lastName ?? ""),
+      email: String(anyMe.user?.email ?? anyMe.email ?? ""),
     });
   }, [me]);
 
@@ -85,14 +86,9 @@ export default function Cuenta() {
     setForm((prev) => ({ ...prev, [key]: value }));
   }
 
-  // ✅ helper para evitar errores TS2554 por firmas distintas
+  // ✅ helper seguro (tu refresh está tipado como () => Promise<void>)
   async function safeRefreshAll() {
-    // useMe.refresh puede ser (opts?) o () según tu tipado actual
     await (refresh as any)({ silent: true });
-
-    // auth.refreshMe en tu proyecto parece estar tipado como () => Promise<void>
-    // o como (opts) => Promise<void>, entonces lo llamamos por any
-    await (auth as any).refreshMe?.({ silent: true });
   }
 
   /* -------------------------
@@ -124,19 +120,39 @@ export default function Cuenta() {
 
   /* -------------------------
      PIN ACTIONS (MI CUENTA)
+     Backend:
+     - PUT    /users/me/quick-pin  { pin, currentPin? }
+     - DELETE /users/me/quick-pin  { currentPin }
   ------------------------- */
   async function onSetPin() {
     setPinMsg(null);
-    const clean = onlyPin4(pinNew);
 
-    if (clean.length !== 4) {
-      setPinMsg("Ingresá un PIN de 4 dígitos.");
+    const cleanNew = onlyPin4(pinNew);
+    const cleanCurrent = onlyPin4(pinCurrent);
+
+    if (cleanNew.length !== 4) {
+      setPinMsg("Ingresá un PIN nuevo de 4 dígitos.");
+      return;
+    }
+
+    // si ya tiene PIN, backend exige currentPin
+    if (pinState.hasQuickPin && cleanCurrent.length !== 4) {
+      setPinMsg("Ingresá tu PIN actual (4 dígitos) para cambiarlo.");
       return;
     }
 
     setPinBusy(true);
     try {
-      await (auth as any).pinSet(clean);
+      await apiFetch("/users/me/quick-pin", {
+        method: "PUT",
+        body: {
+          pin: cleanNew,
+          ...(pinState.hasQuickPin ? { currentPin: cleanCurrent } : {}),
+        },
+        timeoutMs: 12_000,
+      });
+
+      setPinCurrent("");
       setPinNew("");
       setPinMsg("PIN actualizado correctamente ✅");
       await safeRefreshAll();
@@ -149,9 +165,28 @@ export default function Cuenta() {
 
   async function onRemovePin() {
     setPinMsg(null);
+
+    // si no hay pin, no hay nada que borrar
+    if (!pinState.hasQuickPin) {
+      setPinMsg("No tenés un PIN configurado.");
+      return;
+    }
+
+    const cleanCurrent = onlyPin4(pinCurrent);
+    if (cleanCurrent.length !== 4) {
+      setPinMsg("Ingresá tu PIN actual (4 dígitos) para eliminarlo.");
+      return;
+    }
+
     setPinBusy(true);
     try {
-      await (auth as any).pinRemove();
+      await apiFetch("/users/me/quick-pin", {
+        method: "DELETE",
+        body: { currentPin: cleanCurrent },
+        timeoutMs: 12_000,
+      });
+
+      setPinCurrent("");
       setPinNew("");
       setPinMsg("PIN eliminado correctamente ✅");
       await safeRefreshAll();
@@ -252,24 +287,44 @@ export default function Cuenta() {
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
-              <Field label={pinState.hasQuickPin ? "Nuevo PIN" : "Definir PIN"}>
-                <input
-                  className="tp-input"
-                  inputMode="numeric"
-                  value={pinNew}
-                  onChange={(e) => setPinNew(onlyPin4(e.target.value))}
-                  maxLength={4}
-                  disabled={pinBusy}
-                />
-              </Field>
+              {/* ✅ PIN actual (solo si ya existe) */}
+              {pinState.hasQuickPin && (
+                <Field label="PIN actual">
+                  <input
+                    className="tp-input"
+                    inputMode="numeric"
+                    value={pinCurrent}
+                    onChange={(e) => setPinCurrent(onlyPin4(e.target.value))}
+                    maxLength={4}
+                    disabled={pinBusy}
+                  />
+                </Field>
+              )}
 
-              <button
-                className="tp-btn-primary mt-3 w-full"
-                disabled={pinBusy || pinNew.length !== 4}
-                onClick={onSetPin}
-              >
-                {pinBusy ? "Guardando…" : pinState.hasQuickPin ? "Cambiar PIN" : "Guardar PIN"}
-              </button>
+              <div className={pinState.hasQuickPin ? "mt-4" : ""}>
+                <Field label={pinState.hasQuickPin ? "Nuevo PIN" : "Definir PIN"}>
+                  <input
+                    className="tp-input"
+                    inputMode="numeric"
+                    value={pinNew}
+                    onChange={(e) => setPinNew(onlyPin4(e.target.value))}
+                    maxLength={4}
+                    disabled={pinBusy}
+                  />
+                </Field>
+
+                <button
+                  className="tp-btn-primary mt-3 w-full"
+                  disabled={
+                    pinBusy ||
+                    pinNew.length !== 4 ||
+                    (pinState.hasQuickPin && pinCurrent.length !== 4)
+                  }
+                  onClick={onSetPin}
+                >
+                  {pinBusy ? "Guardando…" : pinState.hasQuickPin ? "Cambiar PIN" : "Guardar PIN"}
+                </button>
+              </div>
             </div>
 
             {pinState.hasQuickPin && (
@@ -280,7 +335,7 @@ export default function Cuenta() {
 
                 <button
                   className="tp-btn-secondary mt-6 w-full"
-                  disabled={pinBusy}
+                  disabled={pinBusy || pinCurrent.length !== 4}
                   onClick={onRemovePin}
                 >
                   {pinBusy ? "Procesando…" : "Eliminar PIN"}

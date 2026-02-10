@@ -20,7 +20,8 @@ import InventarioMovimientos from "./pages/InventarioMovimientos";
 import VentasClientes from "./pages/VentasClientes";
 import ComprasProveedores from "./pages/ComprasProveedores";
 
-import PerfilJoyeria from "./pages/PerfilJoyeria";
+import PerfilJoyeria from "./pages/PerfilJoyeria.tsx";
+
 import Cuenta from "./pages/Cuenta";
 import Placeholder from "./pages/Placeholder";
 
@@ -33,6 +34,9 @@ import UserView from "./components/users/UserView";
 import ConfiguracionSistema from "./pages/ConfiguracionSistema";
 import SystemPinSettings from "./pages/SystemPinSettings";
 import SystemThemeSettings from "./pages/SystemThemeSettings";
+
+// ✅ NUEVO: pantalla Catálogo UI
+import SystemUiCatalog from "./pages/SystemUiCatalog";
 
 // ✅ NUEVO: pantalla placeholder "Vendedor"
 import ConfiguracionSistemaVendedor from "./pages/ConfiguracionSistemaVendedor";
@@ -159,6 +163,9 @@ const router = createBrowserRouter([
           { path: "configuracion-sistema/pin", element: <SystemPinSettings /> },
           { path: "configuracion-sistema/tema", element: <SystemThemeSettings /> },
 
+          // ✅ APARIENCIA: Catálogo UI (pantalla real)
+          { path: "configuracion/apariencia/ui", element: <SystemUiCatalog /> },
+
           // ✅ NUEVO: VENDEDOR (placeholder por ahora)
           { path: "configuracion-sistema/vendedor", element: <ConfiguracionSistemaVendedor /> },
 
@@ -171,13 +178,9 @@ const router = createBrowserRouter([
           { path: "configuracion-sistema/numeracion", element: <Placeholder title="Numeración de comprobantes" /> },
           { path: "configuracion-sistema/etiquetas", element: <Placeholder title="Impresión de etiquetas" /> },
 
-          // ✅ NUEVO: ADMINISTRACIÓN
-          
-
+          // ✅ ADMINISTRACIÓN
           { path: "configuracion-sistema/items", element: <ConfiguracionSistemaItems /> },
           { path: "configuracion-sistema/informes", element: <ConfiguracionSistemaInformes /> },
-
- 
 
           /* =====================
              COMPAT: RUTAS VIEJAS

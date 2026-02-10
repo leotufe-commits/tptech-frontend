@@ -24,6 +24,12 @@ import { TPTableWrap, TPTableEl, TPThead, TPTbody, TPTh, TPEmptyRow } from "../u
 
 import type { UserListItem } from "../../services/users";
 
+// ✅ Prefetch real (evita depender del prop undefined)
+import { prefetchUserDetail as prefetchUserDetailInternal } from "./users.data";
+
+// ✅ Descarga con cookie httpOnly (NO <a href> sin credenciales)
+import { downloadUserAttachmentFile } from "../../lib/users.api";
+
 /* ======================================================
    Utils fecha
 ====================================================== */
@@ -62,13 +68,6 @@ function statusLabel(u: any) {
   return s ? s.toLowerCase() : "";
 }
 
-function pinLabel(u: any) {
-  const has = Boolean(u?.hasQuickPin);
-  const enabled = Boolean(u?.pinEnabled);
-  if (!has) return "sin pin";
-  return enabled ? "pin habilitado" : "pin deshabilitado";
-}
-
 function specialCount(u: any): number {
   const c = Number(u?.overridesCount ?? u?.permissionOverridesCount ?? NaN);
   if (Number.isFinite(c)) return c;
@@ -85,7 +84,7 @@ function hasSpecial(u: any) {
 
 type AttachmentItem = {
   id: string;
-  url: string;
+  url?: string;
   filename: string;
   mimeType?: string;
   size?: number;
@@ -173,8 +172,16 @@ type Props = {
   openEdit: (u: UserListItem) => Promise<void> | void;
   askDelete: (u: UserListItem) => void;
 
-  prefetchUserDetail: (id: string) => Promise<any>;
+  // ✅ lo dejamos opcional para compatibilidad (en tu Users.tsx hoy es undefined as any)
+  prefetchUserDetail?: (id: string) => Promise<any>;
 };
+
+type PinOverride = {
+  hasQuickPin?: boolean;
+  pinEnabled?: boolean;
+};
+
+const PIN_EVENT = "tptech:user-pin-updated";
 
 export default function UsersTable(props: Props) {
   const {
@@ -193,6 +200,7 @@ export default function UsersTable(props: Props) {
     toggleStatus,
     openEdit,
     askDelete,
+    // ✅ si viene prop lo usamos; si no, usamos el internal
     prefetchUserDetail,
   } = props;
 
@@ -208,6 +216,60 @@ export default function UsersTable(props: Props) {
       return;
     }
     setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+  }
+
+  // ✅ Override local para que el listado se sincronice aunque no hayas refetch del GET /users
+  const pinOverridesRef = useRef<Map<string, PinOverride>>(new Map());
+  const [pinTick, setPinTick] = useState(0);
+
+  useEffect(() => {
+    function onPinUpdated(e: Event) {
+      const ce = e as CustomEvent<any>;
+      const d = ce?.detail ?? null;
+      const userId = String(d?.userId ?? "").trim();
+      if (!userId) return;
+
+      const hasQuickPin = typeof d?.hasQuickPin === "boolean" ? Boolean(d.hasQuickPin) : undefined;
+      const pinEnabled = typeof d?.pinEnabled === "boolean" ? Boolean(d.pinEnabled) : undefined;
+
+      if (hasQuickPin === undefined && pinEnabled === undefined) return;
+
+      const prev = pinOverridesRef.current.get(userId) ?? {};
+      const next: PinOverride = { ...prev };
+
+      // ✅ FIX CRÍTICO:
+      // NO pisar valores previos con undefined (esto era lo que hacía que “reviva” el PIN en la tabla)
+      if (hasQuickPin !== undefined) next.hasQuickPin = hasQuickPin;
+      if (pinEnabled !== undefined) next.pinEnabled = pinEnabled;
+
+      // ✅ coherencia: si no hay PIN, nunca puede quedar enabled=true
+      if (hasQuickPin === false) next.pinEnabled = false;
+
+      pinOverridesRef.current.set(userId, next);
+      setPinTick((x) => x + 1);
+    }
+
+    window.addEventListener(PIN_EVENT, onPinUpdated as any);
+    return () => window.removeEventListener(PIN_EVENT, onPinUpdated as any);
+  }, []);
+
+  function effectivePin(u: any) {
+    const id = String(u?.id ?? "");
+    const ov = id ? pinOverridesRef.current.get(id) : undefined;
+
+    const hasQuickPin = typeof ov?.hasQuickPin === "boolean" ? ov.hasQuickPin : Boolean(u?.hasQuickPin);
+    let pinEnabled = typeof ov?.pinEnabled === "boolean" ? ov.pinEnabled : Boolean(u?.pinEnabled);
+
+    // ✅ coherencia: si no hay PIN, pinEnabled siempre false
+    if (!hasQuickPin) pinEnabled = false;
+
+    return { hasQuickPin, pinEnabled };
+  }
+
+  function pinLabelEffective(u: any) {
+    const { hasQuickPin: has, pinEnabled: enabled } = effectivePin(u);
+    if (!has) return "sin pin";
+    return enabled ? "pin habilitado" : "pin deshabilitado";
   }
 
   const sortedUsers = useMemo(() => {
@@ -228,8 +290,8 @@ export default function UsersTable(props: Props) {
         ak = norm(statusLabel(a));
         bk = norm(statusLabel(b));
       } else if (sortBy === "PIN") {
-        ak = norm(pinLabel(a));
-        bk = norm(pinLabel(b));
+        ak = norm(pinLabelEffective(a));
+        bk = norm(pinLabelEffective(b));
       } else if (sortBy === "ROLES") {
         const aRoles = ((a?.roles ?? []) as any[]).map((r) => roleLabel(r)).join(" ").trim();
         const bRoles = ((b?.roles ?? []) as any[]).map((r) => roleLabel(r)).join(" ").trim();
@@ -252,7 +314,8 @@ export default function UsersTable(props: Props) {
     });
 
     return arr;
-  }, [users, sortBy, sortDir, roleLabel, warehouseLabelById]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [users, sortBy, sortDir, roleLabel, warehouseLabelById, pinTick]);
 
   // ✅ Botón ícono (outline)
   const iconBtnBase =
@@ -263,8 +326,7 @@ export default function UsersTable(props: Props) {
   const disabledCls = "opacity-40 cursor-not-allowed hover:bg-transparent";
 
   // ✅ Pill violeta para “permisos especiales”
-  const specialPillCls =
-    "border-violet-500/30 bg-violet-500/10 text-violet-300 dark:text-violet-200";
+  const specialPillCls = "border-violet-500/30 bg-violet-500/10 text-violet-300 dark:text-violet-200";
 
   /* ======================================================
      Attachments panel (clic en 📎)
@@ -276,9 +338,13 @@ export default function UsersTable(props: Props) {
 
   const [attPanelUserId, setAttPanelUserId] = useState<string | null>(null);
   const [attTick, setAttTick] = useState(0);
+  const [attDownloadBusyId, setAttDownloadBusyId] = useState<string | null>(null);
+  const [attDownloadErr, setAttDownloadErr] = useState<string | null>(null);
 
   function closeAttPanel() {
     setAttPanelUserId(null);
+    setAttDownloadBusyId(null);
+    setAttDownloadErr(null);
   }
 
   useEffect(() => {
@@ -299,7 +365,10 @@ export default function UsersTable(props: Props) {
     setAttTick((x) => x + 1);
 
     try {
-      const d = await prefetchUserDetail(userId);
+      // ✅ usa prop si viene, si no usa internal
+      const fn = prefetchUserDetail || prefetchUserDetailInternal;
+      const d = await fn(userId);
+
       const root = (d as any)?.user ? (d as any).user : d;
       const arr = Array.isArray(root?.attachments) ? (root.attachments as AttachmentItem[]) : [];
       const info: AttInfo = { has: arr.length > 0, count: arr.length, items: arr };
@@ -321,6 +390,7 @@ export default function UsersTable(props: Props) {
     if (!id) return;
 
     setAttPanelUserId(id);
+    setAttDownloadErr(null);
     await ensureAttachmentsCached(id);
   }
 
@@ -357,6 +427,22 @@ export default function UsersTable(props: Props) {
     nav(`/configuracion/usuarios/${id}`);
   }
 
+  async function downloadAttachment(att: AttachmentItem) {
+    const userId = String(attPanelUserId || "");
+    const attId = String(att?.id || "");
+    if (!userId || !attId) return;
+
+    setAttDownloadErr(null);
+    setAttDownloadBusyId(attId);
+    try {
+      await downloadUserAttachmentFile(userId, attId, att?.filename || "archivo");
+    } catch (e: any) {
+      setAttDownloadErr(e?.message || "No se pudo descargar el archivo.");
+    } finally {
+      setAttDownloadBusyId(null);
+    }
+  }
+
   return (
     <TPTableWrap className="w-full">
       {/* =========================
@@ -386,16 +472,13 @@ export default function UsersTable(props: Props) {
 
             const attCount = listAttCount(u);
 
-            const pinHas = Boolean(u.hasQuickPin);
-            const pinEnabled = Boolean(u.pinEnabled);
+            const pin = effectivePin(u);
+            const pinHas = pin.hasQuickPin;
+            const pinEnabled = pin.pinEnabled;
 
             return (
-              <div
-                key={u.id}
-                className={cn("tp-card w-full text-left p-3 rounded-2xl border border-border")}
-              >
+              <div key={u.id} className={cn("tp-card w-full text-left p-3 rounded-2xl border border-border")}>
                 <div className="flex items-start gap-3">
-                  {/* ✅ “columna usuario” (en mobile: encabezado) clickeable para ver */}
                   <button
                     type="button"
                     onClick={() => openView(u)}
@@ -409,7 +492,9 @@ export default function UsersTable(props: Props) {
                       {avatarSrc ? (
                         <img src={avatarSrc} alt="Avatar" className="h-full w-full object-cover" />
                       ) : (
-                        <div className="grid h-full w-full place-items-center text-xs font-bold text-primary">{initials}</div>
+                        <div className="grid h-full w-full place-items-center text-xs font-bold text-primary">
+                          {initials}
+                        </div>
                       )}
                     </div>
 
@@ -461,14 +546,8 @@ export default function UsersTable(props: Props) {
                     </div>
                   </button>
 
-                  {/* ✅ Acciones en orden: View – Editar – PDF – Activo/Inactivo – Eliminar */}
                   <div className="shrink-0 flex flex-col gap-2">
-                    <button
-                      type="button"
-                      className={cn(iconBtnBase)}
-                      onClick={() => openView(u)}
-                      title="Ver"
-                    >
+                    <button type="button" className={cn(iconBtnBase)} onClick={() => openView(u)} title="Ver">
                       <Eye className="h-4 w-4" />
                     </button>
 
@@ -503,7 +582,15 @@ export default function UsersTable(props: Props) {
                       onClick={() => {
                         if (canToggleThis) void toggleStatus(u);
                       }}
-                      title={!canEditStatus ? "Sin permisos" : isMe ? "No podés cambiar tu propio estado" : isActive ? "Inactivar" : "Activar"}
+                      title={
+                        !canEditStatus
+                          ? "Sin permisos"
+                          : isMe
+                          ? "No podés cambiar tu propio estado"
+                          : isActive
+                          ? "Inactivar"
+                          : "Activar"
+                      }
                     >
                       {isActive ? <ShieldBan className="h-4 w-4" /> : <ShieldCheck className="h-4 w-4" />}
                     </button>
@@ -530,7 +617,13 @@ export default function UsersTable(props: Props) {
           <div className="text-xs text-muted">{totalLabel}</div>
 
           <div className="flex items-center gap-2">
-            <button className={cn(iconBtnBase, page <= 1 && disabledCls)} type="button" disabled={page <= 1} onClick={onPrev} title="Anterior">
+            <button
+              className={cn(iconBtnBase, page <= 1 && disabledCls)}
+              type="button"
+              disabled={page <= 1}
+              onClick={onPrev}
+              title="Anterior"
+            >
               <ChevronLeft className="h-4 w-4" />
             </button>
 
@@ -538,7 +631,13 @@ export default function UsersTable(props: Props) {
               <b className="text-text">{page}</b> / {totalPages}
             </div>
 
-            <button className={cn(iconBtnBase, page >= totalPages && disabledCls)} type="button" disabled={page >= totalPages} onClick={onNext} title="Siguiente">
+            <button
+              className={cn(iconBtnBase, page >= totalPages && disabledCls)}
+              type="button"
+              disabled={page >= totalPages}
+              onClick={onNext}
+              title="Siguiente"
+            >
               <ChevronRight className="h-4 w-4" />
             </button>
           </div>
@@ -643,20 +742,16 @@ export default function UsersTable(props: Props) {
 
                   const attCount = listAttCount(u);
 
-                  const pinHas = Boolean(u.hasQuickPin);
-                  const pinEnabled = Boolean(u.pinEnabled);
+                  const pin = effectivePin(u);
+                  const pinHas = pin.hasQuickPin;
+                  const pinEnabled = pin.pinEnabled;
 
                   return (
                     <tr key={u.id} className={cn("border-t border-border hover:bg-surface2/40")}>
-                      {/* ✅ Usuario (ÚNICA columna clickeable para View) */}
                       <td className="px-5 py-3 align-top">
                         <button
                           type="button"
-                          className={cn(
-                            "w-full text-left",
-                            "rounded-xl",
-                            "hover:opacity-95 active:scale-[0.995] transition"
-                          )}
+                          className={cn("w-full text-left", "rounded-xl", "hover:opacity-95 active:scale-[0.995] transition")}
                           onClick={() => openView(u)}
                           title="Ver usuario"
                         >
@@ -679,15 +774,12 @@ export default function UsersTable(props: Props) {
 
                               <div className="text-xs text-muted truncate">{u.email}</div>
 
-                              {u.createdAt && (
-                                <div className="text-[11px] text-muted">Creado: {formatDateTime(u.createdAt)}</div>
-                              )}
+                              {u.createdAt && <div className="text-[11px] text-muted">Creado: {formatDateTime(u.createdAt)}</div>}
                             </div>
                           </div>
                         </button>
                       </td>
 
-                      {/* Estado */}
                       <td className="px-5 py-3 align-top">
                         <TPBadge
                           tone={isActive ? "success" : isPending ? "warning" : "danger"}
@@ -705,7 +797,6 @@ export default function UsersTable(props: Props) {
                         </TPBadge>
                       </td>
 
-                      {/* PIN */}
                       <td className="px-5 py-3 align-top">
                         {pinHas ? (
                           <TPBadge
@@ -723,7 +814,6 @@ export default function UsersTable(props: Props) {
                         )}
                       </td>
 
-                      {/* Roles */}
                       <td className="px-5 py-3 align-top">
                         <div className="flex flex-wrap gap-2">
                           {(u.roles || []).length ? (
@@ -736,7 +826,6 @@ export default function UsersTable(props: Props) {
                             <span className="text-muted">Sin roles</span>
                           )}
 
-                          {/* ✅ permisos especiales en violeta */}
                           {hasSpecial(u) && (
                             <TPBadge tone="neutral" className={specialPillCls} title="Tiene permisos especiales">
                               Permiso especial
@@ -745,7 +834,6 @@ export default function UsersTable(props: Props) {
                         </div>
                       </td>
 
-                      {/* Almacén */}
                       <td className="px-5 py-3 align-top">
                         {u.favoriteWarehouseId ? (
                           <TPBadge tone="neutral">⭐ {warehouseLabelById(u.favoriteWarehouseId) ?? u.favoriteWarehouseId}</TPBadge>
@@ -754,15 +842,9 @@ export default function UsersTable(props: Props) {
                         )}
                       </td>
 
-                      {/* ✅ Acciones: View – Editar – PDF – Activo/Inactivo – Eliminar */}
                       <td className="px-5 py-3 align-top text-right">
                         <div className="flex justify-end gap-2">
-                          <button
-                            type="button"
-                            className={cn(iconBtnBase)}
-                            onClick={() => openView(u)}
-                            title="Ver"
-                          >
+                          <button type="button" className={cn(iconBtnBase)} onClick={() => openView(u)} title="Ver">
                             <Eye className="h-4 w-4" />
                           </button>
 
@@ -832,7 +914,6 @@ export default function UsersTable(props: Props) {
         </TPTableEl>
       </div>
 
-      {/* Footer desktop */}
       <div className="hidden sm:flex border-t border-border px-4 py-3 items-center justify-between">
         <div className="text-xs text-muted">{totalLabel}</div>
 
@@ -851,7 +932,6 @@ export default function UsersTable(props: Props) {
         </div>
       </div>
 
-      {/* Panel de adjuntos */}
       {attPanelUserId && (
         <div className="fixed inset-0 z-[85] flex items-center justify-center px-4" onClick={closeAttPanel}>
           <div className="absolute inset-0 bg-black/40" />
@@ -883,12 +963,16 @@ export default function UsersTable(props: Props) {
                 <div className="space-y-2">
                   <div className="text-xs text-muted">{attPanelInfo?.count != null ? `${attPanelInfo.count} archivo(s)` : "Archivos"}</div>
 
+                  {attDownloadErr ? (
+                    <div className="rounded-xl border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs">{attDownloadErr}</div>
+                  ) : null}
+
                   <div className="divide-y divide-border rounded-xl border border-border overflow-hidden">
                     {(attPanelInfo?.items ?? []).map((a) => {
-                      const url = absUrl(String(a.url || ""));
                       const fname = String(a.filename || "archivo");
                       const sz = formatBytes(a.size);
                       const meta = [sz || "", a.mimeType ? String(a.mimeType) : ""].filter(Boolean).join(" • ");
+                      const busy = attDownloadBusyId === String(a.id);
 
                       return (
                         <div key={a.id} className="p-3 flex items-center justify-between gap-3 bg-card">
@@ -897,15 +981,21 @@ export default function UsersTable(props: Props) {
                             <div className="text-xs text-muted truncate">{meta || "Archivo"}</div>
                           </div>
 
-                          <a href={url} className={cn("tp-btn", "shrink-0")} target="_blank" rel="noreferrer" download>
-                            Descargar
-                          </a>
+                          <button
+                            type="button"
+                            className={cn("tp-btn", "shrink-0", busy && "opacity-60")}
+                            disabled={busy}
+                            onClick={() => void downloadAttachment(a)}
+                            title="Descargar"
+                          >
+                            {busy ? "Descargando…" : "Descargar"}
+                          </button>
                         </div>
                       );
                     })}
                   </div>
 
-                  <div className="text-[11px] text-muted">Tip: “Descargar” abre el archivo en una pestaña (o descarga según tu navegador).</div>
+                  <div className="text-[11px] text-muted">Tip: usa cookie httpOnly (no Bearer), así que esto descarga sin romper auth.</div>
                 </div>
               )}
             </div>

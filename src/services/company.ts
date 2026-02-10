@@ -9,18 +9,21 @@ export type CompanySecuritySettings = {
 };
 
 export async function fetchCompanySecuritySettings(): Promise<CompanySecuritySettings> {
-  const res = await apiFetch("/company/settings/security", { method: "GET" });
-  const data = await res.json();
-  return data.security as CompanySecuritySettings;
+  const data = await apiFetch<{ security: CompanySecuritySettings }>("/company/settings/security", {
+    method: "GET",
+  });
+  return data.security;
 }
 
 export async function updateCompanySecuritySettings(
   patch: Partial<CompanySecuritySettings>
 ): Promise<CompanySecuritySettings> {
-  const res = await apiFetch("/company/settings/security", {
-    method: "PATCH",
-    body: JSON.stringify(patch),
-  });
-  const data = await res.json();
-  return data.security as CompanySecuritySettings;
+  const data = await apiFetch<{ ok: boolean; security: CompanySecuritySettings }>(
+    "/company/settings/security",
+    {
+      method: "PATCH",
+      body: patch,
+    }
+  );
+  return data.security;
 }

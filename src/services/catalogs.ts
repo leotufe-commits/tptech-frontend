@@ -15,6 +15,10 @@ export type CatalogItem = {
   label: string;
   isActive: boolean;
   sortOrder: number;
+
+  // ✅ NUEVO: favorito (opcional para no romper DB vieja)
+  isFavorite?: boolean;
+
   createdAt?: string;
   updatedAt?: string;
 };
@@ -22,11 +26,9 @@ export type CatalogItem = {
 /**
  * GET /company/catalogs/:type
  * ✅ DEVUELVE ARRAY DIRECTO (CatalogItem[])
- * - Porque PerfilJoyeria y TPComboCreatable lo usan así.
  *
  * opts.force:
  * - agrega cache bust ?_ts=... por si algún proxy/browser cachea igual
- *   (aunque apiFetch usa cache:"no-store", esto lo hace ultra robusto).
  */
 export async function listCatalog(
   type: CatalogType,
@@ -48,7 +50,6 @@ export async function listCatalog(
 
 /**
  * POST /company/catalogs/:type
- * ✅ Mandamos objeto (apiFetch lo serializa a JSON y setea Content-Type)
  */
 export async function createCatalogItem(type: CatalogType, label: string, sortOrder = 0) {
   return apiFetch<{ item: CatalogItem; created?: boolean }>(`/company/catalogs/${type}`, {
@@ -57,6 +58,9 @@ export async function createCatalogItem(type: CatalogType, label: string, sortOr
   });
 }
 
+/**
+ * POST /company/catalogs/:type/bulk
+ */
 export async function bulkCreateCatalogItems(type: CatalogType, labels: string[], sortOrderStart = 0) {
   return apiFetch<{ ok: boolean; requested: number; created: number; skipped: number }>(
     `/company/catalogs/${type}/bulk`,
@@ -67,12 +71,27 @@ export async function bulkCreateCatalogItems(type: CatalogType, labels: string[]
   );
 }
 
+/**
+ * PATCH /company/catalogs/item/:id
+ */
 export async function updateCatalogItem(
   id: string,
-  data: Partial<{ label: string; isActive: boolean; sortOrder: number }>
+  data: Partial<{ label: string; isActive: boolean; sortOrder: number; isFavorite: boolean }>
 ) {
   return apiFetch<{ item: CatalogItem }>(`/company/catalogs/item/${id}`, {
     method: "PATCH",
     body: data,
+  });
+}
+
+/**
+ * ✅ Endpoint dedicado a favorito (recomendado)
+ * PATCH /company/catalogs/item/:id/favorite
+ * Body: { isFavorite: boolean }
+ */
+export async function setCatalogItemFavorite(id: string, isFavorite: boolean) {
+  return apiFetch<{ item: CatalogItem }>(`/company/catalogs/item/${id}/favorite`, {
+    method: "PATCH",
+    body: { isFavorite },
   });
 }

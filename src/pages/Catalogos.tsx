@@ -1,13 +1,19 @@
 // tptech-frontend/src/pages/Catalogos.tsx
 import React, { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Save, Plus, ArrowLeft, RotateCcw } from "lucide-react";
+import { Save, Plus, ArrowLeft, RotateCcw, Star } from "lucide-react";
 
 import { cn } from "../components/users/users.ui";
 import { toast } from "../lib/toast";
 
 import type { CatalogType, CatalogItem } from "../services/catalogs";
-import { bulkCreateCatalogItems, createCatalogItem, listCatalog, updateCatalogItem } from "../services/catalogs";
+import {
+  bulkCreateCatalogItems,
+  createCatalogItem,
+  listCatalog,
+  updateCatalogItem,
+  setCatalogItemFavorite, // ✅ NUEVO
+} from "../services/catalogs";
 
 const TYPE_LABEL: Record<CatalogType, string> = {
   PHONE_PREFIX: "Prefijos",
@@ -54,7 +60,7 @@ export default function Catalogos() {
     setLoading(true);
     setError(null);
     try {
-      const next = await listCatalog(type, { includeInactive: true }); // ✅ ahora devuelve array directo
+      const next = await listCatalog(type, { includeInactive: true }); // ✅ devuelve array directo
       setItems(next);
 
       // inicializar drafts si no existen
@@ -86,7 +92,13 @@ export default function Catalogos() {
   }, [type]);
 
   const sorted = useMemo(() => {
-    return [...items].sort((a, b) => a.sortOrder - b.sortOrder || a.label.localeCompare(b.label));
+    // ✅ favoritos primero, después sortOrder, después label
+    return [...items].sort((a, b) => {
+      const af = (a as any)?.isFavorite ? 1 : 0;
+      const bf = (b as any)?.isFavorite ? 1 : 0;
+      if (af !== bf) return bf - af;
+      return a.sortOrder - b.sortOrder || a.label.localeCompare(b.label);
+    });
   }, [items]);
 
   const activeCount = useMemo(() => items.filter((x) => x.isActive).length, [items]);
@@ -100,7 +112,7 @@ export default function Catalogos() {
 
         <div className="min-w-0 flex-1">
           <div className="text-lg font-semibold">Catálogos (Combos)</div>
-          <div className="text-xs text-muted">Administrá opciones por joyería: crear, activar/desactivar y ordenar.</div>
+          <div className="text-xs text-muted">Administrá opciones por joyería: crear, activar/desactivar, ordenar y favorito.</div>
         </div>
 
         <button type="button" className="tp-btn-secondary" onClick={() => reload()} disabled={busy || loading} title="Recargar">
@@ -171,9 +183,7 @@ export default function Catalogos() {
 
         <div className="mt-3 border-t border-[color-mix(in_oklab,var(--border)_75%,transparent)] pt-3">
           <div className="text-sm font-semibold mb-2">Carga masiva</div>
-          <div className="text-xs text-muted mb-2">
-            Pegá una lista (una por línea o separadas por coma). Se ignoran duplicados automáticamente.
-          </div>
+          <div className="text-xs text-muted mb-2">Pegá una lista (una por línea o separadas por coma). Se ignoran duplicados automáticamente.</div>
 
           <textarea
             className="tp-input w-full min-h-[120px]"
@@ -230,12 +240,42 @@ export default function Catalogos() {
             const d = draftById[it.id] ?? { label: it.label, sortOrder: it.sortOrder };
             const dirty = d.label !== it.label || d.sortOrder !== it.sortOrder;
 
+            const isFav = Boolean((it as any)?.isFavorite);
+
             return (
               <div
                 key={it.id}
                 className="flex flex-wrap items-center gap-2 p-2 rounded-xl"
                 style={{ border: "1px solid color-mix(in oklab, var(--border) 80%, transparent)" }}
               >
+                {/* ⭐ Favorito */}
+                <button
+                  type="button"
+                  className={cn(
+                    "h-9 w-9 rounded-xl border grid place-items-center",
+                    isFav
+                      ? "bg-[color-mix(in_oklab,var(--primary)_14%,var(--card))] border-[color-mix(in_oklab,var(--primary)_28%,var(--border))]"
+                      : "bg-[color-mix(in_oklab,var(--card)_92%,var(--bg))] border-[color-mix(in_oklab,var(--border)_85%,transparent)] hover:bg-[color-mix(in_oklab,var(--primary)_8%,var(--card))]"
+                  )}
+                  title={isFav ? "Quitar favorito" : "Marcar como favorito"}
+                  disabled={busy}
+                  onClick={async () => {
+                    setBusy(true);
+                    setError(null);
+                    try {
+                      await setCatalogItemFavorite(it.id, !isFav); // ✅ toggle (permite deseleccionar)
+                      toast.success(!isFav ? "Marcado como favorito" : "Favorito quitado");
+                      await reload();
+                    } catch (e: any) {
+                      setError(String(e?.message ?? e));
+                    } finally {
+                      setBusy(false);
+                    }
+                  }}
+                >
+                  <Star className={cn("h-4 w-4", isFav ? "fill-[color:var(--primary)] text-[color:var(--primary)]" : "text-muted")} />
+                </button>
+
                 <input
                   className="tp-input flex-1 min-w-[220px]"
                   value={d.label}

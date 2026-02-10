@@ -21,8 +21,15 @@ type Props = {
   tone?: Tone; // default: "primary"
   icon?: "help" | "warning"; // default: "help"
 
+  // ✅ modo "escribir para confirmar"
   requireTypeToConfirm?: boolean;
   typeToConfirmText?: string; // default: "CONFIRMAR"
+
+  // ✅ NUEVO: modo input editable (para "Agregar ítem")
+  inputValue?: string;
+  onInputChange?: (v: string) => void;
+  inputPlaceholder?: string;
+  inputExample?: string;
 
   loading?: boolean;
 
@@ -45,14 +52,22 @@ export default function ConfirmActionDialog({
   requireTypeToConfirm = false,
   typeToConfirmText = "CONFIRMAR",
 
+  inputValue,
+  onInputChange,
+  inputPlaceholder = "Escribí el ítem...",
+  inputExample,
+
   loading = false,
   onClose,
   onConfirm,
 }: Props) {
   const dialogRef = useRef<HTMLDivElement | null>(null);
-  const inputRef = useRef<HTMLInputElement | null>(null);
+  const typedRef = useRef<HTMLInputElement | null>(null);
+  const editRef = useRef<HTMLInputElement | null>(null);
 
   const [typed, setTyped] = useState("");
+
+  const hasEditableInput = typeof inputValue === "string" && typeof onInputChange === "function";
 
   // reset cuando abre/cierra
   useEffect(() => {
@@ -63,13 +78,19 @@ export default function ConfirmActionDialog({
     }
   }, [open]);
 
-  const normalizedTarget = useMemo(() => String(typeToConfirmText || "CONFIRMAR").trim().toUpperCase(), [typeToConfirmText]);
+  const normalizedTarget = useMemo(
+    () => String(typeToConfirmText || "CONFIRMAR").trim().toUpperCase(),
+    [typeToConfirmText]
+  );
   const normalizedTyped = useMemo(() => String(typed || "").trim().toUpperCase(), [typed]);
 
+  const editableTrim = useMemo(() => String(inputValue ?? "").trim(), [inputValue]);
+
   const canConfirm = useMemo(() => {
-    if (!requireTypeToConfirm) return true;
-    return normalizedTyped === normalizedTarget;
-  }, [requireTypeToConfirm, normalizedTyped, normalizedTarget]);
+    if (requireTypeToConfirm) return normalizedTyped === normalizedTarget;
+    if (hasEditableInput) return editableTrim.length > 0;
+    return true;
+  }, [requireTypeToConfirm, normalizedTyped, normalizedTarget, hasEditableInput, editableTrim]);
 
   // focus management + lock scroll
   useEffect(() => {
@@ -80,9 +101,10 @@ export default function ConfirmActionDialog({
 
     document.body.style.overflow = "hidden";
 
-    // focus al input si existe, sino al contenedor
     const t = window.setTimeout(() => {
-      if (requireTypeToConfirm) inputRef.current?.focus();
+      // prioridad: input editable > type-to-confirm > dialog
+      if (hasEditableInput) editRef.current?.focus();
+      else if (requireTypeToConfirm) typedRef.current?.focus();
       else dialogRef.current?.focus();
     }, 0);
 
@@ -91,7 +113,7 @@ export default function ConfirmActionDialog({
       document.body.style.overflow = prevOverflow;
       prevActive?.focus?.();
     };
-  }, [open, requireTypeToConfirm]);
+  }, [open, requireTypeToConfirm, hasEditableInput]);
 
   // Escape / Enter
   useEffect(() => {
@@ -108,11 +130,7 @@ export default function ConfirmActionDialog({
       }
 
       if (e.key === "Enter") {
-        // Si está escribiendo en input, Enter confirma
-        // Si no hay input, también confirma.
         if (loading) return;
-
-        // si requireTypeToConfirm, solo confirma si coincide
         if (!canConfirm) return;
 
         e.preventDefault();
@@ -130,11 +148,7 @@ export default function ConfirmActionDialog({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center px-4" aria-hidden={!open}>
-      <div
-        className="absolute inset-0 bg-black/40"
-        onClick={loading ? undefined : onClose}
-        aria-hidden="true"
-      />
+      <div className="absolute inset-0 bg-black/40" onClick={loading ? undefined : onClose} aria-hidden="true" />
 
       <div
         ref={dialogRef}
@@ -154,13 +168,35 @@ export default function ConfirmActionDialog({
             {description ? <div className="mt-1 text-sm text-muted-foreground">{description}</div> : null}
 
             {hint ? (
-              <div className="mt-2 rounded-xl border border-border bg-black/5 p-3 text-sm">
-                {hint}
-              </div>
+              <div className="mt-2 rounded-xl border border-border bg-black/5 p-3 text-sm">{hint}</div>
             ) : null}
           </div>
         </div>
 
+        {/* ✅ NUEVO: Input editable (Agregar ítem) */}
+        {hasEditableInput && !requireTypeToConfirm ? (
+          <div className="mt-4">
+            <input
+              ref={editRef}
+              value={inputValue}
+              onChange={(e) => onInputChange?.(e.target.value)}
+              disabled={loading}
+              className={cn(
+                "mt-1 w-full rounded-xl border border-border bg-transparent px-3 py-2 text-sm outline-none",
+                // ✅ sin “focus rectangular” fuerte
+                "focus:ring-0 focus:outline-none"
+              )}
+              placeholder={inputPlaceholder}
+              autoComplete="off"
+              autoCorrect="off"
+              spellCheck={false}
+            />
+
+            {inputExample ? <div className="mt-2 text-xs text-muted-foreground">{inputExample}</div> : null}
+          </div>
+        ) : null}
+
+        {/* ✅ Modo escribir para confirmar (se mantiene) */}
         {requireTypeToConfirm ? (
           <div className="mt-4">
             <label className="block text-sm font-medium">
@@ -168,13 +204,14 @@ export default function ConfirmActionDialog({
             </label>
 
             <input
-              ref={inputRef}
+              ref={typedRef}
               value={typed}
               onChange={(e) => setTyped(e.target.value)}
               disabled={loading}
               className={cn(
                 "mt-2 w-full rounded-xl border border-border bg-transparent px-3 py-2 text-sm outline-none",
-                "focus:ring-2 focus:ring-primary/30"
+                // ✅ bajamos el foco fuerte
+                "focus:ring-0 focus:outline-none"
               )}
               placeholder={typeToConfirmText}
               autoComplete="off"

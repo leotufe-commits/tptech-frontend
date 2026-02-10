@@ -1,5 +1,5 @@
 // tptech-frontend/src/components/users/edit/sections/SectionConfig.tsx
-import React from "react";
+import React, { useEffect, useState } from "react";
 import { Loader2 } from "lucide-react";
 
 import { TPSegmentedPills } from "../../../ui/TPBadges";
@@ -8,22 +8,21 @@ import { cn, Section, effectLabel, permLabelByModuleAction } from "../../users.u
 import type { Override, OverrideEffect, Role } from "../../../../services/users";
 import type { Permission } from "../../../../services/permissions";
 
-import { PinFlowModal } from "./PinFlowModal";
+import DeletePinConfirmModal from "../partials/DeletePinConfirmModal";
+import PinConfigSection from "../partials/PinConfigSection";
+import { isPin4 } from "../helpers/sectionConfig.helpers";
 
 type Props = {
   modalMode: "CREATE" | "EDIT";
   disableAdminDangerZone: boolean;
   confirmOverlay: string;
 
-  // admin / permissions
   canAdmin: boolean;
   isOwner: boolean;
 
-  // detail
   detailHasQuickPin: boolean;
   detailPinEnabled: boolean;
 
-  // PIN flow + actions
   pinFlowOpen: boolean;
   openPinFlow: () => void;
   closePinFlow: () => void;
@@ -44,22 +43,19 @@ type Props = {
   pinMsg: string | null;
   showPinMessage: boolean;
 
-  // ✅ drafts (para estado “PENDIENTE”)
   pinNew: string;
   pinNew2: string;
-
   setPinNew: (v: string) => void;
   setPinNew2: (v: string) => void;
 
-  adminSetOrResetPin: () => Promise<void>;
+  adminSetOrResetPin: (opts?: { currentPin?: string }) => Promise<void>;
   adminTogglePinEnabled: (next: boolean, opts?: { confirmRemoveOverrides?: boolean }) => Promise<void>;
-  adminRemovePin: (opts?: { confirmRemoveOverrides?: boolean }) => Promise<void>;
+  adminRemovePin: (opts?: { confirmRemoveOverrides?: boolean; currentPin?: string }) => Promise<void>;
 
-  // special perms (overrides)
   specialListSorted: Override[];
   setConfirmDisablePinClearsSpecialOpen: (v: boolean) => void;
 
-  specialBlocked: boolean; // disableAdminDangerZone || isOwner
+  specialBlocked: boolean;
   specialEnabled: boolean;
   setSpecialEnabled: (v: boolean) => void;
 
@@ -82,156 +78,159 @@ type Props = {
 
   setConfirmDisableSpecialOpen: (v: boolean) => void;
 
-  // warehouses
   fFavWarehouseId: string;
   setFFavWarehouseId: (v: string) => void;
   activeAlmacenes: Array<{ id: string; nombre: string; codigo: string }>;
   warehouseLabelById: (id?: string | null) => string | null;
 
-  // roles
   roles: Role[];
   rolesLoading: boolean;
   fRoleIds: string[];
   setFRoleIds: React.Dispatch<React.SetStateAction<string[]>>;
   roleLabel: (r: any) => string;
 
-  // self-owner protection
   isSelf: boolean;
   ownerRoleId: string | null;
   selfOwnerChecked: boolean;
 };
 
-function isValidPinDraft(p1: string, p2: string) {
-  const a = String(p1 || "").trim();
-  const b = String(p2 || "").trim();
-  if (!a || !b) return false;
-  if (a !== b) return false;
-  return /^\d{4}$/.test(a);
-}
+export default function SectionConfig(props: Props) {
+  const {
+    modalMode,
+    disableAdminDangerZone,
+    confirmOverlay,
 
-export default function SectionConfig({
-  modalMode,
-  disableAdminDangerZone,
-  confirmOverlay,
+    canAdmin,
+    isOwner,
 
-  canAdmin,
-  isOwner,
+    detailHasQuickPin,
+    detailPinEnabled,
 
-  detailHasQuickPin,
-  detailPinEnabled,
+    pinFlowOpen,
+    openPinFlow,
+    closePinFlow,
 
-  pinFlowOpen,
-  openPinFlow,
-  closePinFlow,
+    pinFlowStep,
+    setPinFlowStep,
+    pinDraft,
+    setPinDraft,
+    pinDraft2,
+    setPinDraft2,
 
-  hasPin,
-  pinFlowStep,
-  setPinFlowStep,
-  pinDraft,
-  setPinDraft,
-  pinDraft2,
-  setPinDraft2,
+    pinBusy,
+    pinToggling,
+    pinPillsDisabled,
 
-  pinBusy,
-  pinToggling,
-  pinPillsDisabled,
+    pinMsg,
+    showPinMessage,
 
-  pinMsg,
-  showPinMessage,
+    pinNew,
+    pinNew2,
+    setPinNew,
+    setPinNew2,
 
-  pinNew,
-  pinNew2,
-  setPinNew,
-  setPinNew2,
+    adminSetOrResetPin,
+    adminTogglePinEnabled,
+    adminRemovePin,
 
-  adminSetOrResetPin,
-  adminTogglePinEnabled,
-  adminRemovePin,
+    specialListSorted,
+    setConfirmDisablePinClearsSpecialOpen,
 
-  specialListSorted,
-  setConfirmDisablePinClearsSpecialOpen,
+    specialBlocked,
+    specialEnabled,
+    setSpecialEnabled,
+    specialPermPick,
+    setSpecialPermPick,
+    specialEffectPick,
+    setSpecialEffectPick,
 
-  specialBlocked,
-  specialEnabled,
-  setSpecialEnabled,
-  specialPermPick,
-  setSpecialPermPick,
-  specialEffectPick,
-  setSpecialEffectPick,
+    specialSaving,
+    specialClearing,
 
-  specialSaving,
-  specialClearing,
+    allPerms,
+    permsLoading,
+    addOrUpdateSpecial,
+    removeSpecial,
+    labelByPermId,
+    setConfirmDisableSpecialOpen,
 
-  allPerms,
-  permsLoading,
-  addOrUpdateSpecial,
-  removeSpecial,
-  labelByPermId,
-  setConfirmDisableSpecialOpen,
+    fFavWarehouseId,
+    setFFavWarehouseId,
+    activeAlmacenes,
+    warehouseLabelById,
 
-  fFavWarehouseId,
-  setFFavWarehouseId,
-  activeAlmacenes,
-  warehouseLabelById,
+    roles,
+    rolesLoading,
+    fRoleIds,
+    setFRoleIds,
+    roleLabel,
 
-  roles,
-  rolesLoading,
-  fRoleIds,
-  setFRoleIds,
-  roleLabel,
+    isSelf,
+    ownerRoleId,
+    selfOwnerChecked,
+  } = props;
 
-  isSelf,
-  ownerRoleId,
-  selfOwnerChecked,
-}: Props) {
-  const pinPending = isValidPinDraft(pinNew, pinNew2);
+  // ✅ OPCIÓN A (solo visual)
+  const [pinRemovedVisual, setPinRemovedVisual] = useState(false);
 
-  const pinBadge = !detailHasQuickPin
-    ? pinPending
-      ? { text: "Pendiente", cls: "border-sky-500/30 bg-sky-500/15 text-sky-300" }
-      : { text: "Sin PIN", cls: "border-border bg-bg text-muted" }
-    : detailPinEnabled
-    ? { text: "Activo", cls: "border-emerald-500/30 bg-emerald-500/15 text-emerald-300" }
-    : { text: "Inactivo", cls: "border-yellow-500/30 bg-yellow-500/15 text-yellow-300" };
+  // ✅ modal para pedir PIN ACTUAL al borrar (SELF)
+  const [showDeletePinConfirm, setShowDeletePinConfirm] = useState(false);
+  const [deletePinCurrent, setDeletePinCurrent] = useState("");
+  const [deletePinErr, setDeletePinErr] = useState<string | null>(null);
 
-  const pinActionsDisabled = pinBusy || pinToggling || !canAdmin || disableAdminDangerZone;
+  useEffect(() => {
+    setPinRemovedVisual(false);
+    setShowDeletePinConfirm(false);
+    setDeletePinCurrent("");
+    setDeletePinErr(null);
+  }, [detailHasQuickPin, modalMode]);
 
-  const pinModalTitle =
-    modalMode === "CREATE"
-      ? pinPending
-        ? "Editar PIN inicial"
-        : "Crear PIN inicial"
-      : detailHasQuickPin
-      ? "Actualizar PIN"
-      : "Crear PIN";
+  const busyDeleteSelf = pinBusy || pinToggling;
 
   return (
     <div className="w-full space-y-4">
-      {disableAdminDangerZone ? (
-        <div
-          className="tp-card p-3 text-sm flex gap-3 items-start"
-          style={{
-            border: "1px solid color-mix(in oklab, var(--primary) 22%, var(--border))",
-            background: "color-mix(in oklab, var(--card) 88%, var(--bg))",
-          }}
-        >
-          <div className="min-w-0">
-            <div className="font-semibold">Configuración restringida</div>
-            <div className="text-xs text-muted">
-              Estás editando tu propio usuario. Para evitar perder acceso o expirar la sesión, desde acá no podés cambiar
-              roles/permisos/almacén favorito/PIN. Esto debe hacerlo otro Admin/Owner.
-            </div>
-          </div>
-        </div>
-      ) : null}
+      <DeletePinConfirmModal
+        open={showDeletePinConfirm}
+        busy={busyDeleteSelf}
+        current={deletePinCurrent}
+        setCurrent={setDeletePinCurrent}
+        err={deletePinErr}
+        setErr={setDeletePinErr}
+        onClose={() => {
+          if (busyDeleteSelf) return;
+          setShowDeletePinConfirm(false);
+          setDeletePinCurrent("");
+          setDeletePinErr(null);
+        }}
+        onConfirm={(currentPin) => {
+          if (!isPin4(currentPin)) {
+            setDeletePinErr("Ingresá un PIN válido de 4 dígitos.");
+            return;
+          }
 
-      {/* ✅ PIN FLOW MODAL (CREATE + EDIT) */}
-      <PinFlowModal
-        open={pinFlowOpen}
-        title={pinModalTitle}
-        onClose={closePinFlow}
-        overlayClassName={confirmOverlay}
-        hasPin={hasPin}
+          void adminRemovePin({ currentPin }).then(() => {
+            setPinNew("");
+            setPinNew2("");
+            setPinRemovedVisual(true);
+
+            setShowDeletePinConfirm(false);
+            setDeletePinCurrent("");
+            setDeletePinErr(null);
+          });
+        }}
+      />
+
+      <PinConfigSection
+        modalMode={modalMode}
+        confirmOverlay={confirmOverlay}
+        canAdmin={canAdmin}
+        isOwner={isOwner}
+        isSelf={isSelf}
+        detailHasQuickPin={detailHasQuickPin}
+        detailPinEnabled={detailPinEnabled}
+        pinFlowOpen={pinFlowOpen}
+        openPinFlow={openPinFlow}
+        closePinFlow={closePinFlow}
         pinFlowStep={pinFlowStep}
         setPinFlowStep={setPinFlowStep}
         pinDraft={pinDraft}
@@ -240,120 +239,30 @@ export default function SectionConfig({
         setPinDraft2={setPinDraft2}
         pinBusy={pinBusy}
         pinToggling={pinToggling}
-        onConfirm={async () => {
-          // ✅ ORDEN CORRECTO: primero seteo drafts, después valido/arma el “pendiente”
-          setPinNew(pinDraft);
-          setPinNew2(pinDraft2);
-          await adminSetOrResetPin();
+        pinPillsDisabled={pinPillsDisabled}
+        pinMsg={pinMsg}
+        showPinMessage={showPinMessage}
+        pinNew={pinNew}
+        pinNew2={pinNew2}
+        setPinNew={setPinNew}
+        setPinNew2={setPinNew2}
+        adminSetOrResetPin={adminSetOrResetPin}
+        adminTogglePinEnabled={adminTogglePinEnabled}
+        adminRemovePin={adminRemovePin}
+        specialListSorted={specialListSorted}
+        setConfirmDisablePinClearsSpecialOpen={setConfirmDisablePinClearsSpecialOpen}
+        pinRemovedVisual={pinRemovedVisual}
+        setPinRemovedVisual={setPinRemovedVisual}
+        onAskDeleteSelf={() => {
+          setDeletePinCurrent("");
+          setDeletePinErr(null);
+          setShowDeletePinConfirm(true);
         }}
       />
 
-      {/* ✅ Sección PIN SIEMPRE visible (CREATE + EDIT) */}
-      <Section
-        title={
-          <div className="flex items-center gap-2">
-            <span>Clave rápida (PIN)</span>
-            <span className={cn("text-[11px] px-2 py-0.5 rounded-full border", pinBadge.cls)}>{pinBadge.text}</span>
-          </div>
-        }
-        desc="PIN de 4 dígitos para desbloqueo rápido y cambio de usuario."
-        right={
-          // ✅ Activación SOLO si existe PIN real en detail
-          detailHasQuickPin ? (
-            <div className="flex items-center gap-2">
-              <span className="text-[11px] text-muted">Activación</span>
-              <TPSegmentedPills
-                value={Boolean(detailPinEnabled)}
-                disabled={pinPillsDisabled}
-                onChange={(v) => {
-                  if (pinBusy || pinToggling) return;
-                  if (!canAdmin || disableAdminDangerZone) return;
-
-                  if (!v && specialListSorted.length > 0) {
-                    setConfirmDisablePinClearsSpecialOpen(true);
-                    return;
-                  }
-
-                  void adminTogglePinEnabled(v);
-                }}
-                labels={{ on: "Activo", off: "Inactivo" }}
-              />
-            </div>
-          ) : null
-        }
-      >
-        <div className="tp-card p-4 flex flex-col gap-3">
-          <div className="text-sm">
-            {detailHasQuickPin ? (
-              <span className="text-foreground/80">Hay un PIN configurado para este usuario.</span>
-            ) : pinPending ? (
-              <span className="text-foreground/80">PIN listo para aplicar al guardar.</span>
-            ) : (
-              <span className="text-muted">
-                {modalMode === "CREATE" ? "Podés definir un PIN inicial (se aplica al guardar)." : "Todavía no hay un PIN configurado."}
-              </span>
-            )}
-          </div>
-
-          <div className="flex flex-wrap gap-2">
-            <button
-              type="button"
-              className={cn("tp-btn-primary", pinActionsDisabled && "opacity-60")}
-              disabled={pinActionsDisabled}
-              onClick={openPinFlow}
-            >
-              {detailHasQuickPin ? "Actualizar PIN" : pinPending ? "Editar PIN" : modalMode === "CREATE" ? "Crear PIN inicial" : "Crear PIN"}
-            </button>
-
-            {/* ✅ Eliminar SOLO si existe PIN real (detailHasQuickPin) */}
-            {detailHasQuickPin ? (
-              <button
-                type="button"
-                className={cn("tp-btn-secondary hover:text-red-400", pinActionsDisabled && "opacity-60")}
-                disabled={pinActionsDisabled}
-                onClick={() => {
-                  if (specialListSorted.length > 0) {
-                    setConfirmDisablePinClearsSpecialOpen(true);
-                    return;
-                  }
-                  void adminRemovePin().then(() => {
-                    setPinNew("");
-                    setPinNew2("");
-                  });
-                }}
-              >
-                Eliminar
-              </button>
-            ) : pinPending ? (
-              <button
-                type="button"
-                className={cn("tp-btn-secondary", pinActionsDisabled && "opacity-60")}
-                disabled={pinActionsDisabled}
-                onClick={() => {
-                  // ✅ Quitar solo borra draft (no toca backend)
-                  setPinNew("");
-                  setPinNew2("");
-                }}
-              >
-                Quitar
-              </button>
-            ) : null}
-          </div>
-
-          {showPinMessage && pinMsg ? <div className="text-xs text-muted">{pinMsg}</div> : null}
-
-          {modalMode === "CREATE" ? <div className="text-[11px] text-muted">* El PIN se aplica recién cuando guardás el usuario.</div> : null}
-        </div>
-      </Section>
-
+      {/* ✅ Almacén favorito */}
       <Section title="Almacén favorito" desc="Se usará por defecto en operaciones.">
-        <select
-          className="tp-input"
-          value={fFavWarehouseId}
-          onChange={(e) => setFFavWarehouseId(e.target.value)}
-          disabled={!canAdmin || disableAdminDangerZone}
-          title={disableAdminDangerZone ? "No se puede cambiar en tu propio usuario (evita perder acceso)." : undefined}
-        >
+        <select className="tp-input" value={fFavWarehouseId} onChange={(e) => setFFavWarehouseId(e.target.value)}>
           <option value="">Sin favorito</option>
           {activeAlmacenes.map((a) => {
             const isSelected = String(fFavWarehouseId) === String(a.id);
@@ -367,14 +276,34 @@ export default function SectionConfig({
         </select>
 
         <div className="mt-2 text-xs text-muted">
-          {disableAdminDangerZone
-            ? "Bloqueado al editar tu usuario."
-            : fFavWarehouseId
+          {fFavWarehouseId
             ? `Seleccionado: ${warehouseLabelById(fFavWarehouseId) ?? fFavWarehouseId}`
             : "Sin almacén favorito"}
         </div>
       </Section>
 
+      {/* ✅ Mensaje entre Almacén y Roles */}
+      {disableAdminDangerZone ? (
+        <div
+          className="tp-card p-3 text-sm flex gap-3 items-start"
+          style={{
+            border: "1px solid color-mix(in oklab, var(--primary) 22%, var(--border))",
+            background: "color-mix(in oklab, var(--card) 88%, var(--bg))",
+          }}
+        >
+          <div className="min-w-0">
+            <div className="font-semibold">Configuración restringida</div>
+            <div className="text-xs text-muted">
+              Estás editando tu propio usuario. Para evitar perder acceso o expirar la sesión, desde acá no podés cambiar
+              roles/permisos.
+              <br />
+              ✅ Tu PIN y tu almacén favorito sí los podés gestionar.
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {/* ✅ Roles */}
       <Section title="Roles del usuario" desc="Selección múltiple.">
         <div className={cn("tp-card p-3 max-h-[260px] overflow-auto tp-scroll", disableAdminDangerZone && "opacity-60")}>
           {rolesLoading ? (
@@ -400,7 +329,9 @@ export default function SectionConfig({
                       className="h-4 w-4"
                       checked={checked}
                       disabled={disableThis}
-                      onChange={(e) => setFRoleIds((prev) => (e.target.checked ? [...prev, rid] : prev.filter((id) => id !== rid)))}
+                      onChange={(e) =>
+                        setFRoleIds((prev) => (e.target.checked ? [...prev, rid] : prev.filter((id) => id !== rid)))
+                      }
                     />
                     <span className={cn(disableThis && "text-muted")}>{roleLabel(r)}</span>
                     {isSelf && ownerRoleId && rid === ownerRoleId && selfOwnerChecked ? (
@@ -420,6 +351,7 @@ export default function SectionConfig({
         )}
       </Section>
 
+      {/* ✅ Permisos especiales */}
       <Section
         title={<span className="inline-flex items-center gap-2">Permisos especiales</span>}
         right={
@@ -502,7 +434,11 @@ export default function SectionConfig({
                   type="button"
                   onClick={() => void addOrUpdateSpecial()}
                   disabled={!specialEnabled || !specialPermPick || specialBlocked || specialClearing || specialSaving}
-                  className={cn("tp-btn-primary", "h-[42px] w-[42px] px-0 grid place-items-center", specialSaving && "opacity-60")}
+                  className={cn(
+                    "tp-btn-primary",
+                    "h-[42px] w-[42px] px-0 grid place-items-center",
+                    specialSaving && "opacity-60"
+                  )}
                   title="Agregar / Actualizar"
                   aria-label="Agregar / Actualizar"
                 >

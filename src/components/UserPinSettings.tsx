@@ -72,16 +72,15 @@ export default function UserPinSettings() {
   const timeoutOptions = useMemo(() => [1, 2, 3, 5, 10, 15, 20, 30, 45, 60, 90, 120, 240, 360, 720], []);
 
   const disabledCardClass = !pinLockEnabled ? "opacity-55 bg-surface2/80" : "";
-  const requireSwitchDisabled = !pinLockEnabled || !quickSwitchEnabled;
+
+  // ✅ CORRECCIÓN: exigir PIN al cambiar usuario depende de Quick Switch, no del lock por inactividad
+  const requireSwitchDisabled = !quickSwitchEnabled;
 
   // ✅ UX: si no aplica, mostramos "No aplica" y forzamos visualmente OFF
   const requireSwitchValue = requireSwitchDisabled ? false : Boolean(pinLockRequireOnUserSwitch);
-  const requireSwitchLabels =
-    !pinLockEnabled
-      ? { off: "No aplica", on: "Requerir" }
-      : !quickSwitchEnabled
-      ? { off: "No aplica", on: "Requerir" }
-      : { off: "No requerir", on: "Requerir" };
+  const requireSwitchLabels = !quickSwitchEnabled
+    ? { off: "No aplica", on: "Requerir" }
+    : { off: "No requerir", on: "Requerir" };
 
   function applySnapshot(s: Snapshot) {
     setQuickSwitchEnabled(Boolean(s.quickSwitchEnabled));
@@ -141,10 +140,15 @@ export default function UserPinSettings() {
       const safeTimeoutMin = clamp(Math.floor(Number(timeoutMin) || 1), 1, 720);
 
       const body: Partial<SecuritySettings> = {
-        // ✅ dependencias: si apagan PIN global, apagamos lo demás
+        // ✅ pinLockEnabled es independiente (bloqueo por inactividad)
         pinLockEnabled: Boolean(pinLockEnabled),
-        quickSwitchEnabled: Boolean(pinLockEnabled ? quickSwitchEnabled : false),
-        pinLockRequireOnUserSwitch: Boolean(pinLockEnabled && quickSwitchEnabled ? pinLockRequireOnUserSwitch : false),
+
+        // ✅ quickSwitchEnabled es independiente del lock
+        quickSwitchEnabled: Boolean(quickSwitchEnabled),
+
+        // ✅ exigir PIN al cambiar usuario solo aplica si quickSwitch está ON
+        pinLockRequireOnUserSwitch: Boolean(quickSwitchEnabled ? pinLockRequireOnUserSwitch : false),
+
         pinLockTimeoutSec: safeTimeoutMin * 60,
       };
 
@@ -157,7 +161,6 @@ export default function UserPinSettings() {
       setOk("Guardado correctamente");
       await auth.refreshMe({ silent: true });
 
-      // ✅ actualizamos snapshot a lo guardado (para que "Cancelar" no vuelva atrás)
       const nextSnap: Snapshot = {
         pinLockEnabled: Boolean(body.pinLockEnabled),
         quickSwitchEnabled: Boolean(body.quickSwitchEnabled),
@@ -243,10 +246,10 @@ export default function UserPinSettings() {
                 const next = Boolean(v);
                 setPinLockEnabled(next);
 
-                // ✅ dependencias
+                // ✅ si apagan lock, NO apagamos quick switch (son independientes)
                 if (!next) {
-                  setQuickSwitchEnabled(false);
-                  setPinLockRequireOnUserSwitch(false);
+                  // Solo si querés, podrías setear un timeout default o dejarlo
+                  // y NO tocar quickSwitchEnabled.
                 }
               }}
               disabled={!canEdit || busy}
@@ -257,7 +260,7 @@ export default function UserPinSettings() {
         </div>
 
         {/* Quick Switch */}
-        <div className={`tp-card p-4 transition ${disabledCardClass}`}>
+        <div className={`tp-card p-4 transition ${!quickSwitchEnabled ? "" : ""}`}>
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0">
               <div className="text-sm font-semibold text-text">Cambio rápido de usuario</div>
@@ -267,17 +270,16 @@ export default function UserPinSettings() {
             <TPSegmentedPills
               value={quickSwitchEnabled}
               onChange={(v) => {
-                if (!canEdit || busy || !pinLockEnabled) return;
+                if (!canEdit || busy) return;
                 setErr(null);
                 setOk(null);
 
                 const next = Boolean(v);
                 setQuickSwitchEnabled(next);
 
-                // ✅ si lo apagan, no aplica exigir PIN
                 if (!next) setPinLockRequireOnUserSwitch(false);
               }}
-              disabled={!canEdit || busy || !pinLockEnabled}
+              disabled={!canEdit || busy}
               labels={{ off: "Deshabilitado", on: "Habilitado" }}
               size="sm"
             />
@@ -285,7 +287,7 @@ export default function UserPinSettings() {
         </div>
 
         {/* Require PIN on switch */}
-        <div className={`tp-card p-4 transition ${disabledCardClass}`}>
+        <div className={`tp-card p-4 transition ${!quickSwitchEnabled ? "opacity-55 bg-surface2/80" : ""}`}>
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0">
               <div className="text-sm font-semibold text-text">Requerir PIN al cambiar usuario</div>
@@ -306,15 +308,9 @@ export default function UserPinSettings() {
             />
           </div>
 
-          {pinLockEnabled && !quickSwitchEnabled && (
+          {!quickSwitchEnabled && (
             <div className="mt-2 text-[11px] text-muted">
               <b>No aplica:</b> activá “Cambio rápido de usuario” para poder exigir PIN al cambiar usuario.
-            </div>
-          )}
-
-          {!pinLockEnabled && (
-            <div className="mt-2 text-[11px] text-muted">
-              <b>No aplica:</b> primero habilitá el “Bloqueo por PIN”.
             </div>
           )}
         </div>

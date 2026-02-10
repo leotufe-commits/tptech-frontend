@@ -1,197 +1,15 @@
 // tptech-frontend/src/components/Topbar.tsx
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
-import { createPortal } from "react-dom";
 import { Menu, Settings, Lock, UsersRound } from "lucide-react";
+
 import { useTheme } from "../context/ThemeContext";
 import { useAuth } from "../context/AuthContext";
 import ThemeSwitcher from "./ThemeSwitcher";
 
-type RouteMeta = {
-  title: string;
-  crumbs: { label: string; to?: string }[];
-};
-
-function getMeta(pathname: string): RouteMeta {
-  const p = pathname.toLowerCase();
-
-  if (p === "/dashboard" || p.startsWith("/dashboard/")) {
-    return { title: "Dashboard", crumbs: [{ label: "Dashboard" }] };
-  }
-
-  if (p.startsWith("/configuracion-sistema")) {
-    // subpages
-    if (p.startsWith("/configuracion-sistema/pin")) {
-      return {
-        title: "Configurar PIN",
-        crumbs: [
-          { label: "Dashboard", to: "/dashboard" },
-          { label: "Configuración", to: "/configuracion-sistema" },
-          { label: "PIN" },
-        ],
-      };
-    }
-    if (p.startsWith("/configuracion-sistema/tema")) {
-      return {
-        title: "Tema",
-        crumbs: [
-          { label: "Dashboard", to: "/dashboard" },
-          { label: "Configuración", to: "/configuracion-sistema" },
-          { label: "Tema" },
-        ],
-      };
-    }
-
-    return {
-      title: "Configuración del sistema",
-      crumbs: [{ label: "Dashboard", to: "/dashboard" }, { label: "Configuración" }],
-    };
-  }
-
-  // compat rutas viejas
-  if (p.startsWith("/configuracion")) {
-    return {
-      title: "Configuración",
-      crumbs: [{ label: "Dashboard", to: "/dashboard" }, { label: "Configuración" }],
-    };
-  }
-
-  if (p.startsWith("/divisas")) {
-    return {
-      title: "Divisas",
-      crumbs: [{ label: "Dashboard", to: "/dashboard" }, { label: "Divisas" }],
-    };
-  }
-
-  return { title: "TPTech", crumbs: [{ label: "Dashboard", to: "/dashboard" }] };
-}
-
-function cn(...classes: Array<string | false | null | undefined>) {
-  return classes.filter(Boolean).join(" ");
-}
-
-function clamp(n: number, min: number, max: number) {
-  return Math.max(min, Math.min(max, n));
-}
-
-function useEscapeToClose(open: boolean, onClose: () => void) {
-  useEffect(() => {
-    if (!open) return;
-    function onKeyDown(e: KeyboardEvent) {
-      if (e.key === "Escape") onClose();
-    }
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [open, onClose]);
-}
-
-function useOutsideClickToClose(
-  open: boolean,
-  containerRef: React.RefObject<HTMLElement | null>,
-  onClose: () => void
-) {
-  useEffect(() => {
-    if (!open) return;
-
-    function onDown(e: MouseEvent) {
-      const el = containerRef.current;
-      if (!el) return;
-      if (e.target instanceof Node && !el.contains(e.target)) onClose();
-    }
-
-    document.addEventListener("mousedown", onDown);
-    return () => document.removeEventListener("mousedown", onDown);
-  }, [open, containerRef, onClose]);
-}
-
-/**
- * Menú flotante en Portal (no se corta por overflow del layout).
- * Posiciona debajo del botón, y si no entra, abre hacia arriba.
- */
-function PortalMenu({
-  open,
-  anchorRef,
-  onClose,
-  children,
-  width = 340,
-}: {
-  open: boolean;
-  anchorRef: React.RefObject<HTMLElement | null>;
-  onClose: () => void;
-  children: React.ReactNode;
-  width?: number;
-}) {
-  const menuRef = useRef<HTMLDivElement | null>(null);
-  const [, forceTick] = useState(0);
-
-  useEscapeToClose(open, onClose);
-  useOutsideClickToClose(open, menuRef, onClose);
-
-  useEffect(() => {
-    if (!open) return;
-    const onRecalc = () => forceTick((t: number) => t + 1);
-    window.addEventListener("resize", onRecalc);
-    window.addEventListener("scroll", onRecalc, true);
-    return () => {
-      window.removeEventListener("resize", onRecalc);
-      window.removeEventListener("scroll", onRecalc, true);
-    };
-  }, [open]);
-
-  if (!open) return null;
-
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  const _tick = forceTick; // evita warning si TS/ESLint se pone pesado
-
-  const r = anchorRef.current?.getBoundingClientRect();
-  const viewportPad = 10;
-  const gap = 10;
-
-  const maxH = Math.min(560, Math.max(280, window.innerHeight - viewportPad * 2));
-
-  const anchorRight = r?.right ?? 0;
-  const anchorTop = r?.top ?? 0;
-  const anchorBottom = r?.bottom ?? 0;
-
-  const leftWanted = anchorRight - width;
-  const left = clamp(leftWanted, viewportPad, window.innerWidth - viewportPad - width);
-
-  const spaceBelow = window.innerHeight - viewportPad - anchorBottom;
-  const spaceAbove = anchorTop - viewportPad;
-
-  const openDown = spaceBelow >= 240 || spaceBelow >= spaceAbove;
-  const topDown = clamp(anchorBottom + gap, viewportPad, window.innerHeight - viewportPad - maxH);
-  const topUp = clamp(anchorTop - gap - maxH, viewportPad, window.innerHeight - viewportPad - maxH);
-  const top = openDown ? topDown : topUp;
-
-  return createPortal(
-    <>
-      <div
-        style={{ position: "fixed", inset: 0, zIndex: 9998 }}
-        onMouseDown={onClose}
-        aria-hidden="true"
-      />
-      <div
-        ref={menuRef}
-        style={{
-          position: "fixed",
-          left,
-          top,
-          width,
-          maxHeight: maxH,
-          zIndex: 9999,
-        }}
-        className="rounded-2xl border border-border bg-bg shadow-[0_18px_40px_rgba(0,0,0,0.18)] overflow-hidden"
-        onMouseDown={(e) => e.stopPropagation()}
-      >
-        <div className="tp-scroll overflow-auto" style={{ maxHeight: maxH }}>
-          {children}
-        </div>
-      </div>
-    </>,
-    document.body
-  );
-}
+import { getTopbarMeta } from "./topbar/topbar.meta";
+import { cn } from "./topbar/topbar.utils";
+import { PortalMenu } from "./topbar/PortalMenu";
 
 export default function Topbar({
   onToggleSidebar,
@@ -202,22 +20,21 @@ export default function Topbar({
 }) {
   const { pathname } = useLocation();
   const navigate = useNavigate();
-  const meta = useMemo(() => getMeta(pathname), [pathname]);
+
+  const meta = useMemo(() => getTopbarMeta(pathname), [pathname]);
 
   const auth = useAuth();
   const locked = Boolean((auth as any)?.locked);
 
   const { theme, themes } = useTheme();
-
   const jewelryName = auth.jewelry?.name ?? (auth.loading ? "Cargando..." : "Sin joyería");
 
-  const currentThemeLabel = useMemo(() => {
-    return themes.find((t) => t.value === theme)?.label ?? "Tema";
-  }, [themes, theme]);
+  const currentThemeLabel = useMemo(() => themes.find((t) => t.value === theme)?.label ?? "Tema", [themes, theme]);
 
   const [settingsOpen, setSettingsOpen] = useState(false);
   const settingsBtnRef = useRef<HTMLButtonElement | null>(null);
 
+  // anchorRef estable (evita re-renders raros)
   const settingsAnchorRef = useMemo<React.RefObject<HTMLElement | null>>(
     () => ({
       get current() {
@@ -227,69 +44,87 @@ export default function Topbar({
     []
   );
 
-  // cerrar menú al navegar y cerrar drawer (si existe)
+  // cerrar menú al navegar + cerrar drawer (si existe)
   useEffect(() => {
     setSettingsOpen(false);
     onCloseSidebar?.();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pathname]);
 
-  // ✅ si se bloquea, cerramos settings
+  // si se bloquea, cerramos settings
   useEffect(() => {
     if (!locked) return;
     setSettingsOpen(false);
   }, [locked]);
 
-  // ✅ pinLockEnabled robusto (compat con distintas versiones del AuthContext)
+  // pinLockEnabled robusto (compat)
   const pinLockEnabled = Boolean(
-    (auth as any).pinLockEnabled ??
-      (auth as any).lockEnabled ??
-      (auth as any)?.jewelry?.pinLockEnabled ??
+    (auth as any).pinLockEnabled ?? (auth as any).lockEnabled ?? (auth as any)?.jewelry?.pinLockEnabled ?? false
+  );
+
+  const pinLockTimeoutMinutes = Number((auth as any).pinLockTimeoutMinutes ?? (auth as any).lockTimeoutMinutes ?? 5);
+
+  const pinLockRequireOnUserSwitch = Boolean(
+    (auth as any).pinLockRequireOnUserSwitch ?? (auth as any)?.jewelry?.pinLockRequireOnUserSwitch ?? true
+  );
+
+  const quickSwitchEnabled = Boolean((auth as any).quickSwitchEnabled ?? (auth as any)?.jewelry?.quickSwitchEnabled ?? false);
+
+  // ✅ Estado del PIN del usuario actual (compat) — FIX PRECEDENCIA
+  const meHasQuickPin = Boolean(
+    (auth as any)?.me?.hasQuickPin ??
+      ((auth as any)?.me?.quickPinHash != null) ??
+      (auth as any)?.user?.hasQuickPin ??
       false
   );
 
-  const pinLockTimeoutMinutes = Number(
-    (auth as any).pinLockTimeoutMinutes ?? (auth as any).lockTimeoutMinutes ?? 5
+  const mePinEnabled = Boolean(
+    (auth as any)?.me?.pinEnabled ?? (auth as any)?.me?.quickPinEnabled ?? (auth as any)?.user?.pinEnabled ?? false
   );
 
-  const pinLockRequireOnUserSwitch = Boolean(
-    (auth as any).pinLockRequireOnUserSwitch ??
-      (auth as any)?.jewelry?.pinLockRequireOnUserSwitch ??
-      true
-  );
+  const canLockNow = Boolean(pinLockEnabled && meHasQuickPin && mePinEnabled);
 
-  const quickSwitchEnabled = Boolean(
-    (auth as any).quickSwitchEnabled ?? (auth as any)?.jewelry?.quickSwitchEnabled ?? false
-  );
+  const switchWithoutPin = Boolean(pinLockEnabled && quickSwitchEnabled && pinLockRequireOnUserSwitch === false);
 
-  // “switch sin pin” = quickSwitch ON + requireOnUserSwitch false (y pin global ON)
-  const switchWithoutPin = Boolean(
-    pinLockEnabled && quickSwitchEnabled && pinLockRequireOnUserSwitch === false
-  );
+  const openQuickSwitchFn = (auth as any).openQuickSwitch as undefined | (() => void);
+
+  // ✅ Podemos abrir selector si quickSwitch está ON y existe handler (aunque luego pida PIN)
+  const canOpenQuickSwitchUI = Boolean(pinLockEnabled && quickSwitchEnabled && typeof openQuickSwitchFn === "function");
 
   function onPressLock() {
     if (locked) return;
 
-    // ✅ Si el PIN está deshabilitado => ir a configuración NUEVA
+    // 1) Si el sistema de PIN está apagado => ir a configuración
     if (!pinLockEnabled) {
       navigate("/configuracion-sistema/pin");
       return;
     }
 
-    // ✅ Si está habilitado => bloquear pantalla (LockScreen)
+    // 2) Si quickSwitch está ON y podemos abrir UI => abrir selector
+    if (canOpenQuickSwitchUI && typeof openQuickSwitchFn === "function") {
+      openQuickSwitchFn();
+      return;
+    }
+
+    // 3) Caso normal: bloquear pantalla cuando PIN global está ON
     const lockNowFn = (auth as any).lockNow;
     if (typeof lockNowFn === "function") {
       lockNowFn();
       return;
     }
 
-    // ✅ fallback: si por versión no existe lockNow, usamos setLocked directo
+    // fallback: setLocked(true)
     const setLockedFn = (auth as any).setLocked;
     if (typeof setLockedFn === "function") {
       setLockedFn(true);
       return;
     }
+
+    // último fallback
+    navigate("/configuracion-sistema/pin");
   }
+
+  const lockBtnLabel = !pinLockEnabled ? "Configurar PIN" : canOpenQuickSwitchUI ? "Cambiar usuario" : "Bloquear";
 
   return (
     <header
@@ -338,7 +173,7 @@ export default function Topbar({
 
           {/* DER */}
           <div className="flex shrink-0 items-center gap-2">
-            {/* 🔒 Bloquear ahora (o ir a config si está apagado) */}
+            {/* 🔒 / 👥 Acción principal */}
             <button
               type="button"
               onClick={onPressLock}
@@ -347,14 +182,10 @@ export default function Topbar({
                 locked && "opacity-50 pointer-events-none",
                 "focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-primary/20"
               )}
-              aria-label={
-                pinLockEnabled ? (switchWithoutPin ? "Cambiar usuario" : "Bloquear") : "Configurar PIN"
-              }
-              title={
-                pinLockEnabled ? (switchWithoutPin ? "Cambiar usuario" : "Bloquear") : "Configurar PIN"
-              }
+              aria-label={lockBtnLabel}
+              title={lockBtnLabel}
             >
-              {switchWithoutPin ? <UsersRound className="h-5 w-5" /> : <Lock className="h-5 w-5" />}
+              {canOpenQuickSwitchUI ? <UsersRound className="h-5 w-5" /> : <Lock className="h-5 w-5" />}
             </button>
 
             {/* ⚙️ Configuración */}
@@ -377,19 +208,14 @@ export default function Topbar({
               <Settings className="h-5 w-5" />
             </button>
 
-            <PortalMenu
-              open={settingsOpen}
-              anchorRef={settingsAnchorRef}
-              onClose={() => setSettingsOpen(false)}
-              width={360}
-            >
+            <PortalMenu open={settingsOpen} anchorRef={settingsAnchorRef} onClose={() => setSettingsOpen(false)} width={360}>
               <div className="p-3 space-y-3">
                 <div className="px-1">
                   <div className="text-sm font-semibold text-text">Configuración</div>
                   <div className="text-xs text-muted">Preferencias del sistema</div>
                 </div>
 
-                {/* Tema (solo switch rápido, sin botones de navegación) */}
+                {/* Tema */}
                 <div className="tp-card p-3 space-y-2">
                   <div className="text-xs font-semibold text-muted">Tema</div>
                   <ThemeSwitcher variant="menu" />
@@ -398,7 +224,7 @@ export default function Topbar({
                   </div>
                 </div>
 
-                {/* Joyería + Seguridad (solo info, sin botones) */}
+                {/* Joyería + Seguridad */}
                 <div className="tp-card p-3 space-y-2">
                   <div className="text-xs font-semibold text-muted">Joyería</div>
 
@@ -422,12 +248,12 @@ export default function Topbar({
 
                     <span
                       className="inline-flex items-center gap-1 rounded-full border border-border bg-card px-2 py-1 text-[11px] text-muted"
-                      title="Tiempo de inactividad para bloquear"
+                      title="Tiempo de inactividad"
                     >
                       ⏱ {Number.isFinite(pinLockTimeoutMinutes) ? pinLockTimeoutMinutes : 5} min
                     </span>
 
-                    {pinLockEnabled && (
+                    {pinLockEnabled && quickSwitchEnabled && (
                       <span
                         className={cn(
                           "inline-flex items-center gap-1 rounded-full border px-2 py-1 text-[11px]",
@@ -455,6 +281,12 @@ export default function Topbar({
                     >
                       Configuración PIN
                     </button>
+                  </div>
+
+                  {/* (opcional) debug visual mínimo */}
+                  <div className="pt-2 text-[10px] text-muted/70">
+                    Estado: {pinLockEnabled ? "PIN ON" : "PIN OFF"} · Usuario PIN: {meHasQuickPin && mePinEnabled ? "OK" : "NO"} ·
+                    Bloquear ahora: {canLockNow ? "Sí" : "No"}
                   </div>
                 </div>
               </div>

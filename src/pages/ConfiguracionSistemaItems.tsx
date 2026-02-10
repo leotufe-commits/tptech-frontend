@@ -1,5 +1,5 @@
 // tptech-frontend/src/pages/ConfiguracionSistemaItems.tsx
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import {
   ChevronRight,
@@ -17,19 +17,27 @@ import {
   ShieldBan,
   ShieldCheck,
   Star,
+  Loader2,
 } from "lucide-react";
 
 import { SortArrows } from "../components/ui/TPSort";
+import {
+  listCatalog,
+  createCatalogItem,
+  updateCatalogItem,
+  setCatalogItemFavorite,
+  type CatalogItem,
+  type CatalogType,
+} from "../services/catalogs";
 
 function cn(...classes: Array<string | false | null | undefined>) {
   return classes.filter(Boolean).join(" ");
 }
 
-type CatalogKey = "TAX_CONDITION" | "PHONE_PREFIX" | "COUNTRY" | "PROVINCE" | "CITY";
 type CatalogGroup = "Ubicaciones" | "Fiscal";
 
 type Catalog = {
-  key: CatalogKey;
+  key: CatalogType;
   title: string;
   desc: string;
   group: CatalogGroup;
@@ -40,43 +48,33 @@ type RowStatus = "Activo" | "Inactivo";
 
 type Row = {
   id: string;
-  name: string;
-  code?: string;
+  label: string;
   status: RowStatus;
+  sortOrder: number;
   updatedAt?: string;
-  favorite?: boolean; // ✅ favorito (solo 1 por catálogo)
+  favorite?: boolean;
 };
-
-function nowLabel() {
-  return "hoy";
-}
 
 /* =========================
    Helpers: hints dinámicos por catálogo
 ========================= */
-function catalogHints(key: CatalogKey) {
+function catalogHints(key: CatalogType) {
   switch (key) {
-    case "TAX_CONDITION":
+    case "IVA_CONDITION":
       return {
         modalSubtitle: "Definí una condición impositiva para usar en facturación y perfiles.",
-        nameLabel: "Nombre",
+        nameLabel: "Condición",
         namePlaceholder: "Ej: Responsable Inscripto",
         nameHint: "Se verá en el sistema como opción del combo.",
-        codeLabel: "Código (opcional)",
-        codePlaceholder: "Ej: RI",
-        codeHint: "Código corto para reportes/listados.",
         statusHint: "Desactivá para ocultar la opción sin borrar historial.",
       };
 
     case "PHONE_PREFIX":
       return {
-        modalSubtitle: "Definí un prefijo para teléfonos (por país o región).",
-        nameLabel: "País / Región",
-        namePlaceholder: "Ej: Argentina",
-        nameHint: "Nombre visible en el selector de prefijos.",
-        codeLabel: "Prefijo (opcional)",
-        codePlaceholder: "Ej: +54",
-        codeHint: "Recomendado: incluye el “+”.",
+        modalSubtitle: "Definí un prefijo para teléfonos.",
+        nameLabel: "Prefijo",
+        namePlaceholder: "Ej: +54",
+        nameHint: "Recomendado: incluye el “+”.",
         statusHint: "Desactivá para ocultarlo del selector.",
       };
 
@@ -86,9 +84,6 @@ function catalogHints(key: CatalogKey) {
         nameLabel: "País",
         namePlaceholder: "Ej: Argentina",
         nameHint: "Nombre visible en el combo de país.",
-        codeLabel: "Código (opcional)",
-        codePlaceholder: "Ej: AR",
-        codeHint: "Sugerido: ISO 2 letras.",
         statusHint: "Desactivá para ocultarlo del selector.",
       };
 
@@ -98,9 +93,6 @@ function catalogHints(key: CatalogKey) {
         nameLabel: "Provincia / Estado",
         namePlaceholder: "Ej: Buenos Aires",
         nameHint: "Nombre visible en el combo de provincia/estado.",
-        codeLabel: "Código (opcional)",
-        codePlaceholder: "Ej: BA",
-        codeHint: "Útil para abreviaturas y listados.",
         statusHint: "Desactivá para ocultarla del selector.",
       };
 
@@ -110,10 +102,16 @@ function catalogHints(key: CatalogKey) {
         nameLabel: "Ciudad / Localidad",
         namePlaceholder: "Ej: La Plata",
         nameHint: "Nombre visible en el combo de ciudad.",
-        codeLabel: "Código (opcional)",
-        codePlaceholder: "Ej: LP",
-        codeHint: "Opcional: abreviatura interna.",
         statusHint: "Desactivá para ocultarla del selector.",
+      };
+
+    case "DOCUMENT_TYPE":
+      return {
+        modalSubtitle: "Definí tipos de documento para usuarios/clientes.",
+        nameLabel: "Tipo de documento",
+        namePlaceholder: "Ej: DNI",
+        nameHint: "Nombre visible en el combo.",
+        statusHint: "Desactivá para ocultarlo del selector.",
       };
 
     default:
@@ -122,9 +120,6 @@ function catalogHints(key: CatalogKey) {
         nameLabel: "Nombre",
         namePlaceholder: "Ej: Nombre",
         nameHint: "Nombre visible en el sistema.",
-        codeLabel: "Código (opcional)",
-        codePlaceholder: "Ej: COD",
-        codeHint: "Código corto para identificar.",
         statusHint: "Podés desactivar sin borrar.",
       };
   }
@@ -133,13 +128,7 @@ function catalogHints(key: CatalogKey) {
 /* =========================
    UI: Pill / Badge
 ========================= */
-function Pill({
-  children,
-  tone,
-}: {
-  children: React.ReactNode;
-  tone?: "neutral" | "ok" | "off";
-}) {
+function Pill({ children, tone }: { children: React.ReactNode; tone?: "neutral" | "ok" | "off" }) {
   const cls =
     tone === "ok"
       ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300"
@@ -214,7 +203,7 @@ function ModalShell({
 /* =========================
    Sort helpers
 ========================= */
-type SortCol = "NAME" | "CODE" | "STATUS";
+type SortCol = "LABEL" | "STATUS";
 type SortDir = "asc" | "desc";
 
 function norm(s: any) {
@@ -222,8 +211,18 @@ function norm(s: any) {
 }
 
 function statusRank(s: RowStatus) {
-  // para que "Activo" quede antes que "Inactivo" cuando ordenás por estado asc
   return s === "Activo" ? 0 : 1;
+}
+
+function itemToRow(it: CatalogItem): Row {
+  return {
+    id: it.id,
+    label: it.label,
+    status: it.isActive ? "Activo" : "Inactivo",
+    sortOrder: it.sortOrder ?? 0,
+    updatedAt: it.updatedAt,
+    favorite: Boolean((it as any).isFavorite),
+  };
 }
 
 /* =========================
@@ -232,9 +231,17 @@ function statusRank(s: RowStatus) {
 export default function ConfiguracionSistemaItems() {
   const catalogs: Catalog[] = useMemo(
     () => [
+          {
+      key: "DOCUMENT_TYPE",
+      title: "Tipos de documento",
+      desc: "Tipos de documento para usuarios y clientes.",
+      group: "Fiscal",
+      icon: <Tag size={18} />,
+    },
+
       {
-        key: "TAX_CONDITION",
-        title: "Condición impositiva",
+        key: "IVA_CONDITION",
+        title: "Condición de IVA",
         desc: "Catálogo fiscal base (IVA / régimen).",
         group: "Fiscal",
         icon: <Receipt size={18} />,
@@ -242,7 +249,7 @@ export default function ConfiguracionSistemaItems() {
       {
         key: "PHONE_PREFIX",
         title: "Prefijos telefónicos",
-        desc: "Códigos por país para teléfonos.",
+        desc: "Códigos por país para teléfonos (ej: +54).",
         group: "Ubicaciones",
         icon: <Phone size={18} />,
       },
@@ -271,37 +278,21 @@ export default function ConfiguracionSistemaItems() {
     []
   );
 
-  const [data, setData] = useState<Record<CatalogKey, Row[]>>(() => ({
-    TAX_CONDITION: [
-      { id: "1", name: "Responsable Inscripto", code: "RI", status: "Activo", updatedAt: nowLabel(), favorite: true },
-      { id: "2", name: "Monotributo", code: "MONO", status: "Activo", updatedAt: nowLabel(), favorite: false },
-      { id: "3", name: "Consumidor Final", code: "CF", status: "Activo", updatedAt: nowLabel(), favorite: false },
-    ],
-    PHONE_PREFIX: [
-      { id: "1", name: "Argentina", code: "+54", status: "Activo", updatedAt: nowLabel(), favorite: true },
-      { id: "2", name: "Uruguay", code: "+598", status: "Activo", updatedAt: nowLabel(), favorite: false },
-    ],
-    COUNTRY: [{ id: "1", name: "Argentina", code: "AR", status: "Activo", updatedAt: nowLabel(), favorite: true }],
-    PROVINCE: [
-      { id: "1", name: "Buenos Aires", code: "BA", status: "Activo", updatedAt: nowLabel(), favorite: true },
-      { id: "2", name: "Córdoba", code: "CB", status: "Activo", updatedAt: nowLabel(), favorite: false },
-    ],
-    CITY: [
-      { id: "1", name: "CABA", code: "CABA", status: "Activo", updatedAt: nowLabel(), favorite: true },
-      { id: "2", name: "La Plata", code: "LP", status: "Activo", updatedAt: nowLabel(), favorite: false },
-    ],
-  }));
-
-  const [selected, setSelected] = useState<CatalogKey>("TAX_CONDITION");
+  const [selected, setSelected] = useState<CatalogType>("IVA_CONDITION");
   const [q, setQ] = useState("");
 
   const current = catalogs.find((c) => c.key === selected)!;
-  const rowsAll = data[selected] ?? [];
-
   const hints = useMemo(() => catalogHints(selected), [selected]);
 
-  const [sortBy, setSortBy] = useState<SortCol>("NAME");
+  const [sortBy, setSortBy] = useState<SortCol>("LABEL");
   const [sortDir, setSortDir] = useState<SortDir>("asc");
+
+  const [rowsByKey, setRowsByKey] = useState<Record<string, Row[]>>({});
+  const rowsAll = rowsByKey[selected] ?? [];
+
+  const [loading, setLoading] = useState(false);
+  const [savingBusy, setSavingBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
 
   function toggleSort(col: SortCol) {
     if (sortBy !== col) {
@@ -312,42 +303,55 @@ export default function ConfiguracionSistemaItems() {
     setSortDir((d) => (d === "asc" ? "desc" : "asc"));
   }
 
+  async function refreshSelected(force = false) {
+    try {
+      setErr(null);
+      setLoading(true);
+      const items = await listCatalog(selected, { includeInactive: true, force });
+      const rows = items.map(itemToRow);
+      setRowsByKey((prev) => ({ ...prev, [selected]: rows }));
+    } catch (e: any) {
+      setErr(e?.message || "No se pudo cargar el catálogo.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    // cargar catálogo al cambiar el selector
+    refreshSelected(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selected]);
+
   const filteredRows = useMemo(() => {
     const s = norm(q);
     if (!s) return rowsAll;
-
-    return rowsAll.filter((r) => norm(r.name).includes(s) || norm(r.code).includes(s));
+    return rowsAll.filter((r) => norm(r.label).includes(s));
   }, [q, rowsAll]);
 
-  // ✅ siempre mostrar ordenado (por defecto: alfabético asc por Nombre)
+  // ✅ siempre mostrar ordenado
   const visibleRows = useMemo(() => {
     const arr = [...filteredRows];
     const dir = sortDir === "asc" ? 1 : -1;
 
     arr.sort((a, b) => {
-      let ak = "";
-      let bk = "";
+      // ⭐ favoritos primero SIEMPRE (independiente del sort), para UX y coherencia con PerfilJoyeria
+      const fa = a.favorite ? 1 : 0;
+      const fb = b.favorite ? 1 : 0;
+      if (fa !== fb) return (fb - fa); // desc
 
-      if (sortBy === "NAME") {
-        ak = norm(a.name);
-        bk = norm(b.name);
-      } else if (sortBy === "CODE") {
-        ak = norm(a.code || "");
-        bk = norm(b.code || "");
-      } else {
-        // STATUS
+      if (sortBy === "STATUS") {
         const ra = statusRank(a.status);
         const rb = statusRank(b.status);
         const primary = (ra - rb) * dir;
         if (primary !== 0) return primary;
-        ak = norm(a.name);
-        bk = norm(b.name);
+        return norm(a.label).localeCompare(norm(b.label), "es", { sensitivity: "base" }) * dir;
       }
 
-      const primary = ak.localeCompare(bk, "es", { sensitivity: "base" }) * dir;
+      // LABEL
+      const primary = norm(a.label).localeCompare(norm(b.label), "es", { sensitivity: "base" }) * dir;
       if (primary !== 0) return primary;
 
-      // tie-break estable
       return String(a.id).localeCompare(String(b.id)) * dir;
     });
 
@@ -366,15 +370,13 @@ export default function ConfiguracionSistemaItems() {
   const [modalOpen, setModalOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
 
-  const [fName, setFName] = useState("");
-  const [fCode, setFCode] = useState("");
+  const [fLabel, setFLabel] = useState("");
   const [fStatus, setFStatus] = useState<RowStatus>("Activo");
   const [formError, setFormError] = useState<string | null>(null);
 
   function openCreate() {
     setEditingId(null);
-    setFName("");
-    setFCode("");
+    setFLabel("");
     setFStatus("Activo");
     setFormError(null);
     setModalOpen(true);
@@ -382,108 +384,121 @@ export default function ConfiguracionSistemaItems() {
 
   function openEdit(r: Row) {
     setEditingId(r.id);
-    setFName(r.name || "");
-    setFCode(r.code || "");
+    setFLabel(r.label || "");
     setFStatus(r.status || "Activo");
     setFormError(null);
     setModalOpen(true);
   }
 
   function closeModal() {
+    if (savingBusy) return;
     setModalOpen(false);
     setEditingId(null);
     setFormError(null);
   }
 
-  function upsertRow() {
-    const name = String(fName || "").trim();
-    const code = String(fCode || "").trim();
-
-    if (!name) {
+  async function upsertRow() {
+    const label = String(fLabel || "").trim();
+    if (!label) {
       setFormError("El nombre es obligatorio.");
       return;
     }
 
-    setData((prev) => {
-      const list = Array.isArray(prev[selected]) ? [...prev[selected]] : [];
+    // Validación local rápida (sin bloquear si backend decide distinto)
+    const dup = rowsAll.some((r) => r.label.trim().toLowerCase() === label.toLowerCase() && r.id !== editingId);
+    if (dup) {
+      setFormError("Ya existe un ítem con ese nombre en este catálogo.");
+      return;
+    }
 
-      const dup = list.some((r) => r.name.trim().toLowerCase() === name.toLowerCase() && r.id !== editingId);
-      if (dup) {
-        setFormError("Ya existe un ítem con ese nombre en este catálogo.");
-        return prev;
-      }
+    try {
+      setFormError(null);
+      setSavingBusy(true);
 
       if (editingId) {
-        const idx = list.findIndex((r) => r.id === editingId);
-        if (idx >= 0) list[idx] = { ...list[idx], name, code: code || undefined, status: fStatus, updatedAt: nowLabel() };
-      } else {
-        const id = `${Date.now()}_${Math.random().toString(16).slice(2)}`;
-        list.unshift({
-          id,
-          name,
-          code: code || undefined,
-          status: fStatus,
-          updatedAt: nowLabel(),
-          favorite: false,
+        await updateCatalogItem(editingId, {
+          label,
+          isActive: fStatus === "Activo",
         });
+      } else {
+        await createCatalogItem(selected, label);
+        // si lo creás como inactivo, lo bajamos después con patch (para no tocar tu endpoint POST)
+        if (fStatus === "Inactivo") {
+          await refreshSelected(true);
+          const just = (rowsByKey[selected] ?? []).find((x) => x.label.trim().toLowerCase() === label.toLowerCase());
+          if (just?.id) await updateCatalogItem(just.id, { isActive: false });
+        }
       }
 
-      return { ...prev, [selected]: list };
-    });
-
-    closeModal();
+      await refreshSelected(true);
+      closeModal();
+    } catch (e: any) {
+      setFormError(e?.message || "No se pudo guardar.");
+    } finally {
+      setSavingBusy(false);
+    }
   }
 
-  function toggleActive(r: Row) {
-    setData((prev) => {
-      const list = Array.isArray(prev[selected]) ? [...prev[selected]] : [];
-      const idx = list.findIndex((x) => x.id === r.id);
-      if (idx < 0) return prev;
+  async function toggleActive(r: Row) {
+    try {
+      setSavingBusy(true);
+      const nextStatus: RowStatus = r.status === "Activo" ? "Inactivo" : "Activo";
 
-      const nextStatus: RowStatus = list[idx].status === "Activo" ? "Inactivo" : "Activo";
-      list[idx] = { ...list[idx], status: nextStatus, updatedAt: nowLabel() };
+      // optimistic
+      setRowsByKey((prev) => ({
+        ...prev,
+        [selected]: (prev[selected] ?? []).map((x) => (x.id === r.id ? { ...x, status: nextStatus } : x)),
+      }));
 
-      return { ...prev, [selected]: list };
-    });
+      await updateCatalogItem(r.id, { isActive: nextStatus === "Activo" });
+      await refreshSelected(true);
+    } catch (e: any) {
+      setErr(e?.message || "No se pudo actualizar el estado.");
+      await refreshSelected(true);
+    } finally {
+      setSavingBusy(false);
+    }
   }
 
-  // ✅ solo 1 favorito por catálogo (tabla actual)
-  function setFavorite(r: Row) {
-    setData((prev) => {
-      const list = Array.isArray(prev[selected]) ? [...prev[selected]] : [];
-      const idx = list.findIndex((x) => x.id === r.id);
-      if (idx < 0) return prev;
+  // ✅ solo 1 favorito por catálogo (backend) + ✅ se puede deseleccionar
+  async function setFavorite(r: Row) {
+    try {
+      setSavingBusy(true);
+      const alreadyFav = Boolean(r.favorite);
 
-      const alreadyFav = Boolean(list[idx].favorite);
+      // optimistic: si deselecciona -> todos false, si selecciona -> solo ese true
+      setRowsByKey((prev) => {
+        const list = prev[selected] ?? [];
+        if (alreadyFav) {
+          return { ...prev, [selected]: list.map((x) => ({ ...x, favorite: false })) };
+        }
+        return { ...prev, [selected]: list.map((x) => ({ ...x, favorite: x.id === r.id })) };
+      });
 
-      // si ya es favorito, lo dejamos como favorito (no se "apaga" con click)
-      // si querés que el click lo desmarque, decime y lo hacemos.
-      const next = list.map((x) => ({ ...x, favorite: false }));
-      next[idx] = { ...next[idx], favorite: true, updatedAt: nowLabel() };
-
-      // si ya era favorito, igual mantenemos el estado
-      if (alreadyFav) return { ...prev, [selected]: next };
-
-      return { ...prev, [selected]: next };
-    });
+      await setCatalogItemFavorite(r.id, !alreadyFav);
+      await refreshSelected(true);
+    } catch (e: any) {
+      setErr(e?.message || "No se pudo actualizar el favorito.");
+      await refreshSelected(true);
+    } finally {
+      setSavingBusy(false);
+    }
   }
 
-  function removeRow(r: Row) {
-    const ok = window.confirm(`¿Eliminar "${r.name}"?\n\nEsto es una demo mock. Luego lo conectamos al backend con confirmación real.`);
+  async function removeRow(r: Row) {
+    // No tenemos DELETE implementado en backend en lo que pegaste.
+    // Para no romper, mantenemos confirm y avisamos.
+    const ok = window.confirm(
+      `¿Eliminar "${r.label}"?\n\nTodavía no está implementado el DELETE en backend. Si querés, lo agregamos (soft delete / isActive=false).`
+    );
     if (!ok) return;
-
-    setData((prev) => {
-      const list = Array.isArray(prev[selected]) ? prev[selected].filter((x) => x.id !== r.id) : [];
-      return { ...prev, [selected]: list };
-    });
   }
 
-  // “mock” de paginación (igual estilo Users)
   const page = 1;
   const totalPages = 1;
 
-  // ✅ columnas más “justificadas” y más cerca del Ítem
-  const tableCols = "grid-cols-[1fr,120px,120px,140px]"; // Ítem | Código | Estado | Acciones
+  // Ítem | Estado | Acciones
+  const tableCols = "grid-cols-[1fr,160px,180px]";
 
   return (
     <div className="p-6">
@@ -494,7 +509,7 @@ export default function ConfiguracionSistemaItems() {
       </div>
 
       <div className="grid gap-4 lg:grid-cols-[340px,1fr]">
-        {/* ================= LEFT: Catálogos (sin buscador) ================= */}
+        {/* ================= LEFT: Catálogos ================= */}
         <aside className="rounded-2xl border border-border bg-card p-4" style={{ boxShadow: "var(--shadow)" }}>
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0">
@@ -515,7 +530,7 @@ export default function ConfiguracionSistemaItems() {
                   <div className="mt-2 space-y-2">
                     {list.map((c) => {
                       const active = c.key === selected;
-                      const count = (data[c.key] || []).length;
+                      const count = (rowsByKey[c.key] || []).length;
 
                       return (
                         <button
@@ -568,12 +583,25 @@ export default function ConfiguracionSistemaItems() {
 
         {/* ================= RIGHT ================= */}
         <section className="space-y-3">
-          {/* Header (con borde) + buscador + botón alineados */}
+          {/* Header */}
           <div className="rounded-2xl border border-border bg-card p-4" style={{ boxShadow: "var(--shadow)" }}>
             <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-              <div className="min-w-0">
-                <div className="text-lg font-bold text-text truncate">{current.title}</div>
-                <div className="text-sm text-muted mt-0.5">{current.desc}</div>
+              <div className="min-w-0 text-left">
+                <div className="text-lg font-bold text-text truncate text-left">{current.title}</div>
+                <div className="text-sm text-muted mt-0.5 text-left">{current.desc}</div>
+              </div>
+
+              <div className="flex items-center justify-end gap-2">
+                <button
+                  type="button"
+                  className="tp-btn-secondary h-10 inline-flex items-center gap-2"
+                  onClick={() => refreshSelected(true)}
+                  disabled={loading || savingBusy}
+                  title="Recargar"
+                >
+                  {loading ? <Loader2 size={16} className="animate-spin" /> : <Tag size={16} />}
+                  {loading ? "Cargando…" : "Recargar"}
+                </button>
               </div>
             </div>
 
@@ -583,7 +611,7 @@ export default function ConfiguracionSistemaItems() {
                 <input
                   value={q}
                   onChange={(e) => setQ(e.target.value)}
-                  placeholder="Buscar por nombre / código…"
+                  placeholder="Buscar por nombre…"
                   className={cn(
                     "w-full h-10 rounded-xl border border-border bg-bg text-text pl-9 pr-3 text-sm",
                     "focus:outline-none focus:ring-4 focus:ring-primary/20"
@@ -592,44 +620,37 @@ export default function ConfiguracionSistemaItems() {
               </div>
 
               <div className="flex items-center justify-end">
-                <button type="button" className={cn("tp-btn-primary h-10 inline-flex items-center gap-2")} onClick={openCreate}>
+                <button
+                  type="button"
+                  className={cn("tp-btn-primary h-10 inline-flex items-center gap-2")}
+                  onClick={openCreate}
+                  disabled={savingBusy}
+                >
                   <Plus size={16} />
                   Nuevo ítem
                 </button>
               </div>
             </div>
+
+            {err && <div className="mt-3 text-sm text-red-600">{err}</div>}
           </div>
 
           {/* Tabla estilo Users */}
           <div className="rounded-2xl border border-border bg-card overflow-hidden" style={{ boxShadow: "var(--shadow)" }}>
             {/* header */}
             <div className={cn("grid gap-0 border-b border-border bg-surface2 px-5 py-3 text-[11px] font-semibold text-muted", tableCols)}>
-              <div className="uppercase tracking-wide">
-                <button
-                  type="button"
-                  className="inline-flex items-center gap-1 hover:opacity-90"
-                  onClick={() => toggleSort("NAME")}
-                  title="Ordenar por ítem"
-                >
-                  Ítem
-                  <SortArrows dir={sortDir} active={sortBy === "NAME"} />
-                </button>
-              </div>
-
-              {/* ✅ header alineado a la izquierda (como el contenido) */}
               <div className="uppercase tracking-wide text-left">
                 <button
                   type="button"
                   className="inline-flex items-center gap-1 hover:opacity-90"
-                  onClick={() => toggleSort("CODE")}
-                  title="Ordenar por código"
+                  onClick={() => toggleSort("LABEL")}
+                  title="Ordenar por ítem"
                 >
-                  Código
-                  <SortArrows dir={sortDir} active={sortBy === "CODE"} />
+                  Ítem
+                  <SortArrows dir={sortDir} active={sortBy === "LABEL"} />
                 </button>
               </div>
 
-              {/* ✅ header alineado a la izquierda (como el contenido) */}
               <div className="uppercase tracking-wide text-left">
                 <button
                   type="button"
@@ -645,7 +666,12 @@ export default function ConfiguracionSistemaItems() {
               <div className="uppercase tracking-wide text-right">Acciones</div>
             </div>
 
-            {visibleRows.length === 0 ? (
+            {loading ? (
+              <div className="p-10 text-center text-sm text-muted">
+                <Loader2 className="mx-auto mb-3 h-6 w-6 animate-spin" />
+                Cargando…
+              </div>
+            ) : visibleRows.length === 0 ? (
               <div className="p-8 text-center">
                 <div className="mx-auto mb-2 grid h-12 w-12 place-items-center rounded-2xl border border-border bg-surface2 text-primary">
                   <Tag size={20} />
@@ -665,7 +691,6 @@ export default function ConfiguracionSistemaItems() {
               <div className="divide-y divide-border">
                 {visibleRows.map((r) => {
                   const isFav = Boolean(r.favorite);
-
                   return (
                     <div key={r.id} className="px-5 py-4 hover:bg-surface2 transition">
                       <div className={cn("grid items-center gap-4", tableCols)}>
@@ -676,29 +701,24 @@ export default function ConfiguracionSistemaItems() {
                           className="min-w-0 text-left focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-primary/20 rounded-xl -ml-2 px-2 py-1"
                           title="Editar"
                         >
-                          <div className="font-semibold text-text truncate">{r.name}</div>
-                          <div className="text-xs text-muted mt-0.5">Actualizado: {r.updatedAt || "—"}</div>
-                        </button>
-
-                        {/* Código */}
-                        <div className="min-w-0 text-left">
-                          <span className="text-sm font-semibold text-text truncate block">{r.code || "—"}</span>
-                        </div>
+                          <div className="font-semibold text-text truncate">{r.label}</div>
+                          </button>
 
                         {/* Estado */}
                         <div className="min-w-0 text-left">
                           <Pill tone={r.status === "Activo" ? "ok" : "off"}>{r.status}</Pill>
                         </div>
 
-                        {/* ✅ Acciones: Favorito (primero) / Editar / Activar-Inactivar / Eliminar */}
+                        {/* Acciones */}
                         <div className="flex items-center justify-end gap-2">
                           <button
                             type="button"
                             className="tp-btn-secondary h-9 w-9 !p-0 grid place-items-center"
-                            title={isFav ? "Favorito" : "Marcar como favorito"}
+                            title={isFav ? "Quitar favorito" : "Marcar como favorito"}
                             onClick={() => setFavorite(r)}
+                            disabled={savingBusy}
                           >
-                            <Star size={16} className={cn(isFav ? "fill-yellow-400 text-yellow-400" : "text-text/80")} />
+                            <Star size={16} className={cn("stroke-current", isFav ? "fill-current text-yellow-400" : "fill-transparent text-text/80")} />
                           </button>
 
                           <button
@@ -706,6 +726,7 @@ export default function ConfiguracionSistemaItems() {
                             className="tp-btn-secondary h-9 w-9 !p-0 grid place-items-center"
                             title="Editar"
                             onClick={() => openEdit(r)}
+                            disabled={savingBusy}
                           >
                             <Pencil size={16} />
                           </button>
@@ -715,6 +736,7 @@ export default function ConfiguracionSistemaItems() {
                             className="tp-btn-secondary h-9 w-9 !p-0 grid place-items-center"
                             title={r.status === "Activo" ? "Desactivar" : "Activar"}
                             onClick={() => toggleActive(r)}
+                            disabled={savingBusy}
                           >
                             {r.status === "Activo" ? <ShieldBan size={16} /> : <ShieldCheck size={16} />}
                           </button>
@@ -722,8 +744,9 @@ export default function ConfiguracionSistemaItems() {
                           <button
                             type="button"
                             className="tp-btn-secondary h-9 w-9 !p-0 grid place-items-center"
-                            title="Eliminar"
+                            title="Eliminar (no implementado)"
                             onClick={() => removeRow(r)}
+                            disabled={savingBusy}
                           >
                             <Trash2 size={16} />
                           </button>
@@ -765,13 +788,13 @@ export default function ConfiguracionSistemaItems() {
         onClose={closeModal}
         footer={
           <>
-            <button type="button" className="tp-btn-secondary h-10 inline-flex items-center gap-2" onClick={closeModal}>
+            <button type="button" className="tp-btn-secondary h-10 inline-flex items-center gap-2" onClick={closeModal} disabled={savingBusy}>
               <X size={16} />
               Cancelar
             </button>
 
-            <button type="button" className="tp-btn-primary h-10 inline-flex items-center gap-2" onClick={upsertRow}>
-              <Save size={16} />
+            <button type="button" className="tp-btn-primary h-10 inline-flex items-center gap-2" onClick={upsertRow} disabled={savingBusy}>
+              {savingBusy ? <Loader2 size={16} className="animate-spin" /> : <Save size={16} />}
               Guardar
             </button>
           </>
@@ -785,9 +808,9 @@ export default function ConfiguracionSistemaItems() {
           <div>
             <label className="mb-1 block text-xs font-semibold text-muted">{hints.nameLabel}</label>
             <input
-              value={fName}
+              value={fLabel}
               onChange={(e) => {
-                setFName(e.target.value);
+                setFLabel(e.target.value);
                 setFormError(null);
               }}
               className={cn(
@@ -796,25 +819,12 @@ export default function ConfiguracionSistemaItems() {
               )}
               placeholder={hints.namePlaceholder}
               autoFocus
+              disabled={savingBusy}
             />
             <div className="mt-1 text-xs text-muted">{hints.nameHint}</div>
           </div>
 
           <div className="grid gap-3 md:grid-cols-2">
-            <div>
-              <label className="mb-1 block text-xs font-semibold text-muted">{hints.codeLabel}</label>
-              <input
-                value={fCode}
-                onChange={(e) => setFCode(e.target.value)}
-                className={cn(
-                  "w-full h-10 rounded-xl border border-border bg-bg text-text px-3 text-sm",
-                  "focus:outline-none focus:ring-4 focus:ring-primary/20"
-                )}
-                placeholder={hints.codePlaceholder}
-              />
-              <div className="mt-1 text-xs text-muted">{hints.codeHint}</div>
-            </div>
-
             <div>
               <label className="mb-1 block text-xs font-semibold text-muted">Estado</label>
               <select
@@ -824,11 +834,17 @@ export default function ConfiguracionSistemaItems() {
                   "w-full h-10 rounded-xl border border-border bg-bg text-text px-3 text-sm",
                   "focus:outline-none focus:ring-4 focus:ring-primary/20"
                 )}
+                disabled={savingBusy}
               >
                 <option value="Activo">Activo</option>
                 <option value="Inactivo">Inactivo</option>
               </select>
               <div className="mt-1 text-xs text-muted">{hints.statusHint}</div>
+            </div>
+
+            <div className="rounded-xl border border-border bg-surface2 p-3 text-xs text-muted">
+              <div className="font-semibold text-text text-xs mb-1">Favorito ⭐</div>
+              Definí un favorito por catálogo. En <b>Perfil de joyería</b>, si el campo está vacío al editar/crear, se tomará el favorito como valor inicial.
             </div>
           </div>
         </div>

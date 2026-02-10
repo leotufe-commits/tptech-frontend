@@ -1,18 +1,5 @@
 // tptech-frontend/src/pages/Users.tsx
-import React, { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
-import { useLocation, useNavigate } from "react-router-dom";
-
-import { useAuth } from "../context/AuthContext";
-import { useInventory } from "../context/InventoryContext";
-
-import {
-  cn,
-  normalizeUsersResponse,
-  assertImageFile,
-  getErrorMessage,
-  ROLE_LABEL,
-  type TabKey,
-} from "../components/users/users.ui";
+import React from "react";
 
 import { Modal } from "../components/ui/Modal";
 import ConfirmUnsavedChangesDialog from "../components/ui/ConfirmUnsavedChangesDialog";
@@ -20,1207 +7,22 @@ import ConfirmUnsavedChangesDialog from "../components/ui/ConfirmUnsavedChangesD
 import UsersTable from "../components/users/UsersTable";
 import UserEditModal from "../components/users/UserEditModal";
 
-import {
-  getRolesCached,
-  getPermsCached,
-  prefetchUserDetail,
-  invalidateUserDetail,
-  uploadUserAttachmentsInstant,
-  deleteUserAttachmentInstant,
-  setUserQuickPinEnabledAdmin,
-  removeUserQuickPinAdmin,
-} from "../components/users/users.data";
-
-import {
-  assignRolesToUser,
-  createUser,
-  deleteUser,
-  fetchUsers,
-  removeUserOverride,
-  setUserOverride,
-  updateUserStatus,
-  updateUserAvatarForUser,
-  removeAvatarForUser,
-  updateFavoriteWarehouseForUser,
-  updateUserProfile,
-  setUserQuickPin,
-  type Role,
-  type UserListItem,
-  type Override,
-  type UserDetail,
-  type OverrideEffect,
-  type UserAttachment,
-} from "../services/users";
-
-import type { Permission } from "../services/permissions";
-
-/** ✅ flag para “abrir modal y scrollear a Adjuntos” */
-const OPEN_USERS_ATTACHMENTS_KEY = "tptech_users_open_attachments_v1";
+import { useUsersPage } from "../hooks/useUsersPage";
 
 export default function UsersPage() {
-  const nav = useNavigate();
-  const location = useLocation();
+  const p = useUsersPage();
 
-  const auth = useAuth();
-  const me = (auth.user ?? null) as { id: string } | null;
-  const permissions: string[] = (auth.permissions ?? []) as string[];
-
-  const canView = permissions.includes("USERS_ROLES:VIEW") || permissions.includes("USERS_ROLES:ADMIN");
-  const canEditStatus = permissions.includes("USERS_ROLES:EDIT") || permissions.includes("USERS_ROLES:ADMIN");
-  const canAdmin = permissions.includes("USERS_ROLES:ADMIN");
-
-  const inv = useInventory();
-  const almacenes = (inv?.almacenes ?? []) as Array<{
-    id: string;
-    nombre: string;
-    codigo: string;
-    ubicacion: string;
-    isActive?: boolean;
-  }>;
-
-  const activeAlmacenes = useMemo(() => {
-    const hasIsActive = almacenes.some((a) => typeof a.isActive === "boolean");
-    return hasIsActive ? almacenes.filter((a) => a.isActive !== false) : almacenes;
-  }, [almacenes]);
-
-  function warehouseLabelById(id?: string | null) {
-    if (!id) return null;
-    const w = activeAlmacenes.find((x) => x.id === id) || almacenes.find((x) => x.id === id);
-    if (!w) return null;
-    return `${w.nombre}${w.codigo ? ` (${w.codigo})` : ""}`;
-  }
-
-  const [loading, setLoading] = useState(true);
-  const [err, setErr] = useState<string | null>(null);
-
-  const [users, setUsers] = useState<UserListItem[]>([]);
-  const [qUI, setQUI] = useState("");
-  const [q, setQ] = useState("");
-
-  const [page, setPage] = useState(1);
-  const [limit] = useState(30);
-  const [total, setTotal] = useState(0);
-  const totalPages = useMemo(() => Math.max(1, Math.ceil(total / limit)), [total, limit]);
-
-  const [roles, setRoles] = useState<Role[]>([]);
-  const [rolesLoading, setRolesLoading] = useState(false);
-
-  const [allPerms, setAllPerms] = useState<Permission[]>([]);
-  const [permsLoading, setPermsLoading] = useState(false);
-
-  // avatar (modal)
-  const avatarInputModalRef = useRef<HTMLInputElement>(null!);
-  const [avatarPreview, setAvatarPreview] = useState<string>("");
-  const [avatarImgLoading, setAvatarImgLoading] = useState(false);
-  const [avatarFileDraft, setAvatarFileDraft] = useState<File | null>(null);
-  const [avatarBusy, setAvatarBusy] = useState(false);
-
-  // ✅ limpieza dura del avatar para que NO quede “en memoria” al cancelar/cerrar
-  function clearAvatarState() {
-    setAvatarPreview((prev) => {
-      try {
-        if (prev?.startsWith("blob:")) URL.revokeObjectURL(prev);
-      } catch {}
-      return "";
-    });
-    setAvatarImgLoading(false);
-    setAvatarFileDraft(null);
-    try {
-      if (avatarInputModalRef.current) avatarInputModalRef.current.value = "";
-    } catch {}
-  }
-
-  useEffect(() => {
-    return () => {
-      if (avatarPreview?.startsWith("blob:")) URL.revokeObjectURL(avatarPreview);
-    };
-  }, [avatarPreview]);
-
-  const roleById = useMemo(() => {
-    const m = new Map<string, Role>();
-    for (const r of roles) m.set(String(r.id), r);
-    return m;
-  }, [roles]);
-
-  const ownerRoleId = useMemo(() => {
-    const r =
-      roles.find((x: any) => String((x as any)?.code || "").toUpperCase() === "OWNER") ||
-      roles.find((x: any) => String((x as any)?.name || "").toUpperCase() === "OWNER");
-    return r ? String((r as any).id) : null;
-  }, [roles]);
-
-  function roleLabel(r: Partial<Role> & { code?: string }) {
-    const fromCatalog = (r as any)?.id ? roleById.get(String((r as any).id)) : null;
-    const base: any = fromCatalog ?? r;
-
-    const display = String((base as any)?.displayName || "").trim();
-    if (display) return display;
-
-    const name = String(base?.name || "").trim();
-    if (name) return name;
-
-    const code = String((base as any)?.code || "").toUpperCase().trim();
-    return (ROLE_LABEL as any)[code] || code || "Rol";
-  }
-
-  // delete confirmation
-  const [deleteBusy, setDeleteBusy] = useState(false);
-  const [confirmOpen, setConfirmOpen] = useState(false);
-  const [deleteTarget, setDeleteTarget] = useState<UserListItem | null>(null);
-
-  // modal
-  const [modalOpen, setModalOpen] = useState(false);
-  const [modalMode, setModalMode] = useState<"CREATE" | "EDIT">("CREATE");
-  const [modalBusy, setModalBusy] = useState(false);
-  const [modalLoading, setModalLoading] = useState(false);
-
-  const [targetId, setTargetId] = useState<string>("");
-  const [detail, setDetail] = useState<UserDetail | null>(null);
-
-  const [tab, setTab] = useState<TabKey>("DATA");
-
-  const isSelfEditing = Boolean(
-    modalOpen && modalMode === "EDIT" && targetId && me?.id && String(targetId) === String(me.id)
-  );
-
-  // form fields
-  const [fEmail, setFEmail] = useState("");
-  const [fName, setFName] = useState("");
-  const [fPassword, setFPassword] = useState("");
-  const [fRoleIds, setFRoleIds] = useState<string[]>([]);
-  const [fFavWarehouseId, setFFavWarehouseId] = useState<string>("");
-
-  const [fPhoneCountry, setFPhoneCountry] = useState("");
-  const [fPhoneNumber, setFPhoneNumber] = useState("");
-  const [fDocType, setFDocType] = useState("");
-  const [fDocNumber, setFDocNumber] = useState("");
-
-  const [fStreet, setFStreet] = useState("");
-  const [fNumber, setFNumber] = useState("");
-  const [fCity, setFCity] = useState("");
-  const [fProvince, setFProvince] = useState("");
-  const [fPostalCode, setFPostalCode] = useState("");
-  const [fCountry, setFCountry] = useState("");
-
-  const [fNotes, setFNotes] = useState("");
-
-  /* =========================
-     ✅ PIN (admin) - DRAFT
-     - Se aplica al backend SOLO en Guardar
-  ========================= */
-  const [pinNew, setPinNew] = useState("");
-  const [pinNew2, setPinNew2] = useState("");
-  const [pinBusy, setPinBusy] = useState(false);
-  const [pinMsg, setPinMsg] = useState<string | null>(null);
-
-  // ✅ draft: enabled / remove / clearOverridesOnSave
-  const [pinEnabledDraft, setPinEnabledDraft] = useState<boolean | null>(null); // null = sin cambios
-  const [pinRemoveDraft, setPinRemoveDraft] = useState(false);
-  const [pinClearOverridesOnSave, setPinClearOverridesOnSave] = useState(false);
-
-  function resetPinForm() {
-    setPinNew("");
-    setPinNew2("");
-  }
-
-  // ✅ PIN: mensaje dentro del modal (autolimpia)
-  const pinMsgTimerRef = useRef<number | null>(null);
-
-  function flashPinMsg(msg: string, ms = 2500) {
-    setPinMsg(msg);
-    if (pinMsgTimerRef.current) window.clearTimeout(pinMsgTimerRef.current);
-    pinMsgTimerRef.current = window.setTimeout(() => {
-      setPinMsg(null);
-      pinMsgTimerRef.current = null;
-    }, ms);
-  }
-
-  useEffect(() => {
-    return () => {
-      if (pinMsgTimerRef.current) window.clearTimeout(pinMsgTimerRef.current);
-    };
-  }, []);
-
-  function assertPin4Local(pin: string) {
-    const s = String(pin ?? "").trim();
-    if (!/^\d{4}$/.test(s)) throw new Error("El PIN debe tener 4 dígitos.");
-    return s;
-  }
-
-  async function refreshDetailOnly(userId: string, opts?: { hydrate?: boolean }) {
-    invalidateUserDetail(userId);
-    const refreshed = await prefetchUserDetail(userId);
-    if (!refreshed) return refreshed;
-
-    // 🔁 siempre sincronizamos permisos especiales (detail -> draft inicial)
-    const ov = (refreshed.permissionOverrides ?? []) as Override[];
-    setSpecialList(ov);
-    setSpecialEnabledState(ov.length > 0);
-
-    if (opts?.hydrate === false) {
-      setDetail(refreshed);
-      return refreshed;
-    }
-
-    hydrateFromDetail(refreshed);
-    return refreshed;
-  }
-
-  async function refreshDetailAndList(userId: string, opts?: { hydrate?: boolean }) {
-    await refreshDetailOnly(userId, opts);
-    await load();
-  }
-
-  async function adminSetOrResetPin() {
-    if (!canAdmin) return;
-    if (isSelfEditing) return;
-    if (modalMode !== "EDIT" && modalMode !== "CREATE") return;
-
-    setPinMsg(null);
-
-    let p1 = "";
-    let p2 = "";
-    try {
-      p1 = assertPin4Local(pinNew);
-      p2 = assertPin4Local(pinNew2);
-    } catch (e: any) {
-      flashPinMsg(e?.message || "PIN inválido.");
-      return;
-    }
-
-    if (p1 !== p2) {
-      flashPinMsg("Los PIN no coinciden.");
-      return;
-    }
-
-    if (pinEnabledDraft === null) setPinEnabledDraft(true);
-    if (pinRemoveDraft) setPinRemoveDraft(false);
-
-    flashPinMsg("PIN listo para aplicar al guardar.", 3000);
-  }
-
-  async function adminRemovePin(opts?: { confirmRemoveOverrides?: boolean }) {
-    if (!canAdmin) return;
-    if (isSelfEditing) return;
-    if (modalMode !== "EDIT" || !targetId) return;
-
-    setPinRemoveDraft(true);
-    setPinEnabledDraft(false);
-
-    if (opts?.confirmRemoveOverrides) {
-      setPinClearOverridesOnSave(true);
-      setSpecialPermPick("");
-      setSpecialEffectPick("ALLOW");
-      setSpecialEnabledState(false);
-      setSpecialList([]);
-    }
-
-    flashPinMsg("Se eliminará el PIN al guardar.", 3000);
-  }
-
-  async function adminTogglePinEnabled(nextEnabled: boolean, opts?: { confirmRemoveOverrides?: boolean }) {
-    if (!canAdmin) return;
-    if (isSelfEditing) return;
-    if (modalMode !== "EDIT" || !targetId) return;
-
-    setPinEnabledDraft(nextEnabled);
-    if (nextEnabled && pinRemoveDraft) setPinRemoveDraft(false);
-
-    if (!nextEnabled && opts?.confirmRemoveOverrides) {
-      setPinClearOverridesOnSave(true);
-      setSpecialPermPick("");
-      setSpecialEffectPick("ALLOW");
-      setSpecialEnabledState(false);
-      setSpecialList([]);
-    }
-
-    flashPinMsg(
-      nextEnabled ? "Cambio pendiente: PIN se habilitará al guardar." : "Cambio pendiente: PIN se deshabilitará al guardar.",
-      2500
-    );
-  }
-
-  // special perms (DRAFT)
-  const [specialEnabled, setSpecialEnabledState] = useState(false);
-  const [specialPermPick, setSpecialPermPick] = useState<string>("");
-  const [specialEffectPick, setSpecialEffectPick] = useState<OverrideEffect>("ALLOW");
-  const [specialList, setSpecialList] = useState<Override[]>([]);
-  const [specialSaving, setSpecialSaving] = useState(false);
-
-  // attachments
-  const attInputRef = useRef<HTMLInputElement>(null!);
-  const [uploadingAttachments, setUploadingAttachments] = useState(false);
-  const [deletingAttId, setDeletingAttId] = useState<string | null>(null);
-  const [attachmentsDraft, setAttachmentsDraft] = useState<File[]>([]);
-
-  const savedAttachments: UserAttachment[] = useMemo(() => {
-    const arr = (detail?.attachments ?? []) as UserAttachment[];
-    return Array.isArray(arr) ? arr : [];
-  }, [detail?.attachments]);
-
-  /* =========================
-     ✅ DIRTY CHECK (2C)
-  ========================= */
-  const [confirmUnsavedOpen, setConfirmUnsavedOpen] = useState(false);
-
-  const initialSnapshotRef = useRef<string>("");
-  const snapshotReadyRef = useRef(false);
-
-  function draftKey(f: File) {
-    return `${f.name}-${f.size}-${f.lastModified}`;
-  }
-
-  function stableJson(v: any) {
-    try {
-      return JSON.stringify(v);
-    } catch {
-      return "";
-    }
-  }
-
-  function buildDraftSnapshot() {
-    const roleIdsSorted = [...(fRoleIds ?? [])].map(String).sort();
-    const specialSorted = [...(specialList ?? [])]
-      .map((x) => ({ permissionId: String(x.permissionId), effect: x.effect }))
-      .sort((a, b) => a.permissionId.localeCompare(b.permissionId, "es"));
-
-    const attDraftKeys = (attachmentsDraft ?? []).map(draftKey).sort();
-    const hasUnsavedAvatar = modalMode === "CREATE" ? Boolean(avatarFileDraft) : false;
-
-    return {
-      modalMode,
-      fEmail: String(fEmail ?? ""),
-      fName: String(fName ?? ""),
-      fPassword: String(fPassword ?? ""),
-      fPhoneCountry: String(fPhoneCountry ?? ""),
-      fPhoneNumber: String(fPhoneNumber ?? ""),
-      fDocType: String(fDocType ?? ""),
-      fDocNumber: String(fDocNumber ?? ""),
-      fStreet: String(fStreet ?? ""),
-      fNumber: String(fNumber ?? ""),
-      fCity: String(fCity ?? ""),
-      fProvince: String(fProvince ?? ""),
-      fPostalCode: String(fPostalCode ?? ""),
-      fCountry: String(fCountry ?? ""),
-      fNotes: String(fNotes ?? ""),
-      fRoleIds: roleIdsSorted,
-      fFavWarehouseId: String(fFavWarehouseId ?? ""),
-      specialEnabled: Boolean(specialEnabled),
-      specialList: specialEnabled ? specialSorted : [],
-      pinNew: String(pinNew ?? ""),
-      pinNew2: String(pinNew2 ?? ""),
-      pinEnabledDraft,
-      pinRemoveDraft: Boolean(pinRemoveDraft),
-      pinClearOverridesOnSave: Boolean(pinClearOverridesOnSave),
-      attachmentsDraft: modalMode === "CREATE" ? attDraftKeys : [],
-      avatarDraft: hasUnsavedAvatar ? "1" : "0",
-    };
-  }
-
-  function markSnapshotClean() {
-    initialSnapshotRef.current = stableJson(buildDraftSnapshot());
-    snapshotReadyRef.current = true;
-  }
-
-  function isDirtyNow() {
-    if (!snapshotReadyRef.current) return false;
-    const cur = stableJson(buildDraftSnapshot());
-    return cur !== initialSnapshotRef.current;
-  }
-
-  // debounce search
-  const debounceRef = useRef<number | null>(null);
-  useEffect(() => {
-    if (debounceRef.current) window.clearTimeout(debounceRef.current);
-    debounceRef.current = window.setTimeout(() => {
-      setQ(qUI.trim());
-      setPage(1);
-    }, 250);
-    return () => {
-      if (debounceRef.current) window.clearTimeout(debounceRef.current);
-    };
-  }, [qUI]);
-
-  function sortUsersAlpha(list: UserListItem[]) {
-    const arr = [...(list ?? [])];
-    arr.sort((a, b) => {
-      const la = String(a?.name || a?.email || "").trim().toLowerCase();
-      const lb = String(b?.name || b?.email || "").trim().toLowerCase();
-      return la.localeCompare(lb, "es", { sensitivity: "base" });
-    });
-    return arr;
-  }
-
-  async function load(next?: { q?: string; page?: number }) {
-    setErr(null);
-    setLoading(true);
-    try {
-      const resp = await fetchUsers({ q: next?.q ?? q, page: next?.page ?? page, limit } as any);
-      const norm = normalizeUsersResponse(resp);
-
-      const rawUsers = (norm.users ?? []) as UserListItem[];
-      setUsers(sortUsersAlpha(rawUsers));
-      setTotal(Number(norm.total ?? 0));
-    } catch (e: unknown) {
-      setErr(getErrorMessage(e, "Error cargando usuarios"));
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  useEffect(() => {
-    if (!canView) return;
-    void load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [canView, q, page]);
-
-  async function ensureRolesLoaded() {
-    if (roles.length > 0) return;
-    setRolesLoading(true);
-    try {
-      const list = await getRolesCached();
-      setRoles(list as Role[]);
-    } catch (e: unknown) {
-      setErr(getErrorMessage(e, "Error cargando roles"));
-    } finally {
-      setRolesLoading(false);
-    }
-  }
-
-  useEffect(() => {
-    if (!canView) return;
-    if (roles.length > 0) return;
-    void ensureRolesLoaded();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [canView, roles.length]);
-
-  async function ensurePermsLoaded() {
-    if (allPerms.length > 0) return allPerms;
-    setPermsLoading(true);
-    try {
-      const list = await getPermsCached();
-      setAllPerms(list);
-      return list;
-    } catch (e: unknown) {
-      setErr(getErrorMessage(e, "Error cargando permisos"));
-      return [];
-    } finally {
-      setPermsLoading(false);
-    }
-  }
-
-  function labelPerm(permissionId: string) {
-    const p = allPerms.find((x) => x.id === permissionId);
-    if (!p) return permissionId;
-    return `${p.module} • ${p.action}`;
-  }
-
-  const specialListSorted = useMemo(() => {
-    const arr = [...specialList];
-    arr.sort((a, b) => {
-      const la = labelPerm(a.permissionId).toLowerCase();
-      const lb = labelPerm(b.permissionId).toLowerCase();
-      return la.localeCompare(lb, "es");
-    });
-    return arr;
-  }, [specialList, allPerms]);
-
-  function resetForm() {
-    setDetail(null);
-    setTargetId("");
-
-    setFEmail("");
-    setFName("");
-    setFPassword("");
-    setFRoleIds([]);
-    setFFavWarehouseId("");
-
-    setFPhoneCountry("");
-    setFPhoneNumber("");
-    setFDocType("");
-    setFDocNumber("");
-
-    setFStreet("");
-    setFNumber("");
-    setFCity("");
-    setFProvince("");
-    setFPostalCode("");
-    setFCountry("");
-
-    setFNotes("");
-
-    setSpecialList([]);
-    setSpecialPermPick("");
-    setSpecialEffectPick("ALLOW");
-    setSpecialEnabledState(false);
-
-    clearAvatarState();
-
-    setUploadingAttachments(false);
-    setDeletingAttId(null);
-    setAttachmentsDraft([]);
-
-    // PIN drafts reset
-    resetPinForm();
-    setPinBusy(false);
-    setPinMsg(null);
-    setPinEnabledDraft(null);
-    setPinRemoveDraft(false);
-    setPinClearOverridesOnSave(false);
-
-    if (pinMsgTimerRef.current) {
-      window.clearTimeout(pinMsgTimerRef.current);
-      pinMsgTimerRef.current = null;
-    }
-
-    setTab("DATA");
-
-    // dirty snapshot reset
-    initialSnapshotRef.current = "";
-    snapshotReadyRef.current = false;
-    setConfirmUnsavedOpen(false);
-  }
-
-  function hydrateFromDetail(d: UserDetail) {
-    setDetail(d);
-
-    setFEmail(d.email ?? "");
-    setFName(d.name ?? "");
-    setFPassword("");
-
-    setFRoleIds((d.roles ?? []).map((r) => r.id));
-    setFFavWarehouseId(d.favoriteWarehouseId ? String(d.favoriteWarehouseId) : "");
-
-    setFPhoneCountry((d as any).phoneCountry ?? "");
-    setFPhoneNumber((d as any).phoneNumber ?? "");
-    setFDocType((d as any).documentType ?? "");
-    setFDocNumber((d as any).documentNumber ?? "");
-
-    setFStreet((d as any).street ?? "");
-    setFNumber((d as any).number ?? "");
-    setFCity((d as any).city ?? "");
-    setFProvince((d as any).province ?? "");
-    setFPostalCode((d as any).postalCode ?? "");
-    setFCountry((d as any).country ?? "");
-
-    setFNotes((d as any).notes ?? "");
-
-    const ov = (d.permissionOverrides ?? []) as Override[];
-    setSpecialList(ov);
-    setSpecialEnabledState(ov.length > 0);
-
-    setPinEnabledDraft(null);
-    setPinRemoveDraft(false);
-    setPinClearOverridesOnSave(false);
-    resetPinForm();
-    setPinMsg(null);
-  }
-
-  async function openCreate() {
-    if (!canAdmin) return;
-
-    setErr(null);
-    resetForm();
-    setModalMode("CREATE");
-    setModalOpen(true);
-    setModalLoading(true);
-
-    try {
-      await ensureRolesLoaded();
-      const perms = await ensurePermsLoaded();
-      setSpecialPermPick(perms[0]?.id || "");
-      setSpecialEffectPick("ALLOW");
-      setSpecialEnabledState(false);
-      setTab("DATA");
-
-      setPinNew("");
-      setPinNew2("");
-      setPinMsg(null);
-    } finally {
-      setModalLoading(false);
-      markSnapshotClean();
-    }
-  }
-
-  async function openEdit(u: UserListItem) {
-    if (!canAdmin) return;
-
-    setErr(null);
-    resetForm();
-    setModalMode("EDIT");
-    setModalOpen(true);
-    setModalLoading(true);
-
-    try {
-      await ensureRolesLoaded();
-      const perms = await ensurePermsLoaded();
-
-      setTargetId(u.id);
-
-      await refreshDetailOnly(u.id, { hydrate: true });
-
-      setSpecialPermPick(perms[0]?.id || "");
-      setSpecialEffectPick("ALLOW");
-
-      try {
-        const raw = sessionStorage.getItem(OPEN_USERS_ATTACHMENTS_KEY);
-        if (raw) {
-          const j = JSON.parse(raw);
-          if (j?.userId && String(j.userId) === String(u.id)) setTab("DATA");
-          else setTab("DATA");
-        } else {
-          setTab("DATA");
-        }
-      } catch {
-        setTab("DATA");
-      }
-    } catch (e: unknown) {
-      setErr(getErrorMessage(e, "Error cargando usuario"));
-      setModalOpen(false);
-    } finally {
-      setModalLoading(false);
-      markSnapshotClean();
-    }
-  }
-
-  // ✅ ABRIR MODAL DESDE URL: /configuracion/usuarios?edit=<id>
-  async function openEditById(userId: string) {
-    if (!canAdmin) return;
-    if (!userId) return;
-
-    // si ya está abierto para ese usuario, solo limpiamos la url
-    if (modalOpen && modalMode === "EDIT" && String(targetId) === String(userId)) return;
-
-    setErr(null);
-    resetForm();
-    setModalMode("EDIT");
-    setModalOpen(true);
-    setModalLoading(true);
-
-    try {
-      await ensureRolesLoaded();
-      const perms = await ensurePermsLoaded();
-
-      setTargetId(userId);
-      await refreshDetailOnly(userId, { hydrate: true });
-
-      setSpecialPermPick(perms[0]?.id || "");
-      setSpecialEffectPick("ALLOW");
-      setTab("DATA");
-    } catch (e: unknown) {
-      setErr(getErrorMessage(e, "Error cargando usuario"));
-      setModalOpen(false);
-    } finally {
-      setModalLoading(false);
-      markSnapshotClean();
-    }
-  }
-
-  // ✅ leer query param edit y abrir modal
-  useEffect(() => {
-    if (!canView) return;
-
-    const qs = new URLSearchParams(location.search);
-    const editId = String(qs.get("edit") || "").trim();
-    if (!editId) return;
-
-    // abrimos el modal para ese usuario
-    void openEditById(editId);
-
-    // limpiamos el param para que no reabra al refrescar
-    qs.delete("edit");
-    const next = qs.toString();
-    nav(next ? `/configuracion/usuarios?${next}` : `/configuracion/usuarios`, { replace: true });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [location.search, canView]);
-
-  async function closeModalHard() {
-    if (modalBusy || avatarBusy || specialSaving || uploadingAttachments || deletingAttId || pinBusy) return;
-
-    clearAvatarState();
-    setAttachmentsDraft([]);
-    setErr(null);
-
-    setModalOpen(false);
-    resetForm();
-  }
-
-  async function closeModal() {
-    if (modalBusy || avatarBusy || specialSaving || uploadingAttachments || deletingAttId || pinBusy) return;
-
-    if (modalOpen && isDirtyNow()) {
-      setConfirmUnsavedOpen(true);
-      return;
-    }
-
-    await closeModalHard();
-  }
-
-  function isOwnerInDraft() {
-    if (!ownerRoleId) return false;
-    return fRoleIds.includes(String(ownerRoleId));
-  }
-
-  // ✅ (ÚNICA) computeOverrideDiff — sin duplicados
-  function computeOverrideDiff(
-    prev: Override[],
-    nextEnabled: boolean,
-    next: Override[]
-  ): { toRemove: string[]; toUpsert: Array<{ permissionId: string; effect: OverrideEffect }> } {
-    const prevMap = new Map<string, OverrideEffect>();
-    for (const ov of prev || []) {
-      const pid = String(ov.permissionId);
-      if (!pid) continue;
-      prevMap.set(pid, ov.effect);
-    }
-
-    const nextMap = new Map<string, OverrideEffect>();
-    if (nextEnabled) {
-      for (const ov of next || []) {
-        const pid = String(ov.permissionId);
-        if (!pid) continue;
-        nextMap.set(pid, ov.effect);
-      }
-    }
-
-    const toRemove: string[] = [];
-    for (const [pid] of prevMap) {
-      if (!nextEnabled || !nextMap.has(pid)) toRemove.push(pid);
-    }
-
-    const toUpsert: Array<{ permissionId: string; effect: OverrideEffect }> = [];
-    if (nextEnabled) {
-      for (const [pid, eff] of nextMap) {
-        const prevEff = prevMap.get(pid);
-        if (!prevEff || prevEff !== eff) {
-          toUpsert.push({ permissionId: pid, effect: eff });
-        }
-      }
-    }
-
-    return { toRemove, toUpsert };
-  }
-
-  /* =========================
-     ✅ GUARDAR (CREATE / EDIT)
-  ========================= */
-  async function saveModal(e?: FormEvent) {
-    if (e) e.preventDefault();
-    if (!canAdmin) return;
-
-    setErr(null);
-
-    const cleanEmail = fEmail.trim();
-    const cleanName = fName.trim();
-
-    if (!cleanEmail) {
-      setErr("Completá el email.");
-      setTab("DATA");
-      return;
-    }
-    if (!cleanName) {
-      setErr("Nombre y apellido es obligatorio.");
-      setTab("DATA");
-      return;
-    }
-
-    setModalBusy(true);
-    setSpecialSaving(true);
-    setPinBusy(true);
-
-    try {
-      if (modalMode === "CREATE") {
-        const created = await createUser({
-          email: cleanEmail,
-          name: cleanName,
-          password: fPassword.trim() || undefined,
-          roleIds: fRoleIds,
-        } as any);
-
-        const createdUserId = String((created as any)?.user?.id || "");
-        if (!createdUserId) throw new Error("No se recibió el ID del usuario creado.");
-
-        const warnings: string[] = [];
-
-        const safe = async (label: string, fn: () => Promise<void>) => {
-          try {
-            await fn();
-          } catch (e: unknown) {
-            warnings.push(getErrorMessage(e, label));
-          }
-        };
-
-        await safe("No se pudo guardar el perfil del usuario.", async () => {
-          await updateUserProfile(createdUserId, {
-            name: cleanName,
-            phoneCountry: fPhoneCountry,
-            phoneNumber: fPhoneNumber,
-            documentType: fDocType,
-            documentNumber: fDocNumber,
-            street: fStreet,
-            number: fNumber,
-            city: fCity,
-            province: fProvince,
-            postalCode: fPostalCode,
-            country: fCountry,
-            notes: fNotes,
-          } as any);
-        });
-
-        if (fFavWarehouseId) {
-          await safe("No se pudo guardar el almacén favorito.", async () => {
-            await updateFavoriteWarehouseForUser(createdUserId, fFavWarehouseId || null);
-          });
-        }
-
-        if (avatarFileDraft) {
-          await safe("No se pudo subir el avatar.", async () => {
-            assertImageFile(avatarFileDraft);
-            await updateUserAvatarForUser(createdUserId, avatarFileDraft);
-          });
-        }
-
-        if (attachmentsDraft.length) {
-          await safe("No se pudieron subir los adjuntos.", async () => {
-            setUploadingAttachments(true);
-            try {
-              await uploadUserAttachmentsInstant(createdUserId, attachmentsDraft);
-              setAttachmentsDraft([]);
-            } finally {
-              setUploadingAttachments(false);
-            }
-          });
-        }
-
-        await safe("No se pudo configurar el PIN inicial.", async () => {
-          const p1 = String(pinNew || "").trim();
-          const p2 = String(pinNew2 || "").trim();
-          if (p1 && p1 === p2 && /^\d{4}$/.test(p1)) {
-            await setUserQuickPin(createdUserId, p1);
-            const enabled = pinEnabledDraft ?? true;
-            await setUserQuickPinEnabledAdmin(createdUserId, enabled);
-          }
-        });
-
-        await safe("No se pudieron aplicar permisos especiales.", async () => {
-          const ownerNow = ownerRoleId ? fRoleIds.includes(String(ownerRoleId)) : false;
-          if (!ownerNow && specialEnabled && specialList.length) {
-            for (const ov of specialList) {
-              await setUserOverride(createdUserId, ov.permissionId, ov.effect);
-            }
-          }
-        });
-
-        setModalOpen(false);
-        resetForm();
-
-        setPage(1);
-        await load({ page: 1 });
-
-        if (warnings.length) {
-          setErr(`Usuario creado, pero hubo avisos:\n- ${warnings.join("\n- ")}`);
-        }
-
-        markSnapshotClean();
-        return;
-      }
-
-      if (!targetId) throw new Error("Falta ID de usuario.");
-
-      await updateUserProfile(targetId, {
-        name: cleanName,
-        phoneCountry: fPhoneCountry,
-        phoneNumber: fPhoneNumber,
-        documentType: fDocType,
-        documentNumber: fDocNumber,
-        street: fStreet,
-        number: fNumber,
-        city: fCity,
-        province: fProvince,
-        postalCode: fPostalCode,
-        country: fCountry,
-        notes: fNotes,
-      } as any);
-
-      if (!isSelfEditing) {
-        await assignRolesToUser(targetId, fRoleIds);
-        await updateFavoriteWarehouseForUser(targetId, fFavWarehouseId ? fFavWarehouseId : null);
-      }
-
-      if (avatarFileDraft) {
-        assertImageFile(avatarFileDraft);
-        await updateUserAvatarForUser(targetId, avatarFileDraft);
-        setAvatarFileDraft(null);
-      }
-
-      if (attachmentsDraft.length) {
-        setUploadingAttachments(true);
-        try {
-          await uploadUserAttachmentsInstant(targetId, attachmentsDraft);
-          setAttachmentsDraft([]);
-        } finally {
-          setUploadingAttachments(false);
-        }
-      }
-
-      if (!isSelfEditing) {
-        const prevOverrides = ((detail?.permissionOverrides ?? []) as Override[]) || [];
-        const ownerNow = isOwnerInDraft();
-
-        const overridesEnabledNext = !ownerNow && !pinClearOverridesOnSave && specialEnabled;
-
-        const nextOverrides = overridesEnabledNext ? specialList : [];
-        const diff = computeOverrideDiff(prevOverrides, overridesEnabledNext, nextOverrides);
-
-        for (const pid of diff.toRemove) {
-          await removeUserOverride(targetId, pid);
-        }
-        for (const it of diff.toUpsert) {
-          await setUserOverride(targetId, it.permissionId, it.effect);
-        }
-      }
-
-      if (!isSelfEditing) {
-        if (pinRemoveDraft) {
-          await removeUserQuickPinAdmin(targetId, { confirmRemoveOverrides: pinClearOverridesOnSave });
-        } else {
-          const p1Raw = String(pinNew || "").trim();
-          const p2Raw = String(pinNew2 || "").trim();
-          const hasPinDraft = Boolean(p1Raw || p2Raw);
-
-          if (hasPinDraft) {
-            const p1 = assertPin4Local(p1Raw);
-            const p2 = assertPin4Local(p2Raw);
-            if (p1 !== p2) throw new Error("Los PIN no coinciden.");
-
-            await setUserQuickPin(targetId, p1);
-
-            const enabled = pinEnabledDraft ?? true;
-            await setUserQuickPinEnabledAdmin(targetId, enabled);
-          } else if (pinEnabledDraft !== null) {
-            await setUserQuickPinEnabledAdmin(targetId, pinEnabledDraft, {
-              confirmRemoveOverrides: pinClearOverridesOnSave,
-            });
-          }
-        }
-      }
-      await refreshDetailAndList(targetId, { hydrate: false });
-
-      setModalOpen(false);
-      resetForm();
-
-      markSnapshotClean();
-    } catch (e2: unknown) {
-      setErr(getErrorMessage(e2, "Error guardando usuario"));
-    } finally {
-      setModalBusy(false);
-      setSpecialSaving(false);
-      setPinBusy(false);
-    }
-  }
-
-  async function toggleStatus(u: UserListItem) {
-    if (!canEditStatus) return;
-
-    if (me?.id && u.id === me.id) {
-      setErr("No podés cambiar tu propio estado.");
-      return;
-    }
-
-    const next = u.status === "ACTIVE" ? "BLOCKED" : "ACTIVE";
-    try {
-      await updateUserStatus(u.id, next);
-      await load();
-    } catch (e: unknown) {
-      setErr(getErrorMessage(e, "Error actualizando estado"));
-    }
-  }
-
-  function askDelete(u: UserListItem) {
-    if (!canAdmin) return;
-    if (me?.id && u.id === me.id) {
-      setErr("No podés eliminar tu propio usuario.");
-      return;
-    }
-    setErr(null);
-    setDeleteTarget(u);
-    setConfirmOpen(true);
-  }
-
-  async function confirmDelete() {
-    if (!deleteTarget) return;
-    setDeleteBusy(true);
-    setErr(null);
-    try {
-      await deleteUser(deleteTarget.id);
-      setConfirmOpen(false);
-      setDeleteTarget(null);
-      await load();
-    } catch (e: unknown) {
-      setErr(getErrorMessage(e, "Error eliminando usuario"));
-    } finally {
-      setDeleteBusy(false);
-    }
-  }
-
-  async function pickAvatarForModal(file: File) {
-    if (!canAdmin) return;
-
-    try {
-      assertImageFile(file);
-      setErr(null);
-
-      setAvatarPreview((prev) => {
-        if (prev?.startsWith("blob:")) URL.revokeObjectURL(prev);
-        return URL.createObjectURL(file);
-      });
-
-      if (modalMode === "CREATE") {
-        setAvatarFileDraft(file);
-        return;
-      }
-
-      if (!targetId) return;
-
-      setAvatarBusy(true);
-      await updateUserAvatarForUser(targetId, file);
-      setAvatarFileDraft(null);
-
-      await refreshDetailOnly(targetId, { hydrate: false });
-
-      setAvatarPreview((prev) => {
-        if (prev?.startsWith("blob:")) URL.revokeObjectURL(prev);
-        return "";
-      });
-
-      await load();
-    } catch (e: unknown) {
-      setErr(getErrorMessage(e, "Error subiendo avatar"));
-    } finally {
-      setAvatarBusy(false);
-    }
-  }
-
-  async function modalRemoveAvatar() {
-    if (!canAdmin) return;
-    if (modalMode !== "EDIT") return;
-    if (!targetId) return;
-
-    setAvatarBusy(true);
-    setErr(null);
-    try {
-      await removeAvatarForUser(targetId);
-      await refreshDetailOnly(targetId, { hydrate: false });
-      await load();
-    } catch (e: unknown) {
-      setErr(getErrorMessage(e, "Error quitando avatar"));
-    } finally {
-      setAvatarBusy(false);
-    }
-  }
-
-  async function addOrUpdateSpecial() {
-    if (!canAdmin) return;
-    if (!specialEnabled) return;
-    if (!specialPermPick) return;
-
-    if (isSelfEditing) {
-      setErr("No podés editar permisos especiales en tu propio usuario.");
-      return;
-    }
-
-    setSpecialList((prev) => {
-      const next = prev.filter((x) => x.permissionId !== specialPermPick);
-      next.push({ permissionId: specialPermPick, effect: specialEffectPick });
-      return next;
-    });
-  }
-
-  async function removeSpecial(permissionId: string) {
-    if (!canAdmin) return;
-
-    if (isSelfEditing) {
-      setErr("No podés editar permisos especiales en tu propio usuario.");
-      return;
-    }
-
-    setSpecialList((prev) => prev.filter((x) => x.permissionId !== permissionId));
-  }
-
-  async function addAttachments(files: File[]) {
-    if (!canAdmin) return;
-    if (!files.length) return;
-
-    if (modalMode === "CREATE") {
-      setAttachmentsDraft((prev) => [...prev, ...files]);
-      return;
-    }
-
-    if (!targetId) return;
-
-    setErr(null);
-    setUploadingAttachments(true);
-    try {
-      await uploadUserAttachmentsInstant(targetId, files);
-      await refreshDetailOnly(targetId, { hydrate: false });
-      await load();
-    } catch (e: unknown) {
-      setErr(getErrorMessage(e, "No se pudieron subir los adjuntos."));
-    } finally {
-      setUploadingAttachments(false);
-    }
-  }
-
-  async function removeSavedAttachment(attId: string) {
-    if (!canAdmin) return;
-    if (modalMode !== "EDIT") return;
-    if (!targetId) return;
-
-    setDeletingAttId(attId);
-    setErr(null);
-
-    setDetail((prev) => {
-      if (!prev) return prev;
-      const cur = Array.isArray((prev as any).attachments) ? ((prev as any).attachments as any[]) : [];
-      return {
-        ...(prev as any),
-        attachments: cur.filter((a) => String(a?.id) !== String(attId)),
-      } as any;
-    });
-
-    try {
-      await deleteUserAttachmentInstant(targetId, attId);
-      await refreshDetailOnly(targetId, { hydrate: false });
-      await load();
-    } catch (e: unknown) {
-      try {
-        await refreshDetailOnly(targetId, { hydrate: false });
-      } catch {}
-      setErr(getErrorMessage(e, "No se pudo eliminar el adjunto."));
-    } finally {
-      setDeletingAttId(null);
-    }
-  }
-
-  function removeDraftAttachmentByIndex(idx: number) {
-    setAttachmentsDraft((prev) => prev.filter((_, i) => i !== idx));
-  }
-
-  if (!canView) return <div className="p-6">Sin permisos para ver usuarios.</div>;
-
-  const totalLabel = `${total} ${total === 1 ? "Usuario" : "Usuarios"}`;
-
-  const busyClose = modalBusy || avatarBusy || specialSaving || uploadingAttachments || Boolean(deletingAttId) || pinBusy;
+  if (!p.canView) return <div className="p-6">Sin permisos para ver usuarios.</div>;
 
   return (
     <div className="p-4 md:p-6 space-y-4 min-h-0">
       <ConfirmUnsavedChangesDialog
-        open={confirmUnsavedOpen}
-        busy={busyClose}
-        onClose={() => setConfirmUnsavedOpen(false)}
+        open={p.confirmUnsavedOpen}
+        busy={p.busyClose}
+        onClose={() => p.setConfirmUnsavedOpen(false)}
         onDiscard={() => {
-          setConfirmUnsavedOpen(false);
-          void closeModalHard();
+          p.setConfirmUnsavedOpen(false);
+          void p.closeModalHard();
         }}
         title="Cambios sin guardar"
         description={
@@ -1233,155 +35,180 @@ export default function UsersPage() {
       />
 
       <div className="space-y-2">
-        <h1 className="text-2xl font-semibold">Usuarios</h1>
-        <p className="text-sm text-muted">Gestión de usuarios, roles, permisos especiales, avatar, adjuntos y almacén favorito.</p>
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <h1 className="text-2xl font-semibold">Usuarios</h1>
+            <p className="text-sm text-muted">
+              Gestión de usuarios, roles, permisos especiales, avatar, adjuntos y almacén favorito.
+            </p>
+          </div>
+
+          {Boolean(String(p.returnToRef.current || "").trim()) && (
+            <button
+              type="button"
+              className="tp-btn-secondary"
+              onClick={() => {
+                if (p.modalOpen && p.isDirtyNow()) {
+                  p.setConfirmUnsavedOpen(true);
+                  return;
+                }
+                p.goBackIfReturnTo();
+              }}
+            >
+              Volver
+            </button>
+          )}
+        </div>
 
         <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
           <input
             className="tp-input md:max-w-md"
             placeholder="Buscar por email / nombre…"
-            value={qUI}
-            onChange={(e) => setQUI(e.target.value)}
+            value={p.qUI}
+            onChange={(e) => p.setQUI(e.target.value)}
           />
 
-          {canAdmin && (
-            <button className="tp-btn-primary" onClick={openCreate} type="button">
+          {p.canAdmin && (
+            <button className="tp-btn-primary" onClick={p.openCreate} type="button">
               Nuevo usuario
             </button>
           )}
         </div>
       </div>
 
-      {err && <div className="rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm">{err}</div>}
+      {p.err && <div className="rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm">{p.err}</div>}
 
       <UsersTable
-        loading={loading}
-        users={users}
-        totalLabel={totalLabel}
-        page={page}
-        totalPages={totalPages}
-        onPrev={() => setPage((p) => Math.max(1, p - 1))}
-        onNext={() => setPage((p) => Math.min(totalPages, p + 1))}
-        canAdmin={canAdmin}
-        canEditStatus={canEditStatus}
-        meId={me?.id ?? null}
-        roleLabel={roleLabel}
-        warehouseLabelById={warehouseLabelById}
-        toggleStatus={toggleStatus}
-        openEdit={openEdit}
-        askDelete={askDelete}
-        prefetchUserDetail={prefetchUserDetail}
+        loading={p.loading}
+        users={p.users}
+        totalLabel={p.totalLabel}
+        page={p.page}
+        totalPages={p.totalPages}
+        onPrev={() => p.setPage((x) => Math.max(1, x - 1))}
+        onNext={() => p.setPage((x) => Math.min(p.totalPages, x + 1))}
+        canAdmin={p.canAdmin}
+        canEditStatus={p.canEditStatus}
+        meId={p.me?.id ?? null}
+        roleLabel={p.roleLabel}
+        warehouseLabelById={p.warehouseLabelById}
+        toggleStatus={p.toggleStatus}
+        openEdit={p.openEdit}
+        askDelete={p.askDelete}
+        prefetchUserDetail={undefined as any} // UsersTable ya lo usa desde users.data en tu proyecto; si acá lo necesitás, lo agrego al hook.
       />
 
       <UserEditModal
-        open={modalOpen}
+        open={p.modalOpen}
         wide
-        modalMode={modalMode}
-        modalBusy={modalBusy}
-        modalLoading={modalLoading}
-        title={modalMode === "CREATE" ? "Crear usuario" : `Editar usuario • ${detail?.email ?? ""}`}
-        onClose={closeModal}
-        onSubmit={saveModal}
-        canAdmin={canAdmin}
-        isSelfEditing={isSelfEditing}
-        detail={detail}
-        tab={tab}
-        setTab={setTab}
-        fEmail={fEmail}
-        setFEmail={setFEmail}
-        fName={fName}
-        setFName={setFName}
-        fPassword={fPassword}
-        setFPassword={setFPassword}
-        fPhoneCountry={fPhoneCountry}
-        setFPhoneCountry={setFPhoneCountry}
-        fPhoneNumber={fPhoneNumber}
-        setFPhoneNumber={setFPhoneNumber}
-        fDocType={fDocType}
-        setFDocType={setFDocType}
-        fDocNumber={fDocNumber}
-        setFDocNumber={setFDocNumber}
-        fStreet={fStreet}
-        setFStreet={setFStreet}
-        fNumber={fNumber}
-        setFNumber={setFNumber}
-        fCity={fCity}
-        setFCity={setFCity}
-        fProvince={fProvince}
-        setFProvince={setFProvince}
-        fPostalCode={fPostalCode}
-        setFPostalCode={setFPostalCode}
-        fCountry={fCountry}
-        setFCountry={setFCountry}
-        fNotes={fNotes}
-        setFNotes={setFNotes}
-        avatarBusy={avatarBusy}
-        avatarImgLoading={avatarImgLoading}
-        setAvatarImgLoading={setAvatarImgLoading}
-        avatarPreview={avatarPreview}
-        setAvatarPreview={setAvatarPreview}
-        avatarInputModalRef={avatarInputModalRef}
-        pickAvatarForModal={pickAvatarForModal}
-        modalRemoveAvatar={modalRemoveAvatar}
-        setAvatarFileDraft={setAvatarFileDraft}
-        attInputRef={attInputRef}
-        uploadingAttachments={uploadingAttachments}
-        deletingAttId={deletingAttId}
-        attachmentsDraft={attachmentsDraft}
-        removeDraftAttachmentByIndex={removeDraftAttachmentByIndex}
-        addAttachments={addAttachments}
-        removeSavedAttachment={removeSavedAttachment}
-        savedAttachments={savedAttachments}
-        pinBusy={pinBusy}
-        pinMsg={pinMsg}
-        pinNew={pinNew}
-        setPinNew={setPinNew}
-        pinNew2={pinNew2}
-        setPinNew2={setPinNew2}
-        adminTogglePinEnabled={adminTogglePinEnabled}
-        adminSetOrResetPin={adminSetOrResetPin}
-        adminRemovePin={adminRemovePin}
-        fFavWarehouseId={fFavWarehouseId}
-        setFFavWarehouseId={setFFavWarehouseId}
-        activeAlmacenes={activeAlmacenes}
-        warehouseLabelById={warehouseLabelById}
-        roles={roles}
-        rolesLoading={rolesLoading}
-        fRoleIds={fRoleIds}
-        setFRoleIds={setFRoleIds}
-        roleLabel={roleLabel}
-        allPerms={allPerms}
-        permsLoading={permsLoading}
-        specialEnabled={specialEnabled}
+        modalMode={p.modalMode}
+        modalBusy={p.modalBusy}
+        modalLoading={p.modalLoading}
+        title={p.modalMode === "CREATE" ? "Crear usuario" : `Editar usuario • ${p.detail?.email ?? ""}`}
+        onClose={p.closeModal}
+        onSubmit={p.saveModal}
+        canAdmin={p.canAdmin}
+        isSelfEditing={p.isSelfEditing}
+        detail={p.detail}
+        tab={p.tab}
+        setTab={p.setTab}
+        fEmail={p.fEmail}
+        setFEmail={p.setFEmail}
+        fName={p.fName}
+        setFName={p.setFName}
+        fPassword={p.fPassword}
+        setFPassword={p.setFPassword}
+        fPhoneCountry={p.fPhoneCountry}
+        setFPhoneCountry={p.setFPhoneCountry}
+        fPhoneNumber={p.fPhoneNumber}
+        setFPhoneNumber={p.setFPhoneNumber}
+        fDocType={p.fDocType}
+        setFDocType={p.setFDocType}
+        fDocNumber={p.fDocNumber}
+        setFDocNumber={p.setFDocNumber}
+        fStreet={p.fStreet}
+        setFStreet={p.setFStreet}
+        fNumber={p.fNumber}
+        setFNumber={p.setFNumber}
+        fCity={p.fCity}
+        setFCity={p.setFCity}
+        fProvince={p.fProvince}
+        setFProvince={p.setFProvince}
+        fPostalCode={p.fPostalCode}
+        setFPostalCode={p.setFPostalCode}
+        fCountry={p.fCountry}
+        setFCountry={p.setFCountry}
+        fNotes={p.fNotes}
+        setFNotes={p.setFNotes}
+        avatarBusy={p.avatarBusy}
+        avatarImgLoading={p.avatarImgLoading}
+        setAvatarImgLoading={p.setAvatarImgLoading}
+        avatarPreview={p.avatarPreview}
+        setAvatarPreview={p.setAvatarPreview}
+        avatarInputModalRef={p.avatarInputModalRef}
+        pickAvatarForModal={p.pickAvatarForModal}
+        modalRemoveAvatar={p.modalRemoveAvatar}
+        setAvatarFileDraft={p.setAvatarFileDraft}
+        attInputRef={p.attInputRef}
+        uploadingAttachments={p.uploadingAttachments}
+        deletingAttId={p.deletingAttId}
+        attachmentsDraft={p.attachmentsDraft}
+        removeDraftAttachmentByIndex={p.removeDraftAttachmentByIndex}
+        addAttachments={p.addAttachments}
+        removeSavedAttachment={p.removeSavedAttachment}
+        savedAttachments={p.savedAttachments}
+        handleDownloadSavedAttachment={p.handleDownloadSavedAttachment}
+        pinBusy={p.pinBusy}
+        pinMsg={p.pinMsg}
+        pinNew={p.pinNew}
+        setPinNew={p.setPinNew}
+        pinNew2={p.pinNew2}
+        setPinNew2={p.setPinNew2}
+        adminTogglePinEnabled={p.adminTogglePinEnabled}
+        adminSetOrResetPin={p.adminSetOrResetPin}
+        adminRemovePin={p.adminRemovePin}
+        fFavWarehouseId={p.fFavWarehouseId}
+        setFFavWarehouseId={p.setFFavWarehouseId}
+        activeAlmacenes={p.activeAlmacenes}
+        warehouseLabelById={p.warehouseLabelById}
+        roles={p.roles}
+        rolesLoading={p.rolesLoading}
+        fRoleIds={p.fRoleIds}
+        setFRoleIds={p.setFRoleIds}
+        roleLabel={p.roleLabel}
+        allPerms={p.allPerms}
+        permsLoading={p.permsLoading}
+        specialEnabled={p.specialEnabled}
         setSpecialEnabled={(v) => {
-          if (isSelfEditing) {
-            setErr("No podés editar permisos especiales en tu propio usuario.");
+          if (p.isSelfEditing) {
+            p.setErr("No podés editar permisos especiales en tu propio usuario.");
             return;
           }
-          setSpecialEnabledState(v);
+          p.setSpecialEnabledState(v);
         }}
-        specialPermPick={specialPermPick}
-        setSpecialPermPick={setSpecialPermPick}
-        specialEffectPick={specialEffectPick}
-        setSpecialEffectPick={setSpecialEffectPick}
-        specialSaving={specialSaving}
-        specialListSorted={specialListSorted}
-        addOrUpdateSpecial={addOrUpdateSpecial}
-        removeSpecial={removeSpecial}
+        specialPermPick={p.specialPermPick}
+        setSpecialPermPick={p.setSpecialPermPick}
+        specialEffectPick={p.specialEffectPick}
+        setSpecialEffectPick={p.setSpecialEffectPick}
+        specialSaving={p.specialSaving}
+        specialListSorted={p.specialListSorted}
+        addOrUpdateSpecial={p.addOrUpdateSpecial}
+        removeSpecial={p.removeSpecial}
+        autoOpenPinFlow={p.autoOpenPinFlow}
+        onAutoOpenPinFlowConsumed={() => p.setAutoOpenPinFlow(false)}
       />
 
       <Modal
-        open={confirmOpen}
+        open={p.confirmOpen}
         title="Eliminar usuario"
         onClose={() => {
-          if (deleteBusy) return;
-          setConfirmOpen(false);
-          setDeleteTarget(null);
+          if (p.deleteBusy) return;
+          p.setConfirmOpen(false);
+          p.setDeleteTarget(null);
         }}
       >
         <div className="space-y-4">
           <div className="text-sm">
-            Vas a eliminar (soft delete) a: <span className="font-semibold">{deleteTarget?.email}</span>
+            Vas a eliminar (soft delete) a: <span className="font-semibold">{p.deleteTarget?.email}</span>
             <div className="mt-2 text-xs text-muted">
               - Se bloquea el usuario y se invalida la sesión. <br />
               - Se liberará el email para poder recrearlo. <br />
@@ -1393,22 +220,22 @@ export default function UsersPage() {
             <button
               className="tp-btn-secondary"
               type="button"
-              disabled={deleteBusy}
+              disabled={p.deleteBusy}
               onClick={() => {
-                setConfirmOpen(false);
-                setDeleteTarget(null);
+                p.setConfirmOpen(false);
+                p.setDeleteTarget(null);
               }}
             >
               Cancelar
             </button>
 
             <button
-              className={cn("tp-btn", deleteBusy && "opacity-60")}
+              className={p.cn("tp-btn", p.deleteBusy && "opacity-60")}
               type="button"
-              disabled={deleteBusy}
-              onClick={() => void confirmDelete()}
+              disabled={p.deleteBusy}
+              onClick={() => void p.confirmDelete()}
             >
-              {deleteBusy ? "Eliminando…" : "Eliminar"}
+              {p.deleteBusy ? "Eliminando…" : "Eliminar"}
             </button>
           </div>
         </div>

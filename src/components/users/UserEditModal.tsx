@@ -1,6 +1,6 @@
 // tptech-frontend/src/components/users/UserEditModal.tsx
 import React, { type FormEvent, useEffect, useMemo, useState } from "react";
-import { Loader2, AlertTriangle } from "lucide-react";
+import { Loader2 } from "lucide-react";
 
 import { Modal } from "../ui/Modal";
 import UserEditFooter from "./edit/UserEditFooter";
@@ -13,6 +13,16 @@ import { cn, Tabs, type TabKey, initialsFrom, absUrl, permLabelByModuleAction } 
 
 import type { Override, OverrideEffect, Role, UserAttachment, UserDetail } from "../../services/users";
 import type { Permission } from "../../services/permissions";
+
+import {
+  shouldHidePinMsg,
+  safeReadAutoPin,
+  safeClearAutoPin,
+  draftKeyOfFile,
+} from "./edit/helpers/userEditModal.helpers";
+
+import { useDraftAttachmentPreviews } from "./edit/hooks/useDraftAttachmentPreviews";
+import UserAvatarCard from "./edit/partials/UserAvatarCard";
 
 /* =========================
    PROPS
@@ -27,11 +37,9 @@ type Props = {
   onClose: () => void;
   onSubmit: (e?: FormEvent) => Promise<void> | void;
 
-  // permissions
   canAdmin: boolean;
   isSelfEditing: boolean;
 
-  // detail/state
   detail: UserDetail | null;
 
   tab: TabKey;
@@ -90,6 +98,7 @@ type Props = {
   addAttachments: (files: File[]) => Promise<void>;
   removeSavedAttachment: (id: string) => Promise<void>;
   savedAttachments: UserAttachment[];
+  handleDownloadSavedAttachment: (att: UserAttachment) => Promise<void> | void;
 
   // pin (draft)
   pinBusy: boolean;
@@ -99,8 +108,8 @@ type Props = {
   pinNew2: string;
   setPinNew2: (v: string) => void;
   adminTogglePinEnabled: (next: boolean, opts?: { confirmRemoveOverrides?: boolean }) => Promise<void>;
-  adminSetOrResetPin: () => Promise<void>;
-  adminRemovePin: (opts?: { confirmRemoveOverrides?: boolean }) => Promise<void>;
+  adminSetOrResetPin: (opts?: { currentPin?: string }) => Promise<void>;
+  adminRemovePin: (opts?: { confirmRemoveOverrides?: boolean; currentPin?: string }) => Promise<void>;
 
   // warehouse
   fFavWarehouseId: string;
@@ -129,16 +138,15 @@ type Props = {
   specialListSorted: Override[];
   addOrUpdateSpecial: () => Promise<void>;
   removeSpecial: (permissionId: string) => Promise<void>;
+
+  autoOpenPinFlow?: boolean;
+  onAutoOpenPinFlowConsumed?: () => void;
 };
 
-/* =========================
-   HELPERS
-========================= */
-function shouldHidePinMsg(msg?: string | null) {
-  const m = String(msg || "").toLowerCase();
-  if (!m) return true;
-  return m.includes("sesión expirada") || m.includes("sesion expirada");
-}
+/* ============================================================
+   ✅ EVENTO GLOBAL (para que UsersTable actualice “Sin PIN / Habilitado”)
+============================================================ */
+const PIN_EVENT = "tptech:user-pin-updated";
 
 export default function UserEditModal(props: Props) {
   const {
@@ -208,6 +216,7 @@ export default function UserEditModal(props: Props) {
     addAttachments,
     removeSavedAttachment,
     savedAttachments,
+    handleDownloadSavedAttachment,
 
     pinBusy,
     pinMsg,
@@ -244,6 +253,9 @@ export default function UserEditModal(props: Props) {
     specialListSorted,
     addOrUpdateSpecial,
     removeSpecial,
+
+    autoOpenPinFlow,
+    onAutoOpenPinFlowConsumed,
   } = props;
 
   const isSelf = Boolean(isSelfEditing);
@@ -251,10 +263,43 @@ export default function UserEditModal(props: Props) {
 
   const [showPassword, setShowPassword] = useState(false);
 
-  // ✅ Owner detection (para bloquear permisos especiales si es Propietario)
   const isOwner = Boolean(
     detail?.roles?.some((r) => String((r as any)?.code || (r as any)?.name || "").toUpperCase().trim() === "OWNER")
   );
+
+  /* ============================================================
+     ✅ EMIT HELPER: avisa a UsersTable para que refleje el estado
+  ============================================================ */
+  function emitPinUpdated(payload: { hasQuickPin?: boolean; pinEnabled?: boolean }) {
+    const userId = String((detail as any)?.id || "").trim();
+    if (!userId) return;
+
+    window.dispatchEvent(
+      new CustomEvent(PIN_EVENT, {
+        detail: { userId, ...payload },
+      })
+    );
+  }
+
+  /* ============================================================
+     ✅ WRAPPERS: luego de la acción real, notificamos a la tabla
+  ============================================================ */
+  async function adminSetOrResetPinWrapped(opts?: { currentPin?: string }) {
+    await adminSetOrResetPin(opts);
+    // set/reset => existe pin, y por default suele quedar habilitado
+    emitPinUpdated({ hasQuickPin: true, pinEnabled: true });
+  }
+
+  async function adminRemovePinWrapped(opts?: { confirmRemoveOverrides?: boolean; currentPin?: string }) {
+    await adminRemovePin(opts);
+    emitPinUpdated({ hasQuickPin: false, pinEnabled: false });
+  }
+
+  async function adminTogglePinEnabledWrapped(next: boolean, opts?: { confirmRemoveOverrides?: boolean }) {
+    await adminTogglePinEnabled(next, opts);
+    // si se está toggleando, asumimos que existe pin (solo aparece toggle si había pin)
+    emitPinUpdated({ hasQuickPin: true, pinEnabled: Boolean(next) });
+  }
 
   // ===== PIN FLOW (UI) =====
   const [pinFlowOpen, setPinFlowOpen] = useState(false);
@@ -262,13 +307,15 @@ export default function UserEditModal(props: Props) {
   const [pinDraft, setPinDraft] = useState("");
   const [pinDraft2, setPinDraft2] = useState("");
 
+  const [confirmDisablePinClearsSpecialOpen, setConfirmDisablePinClearsSpecialOpen] = useState(false);
+  const [pinToggling, setPinToggling] = useState(false);
+
   function openPinFlow() {
     setPinDraft("");
     setPinDraft2("");
     setPinFlowStep("NEW");
     setPinFlowOpen(true);
 
-    // drafts limpios hasta confirmar
     setPinNew("");
     setPinNew2("");
   }
@@ -281,7 +328,71 @@ export default function UserEditModal(props: Props) {
     setPinFlowStep("NEW");
   }
 
-  // ✅ BLOQUEA submit del form mientras el PIN modal está abierto
+  /* ============================================================
+     ✅ AUTO OPEN PIN FLOW (desde Users.tsx)
+  ============================================================ */
+  useEffect(() => {
+    if (!open) return;
+    if (!autoOpenPinFlow) return;
+    if (modalMode !== "EDIT") return;
+
+    const detailId = String((detail as any)?.id || "");
+    if (!detailId) return;
+
+    const hasRealPin = Boolean((detail as any)?.hasQuickPin);
+
+    if (tab !== "CONFIG") {
+      setTab("CONFIG");
+      return;
+    }
+
+    if (hasRealPin) {
+      onAutoOpenPinFlowConsumed?.();
+      return;
+    }
+
+    if (!pinFlowOpen && !pinBusy && !pinToggling) {
+      openPinFlow();
+      onAutoOpenPinFlowConsumed?.();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, autoOpenPinFlow, modalMode, (detail as any)?.id, tab, pinFlowOpen, pinBusy, pinToggling]);
+
+  /* ============================================================
+     ✅ AUTO PIN LEGACY (sessionStorage)
+  ============================================================ */
+  useEffect(() => {
+    if (!open) return;
+    if (modalMode !== "EDIT") return;
+
+    const detailId = String((detail as any)?.id || "");
+    if (!detailId) return;
+
+    if (autoOpenPinFlow) return;
+
+    const auto = safeReadAutoPin();
+    if (!auto?.userId) return;
+    if (String(auto.userId) !== detailId) return;
+
+    const hasRealPin = Boolean((detail as any)?.hasQuickPin);
+
+    if (tab !== "CONFIG") {
+      setTab("CONFIG");
+      return;
+    }
+
+    if (hasRealPin) {
+      safeClearAutoPin();
+      return;
+    }
+
+    if (!pinFlowOpen && !pinBusy && !pinToggling) {
+      openPinFlow();
+      safeClearAutoPin();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, modalMode, (detail as any)?.id, tab, pinFlowOpen, pinBusy, pinToggling, autoOpenPinFlow]);
+
   function handleSubmit(e?: FormEvent) {
     if (e && pinFlowOpen) {
       e.preventDefault();
@@ -291,55 +402,15 @@ export default function UserEditModal(props: Props) {
     return onSubmit(e);
   }
 
-  // previews attachments draft
-  const [draftPreviewByKey, setDraftPreviewByKey] = useState<Record<string, string>>({});
-  function draftKey(f: File) {
-    return `${f.name}-${f.size}-${f.lastModified}`;
-  }
+  // previews attachments draft (hook)
+  const { previewByKey: draftPreviewByKey } = useDraftAttachmentPreviews(attachmentsDraft);
 
   const [hiddenSavedAttIds, setHiddenSavedAttIds] = useState<Set<string>>(new Set());
   const [forceHideDetailAvatar, setForceHideDetailAvatar] = useState(false);
 
-  // confirm: deshabilitar permisos especiales
   const [confirmDisableSpecialOpen, setConfirmDisableSpecialOpen] = useState(false);
   const [specialClearing, setSpecialClearing] = useState(false);
 
-  // confirm: deshabilitar PIN borra permisos especiales
-  const [confirmDisablePinClearsSpecialOpen, setConfirmDisablePinClearsSpecialOpen] = useState(false);
-  const [pinToggling, setPinToggling] = useState(false);
-
-  // ✅ Mantiene sincronizados los objectURL con attachmentsDraft
-  useEffect(() => {
-    setDraftPreviewByKey((prev) => {
-      const next: Record<string, string> = { ...prev };
-      const alive = new Set<string>();
-
-      for (const f of attachmentsDraft) {
-        const k = draftKey(f);
-        alive.add(k);
-
-        const isImg = String((f as any)?.type || "").startsWith("image/");
-        if (isImg && !next[k]) {
-          try {
-            next[k] = URL.createObjectURL(f);
-          } catch {}
-        }
-      }
-
-      for (const k of Object.keys(next)) {
-        if (!alive.has(k)) {
-          try {
-            URL.revokeObjectURL(next[k]);
-          } catch {}
-          delete next[k];
-        }
-      }
-
-      return next;
-    });
-  }, [attachmentsDraft]);
-
-  // reset state cuando abre/cambia user
   useEffect(() => {
     if (!open) return;
 
@@ -354,7 +425,6 @@ export default function UserEditModal(props: Props) {
 
     setShowPassword(false);
 
-    // ✅ reset PIN flow
     setPinFlowOpen(false);
     setPinFlowStep("NEW");
     setPinDraft("");
@@ -364,40 +434,10 @@ export default function UserEditModal(props: Props) {
   }, [open, detail?.id, setPinNew, setPinNew2]);
 
   function safeClose() {
-    try {
-      if (typeof avatarPreview === "string" && avatarPreview.startsWith("blob:")) URL.revokeObjectURL(avatarPreview);
-    } catch {}
-    try {
-      for (const u of Object.values(draftPreviewByKey)) URL.revokeObjectURL(u);
-    } catch {}
-
-    setAvatarPreview("");
-    setAvatarFileDraft(null);
-    setDraftPreviewByKey({});
-
-    setHiddenSavedAttIds(new Set());
-    setForceHideDetailAvatar(false);
-
-    setConfirmDisableSpecialOpen(false);
-    setSpecialClearing(false);
-
-    setConfirmDisablePinClearsSpecialOpen(false);
-    setPinToggling(false);
-
-    setShowPassword(false);
-
-    // ✅ reset PIN flow
-    setPinFlowOpen(false);
-    setPinFlowStep("NEW");
-    setPinDraft("");
-    setPinDraft2("");
-    setPinNew("");
-    setPinNew2("");
-
     onClose();
   }
 
-  // ✅ EL ESTADO REAL DEL PIN VIENE SOLO DEL DETAIL (no optimista)
+  // ✅ ESTADO REAL DEL PIN
   const detailHasQuickPin = Boolean(detail?.hasQuickPin);
   const detailPinEnabled = Boolean(detail?.pinEnabled);
   const hasPin = detailHasQuickPin;
@@ -410,7 +450,6 @@ export default function UserEditModal(props: Props) {
 
   const showPinMessage = !shouldHidePinMsg(pinMsg);
 
-  // role owner id (para el “obligatorio” cuando editás tu usuario)
   const ownerRoleId = useMemo(() => {
     const r =
       roles.find((x: any) => String((x as any)?.code || "").toUpperCase() === "OWNER") ??
@@ -507,7 +546,8 @@ export default function UserEditModal(props: Props) {
 
     setPinToggling(true);
     try {
-      await adminTogglePinEnabled(false, { confirmRemoveOverrides: true });
+      // ✅ usar wrapper para que la tabla se entere
+      await adminTogglePinEnabledWrapped(false, { confirmRemoveOverrides: true });
 
       setSpecialPermPick("");
       setSpecialEffectPick("ALLOW");
@@ -519,10 +559,7 @@ export default function UserEditModal(props: Props) {
     }
   }
 
-  // ✅ Bloqueo total permisos especiales si es OWNER o self-edit
   const specialBlocked = disableAdminDangerZone || isOwner;
-
-  // ✅ Confirm overlays más oscuros SOLO para estos confirm (no afecta otros modales)
   const confirmOverlay = "bg-black/70 backdrop-blur-[1px]";
 
   return (
@@ -540,7 +577,6 @@ export default function UserEditModal(props: Props) {
         onConfirmDisableSpecialAndClear={() => void confirmDisableSpecialAndClear()}
       />
 
-      {/* ✅ Modal principal */}
       <Modal open={open} wide={wide} title={title} onClose={safeClose}>
         {modalLoading ? (
           <div className={cn("tp-card p-4 text-sm text-muted flex items-center gap-2")}>
@@ -549,137 +585,25 @@ export default function UserEditModal(props: Props) {
           </div>
         ) : (
           <form onSubmit={handleSubmit} className="space-y-4">
-            {/* Avatar */}
-            <div className={cn("tp-card p-4")}>
-              <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-                <div className="flex items-center gap-4">
-                  <div className="relative group">
-                    <button
-                      type="button"
-                      className={cn(
-                        "h-16 w-16 rounded-2xl grid place-items-center relative overflow-hidden",
-                        "focus:outline-none focus:ring-2 focus:ring-[color:var(--primary)]",
-                        (avatarBusy || modalBusy) && "opacity-60 cursor-not-allowed"
-                      )}
-                      style={{
-                        border: "1px solid var(--border)",
-                        background: "color-mix(in oklab, var(--card) 80%, var(--bg))",
-                        color: "var(--muted)",
-                      }}
-                      title={detail?.avatarUrl || avatarPreview ? "Editar avatar" : "Agregar avatar"}
-                      onClick={() => {
-                        if (!avatarBusy && !modalBusy) avatarInputModalRef.current?.click();
-                      }}
-                      disabled={avatarBusy || modalBusy}
-                    >
-                      {(avatarBusy || avatarImgLoading) && (
-                        <div className="absolute inset-0 grid place-items-center" style={{ background: "rgba(0,0,0,0.22)" }}>
-                          <div className="h-6 w-6 rounded-full border-2 border-white/40 border-t-white animate-spin" />
-                        </div>
-                      )}
+            <UserAvatarCard
+              modalMode={modalMode}
+              modalBusy={modalBusy}
+              avatarBusy={avatarBusy}
+              avatarImgLoading={avatarImgLoading}
+              setAvatarImgLoading={setAvatarImgLoading}
+              avatarSrc={avatarSrc}
+              avatarPreview={avatarPreview}
+              detailHasAvatar={Boolean(!forceHideDetailAvatar && detail?.avatarUrl)}
+              avatarInputModalRef={avatarInputModalRef}
+              onPick={(f) => {
+                setForceHideDetailAvatar(false);
+                void pickAvatarForModal(f);
+              }}
+              onRemove={() => void handleRemoveAvatar()}
+            />
 
-                      {avatarSrc ? (
-                        <img
-                          src={avatarSrc}
-                          alt="Avatar"
-                          className="h-full w-full object-cover"
-                          onLoadStart={() => setAvatarImgLoading(true)}
-                          onLoad={() => setAvatarImgLoading(false)}
-                          onError={() => setAvatarImgLoading(false)}
-                        />
-                      ) : (
-                        <div className="grid h-full w-full place-items-center text-sm font-bold text-primary">
-                          {initialsFrom(fName || fEmail || "U")}
-                        </div>
-                      )}
+            <Tabs value={tab} onChange={setTab} />
 
-                      <div
-                        className={cn("absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity", "grid place-items-center")}
-                        style={{ background: "rgba(0,0,0,0.28)" }}
-                        aria-hidden="true"
-                      >
-                        <span className="text-white text-[11px] px-2 text-center leading-tight">
-                          {avatarBusy ? "SUBIENDO…" : avatarPreview || detail?.avatarUrl ? "EDITAR" : "AGREGAR"}
-                        </span>
-                      </div>
-                    </button>
-
-                    {(avatarPreview || (modalMode === "EDIT" && detail?.avatarUrl && !forceHideDetailAvatar)) && (
-                      <button
-                        type="button"
-                        onClick={() => void handleRemoveAvatar()}
-                        className={cn(
-                          "absolute top-2 right-2 h-6 w-6 rounded-full grid place-items-center",
-                          "opacity-0 group-hover:opacity-100 transition-opacity"
-                        )}
-                        style={{
-                          background: "rgba(255,255,255,0.75)",
-                          border: "1px solid rgba(0,0,0,0.08)",
-                          backdropFilter: "blur(6px)",
-                        }}
-                        title={avatarPreview ? "Descartar" : "Eliminar avatar"}
-                        aria-label={avatarPreview ? "Descartar" : "Eliminar avatar"}
-                        disabled={avatarBusy || modalBusy}
-                      >
-                        <span className="text-[11px] leading-none">✕</span>
-                      </button>
-                    )}
-
-                    <input
-                      ref={avatarInputModalRef}
-                      type="file"
-                      accept="image/*"
-                      hidden
-                      onChange={(e) => {
-                        const f = e.target.files?.[0];
-                        e.currentTarget.value = "";
-                        if (!f) return;
-
-                        setForceHideDetailAvatar(false);
-                        void pickAvatarForModal(f);
-                      }}
-                    />
-                  </div>
-
-                  <div className="min-w-0">
-                    <div className="text-sm font-semibold">Imagen de Perfil</div>
-                    <div className="text-xs text-muted">
-                      {modalMode === "CREATE" ? "Podés elegirlo ahora (se sube al crear)." : "Elegí uno nuevo para actualizar al instante."}
-                    </div>
-                  </div>
-                </div>
-
-                {avatarPreview && (
-                  <button className="tp-btn" type="button" onClick={() => void handleRemoveAvatar()} disabled={avatarBusy || modalBusy}>
-                    Descartar
-                  </button>
-                )}
-              </div>
-            </div>
-
-            {/* aviso self */}
-            {modalMode === "EDIT" && isSelf ? (
-              <div
-                className={cn("tp-card p-3 text-sm flex gap-3 items-start")}
-                style={{
-                  border: "1px solid color-mix(in oklab, var(--primary) 22%, var(--border))",
-                  background: "color-mix(in oklab, var(--card) 88%, var(--bg))",
-                }}
-              >
-                <AlertTriangle className="h-4 w-4 mt-0.5" />
-                <div className="min-w-0">
-                  <div className="font-semibold">Estás editando tu propio usuario</div>
-                  <div className="text-xs text-muted">
-                    Para evitar perder acceso o expirar la sesión, desde acá no podés cambiar roles/permisos/almacén favorito/PIN. Eso debe
-                    hacerlo otro Admin/Owner.
-                  </div>
-                </div>
-              </div>
-            ) : null}
-
-            <Tabs value={tab} onChange={setTab} configBadge={disableAdminDangerZone ? "Restringida" : undefined} />
-
-            {/* TAB DATA */}
             {tab === "DATA" ? (
               <SectionData
                 modalMode={modalMode}
@@ -722,12 +646,14 @@ export default function UserEditModal(props: Props) {
                 addAttachments={addAttachments}
                 filteredSavedAttachments={filteredSavedAttachments}
                 handleRemoveSavedAttachment={handleRemoveSavedAttachment}
-                draftKey={draftKey}
+                handleDownloadSavedAttachment={handleDownloadSavedAttachment}
+                draftKey={draftKeyOfFile}
                 draftPreviewByKey={draftPreviewByKey}
+                initialsFrom={(s: string) => initialsFrom(s)}
+                avatarInitialsBase={fName || fEmail || "U"}
               />
             ) : null}
 
-            {/* TAB CONFIG */}
             {tab === "CONFIG" ? (
               <SectionConfig
                 modalMode={modalMode}
@@ -756,9 +682,10 @@ export default function UserEditModal(props: Props) {
                 setPinNew2={setPinNew2}
                 pinNew={pinNew}
                 pinNew2={pinNew2}
-                adminSetOrResetPin={adminSetOrResetPin}
-                adminTogglePinEnabled={adminTogglePinEnabled}
-                adminRemovePin={adminRemovePin}
+                // ✅ acá está la clave: usar wrappers que emiten el evento
+                adminSetOrResetPin={adminSetOrResetPinWrapped}
+                adminTogglePinEnabled={adminTogglePinEnabledWrapped}
+                adminRemovePin={adminRemovePinWrapped}
                 specialListSorted={specialListSorted}
                 setConfirmDisablePinClearsSpecialOpen={setConfirmDisablePinClearsSpecialOpen}
                 specialBlocked={specialBlocked}
@@ -791,7 +718,6 @@ export default function UserEditModal(props: Props) {
               />
             ) : null}
 
-            {/* footer */}
             <UserEditFooter modalBusy={modalBusy} modalMode={modalMode} onCancel={safeClose} />
           </form>
         )}

@@ -301,7 +301,6 @@ export default function UserView() {
 
           {canAdmin && (
             <>
-              {/* ✅ Editar: manda a la pantalla de edición (vía query edit=...) */}
               <button
                 type="button"
                 className="tp-btn-primary inline-flex items-center gap-2"
@@ -317,7 +316,6 @@ export default function UserView() {
                 Editar
               </button>
 
-              {/* ✅ Eliminar: NO rojo + con borde del sistema + deshabilitado si isMe */}
               <button
                 type="button"
                 className={cn(
@@ -364,10 +362,7 @@ export default function UserView() {
                 {detail.name || "Sin nombre"} {isMe && <span className="text-xs text-muted">(vos)</span>}
               </div>
 
-              {/* mail */}
               <div className="text-sm text-muted truncate">{detail.email}</div>
-
-              {/* ✅ creado debajo del mail */}
               <div className="text-xs text-muted mt-1">Creado: {formatDateTime(detail.createdAt) || "—"}</div>
 
               <div className="mt-2 flex flex-wrap gap-2">
@@ -570,9 +565,11 @@ export default function UserView() {
             ) : (
               <div className="divide-y divide-border rounded-xl border border-border overflow-hidden">
                 {attachments.map((a: any) => {
-                  const url = absUrl(String(a.url || ""));
                   const fname = String(a.filename || "archivo");
                   const meta = [formatBytes(a.size), String(a.mimeType || "")].filter(Boolean).join(" • ");
+
+                  // ✅ Igual que Empresa: endpoint dedicado de descarga
+                  const downloadHref = absUrl(`/users/${encodeURIComponent(userId)}/attachments/${encodeURIComponent(String(a.id))}/download`);
 
                   return (
                     <div key={a.id} className="p-3 flex items-center justify-between gap-3 bg-card">
@@ -583,7 +580,7 @@ export default function UserView() {
                       </div>
 
                       <a
-                        href={url}
+                        href={downloadHref}
                         className={cn("tp-btn", "shrink-0")}
                         target="_blank"
                         rel="noreferrer"
