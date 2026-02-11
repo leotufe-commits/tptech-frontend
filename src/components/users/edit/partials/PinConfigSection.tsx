@@ -4,7 +4,7 @@ import { TPSegmentedPills } from "../../../ui/TPBadges";
 import { cn, Section } from "../../users.ui";
 import type { Override } from "../../../../services/users";
 import { PinFlowModal } from "../sections/PinFlowModal";
-import { isValidPinDraft, nextTick } from "../helpers/sectionConfig.helpers";
+import { isValidPinDraft } from "../helpers/sectionConfig.helpers";
 
 type Props = {
   modalMode: "CREATE" | "EDIT";
@@ -37,14 +37,14 @@ type Props = {
   pinMsg: string | null;
   showPinMessage: boolean;
 
-  // drafts pending
+  // drafts pending (solo CREATE)
   pinNew: string;
   pinNew2: string;
   setPinNew: (v: string) => void;
   setPinNew2: (v: string) => void;
 
   // actions
-  adminSetOrResetPin: (opts?: { currentPin?: string }) => Promise<void>;
+  adminSetOrResetPin: (opts?: { currentPin?: string; pin?: string; pin2?: string }) => Promise<void>;
   adminTogglePinEnabled: (next: boolean, opts?: { confirmRemoveOverrides?: boolean }) => Promise<void>;
   adminRemovePin: (opts?: { confirmRemoveOverrides?: boolean; currentPin?: string }) => Promise<void>;
 
@@ -108,7 +108,9 @@ export default function PinConfigSection(props: Props) {
     onAskDeleteSelf,
   } = props;
 
-  const pinPending = isValidPinDraft(pinNew, pinNew2);
+  // ✅ IMPORTANTE:
+  // "pinPending" SOLO aplica en CREATE (porque ahí sí se guarda al apretar Guardar usuario).
+  const pinPending = modalMode === "CREATE" ? isValidPinDraft(pinNew, pinNew2) : false;
 
   const canManagePin = Boolean(isSelf || canAdmin);
   const pinActionsDisabled = pinBusy || pinToggling || !canManagePin;
@@ -144,20 +146,30 @@ export default function PinConfigSection(props: Props) {
         pinBusy={pinBusy}
         pinToggling={pinToggling}
         onConfirm={async (payload?: { currentPin?: string }) => {
-          setPinNew(pinDraft);
-          setPinNew2(pinDraft2);
+          // ✅ sanity: si el modal permite confirmar con basura, no seguimos
+          if (!isValidPinDraft(pinDraft, pinDraft2)) return;
+
           setPinRemovedVisual(false);
 
+          // ✅ CREATE: queda pendiente y se aplica cuando guardás el usuario
           if (modalMode === "CREATE") {
+            setPinNew(pinDraft);
+            setPinNew2(pinDraft2);
             closePinFlow();
             return;
           }
 
-          await nextTick();
-          await nextTick();
+          // ✅ EDIT: se guarda INMEDIATO (NO queda pendiente)
+          // limpiamos el draft pending por si venías de estados viejos
+          setPinNew("");
+          setPinNew2("");
 
-          if (isSelf && payload?.currentPin) await adminSetOrResetPin({ currentPin: payload.currentPin });
-          else await adminSetOrResetPin();
+          // ✅ CLAVE: no depender del state (pinNew/pinNew2) para llamar al API
+          await adminSetOrResetPin({
+            currentPin: payload?.currentPin,
+            pin: pinDraft,
+            pin2: pinDraft2,
+          });
 
           closePinFlow();
         }}
@@ -220,6 +232,7 @@ export default function PinConfigSection(props: Props) {
                   }
 
                   void adminRemovePin().then(() => {
+                    // ✅ en EDIT esto es real (ya se borró). En CREATE no llegás acá.
                     setPinNew("");
                     setPinNew2("");
                     setPinRemovedVisual(true);
@@ -234,6 +247,7 @@ export default function PinConfigSection(props: Props) {
                 className={cn("tp-btn-secondary", (pinBusy || pinToggling || !canManagePin) && "opacity-60")}
                 disabled={pinBusy || pinToggling || !canManagePin}
                 onClick={() => {
+                  // ✅ solo CREATE: cancelar pin pendiente
                   setPinNew("");
                   setPinNew2("");
                   setPinRemovedVisual(false);

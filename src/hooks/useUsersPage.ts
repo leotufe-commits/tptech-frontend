@@ -82,7 +82,7 @@ function parseTabParam(v: string | null): TabKey | null {
 
 function parsePinAction(v: string | null): "create" | null {
   const s = String(v || "").trim().toLowerCase();
-  if (s === "create" || s === "new" || s === "set" || s === "1" || s === "true") return "create";
+  if (s === "create" || s === "new" || s === "set" || s === "setup" || s === "1" || s === "true") return "create";
   return null;
 }
 
@@ -131,7 +131,7 @@ export function useUsersPage() {
     const fromState = st?.returnTo ? String(st.returnTo) : "";
 
     const qs = new URLSearchParams(location.search);
-    const fromQuery = qs.get("returnTo") ? String(qs.get("returnTo") || "") : "";
+    const fromQuery = String(qs.get("returnTo") || qs.get("return") || "").trim();
 
     const rt = (fromState || fromQuery || "").trim();
     if (rt) returnToRef.current = rt;
@@ -456,14 +456,25 @@ export function useUsersPage() {
 
       const rawUsers = (norm.users ?? []) as UserListItem[];
 
-      const normalizedUsers = rawUsers.map((u) => ({
-        ...(u as any),
-        hasQuickPin: Boolean((u as any)?.hasQuickPin),
-        pinEnabled:
+      const normalizedUsers = rawUsers.map((u) => {
+        const pinEnabled =
           typeof (u as any)?.pinEnabled === "boolean"
             ? Boolean((u as any).pinEnabled)
-            : Boolean((u as any)?.pinEnabled),
-      }));
+            : typeof (u as any)?.quickPinEnabled === "boolean"
+            ? Boolean((u as any).quickPinEnabled)
+            : false;
+
+        const hasQuickPin =
+          typeof (u as any)?.hasQuickPin === "boolean"
+            ? Boolean((u as any).hasQuickPin)
+            : pinEnabled; // ✅ fallback razonable si el backend no manda hasQuickPin
+
+        return {
+          ...(u as any),
+          hasQuickPin,
+          pinEnabled,
+        };
+      });
 
       setUsers(sortUsersAlpha(normalizedUsers));
       setTotal(Number(norm.total ?? 0));
@@ -683,11 +694,13 @@ export function useUsersPage() {
     );
   }
 
-  async function adminSetOrResetPin(opts?: { currentPin?: string }) {
+  // ✅ UPDATED: acepta pin/pin2 (para no depender de state) y usa fallback a pinNew/pinNew2
+  async function adminSetOrResetPin(opts?: { currentPin?: string; pin?: string; pin2?: string }) {
     if (!canManagePinHere()) return;
 
     setPinMsg(null);
 
+    // en CREATE seguimos usando state "pendiente" (porque se aplica al Guardar)
     if (modalMode === "CREATE") {
       let p1 = "";
       let p2 = "";
@@ -708,11 +721,15 @@ export function useUsersPage() {
 
     if (modalMode !== "EDIT" || !targetId) return;
 
+    // ✅ en EDIT: si vienen pin/pin2 desde el modal, se usan esos
+    const raw1 = String(opts?.pin ?? pinNew ?? "").trim();
+    const raw2 = String(opts?.pin2 ?? pinNew2 ?? "").trim();
+
     let p1 = "";
     let p2 = "";
     try {
-      p1 = assertPin4Local(pinNew);
-      p2 = assertPin4Local(pinNew2);
+      p1 = assertPin4Local(raw1);
+      p2 = assertPin4Local(raw2);
     } catch (e: any) {
       flashPinMsg(e?.message || "PIN inválido.");
       return;

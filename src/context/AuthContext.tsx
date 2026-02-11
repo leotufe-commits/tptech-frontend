@@ -978,10 +978,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     [setSession, bumpActivity]
   );
 
-  /* =========================
+    /* =========================
      PIN LOCK SETTINGS (JOYERÍA)
-     ✅ AHORA MANDA LOS ALIASES NUEVOS (enabled/timeoutMinutes/requireOnUserSwitch)
-     ✅ El backend (pinLockSettingsSchema) los normaliza a canonical
+     ✅ AHORA USA EL ENDPOINT NUEVO:
+        PATCH /company/settings/security
+     ✅ Traduce minutos → segundos (backend usa pinLockTimeoutSec)
   ========================= */
   const setPinLockSettingsForJewelry = useCallback(
     async (args: {
@@ -992,14 +993,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }) => {
       const timeoutMinutes = clamp(Math.floor(Number(args.timeoutMinutes) || 1), 1, 60 * 12);
 
-      await apiFetch("/auth/company/security/pin-lock", {
+      const payload = {
+        quickSwitchEnabled: Boolean(args.quickSwitchEnabled),
+        pinLockEnabled: Boolean(args.enabled),
+        pinLockTimeoutSec: timeoutMinutes * 60,
+        pinLockRequireOnUserSwitch: Boolean(args.requireOnUserSwitch),
+      };
+
+      await apiFetch("/company/settings/security", {
         method: "PATCH",
-        body: {
-          enabled: Boolean(args.enabled),
-          timeoutMinutes,
-          requireOnUserSwitch: Boolean(args.requireOnUserSwitch),
-          quickSwitchEnabled: Boolean(args.quickSwitchEnabled),
-        } as any,
+        body: JSON.stringify(payload),
         timeoutMs: 10_000,
       });
 

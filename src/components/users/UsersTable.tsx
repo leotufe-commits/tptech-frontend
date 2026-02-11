@@ -237,8 +237,7 @@ export default function UsersTable(props: Props) {
       const prev = pinOverridesRef.current.get(userId) ?? {};
       const next: PinOverride = { ...prev };
 
-      // ✅ FIX CRÍTICO:
-      // NO pisar valores previos con undefined (esto era lo que hacía que “reviva” el PIN en la tabla)
+      // ✅ NO pisar valores previos con undefined
       if (hasQuickPin !== undefined) next.hasQuickPin = hasQuickPin;
       if (pinEnabled !== undefined) next.pinEnabled = pinEnabled;
 
@@ -253,12 +252,34 @@ export default function UsersTable(props: Props) {
     return () => window.removeEventListener(PIN_EVENT, onPinUpdated as any);
   }, []);
 
+  /**
+   * ✅ Regla importante para tu caso (lock screen / cancelar):
+   * - "pinEnabled" NO es prueba de que exista PIN.
+   * - Si el backend no manda hasQuickPin, NO inferimos hasQuickPin desde pinEnabled.
+   *   Solo usamos señales más seguras (hasQuickPin explícito o quickPinUpdatedAt).
+   */
   function effectivePin(u: any) {
     const id = String(u?.id ?? "");
     const ov = id ? pinOverridesRef.current.get(id) : undefined;
 
-    const hasQuickPin = typeof ov?.hasQuickPin === "boolean" ? ov.hasQuickPin : Boolean(u?.hasQuickPin);
-    let pinEnabled = typeof ov?.pinEnabled === "boolean" ? ov.pinEnabled : Boolean(u?.pinEnabled);
+    const rawHas = typeof u?.hasQuickPin === "boolean" ? Boolean(u.hasQuickPin) : undefined;
+    const rawUpdatedAt = String(u?.quickPinUpdatedAt ?? "").trim();
+
+    const hasQuickPin =
+      typeof ov?.hasQuickPin === "boolean"
+        ? ov.hasQuickPin
+        : rawHas !== undefined
+        ? rawHas
+        : Boolean(rawUpdatedAt); // ✅ fallback más seguro que pinEnabled
+
+    let pinEnabled =
+      typeof ov?.pinEnabled === "boolean"
+        ? ov.pinEnabled
+        : typeof u?.pinEnabled === "boolean"
+        ? Boolean(u.pinEnabled)
+        : typeof u?.quickPinEnabled === "boolean"
+        ? Boolean(u.quickPinEnabled)
+        : false;
 
     // ✅ coherencia: si no hay PIN, pinEnabled siempre false
     if (!hasQuickPin) pinEnabled = false;
@@ -751,7 +772,11 @@ export default function UsersTable(props: Props) {
                       <td className="px-5 py-3 align-top">
                         <button
                           type="button"
-                          className={cn("w-full text-left", "rounded-xl", "hover:opacity-95 active:scale-[0.995] transition")}
+                          className={cn(
+                            "w-full text-left",
+                            "rounded-xl",
+                            "hover:opacity-95 active:scale-[0.995] transition"
+                          )}
                           onClick={() => openView(u)}
                           title="Ver usuario"
                         >
@@ -774,7 +799,9 @@ export default function UsersTable(props: Props) {
 
                               <div className="text-xs text-muted truncate">{u.email}</div>
 
-                              {u.createdAt && <div className="text-[11px] text-muted">Creado: {formatDateTime(u.createdAt)}</div>}
+                              {u.createdAt && (
+                                <div className="text-[11px] text-muted">Creado: {formatDateTime(u.createdAt)}</div>
+                              )}
                             </div>
                           </div>
                         </button>
@@ -804,7 +831,11 @@ export default function UsersTable(props: Props) {
                             title={pinEnabled ? "PIN habilitado" : "PIN deshabilitado"}
                             className="gap-1"
                           >
-                            {pinEnabled ? <KeyRound className="h-3.5 w-3.5" /> : <Shield className="h-3.5 w-3.5" />}
+                            {pinEnabled ? (
+                              <KeyRound className="h-3.5 w-3.5" />
+                            ) : (
+                              <Shield className="h-3.5 w-3.5" />
+                            )}
                             {pinEnabled ? "Habilitado" : "Deshabilitado"}
                           </TPBadge>
                         ) : (
@@ -836,7 +867,9 @@ export default function UsersTable(props: Props) {
 
                       <td className="px-5 py-3 align-top">
                         {u.favoriteWarehouseId ? (
-                          <TPBadge tone="neutral">⭐ {warehouseLabelById(u.favoriteWarehouseId) ?? u.favoriteWarehouseId}</TPBadge>
+                          <TPBadge tone="neutral">
+                            ⭐ {warehouseLabelById(u.favoriteWarehouseId) ?? u.favoriteWarehouseId}
+                          </TPBadge>
                         ) : (
                           <span className="text-muted">—</span>
                         )}
@@ -899,7 +932,13 @@ export default function UsersTable(props: Props) {
                             onClick={() => {
                               if (canDeleteThis) askDelete(u);
                             }}
-                            title={!canAdmin ? "Sin permisos de administrador" : isMe ? "No podés eliminar tu propio usuario" : "Eliminar usuario"}
+                            title={
+                              !canAdmin
+                                ? "Sin permisos de administrador"
+                                : isMe
+                                ? "No podés eliminar tu propio usuario"
+                                : "Eliminar usuario"
+                            }
                           >
                             <Trash2 className="h-4 w-4" />
                           </button>
@@ -918,7 +957,13 @@ export default function UsersTable(props: Props) {
         <div className="text-xs text-muted">{totalLabel}</div>
 
         <div className="flex items-center gap-2">
-          <button className={cn(iconBtnBase, page <= 1 && disabledCls)} type="button" disabled={page <= 1} onClick={onPrev} title="Anterior">
+          <button
+            className={cn(iconBtnBase, page <= 1 && disabledCls)}
+            type="button"
+            disabled={page <= 1}
+            onClick={onPrev}
+            title="Anterior"
+          >
             <ChevronLeft className="h-4 w-4" />
           </button>
 
@@ -926,7 +971,13 @@ export default function UsersTable(props: Props) {
             <b className="text-text">{page}</b> / {totalPages}
           </div>
 
-          <button className={cn(iconBtnBase, page >= totalPages && disabledCls)} type="button" disabled={page >= totalPages} onClick={onNext} title="Siguiente">
+          <button
+            className={cn(iconBtnBase, page >= totalPages && disabledCls)}
+            type="button"
+            disabled={page >= totalPages}
+            onClick={onNext}
+            title="Siguiente"
+          >
             <ChevronRight className="h-4 w-4" />
           </button>
         </div>
@@ -942,8 +993,12 @@ export default function UsersTable(props: Props) {
           >
             <div className="px-4 py-3 border-b border-border flex items-center justify-between gap-2">
               <div className="min-w-0">
-                <div className="text-sm font-semibold truncate">Adjuntos — {attPanelUser ? userLabel(attPanelUser as any) : "Usuario"}</div>
-                <div className="text-xs text-muted truncate">{attPanelUser ? String((attPanelUser as any).email || "") : ""}</div>
+                <div className="text-sm font-semibold truncate">
+                  Adjuntos — {attPanelUser ? userLabel(attPanelUser as any) : "Usuario"}
+                </div>
+                <div className="text-xs text-muted truncate">
+                  {attPanelUser ? String((attPanelUser as any).email || "") : ""}
+                </div>
               </div>
 
               <button type="button" className={cn(iconBtnBase)} onClick={closeAttPanel} title="Cerrar">
@@ -961,10 +1016,14 @@ export default function UsersTable(props: Props) {
                 <div className="text-sm text-muted">Este usuario no tiene adjuntos.</div>
               ) : (
                 <div className="space-y-2">
-                  <div className="text-xs text-muted">{attPanelInfo?.count != null ? `${attPanelInfo.count} archivo(s)` : "Archivos"}</div>
+                  <div className="text-xs text-muted">
+                    {attPanelInfo?.count != null ? `${attPanelInfo.count} archivo(s)` : "Archivos"}
+                  </div>
 
                   {attDownloadErr ? (
-                    <div className="rounded-xl border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs">{attDownloadErr}</div>
+                    <div className="rounded-xl border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs">
+                      {attDownloadErr}
+                    </div>
                   ) : null}
 
                   <div className="divide-y divide-border rounded-xl border border-border overflow-hidden">
@@ -995,7 +1054,9 @@ export default function UsersTable(props: Props) {
                     })}
                   </div>
 
-                  <div className="text-[11px] text-muted">Tip: usa cookie httpOnly (no Bearer), así que esto descarga sin romper auth.</div>
+                  <div className="text-[11px] text-muted">
+                    Tip: usa cookie httpOnly (no Bearer), así que esto descarga sin romper auth.
+                  </div>
                 </div>
               )}
             </div>

@@ -14,12 +14,7 @@ import { cn, Tabs, type TabKey, initialsFrom, absUrl, permLabelByModuleAction } 
 import type { Override, OverrideEffect, Role, UserAttachment, UserDetail } from "../../services/users";
 import type { Permission } from "../../services/permissions";
 
-import {
-  shouldHidePinMsg,
-  safeReadAutoPin,
-  safeClearAutoPin,
-  draftKeyOfFile,
-} from "./edit/helpers/userEditModal.helpers";
+import { shouldHidePinMsg, safeReadAutoPin, safeClearAutoPin, draftKeyOfFile } from "./edit/helpers/userEditModal.helpers";
 
 import { useDraftAttachmentPreviews } from "./edit/hooks/useDraftAttachmentPreviews";
 import UserAvatarCard from "./edit/partials/UserAvatarCard";
@@ -108,7 +103,10 @@ type Props = {
   pinNew2: string;
   setPinNew2: (v: string) => void;
   adminTogglePinEnabled: (next: boolean, opts?: { confirmRemoveOverrides?: boolean }) => Promise<void>;
-  adminSetOrResetPin: (opts?: { currentPin?: string }) => Promise<void>;
+
+  // ✅ CAMBIO: acepta pin/pin2 para no depender del state (evita “no dispara request”)
+  adminSetOrResetPin: (opts?: { currentPin?: string; pin?: string; pin2?: string }) => Promise<void>;
+
   adminRemovePin: (opts?: { confirmRemoveOverrides?: boolean; currentPin?: string }) => Promise<void>;
 
   // warehouse
@@ -284,9 +282,8 @@ export default function UserEditModal(props: Props) {
   /* ============================================================
      ✅ WRAPPERS: luego de la acción real, notificamos a la tabla
   ============================================================ */
-  async function adminSetOrResetPinWrapped(opts?: { currentPin?: string }) {
+  async function adminSetOrResetPinWrapped(opts?: { currentPin?: string; pin?: string; pin2?: string }) {
     await adminSetOrResetPin(opts);
-    // set/reset => existe pin, y por default suele quedar habilitado
     emitPinUpdated({ hasQuickPin: true, pinEnabled: true });
   }
 
@@ -297,7 +294,6 @@ export default function UserEditModal(props: Props) {
 
   async function adminTogglePinEnabledWrapped(next: boolean, opts?: { confirmRemoveOverrides?: boolean }) {
     await adminTogglePinEnabled(next, opts);
-    // si se está toggleando, asumimos que existe pin (solo aparece toggle si había pin)
     emitPinUpdated({ hasQuickPin: true, pinEnabled: Boolean(next) });
   }
 
@@ -546,7 +542,6 @@ export default function UserEditModal(props: Props) {
 
     setPinToggling(true);
     try {
-      // ✅ usar wrapper para que la tabla se entere
       await adminTogglePinEnabledWrapped(false, { confirmRemoveOverrides: true });
 
       setSpecialPermPick("");
@@ -561,6 +556,7 @@ export default function UserEditModal(props: Props) {
 
   const specialBlocked = disableAdminDangerZone || isOwner;
   const confirmOverlay = "bg-black/70 backdrop-blur-[1px]";
+
   return (
     <>
       <ConfirmModals
@@ -681,7 +677,6 @@ export default function UserEditModal(props: Props) {
                 setPinNew2={setPinNew2}
                 pinNew={pinNew}
                 pinNew2={pinNew2}
-                // ✅ acá está la clave: usar wrappers que emiten el evento
                 adminSetOrResetPin={adminSetOrResetPinWrapped}
                 adminTogglePinEnabled={adminTogglePinEnabledWrapped}
                 adminRemovePin={adminRemovePinWrapped}
