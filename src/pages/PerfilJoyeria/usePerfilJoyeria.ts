@@ -61,11 +61,11 @@ export function usePerfilJoyeria() {
   const [uploadingAttachments, setUploadingAttachments] = useState(false);
   const [deletingAttId, setDeletingAttId] = useState<string | null>(null);
 
-  const logoInputRef = useRef<HTMLInputElement | null>(null);
+  const logoInputRef = useRef<HTMLInputElement>(null!);
   const [logoPreview, setLogoPreview] = useState<string>("");
   const [logoImgLoading, setLogoImgLoading] = useState(false);
 
-  const attInputRef = useRef<HTMLInputElement | null>(null);
+  const attInputRef = useRef<HTMLInputElement>(null!);
 
   const [confirmUnsavedOpen, setConfirmUnsavedOpen] = useState(false);
 
