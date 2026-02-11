@@ -3,6 +3,14 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import type { CatalogItem, CatalogType } from "../services/catalogs";
 import { bulkCreateCatalogItems, createCatalogItem, listCatalog, updateCatalogItem } from "../services/catalogs";
 
+type CatalogListResponse = { items?: CatalogItem[] } | CatalogItem[] | null | undefined;
+
+function readItemsFromList(r: CatalogListResponse): CatalogItem[] {
+  if (!r) return [];
+  if (Array.isArray(r)) return r;
+  return Array.isArray(r.items) ? r.items : [];
+}
+
 export function useCatalogAdmin(type: CatalogType) {
   const [items, setItems] = useState<CatalogItem[]>([]);
   const [loading, setLoading] = useState(false);
@@ -13,8 +21,8 @@ export function useCatalogAdmin(type: CatalogType) {
     setLoading(true);
     setError(null);
     try {
-      const r = await listCatalog(type, { includeInactive: true });
-      setItems(r.items ?? []);
+      const r = (await listCatalog(type, { includeInactive: true })) as CatalogListResponse;
+      setItems(readItemsFromList(r));
     } catch (e: any) {
       setError(String(e?.message ?? e));
     } finally {

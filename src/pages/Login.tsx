@@ -111,6 +111,9 @@ export default function Login() {
   const navigate = useNavigate();
   const { refreshMe } = useAuth();
 
+  // ✅ Wrapper tipado para evitar TS2347 (genéricos sobre any)
+  const apiFetch = (API as any).apiFetch as (<T = any>(path: string, opts?: any) => Promise<T>);
+
   const [email, setEmail] = useState("");
   const [pass, setPass] = useState("");
   const [showPass, setShowPass] = useState(false);
@@ -186,13 +189,12 @@ export default function Login() {
       setDidLookup(true);
       setLoadingTenants(true);
 
-      (API as any)
-        .apiFetch<LoginOptionsResponse>("/auth/login/options", {
-          method: "POST",
-          body: { email: e },
-          timeoutMs: 8000,
-        })
-        .then((resp: LoginOptionsResponse) => {
+      apiFetch<LoginOptionsResponse>("/auth/login/options", {
+        method: "POST",
+        body: { email: e },
+        timeoutMs: 8000,
+      })
+        .then((resp) => {
           const list = Array.isArray(resp?.tenants) ? resp.tenants : [];
           setTenants(list);
 
@@ -225,7 +227,7 @@ export default function Login() {
     }, 400);
 
     return () => window.clearTimeout(t);
-  }, [email, emailOk, lastTenantKey]);
+  }, [email, emailOk, lastTenantKey, apiFetch]);
 
   const canSubmit = useMemo(() => {
     if (!emailOk) return false;
@@ -249,7 +251,7 @@ export default function Login() {
       setLoading(true);
 
       // ✅ Login (cookie httpOnly). Si el backend devuelve token, lo aprovechamos.
-      const resp = await (API as any).apiFetch<LoginResponseMaybe>("/auth/login", {
+      const resp = await apiFetch<LoginResponseMaybe>("/auth/login", {
         method: "POST",
         body: {
           tenantId: effectiveTenantId,
@@ -467,7 +469,9 @@ export default function Login() {
                 placeholder="Código de joyería"
                 disabled={!emailOk || loadingTenants || loading}
               />
-              <p className="mt-2 text-xs text-muted">No se detectó joyería automáticamente. Podés ingresar el código manual.</p>
+              <p className="mt-2 text-xs text-muted">
+                No se detectó joyería automáticamente. Podés ingresar el código manual.
+              </p>
             </div>
           )}
 

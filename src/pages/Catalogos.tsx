@@ -112,10 +112,18 @@ export default function Catalogos() {
 
         <div className="min-w-0 flex-1">
           <div className="text-lg font-semibold">Catálogos (Combos)</div>
-          <div className="text-xs text-muted">Administrá opciones por joyería: crear, activar/desactivar, ordenar y favorito.</div>
+          <div className="text-xs text-muted">
+            Administrá opciones por joyería: crear, activar/desactivar, ordenar y favorito.
+          </div>
         </div>
 
-        <button type="button" className="tp-btn-secondary" onClick={() => reload()} disabled={busy || loading} title="Recargar">
+        <button
+          type="button"
+          className="tp-btn-secondary"
+          onClick={() => reload()}
+          disabled={busy || loading}
+          title="Recargar"
+        >
           <RotateCcw className="h-4 w-4" />
         </button>
       </div>
@@ -167,7 +175,7 @@ export default function Catalogos() {
               try {
                 await createCatalogItem(type, newLabel.trim(), 0);
                 setNewLabel("");
-                toast.success("Ítem agregado");
+                toast({ tone: "success", message: "Ítem agregado" } as any);
                 await reload();
               } catch (e: any) {
                 setError(String(e?.message ?? e));
@@ -183,7 +191,9 @@ export default function Catalogos() {
 
         <div className="mt-3 border-t border-[color-mix(in_oklab,var(--border)_75%,transparent)] pt-3">
           <div className="text-sm font-semibold mb-2">Carga masiva</div>
-          <div className="text-xs text-muted mb-2">Pegá una lista (una por línea o separadas por coma). Se ignoran duplicados automáticamente.</div>
+          <div className="text-xs text-muted mb-2">
+            Pegá una lista (una por línea o separadas por coma). Se ignoran duplicados automáticamente.
+          </div>
 
           <textarea
             className="tp-input w-full min-h-[120px]"
@@ -205,7 +215,7 @@ export default function Catalogos() {
                 try {
                   await bulkCreateCatalogItems(type, labels, 0);
                   setBulkText("");
-                  toast.success(`Carga masiva OK (${labels.length})`);
+                  toast({ tone: "success", message: `Carga masiva OK (${labels.length})` } as any);
                   await reload();
                 } catch (e: any) {
                   setError(String(e?.message ?? e));
@@ -229,7 +239,10 @@ export default function Catalogos() {
         </div>
 
         {error && (
-          <div className="mb-2 text-sm tp-card p-2" style={{ border: "1px solid color-mix(in oklab, var(--danger) 35%, var(--border))" }}>
+          <div
+            className="mb-2 text-sm tp-card p-2"
+            style={{ border: "1px solid color-mix(in oklab, var(--danger) 35%, var(--border))" }}
+          >
             <div className="font-semibold">Error</div>
             <div className="text-xs text-muted break-words">{error}</div>
           </div>
@@ -264,7 +277,7 @@ export default function Catalogos() {
                     setError(null);
                     try {
                       await setCatalogItemFavorite(it.id, !isFav); // ✅ toggle (permite deseleccionar)
-                      toast.success(!isFav ? "Marcado como favorito" : "Favorito quitado");
+                      toast({ tone: "success", message: !isFav ? "Marcado como favorito" : "Favorito quitado" } as any);
                       await reload();
                     } catch (e: any) {
                       setError(String(e?.message ?? e));
@@ -273,7 +286,12 @@ export default function Catalogos() {
                     }
                   }}
                 >
-                  <Star className={cn("h-4 w-4", isFav ? "fill-[color:var(--primary)] text-[color:var(--primary)]" : "text-muted")} />
+                  <Star
+                    className={cn(
+                      "h-4 w-4",
+                      isFav ? "fill-[color:var(--primary)] text-[color:var(--primary)]" : "text-muted"
+                    )}
+                  />
                 </button>
 
                 <input
@@ -339,7 +357,7 @@ export default function Catalogos() {
                     setError(null);
                     try {
                       await updateCatalogItem(it.id, { label, sortOrder: d.sortOrder });
-                      toast.success("Guardado");
+                      toast({ tone: "success", message: "Guardado" } as any);
                       await reload();
                     } catch (e: any) {
                       setError(String(e?.message ?? e));
