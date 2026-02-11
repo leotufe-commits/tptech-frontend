@@ -460,9 +460,7 @@ export default function SystemUiCatalog() {
                 <TPUserStatusBadge status="BLOCKED" />
               </div>
 
-              <div className="text-[11px] text-muted mt-3">
-                Nota: PENDING/BLOCKED hoy se ven “Inactivo” (como está en tu archivo).
-              </div>
+              <div className="text-[11px] text-muted mt-3">Nota: PENDING/BLOCKED hoy se ven “Inactivo” (como está en tu archivo).</div>
             </Block>
 
             <Block title="ButtonBar" desc="Alineación y wrap reales (ButtonBar.tsx).">
@@ -665,9 +663,7 @@ export default function SystemUiCatalog() {
                 {/* MODAL normal */}
                 <Modal open={modalOpen} title="Modal normal" onClose={() => setModalOpen(false)}>
                   <div className="space-y-3">
-                    <div className="text-sm text-muted">
-                      Este modal usa el overlay por defecto y permite cerrar por ESC/backdrop.
-                    </div>
+                    <div className="text-sm text-muted">Este modal usa el overlay por defecto y permite cerrar por ESC/backdrop.</div>
 
                     <div className="rounded-2xl border border-border bg-surface2 p-3">
                       <div className="text-sm font-semibold text-text mb-2">Contenido</div>
@@ -689,12 +685,7 @@ export default function SystemUiCatalog() {
                 </Modal>
 
                 {/* MODAL wide */}
-                <Modal
-                  open={modalWideOpen}
-                  title="Modal wide (max-w-6xl)"
-                  onClose={() => setModalWideOpen(false)}
-                  wide
-                >
+                <Modal open={modalWideOpen} title="Modal wide (max-w-6xl)" onClose={() => setModalWideOpen(false)} wide>
                   <div className="space-y-3">
                     <div className="text-sm text-muted">
                       Mismo modal, pero con prop <span className="font-semibold text-text">wide</span>.
@@ -745,9 +736,8 @@ export default function SystemUiCatalog() {
                 >
                   <div className="space-y-3">
                     <div className="text-sm text-muted">
-                      Con <span className="font-semibold text-text">busy=true</span> bloquea:
-                      ESC, click afuera y botón “Cerrar”. El overlay está más oscuro con{" "}
-                      <span className="font-semibold text-text">overlayClassName</span>.
+                      Con <span className="font-semibold text-text">busy=true</span> bloquea: ESC, click afuera y botón “Cerrar”. El overlay
+                      está más oscuro con <span className="font-semibold text-text">overlayClassName</span>.
                     </div>
 
                     <div className="rounded-2xl border border-border bg-surface2 p-3">
@@ -766,9 +756,7 @@ export default function SystemUiCatalog() {
                 {/* NESTED demo */}
                 <Modal open={nestedParentOpen} title="Modal padre (stack)" onClose={() => setNestedParentOpen(false)}>
                   <div className="space-y-3">
-                    <div className="text-sm text-muted">
-                      Abrí el hijo: el overlay se suaviza y solo el top responde al ESC/backdrop.
-                    </div>
+                    <div className="text-sm text-muted">Abrí el hijo: el overlay se suaviza y solo el top responde al ESC/backdrop.</div>
 
                     <ButtonBar align="left">
                       <DemoButton variant="primary" onClick={() => setNestedChildOpen(true)}>
@@ -799,15 +787,11 @@ export default function SystemUiCatalog() {
               </div>
             </Block>
 
-            <Block
-              title="ConfirmDeleteDialog"
-              desc="Confirmación destructiva (con overlay). Versión simple + versión con tipeo + loading."
-            >
+            <Block title="ConfirmDeleteDialog" desc="Confirmación destructiva (con overlay). Versión simple + versión con tipeo + loading.">
               <div className="space-y-3">
                 <div className="rounded-2xl border border-border bg-surface2 p-3">
                   <div className="text-xs text-muted mb-2">
-                    Probá abrirlos y ver: overlay, bloqueo cuando{" "}
-                    <span className="font-semibold text-text">loading</span>, y el caso de{" "}
+                    Probá abrirlos y ver: overlay, bloqueo cuando <span className="font-semibold text-text">loading</span>, y el caso de{" "}
                     <span className="font-semibold text-text">requireTypeToConfirm</span>.
                   </div>
 
@@ -837,8 +821,8 @@ export default function SystemUiCatalog() {
                 </div>
 
                 <div className="text-[11px] text-muted">
-                  Nota: este dialog hoy no usa <span className="font-semibold text-text">Modal.tsx</span> (tiene overlay
-                  propio), así lo ves “tal cual” está implementado.
+                  Nota: este dialog hoy no usa <span className="font-semibold text-text">Modal.tsx</span> (tiene overlay propio), así lo ves “tal cual”
+                  está implementado.
                 </div>
 
                 <ConfirmDeleteDialog
@@ -954,8 +938,8 @@ export default function SystemUiCatalog() {
           </div>
 
           <div className="text-[11px] text-muted">
-            Objetivo: transformar estilos en “opciones” (variantes de botones, densidad de tablas, radios, sombras,
-            etc.) y luego guardarlo por usuario o por joyería.
+            Objetivo: transformar estilos en “opciones” (variantes de botones, densidad de tablas, radios, sombras, etc.) y luego guardarlo por usuario o por
+            joyería.
           </div>
         </div>
       </div>

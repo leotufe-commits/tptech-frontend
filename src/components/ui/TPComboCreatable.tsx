@@ -1,3 +1,4 @@
+// tptech-frontend/src/components/ui/TPComboCreatable.tsx
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { ChevronDown, X } from "lucide-react";
@@ -116,10 +117,10 @@ function Modal({
           <div className="p-4">{children}</div>
 
           <div className="p-4 pt-2 flex justify-end gap-2 border-t border-border">
-            <button className="tp-btn-secondary" onClick={onClose} disabled={loading}>
+            <button className="tp-btn-secondary" onClick={onClose} disabled={loading} type="button">
               {cancelText}
             </button>
-            <button className="tp-btn-primary" onClick={onConfirm} disabled={loading}>
+            <button className="tp-btn-primary" onClick={onConfirm} disabled={loading} type="button">
               {loading ? "Guardando…" : confirmText}
             </button>
           </div>
@@ -162,10 +163,7 @@ export default function TPComboCreatable({
   const [errMsg, setErrMsg] = useState<string | null>(null);
 
   const safeItems = useMemo(() => (Array.isArray(items) ? items : []), [items]);
-  const activeItems = useMemo(
-    () => safeItems.filter((i) => i.isActive !== false),
-    [safeItems]
-  );
+  const activeItems = useMemo(() => safeItems.filter((i) => i.isActive !== false), [safeItems]);
 
   const didAutoPickRef = useRef(false);
 
@@ -205,9 +203,7 @@ export default function TPComboCreatable({
     }
 
     const v = norm(value).toLowerCase();
-    const idx = v
-      ? activeItems.findIndex((it) => norm(it.label).toLowerCase() === v)
-      : -1;
+    const idx = v ? activeItems.findIndex((it) => norm(it.label).toLowerCase() === v) : -1;
 
     setActiveIndex(activeItems.length ? (idx >= 0 ? idx : 0) : -1);
   }, [open, activeItems, value]);
@@ -226,9 +222,7 @@ export default function TPComboCreatable({
     onRefresh?.();
 
     const v = norm(value).toLowerCase();
-    const idx = v
-      ? activeItems.findIndex((it) => norm(it.label).toLowerCase() === v)
-      : -1;
+    const idx = v ? activeItems.findIndex((it) => norm(it.label).toLowerCase() === v) : -1;
 
     setActiveIndex(activeItems.length ? (idx >= 0 ? idx : 0) : -1);
     setTimeout(() => inputRef.current?.focus(), 0);
@@ -365,7 +359,10 @@ export default function TPComboCreatable({
                 {activeItems.map((it, idx) => (
                   <button
                     key={it.id}
-                    ref={(el) => (itemRefs.current[idx] = el)}
+                    // ✅ FIX TS2322: callback ref NO debe retornar el elemento
+                    ref={(el) => {
+                      itemRefs.current[idx] = el;
+                    }}
                     type="button"
                     onMouseEnter={() => setActiveIndex(idx)}
                     onClick={() => pick(it.label)}
@@ -381,6 +378,7 @@ export default function TPComboCreatable({
 
                 {allowCreate && (
                   <button
+                    type="button"
                     className="mt-2 text-sm underline text-primary"
                     onClick={() => {
                       setCreateDraft(norm(value));

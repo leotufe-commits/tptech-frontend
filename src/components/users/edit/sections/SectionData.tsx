@@ -1,3 +1,4 @@
+// tptech-frontend/src/components/users/edit/sections/SectionData.tsx
 import React from "react";
 
 import { cn, Section, formatBytes, safeFileLabel, absUrl } from "../../users.ui";
@@ -65,12 +66,17 @@ type Props = {
   filteredSavedAttachments: UserAttachment[];
   handleRemoveSavedAttachment: (id: string) => Promise<void>;
 
-  // ✅ NUEVO: descargar adjunto guardado
+  // ✅ descargar adjunto guardado
   handleDownloadSavedAttachment: (att: UserAttachment) => void;
 
   // previews
   draftKey: (f: File) => string;
   draftPreviewByKey: Record<string, string>;
+
+  // ✅ FIX build: SectionData recibe estas props desde UserEditModal
+  // (aunque hoy no las use acá, deben existir en el type)
+  initialsFrom: (s: string) => string;
+  avatarInitialsBase: string;
 };
 
 function asCatalogType(t: CatalogType): CatalogType {
@@ -140,7 +146,6 @@ export default function SectionData(props: Props) {
     filteredSavedAttachments,
     handleRemoveSavedAttachment,
 
-    // ✅ NUEVO
     handleDownloadSavedAttachment,
 
     draftKey,
@@ -170,7 +175,7 @@ export default function SectionData(props: Props) {
       await addAttachments(files);
     } catch (e) {
       console.error("Error subiendo adjuntos:", e);
-      // Acá idealmente mostrar toast; por ahora no rompemos el modal/UI.
+      // Ideal: toast. Por ahora, no rompemos el modal/UI.
     }
   }
 
@@ -425,9 +430,8 @@ export default function SectionData(props: Props) {
               disabled={busyAttachments}
             />
 
-            {/* panel (mismo look tp-input) */}
+            {/* panel */}
             <div className="rounded-2xl border bg-surface p-3" style={{ borderColor: "var(--border)" }}>
-              {/* dropzone */}
               <div
                 role="button"
                 tabIndex={0}
@@ -492,7 +496,6 @@ export default function SectionData(props: Props) {
                 )}
               </div>
 
-              {/* nota create/edit */}
               {isCreate ? (
                 <div className="mt-3 text-[11px] text-muted">
                   En <b>Crear</b>, los adjuntos se asocian al usuario cuando se confirma “Crear”.
@@ -502,7 +505,6 @@ export default function SectionData(props: Props) {
               )}
             </div>
 
-            {/* list */}
             {(hasDraft || hasSaved) && (
               <TPCard className="p-3">
                 <div className="space-y-3">
@@ -584,7 +586,6 @@ export default function SectionData(props: Props) {
                                 </div>
                               </div>
 
-                              {/* ✅ NUEVO: Descargar */}
                               <button
                                 type="button"
                                 className={cn("tp-btn-secondary !px-3 !py-1 text-xs")}
