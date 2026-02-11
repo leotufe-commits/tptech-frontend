@@ -20,6 +20,8 @@ type Snapshot = {
   requireOnSwitch: boolean;
 };
 
+const PINLOCK_PENDING_KEY = "tptech_pinlock_pending_enable_v1";
+
 export default function SystemPinSettings() {
   const auth = useAuth();
   const navigate = useNavigate();
@@ -134,7 +136,6 @@ export default function SystemPinSettings() {
   const meId = String((auth.user as any)?.id || "");
   const meHasQuickPin = useMemo(() => {
     const u: any = auth.user || {};
-    // intentamos varias claves comunes para no depender 100% de una sola
     if (typeof u.hasQuickPin === "boolean") return u.hasQuickPin;
     if (typeof u.quickPinEnabled === "boolean") return u.quickPinEnabled;
     if (typeof u.pinEnabled === "boolean") return u.pinEnabled;
@@ -143,13 +144,42 @@ export default function SystemPinSettings() {
     return false;
   }, [auth.user]);
 
-  function goToMyUserPin() {
-    // ✅ ya tenés implementado /configuracion/usuarios?edit=<id> en Users.tsx
+  function goToMyUserPinSetup() {
+    // ✅ ruta: abrir edición + tab=config + abrir flujo PIN + volver
     if (!meId) {
       navigate(USERS_ROUTE);
       return;
     }
-    navigate(`${USERS_ROUTE}?edit=${encodeURIComponent(meId)}`);
+    const qs = new URLSearchParams();
+    qs.set("edit", meId);
+    qs.set("tab", "config");
+    qs.set("pin", "setup");
+    qs.set("return", "/configuracion-sistema/pin");
+    navigate(`${USERS_ROUTE}?${qs.toString()}`);
+  }
+
+  function setPendingEnableSnapshot() {
+    try {
+      const safeMin = clamp(Math.floor(Number(timeoutMin) || 1), 1, 60 * 12);
+      const payload = {
+        enabled: true,
+        timeoutMinutes: safeMin,
+        requireOnUserSwitch: Boolean(requireOnSwitch),
+        quickSwitchEnabled: Boolean(quickSwitchEnabled),
+        at: Date.now(),
+      };
+      sessionStorage.setItem(PINLOCK_PENDING_KEY, JSON.stringify(payload));
+    } catch {
+      // ignore
+    }
+  }
+
+  function clearPendingEnable() {
+    try {
+      sessionStorage.removeItem(PINLOCK_PENDING_KEY);
+    } catch {
+      // ignore
+    }
   }
 
   async function onSave(): Promise<boolean> {
@@ -179,7 +209,6 @@ export default function SystemPinSettings() {
 
       await auth.setPinLockSettingsForJewelry(payload);
 
-      // ✅ Dejamos el “server snapshot” alineado de inmediato
       serverSnapRef.current = {
         enabled: payload.enabled,
         timeoutMin: payload.timeoutMinutes,
@@ -198,6 +227,43 @@ export default function SystemPinSettings() {
     }
   }
 
+  // ✅ AUTO: si venimos de crear PIN, y ahora meHasQuickPin=true, re-habilitar + guardar
+  useEffect(() => {
+    if (!canEdit) return;
+
+    let raw: any = null;
+    try {
+      const s = sessionStorage.getItem(PINLOCK_PENDING_KEY);
+      raw = s ? JSON.parse(s) : null;
+    } catch {
+      raw = null;
+    }
+
+    if (!raw) return;
+
+    // si todavía no hay PIN, no hacemos nada (pero limpiamos si querés)
+    if (!meHasQuickPin) return;
+
+    // aplicar y guardar una sola vez
+    clearPendingEnable();
+
+    setEnabled(true);
+    setQuickSwitchEnabled(Boolean(raw.quickSwitchEnabled));
+    setRequireOnSwitch(Boolean(raw.requireOnUserSwitch));
+    setTimeoutMin(clamp(Number(raw.timeoutMinutes || 5), 1, 720));
+
+    // guardado automático (sin pedir al usuario)
+    void (async () => {
+      try {
+        await onSave();
+      } catch {
+        // si falla, dejamos UI en estado aplicado pero mostramos err
+      }
+    })();
+
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [meHasQuickPin, canEdit]);
+
   function onCancel() {
     if (busy) return;
     clearSavedTimer();
@@ -206,7 +272,14 @@ export default function SystemPinSettings() {
   }
 
   function goUsersNow() {
-    navigate(USERS_ROUTE);
+    // ✅ botón “Ir a Usuarios”: abrir mi usuario en Config (sin forzar pin setup)
+    if (!meId) return navigate(USERS_ROUTE);
+
+    const qs = new URLSearchParams();
+    qs.set("edit", meId);
+    qs.set("tab", "config");
+    qs.set("return", "/configuracion-sistema/pin");
+    navigate(`${USERS_ROUTE}?${qs.toString()}`);
   }
 
   function onGoUsers() {
@@ -244,7 +317,6 @@ export default function SystemPinSettings() {
   const disabledCardClass = !enabled ? "opacity-55 bg-surface2/80" : "";
   const requireSwitchDisabled = !enabled || !quickSwitchEnabled;
 
-  // ✅ UX: si no aplica, mostramos "No aplica" y forzamos visualmente OFF
   const requireSwitchValue = requireSwitchDisabled ? false : Boolean(requireOnSwitch);
   const requireSwitchLabels =
     !enabled
@@ -291,12 +363,16 @@ export default function SystemPinSettings() {
                 type="button"
                 disabled={busy}
                 onClick={() => {
-                  // ✅ forzamos el switch en OFF en UI
+                  // ✅ forzamos OFF visualmente (si cancela PIN, queda deshabilitado)
                   setEnabled(false);
                   setQuickSwitchEnabled(false);
                   setRequireOnSwitch(false);
+
+                  // ✅ dejamos “pendiente” para auto-habilitar al volver si completa PIN
+                  setPendingEnableSnapshot();
+
                   setShowNeedPinConfirm(false);
-                  goToMyUserPin();
+                  goToMyUserPinSetup();
                 }}
                 className="inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2 text-sm font-semibold text-white bg-primary hover:opacity-95 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-primary/20 disabled:opacity-60"
               >
@@ -387,7 +463,6 @@ export default function SystemPinSettings() {
       </div>
 
       <div className="tp-card p-4 space-y-4">
-        {/* Header */}
         <div className="min-w-0">
           <div className="font-semibold text-text">Seguridad (PIN / Quick Switch)</div>
           <div className="text-sm text-muted">Configuración por joyería.</div>
@@ -399,9 +474,7 @@ export default function SystemPinSettings() {
           </div>
         )}
 
-        {/* ✅ Layout igual a Perfil Joyeria */}
         <div className="grid gap-4 md:grid-cols-2">
-          {/* Bloqueo por PIN (principal) */}
           <div className="tp-card p-4">
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
@@ -422,12 +495,14 @@ export default function SystemPinSettings() {
                     setEnabled(false);
                     setQuickSwitchEnabled(false);
                     setRequireOnSwitch(false);
+                    // si apaga manualmente, limpiamos pendiente
+                    try {
+                      sessionStorage.removeItem(PINLOCK_PENDING_KEY);
+                    } catch {}
                     return;
                   }
 
-                  // ✅ BLOQUEO: no permitir prender si MI usuario no tiene PIN
                   if (!meHasQuickPin) {
-                    // mantenemos OFF visualmente
                     setEnabled(false);
                     setQuickSwitchEnabled(false);
                     setRequireOnSwitch(false);
@@ -443,7 +518,6 @@ export default function SystemPinSettings() {
               />
             </div>
 
-            {/* ✅ hint si falta PIN */}
             {!meHasQuickPin ? (
               <div className="mt-3 text-[11px] text-muted">
                 Para activar el bloqueo por PIN, primero configurá <b>tu</b> PIN en Usuarios.
@@ -451,14 +525,11 @@ export default function SystemPinSettings() {
             ) : null}
           </div>
 
-          {/* Cambio rápido */}
           <div className={`tp-card p-4 transition ${disabledCardClass}`}>
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
                 <div className="text-sm font-semibold text-text">Cambio rápido de usuario</div>
-                <div className="text-xs text-muted mt-1">
-                  Permite cambiar de usuario desde la pantalla bloqueada.
-                </div>
+                <div className="text-xs text-muted mt-1">Permite cambiar de usuario desde la pantalla bloqueada.</div>
               </div>
 
               <TPSegmentedPills
@@ -480,7 +551,6 @@ export default function SystemPinSettings() {
             </div>
           </div>
 
-          {/* Requerir PIN al cambiar usuario */}
           <div className={`tp-card p-4 transition ${disabledCardClass}`}>
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
@@ -510,7 +580,6 @@ export default function SystemPinSettings() {
             )}
           </div>
 
-          {/* Tiempo de inactividad (al lado del Requerir PIN) */}
           <div className={`tp-card p-4 transition ${disabledCardClass}`}>
             <div className="flex items-center justify-between gap-3">
               <div>
@@ -540,7 +609,6 @@ export default function SystemPinSettings() {
           </div>
         </div>
 
-        {/* ✅ Importante (abajo) */}
         <div className="rounded-2xl border border-border bg-surface2/60 p-4">
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0">
@@ -572,14 +640,15 @@ export default function SystemPinSettings() {
           <div
             className={cn(
               "text-sm rounded-xl px-3 py-2 border",
-              err ? "text-red-400 bg-red-500/10 border-red-500/15" : "text-emerald-400 bg-emerald-500/10 border-emerald-500/15"
+              err
+                ? "text-red-400 bg-red-500/10 border-red-500/15"
+                : "text-emerald-400 bg-emerald-500/10 border-emerald-500/15"
             )}
           >
             {err || saved}
           </div>
         )}
 
-        {/* Actions */}
         <div className="flex items-center justify-end gap-3">
           <button
             type="button"

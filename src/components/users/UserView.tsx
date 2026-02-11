@@ -1,6 +1,6 @@
 // tptech-frontend/src/components/users/UserView.tsx
 import React, { useEffect, useMemo, useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useLocation, useNavigate, useParams } from "react-router-dom";
 import {
   Loader2,
   ChevronLeft,
@@ -12,12 +12,12 @@ import {
   MapPin,
   IdCard,
   StickyNote,
-  ShieldCheck,
-  ShieldBan,
-  User,
+  User as UserIcon,
   Users,
   Fingerprint,
   Trash2,
+  Mail,
+  Warehouse,
 } from "lucide-react";
 
 import { useAuth } from "../../context/AuthContext";
@@ -37,6 +37,9 @@ import ButtonBar from "../ui/ButtonBar";
 
 const OPEN_USERS_EDIT_KEY = "tptech_users_open_edit_v1";
 
+/* =========================
+   Helpers (mismo espíritu que PerfilJoyeriaView)
+========================= */
 function formatDateTime(v?: string | Date | null) {
   if (!v) return "";
   const d = typeof v === "string" ? new Date(v) : v;
@@ -69,6 +72,11 @@ function valueOrDash(v: any) {
   return s ? s : "—";
 }
 
+function safeFileLabel(name: any) {
+  const s = String(name ?? "").trim();
+  return s || "archivo";
+}
+
 function cardBase(extra?: string) {
   return cn("tp-card rounded-2xl border border-border bg-card p-4", extra);
 }
@@ -93,8 +101,35 @@ function SectionShell({
   );
 }
 
+function InfoCard({
+  icon,
+  label,
+  value,
+}: {
+  icon?: React.ReactNode;
+  label: string;
+  value: React.ReactNode;
+}) {
+  return (
+    <div className={cn(cardBase("p-3"))}>
+      <div className="text-xs text-muted mb-1 flex items-center gap-2">
+        {icon}
+        {label}
+      </div>
+      <div className="font-semibold whitespace-pre-wrap break-words">{valueOrDash(value)}</div>
+    </div>
+  );
+}
+
+function truthyParam(v: string | null) {
+  if (!v) return false;
+  const s = v.trim().toLowerCase();
+  return s === "1" || s === "true" || s === "yes" || s === "on" || s === "setup";
+}
+
 export default function UserView() {
   const nav = useNavigate();
+  const location = useLocation();
   const { id } = useParams();
   const userId = String(id || "");
 
@@ -138,7 +173,6 @@ export default function UserView() {
   const [perms, setPerms] = useState<Permission[]>([]);
   const [permsLoading, setPermsLoading] = useState(false);
 
-  // ✅ ConfirmDeleteDialog
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
 
@@ -223,6 +257,50 @@ export default function UserView() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [canView, userId]);
 
+  /**
+   * ✅ AUTO-DERIVACIÓN A "CREAR PIN INICIAL"
+   * Si llegamos con ?pin=setup (por ejemplo desde SystemPinSettings),
+   * esta vista (solo lectura) redirige a Users.tsx (edit modal) para abrir directamente el flujo de PIN.
+   */
+  const wantsPinSetup = useMemo(() => {
+    const sp = new URLSearchParams(location.search || "");
+    return truthyParam(sp.get("pin")) || truthyParam(sp.get("pinSetup")) || truthyParam(sp.get("setupPin"));
+  }, [location.search]);
+
+  const alreadyRedirectedRef = React.useRef(false);
+
+  useEffect(() => {
+    if (!wantsPinSetup) return;
+    if (alreadyRedirectedRef.current) return;
+    if (loading) return;
+    if (!detail) return;
+
+    const hasPin = Boolean((detail as any)?.hasQuickPin || (detail as any)?.quickPinEnabled);
+    // Solo tiene sentido auto-abrir si NO tiene PIN (tu caso)
+    if (hasPin) return;
+
+    alreadyRedirectedRef.current = true;
+
+    // Guardamos un payload para que Users.tsx / UserEditModal pueda abrir directo el modal de "Crear PIN inicial"
+    try {
+      sessionStorage.setItem(
+        OPEN_USERS_EDIT_KEY,
+        JSON.stringify({
+          userId,
+          // flags sugeridas (si tu Users.tsx ya lee OPEN_USERS_EDIT_KEY, te sirven)
+          openSection: "PIN",
+          pinSetup: true,
+          ts: Date.now(),
+        })
+      );
+    } catch {
+      // ignore
+    }
+
+    // Redirigir al listado con el edit abierto + query para señalizar "setup"
+    nav(`/configuracion/usuarios?edit=${encodeURIComponent(userId)}&pin=setup`, { replace: true });
+  }, [wantsPinSetup, loading, detail, nav, userId]);
+
   if (!canView) return <div className="p-6">Sin permisos.</div>;
 
   const avatarSrc = detail?.avatarUrl ? absUrl(detail.avatarUrl) : "";
@@ -239,8 +317,6 @@ export default function UserView() {
   const favLabel = detail?.favoriteWarehouseId
     ? warehouseLabelById(detail.favoriteWarehouseId) ?? detail.favoriteWarehouseId
     : null;
-
-  const miniHint = "text-[11px] text-muted";
 
   function onAskDelete() {
     if (isMe || deleting) return;
@@ -263,9 +339,35 @@ export default function UserView() {
     }
   }
 
+  function downloadUrl(attId: string) {
+    const id = String(attId || "").trim();
+    if (!id) return "";
+    // ✅ Igual que ya tenías en tu UserView original
+    return absUrl(`/users/${encodeURIComponent(userId)}/attachments/${encodeURIComponent(id)}/download`);
+  }
+
+  const phone = valueOrDash(
+    `${String((detail as any)?.phoneCountry || "").trim()} ${String((detail as any)?.phoneNumber || "").trim()}`.trim()
+  );
+  const doc = valueOrDash(
+    `${String((detail as any)?.documentType || "").trim()} ${String((detail as any)?.documentNumber || "").trim()}`.trim()
+  );
+
+  const addressLine = valueOrDash(
+    [String((detail as any)?.street || "").trim(), String((detail as any)?.number || "").trim()].filter(Boolean).join(" ")
+  );
+  const addressMeta =
+    [
+      String((detail as any)?.city || "").trim(),
+      String((detail as any)?.province || "").trim(),
+      String((detail as any)?.postalCode || "").trim(),
+      String((detail as any)?.country || "").trim(),
+    ]
+      .filter(Boolean)
+      .join(" • ") || "—";
+
   return (
     <div className="p-4 md:p-6 space-y-4 min-h-0">
-      {/* ✅ Confirm modal */}
       <ConfirmDeleteDialog
         open={confirmDeleteOpen}
         title="Eliminar usuario"
@@ -288,7 +390,6 @@ export default function UserView() {
           <h1 className="text-2xl font-semibold truncate">Ver usuario</h1>
         </div>
 
-        {/* ✅ ButtonBar reutilizable */}
         <ButtonBar>
           <button
             type="button"
@@ -334,261 +435,172 @@ export default function UserView() {
         </ButtonBar>
       </div>
 
-      {err && (
-        <div className="rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm">{err}</div>
-      )}
+      {err && <div className="rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm">{err}</div>}
 
-      {/* Summary */}
-      <div className={cn("tp-card p-4 rounded-2xl border border-border")}>
-        {loading ? (
-          <div className="flex items-center gap-2 text-sm text-muted">
-            <Loader2 className="h-4 w-4 animate-spin" />
-            Cargando…
-          </div>
-        ) : !detail ? (
-          <div className="text-sm text-muted">No hay datos del usuario.</div>
-        ) : (
-          <div className="flex items-start gap-4">
-            <div className="h-20 w-20 rounded-full overflow-hidden border border-border bg-surface shrink-0">
-              {avatarSrc ? (
-                <img src={avatarSrc} alt="Avatar" className="h-full w-full object-cover" />
-              ) : (
-                <div className="grid h-full w-full place-items-center text-base font-bold text-primary">{initials}</div>
-              )}
-            </div>
-
-            <div className="min-w-0 flex-1">
-              <div className="font-semibold text-xl truncate">
-                {detail.name || "Sin nombre"} {isMe && <span className="text-xs text-muted">(vos)</span>}
-              </div>
-
-              <div className="text-sm text-muted truncate">{detail.email}</div>
-              <div className="text-xs text-muted mt-1">Creado: {formatDateTime(detail.createdAt) || "—"}</div>
-
-              <div className="mt-2 flex flex-wrap gap-2">
-                <TPBadge tone={isActive ? "success" : isPending ? "warning" : "danger"}>
-                  {isActive ? "Activo" : isPending ? "Pendiente" : "Inactivo"}
-                </TPBadge>
-
-                {hasPin ? (
-                  <TPBadge tone={pinEnabled ? "success" : "danger"} className="gap-1">
-                    {pinEnabled ? <KeyRound className="h-3.5 w-3.5" /> : <Shield className="h-3.5 w-3.5" />}
-                    {pinEnabled ? "PIN habilitado" : "PIN deshabilitado"}
-                  </TPBadge>
-                ) : (
-                  <TPBadge tone="danger">Sin PIN</TPBadge>
-                )}
-
-                {favLabel ? <TPBadge tone="neutral">⭐ {favLabel}</TPBadge> : <TPBadge tone="neutral">⭐ —</TPBadge>}
-              </div>
-            </div>
-          </div>
-        )}
-      </div>
-
-      {/* Secciones */}
-      {detail && (
+      {/* Carga / vacío */}
+      {loading ? (
+        <div className={cn(cardBase(), "flex items-center gap-2 text-sm text-muted")}>
+          <Loader2 className="h-4 w-4 animate-spin" />
+          Cargando…
+        </div>
+      ) : !detail ? (
+        <div className={cn(cardBase(), "text-sm text-muted")}>No hay datos del usuario.</div>
+      ) : (
         <div className="space-y-4">
-          {/* DATA */}
-          <SectionShell title="Datos" icon={<User className="h-4 w-4" />}>
+          {/* Resumen */}
+          <div className={cn(cardBase("p-3"))}>
+            <div className="flex items-start gap-3">
+              <div className="h-14 w-14 rounded-full overflow-hidden border border-border bg-surface shrink-0">
+                {avatarSrc ? (
+                  <img src={avatarSrc} alt="Avatar" className="h-full w-full object-cover" />
+                ) : (
+                  <div className="grid h-full w-full place-items-center text-sm font-bold text-primary">{initials}</div>
+                )}
+              </div>
+
+              <div className="min-w-0 flex-1">
+                <div className="font-semibold text-lg truncate">
+                  {detail.name || "Sin nombre"} {isMe && <span className="text-xs text-muted">(vos)</span>}
+                </div>
+                <div className="text-sm text-muted truncate">{detail.email}</div>
+
+                <div className="mt-2 flex flex-wrap gap-2">
+                  <TPBadge tone={isActive ? "success" : isPending ? "warning" : "danger"}>
+                    {isActive ? "Activo" : isPending ? "Pendiente" : isBlocked ? "Inactivo" : valueOrDash(status)}
+                  </TPBadge>
+
+                  {hasPin ? (
+                    <TPBadge tone={pinEnabled ? "success" : "danger"} className="gap-1">
+                      {pinEnabled ? <KeyRound className="h-3.5 w-3.5" /> : <Shield className="h-3.5 w-3.5" />}
+                      {pinEnabled ? "PIN habilitado" : "PIN deshabilitado"}
+                    </TPBadge>
+                  ) : (
+                    <TPBadge tone="danger">Sin PIN</TPBadge>
+                  )}
+
+                  {favLabel ? (
+                    <TPBadge tone="neutral" className="gap-1">
+                      <Warehouse className="h-3.5 w-3.5" /> {favLabel}
+                    </TPBadge>
+                  ) : (
+                    <TPBadge tone="neutral">⭐ —</TPBadge>
+                  )}
+                </div>
+
+                <div className="mt-2 text-[11px] text-muted">
+                  Creado: <b>{formatDateTime(detail.createdAt) || "—"}</b>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <SectionShell title="Datos del usuario" icon={<UserIcon className="h-4 w-4" />}>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
-              <div className={cardBase("p-3")}>
-                <div className="text-xs text-muted mb-1 flex items-center gap-2">
-                  <Phone className="h-3.5 w-3.5" />
-                  Teléfono
-                </div>
-                <div className="font-semibold">
-                  {valueOrDash(
-                    `${String((detail as any).phoneCountry || "").trim()} ${String((detail as any).phoneNumber || "").trim()}`.trim()
-                  )}
-                </div>
-              </div>
+              <InfoCard icon={<UserIcon className="h-3.5 w-3.5" />} label="Nombre" value={valueOrDash(detail.name)} />
+              <InfoCard icon={<Mail className="h-3.5 w-3.5" />} label="Correo" value={valueOrDash(detail.email)} />
 
-              <div className={cardBase("p-3")}>
-                <div className="text-xs text-muted mb-1 flex items-center gap-2">
-                  <IdCard className="h-3.5 w-3.5" />
-                  Documento
-                </div>
-                <div className="font-semibold">
-                  {valueOrDash(
-                    `${String((detail as any).documentType || "").trim()} ${String((detail as any).documentNumber || "").trim()}`.trim()
-                  )}
-                </div>
-              </div>
+              <InfoCard icon={<Phone className="h-3.5 w-3.5" />} label="Teléfono" value={phone} />
+              <InfoCard icon={<IdCard className="h-3.5 w-3.5" />} label="Documento" value={doc} />
 
-              <div className={cardBase("p-3 md:col-span-2")}>
-                <div className="text-xs text-muted mb-1 flex items-center gap-2">
-                  <MapPin className="h-3.5 w-3.5" />
-                  Dirección
-                </div>
-                <div className="font-semibold">
-                  {valueOrDash(
-                    [String((detail as any).street || "").trim(), String((detail as any).number || "").trim()]
-                      .filter(Boolean)
-                      .join(" ")
-                  )}
-                </div>
-                <div className="text-xs text-muted mt-1">
-                  {[
-                    String((detail as any).city || "").trim(),
-                    String((detail as any).province || "").trim(),
-                    String((detail as any).postalCode || "").trim(),
-                    String((detail as any).country || "").trim(),
-                  ]
-                    .filter(Boolean)
-                    .join(" • ") || "—"}
-                </div>
-              </div>
+              <InfoCard
+                icon={<Users className="h-3.5 w-3.5" />}
+                label="Roles"
+                value={
+                  rolesLoading ? (
+                    "Cargando…"
+                  ) : (detail.roles || []).length ? (
+                    (detail.roles || []).map((r: any) => roleLabel(r)).join(" • ")
+                  ) : (
+                    "—"
+                  )
+                }
+              />
 
-              <div className={cardBase("p-3 md:col-span-2")}>
-                <div className="text-xs text-muted mb-1 flex items-center gap-2">
-                  <StickyNote className="h-3.5 w-3.5" />
-                  Notas
-                </div>
-                <div className="font-semibold whitespace-pre-wrap break-words">
-                  {String((detail as any).notes || "").trim() || "—"}
-                </div>
+              <InfoCard
+                icon={<Fingerprint className="h-3.5 w-3.5" />}
+                label="Acceso por PIN"
+                value={
+                  hasPin
+                    ? pinEnabled
+                      ? `Habilitado • ${valueOrDash(formatDateTime((detail as any)?.quickPinUpdatedAt))}`
+                      : "Deshabilitado"
+                    : "Sin PIN"
+                }
+              />
+            </div>
+          </SectionShell>
+
+          <SectionShell title="Domicilio" icon={<MapPin className="h-4 w-4" />}>
+            <div className={cn(cardBase("p-3"))}>
+              <div className="text-xs text-muted mb-1 flex items-center gap-2">
+                <MapPin className="h-3.5 w-3.5" />
+                Dirección
+              </div>
+              <div className="font-semibold whitespace-pre-wrap break-words">{valueOrDash(addressLine)}</div>
+              <div className="mt-1 text-xs text-muted whitespace-pre-wrap break-words">{valueOrDash(addressMeta)}</div>
+            </div>
+          </SectionShell>
+
+          <SectionShell title="Notas" icon={<StickyNote className="h-4 w-4" />}>
+            <div className={cn(cardBase("p-3"))}>
+              <div className="text-xs text-muted mb-1">Notas</div>
+              <div className="font-semibold whitespace-pre-wrap break-words">
+                {String((detail as any)?.notes || "").trim() || "—"}
               </div>
             </div>
           </SectionShell>
 
-          {/* ROLES + OVERRIDES */}
-          <SectionShell title="Roles y permisos" icon={<Users className="h-4 w-4" />}>
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-              <div className={cardBase("lg:col-span-2")}>
-                <div className="text-sm font-semibold mb-3">Roles</div>
-
-                {rolesLoading ? (
-                  <div className="text-sm text-muted flex items-center gap-2">
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                    Cargando roles…
-                  </div>
-                ) : (detail.roles || []).length ? (
-                  <div className="flex flex-wrap gap-2">
-                    {detail.roles.map((r: any) => (
-                      <TPBadge key={r.id ?? r.name} tone="neutral">
-                        {roleLabel(r)}
-                      </TPBadge>
-                    ))}
-                  </div>
-                ) : (
-                  <div className="text-sm text-muted">Sin roles</div>
-                )}
+          <SectionShell title="Permisos especiales" icon={<Shield className="h-4 w-4" />}>
+            {permsLoading ? (
+              <div className="text-sm text-muted flex items-center gap-2">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                Cargando permisos…
               </div>
-
-              <div className={cardBase()}>
-                <div className="text-sm font-semibold mb-3">Estado</div>
-
-                <div className="space-y-3 text-sm">
-                  <div className="rounded-xl border border-border bg-card px-3 py-2">
-                    <div className="text-xs text-muted mb-1">Estado</div>
-                    <div className="flex items-center gap-2">
-                      {isActive ? <ShieldCheck className="h-4 w-4" /> : <ShieldBan className="h-4 w-4" />}
-                      <div className="font-semibold">
-                        {isActive ? "Activo" : isPending ? "Pendiente" : isBlocked ? "Inactivo" : valueOrDash(status)}
-                      </div>
+            ) : overridesSorted.length === 0 ? (
+              <div className="text-sm text-muted">Este usuario no tiene permisos especiales.</div>
+            ) : (
+              <div className="space-y-2">
+                {overridesSorted.map((ov) => (
+                  <div
+                    key={ov.permissionId}
+                    className="flex items-center justify-between gap-2 rounded-xl border border-border bg-card px-3 py-2"
+                  >
+                    <div className="min-w-0">
+                      <div className="text-sm font-semibold truncate">{labelPerm(ov.permissionId)}</div>
+                      <div className="text-xs text-muted truncate">{ov.permissionId}</div>
                     </div>
-                  </div>
 
-                  <div className="rounded-xl border border-border bg-card px-3 py-2">
-                    <div className="text-xs text-muted mb-1">Almacén favorito</div>
-                    <div className="font-semibold">{favLabel || "—"}</div>
+                    <TPBadge tone={ov.effect === "ALLOW" ? "success" : "danger"}>
+                      {ov.effect === "ALLOW" ? "Permitir" : "Denegar"}
+                    </TPBadge>
                   </div>
-
-                  <div className={miniHint}>
-                    * Cambios desde <b>Editar</b>.
-                  </div>
-                </div>
+                ))}
               </div>
-
-              <div className={cardBase("lg:col-span-3")}>
-                <div className="text-sm font-semibold mb-3">Permisos especiales</div>
-
-                {permsLoading ? (
-                  <div className="text-sm text-muted flex items-center gap-2">
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                    Cargando permisos…
-                  </div>
-                ) : overridesSorted.length === 0 ? (
-                  <div className="text-sm text-muted">Este usuario no tiene permisos especiales.</div>
-                ) : (
-                  <div className="space-y-2">
-                    {overridesSorted.map((ov) => (
-                      <div
-                        key={ov.permissionId}
-                        className="flex items-center justify-between gap-2 rounded-xl border border-border bg-card px-3 py-2"
-                      >
-                        <div className="min-w-0">
-                          <div className="text-sm font-semibold truncate">{labelPerm(ov.permissionId)}</div>
-                          <div className="text-xs text-muted truncate">{ov.permissionId}</div>
-                        </div>
-
-                        <TPBadge tone={ov.effect === "ALLOW" ? "success" : "danger"}>
-                          {ov.effect === "ALLOW" ? "Permitir" : "Denegar"}
-                        </TPBadge>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            </div>
+            )}
           </SectionShell>
 
-          {/* PIN */}
-          <SectionShell title="Acceso por PIN" icon={<Fingerprint className="h-4 w-4" />}>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-sm">
-              <div className={cardBase("p-3")}>
-                <div className="text-xs text-muted mb-1">Tiene PIN</div>
-                <div className="font-semibold">{hasPin ? "Sí" : "No"}</div>
-              </div>
-
-              <div className={cardBase("p-3")}>
-                <div className="text-xs text-muted mb-1">Estado</div>
-                <div className="font-semibold">{hasPin ? (pinEnabled ? "Habilitado" : "Deshabilitado") : "—"}</div>
-              </div>
-
-              <div className={cardBase("p-3")}>
-                <div className="text-xs text-muted mb-1">Última actualización</div>
-                <div className="font-semibold">{formatDateTime((detail as any).quickPinUpdatedAt || null) || "—"}</div>
-              </div>
-            </div>
-
-            <div className="mt-3 text-[11px] text-muted">
-              * Esta vista es <b>solo lectura</b>. Cambios desde <b>Editar</b>.
-            </div>
-          </SectionShell>
-
-          {/* ATTACHMENTS */}
           <SectionShell title="Adjuntos" icon={<Paperclip className="h-4 w-4" />}>
             {attachments.length === 0 ? (
-              <div className="text-sm text-muted">Este usuario no tiene adjuntos.</div>
+              <div className="text-sm text-muted">Todavía no hay adjuntos.</div>
             ) : (
               <div className="divide-y divide-border rounded-xl border border-border overflow-hidden">
                 {attachments.map((a: any) => {
-                  const fname = String(a.filename || "archivo");
+                  const fname = safeFileLabel(a.filename);
                   const meta = [formatBytes(a.size), String(a.mimeType || "")].filter(Boolean).join(" • ");
-
-                  // ✅ Igual que Empresa: endpoint dedicado de descarga
-                  const downloadHref = absUrl(`/users/${encodeURIComponent(userId)}/attachments/${encodeURIComponent(String(a.id))}/download`);
+                  const url = downloadUrl(a.id);
 
                   return (
                     <div key={a.id} className="p-3 flex items-center justify-between gap-3 bg-card">
                       <div className="min-w-0">
                         <div className="text-sm font-semibold truncate">{fname}</div>
                         <div className="text-xs text-muted truncate">{meta || "Archivo"}</div>
-                        {a.createdAt && <div className="text-[11px] text-muted">Subido: {formatDateTime(a.createdAt)}</div>}
                       </div>
 
-                      <a
-                        href={downloadHref}
-                        className={cn("tp-btn", "shrink-0")}
-                        target="_blank"
-                        rel="noreferrer"
-                        download
-                        title="Descargar"
-                      >
-                        Descargar
-                      </a>
+                      {url ? (
+                        <a href={url} className={cn("tp-btn", "shrink-0")} title="Descargar">
+                          Descargar
+                        </a>
+                      ) : null}
                     </div>
                   );
                 })}
@@ -596,7 +608,7 @@ export default function UserView() {
             )}
 
             <div className="mt-3 text-[11px] text-muted">
-              * Para subir/eliminar adjuntos, usá <b>Editar</b>.
+              * Esta vista es <b>solo lectura</b>. Para subir/eliminar adjuntos, usá <b>Editar</b>.
             </div>
           </SectionShell>
         </div>

@@ -9,6 +9,9 @@ import UserEditModal from "../components/users/UserEditModal";
 
 import { useUsersPage } from "../hooks/useUsersPage";
 
+// ✅ FIX: no pasar undefined as any
+import { prefetchUserDetail as prefetchUserDetailFn } from "../components/users/users.data";
+
 export default function UsersPage() {
   const p = useUsersPage();
 
@@ -94,7 +97,7 @@ export default function UsersPage() {
         toggleStatus={p.toggleStatus}
         openEdit={p.openEdit}
         askDelete={p.askDelete}
-        prefetchUserDetail={undefined as any} // UsersTable ya lo usa desde users.data en tu proyecto; si acá lo necesitás, lo agrego al hook.
+        prefetchUserDetail={prefetchUserDetailFn}
       />
 
       <UserEditModal

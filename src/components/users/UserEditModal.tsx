@@ -561,7 +561,6 @@ export default function UserEditModal(props: Props) {
 
   const specialBlocked = disableAdminDangerZone || isOwner;
   const confirmOverlay = "bg-black/70 backdrop-blur-[1px]";
-
   return (
     <>
       <ConfirmModals

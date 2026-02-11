@@ -353,20 +353,31 @@ function Group({
         <ChevronDown className={cn("h-4 w-4 text-muted transition", expandedOpen && "rotate-180")} />
       </button>
 
+      {/* ✅ TREE CONNECTORS (si esto NO aparece, expandedOpen NO está true) */}
       {expandedOpen && (
         <div className="relative ml-10 space-y-3">
+          {/* DEBUG: si ves esta barra amarilla, el bloque se está montando */}
+         
           {children.map((c, idx) => {
             const isLast = idx === children.length - 1;
             const isFirst = idx === 0;
 
             return (
               <div key={c.to} className="relative">
-                {isFirst && <div className="absolute left-5 -top-3 h-3 w-px bg-border" />}
+                {isFirst && (
+                  <div className="pointer-events-none absolute left-5 -top-3 z-10 h-3 w-px bg-muted opacity-80" />
+                )}
 
-                <div className={cn("absolute left-5 top-0 w-px bg-border", isLast ? "h-1/2" : "h-full")} />
-                <div className="absolute left-5 top-1/2 h-px w-5 bg-border" />
+                <div
+                  className={cn(
+                    "pointer-events-none absolute left-5 top-0 z-10 w-px bg-muted opacity-80",
+                    isLast ? "h-1/2" : "h-full"
+                  )}
+                />
 
-                <div className="pl-10">
+                <div className="pointer-events-none absolute left-5 top-1/2 z-10 h-px w-5 bg-muted opacity-80" />
+
+                <div className="relative z-20 pl-10">
                   <Leaf to={c.to} label={c.label} collapsed={false} onNavigate={onNavigate} />
                 </div>
               </div>
@@ -409,7 +420,6 @@ export default function Sidebar({
   const collapsed = !mini && actualWidth <= COLLAPSED_W;
   const headerTextHidden = mini || collapsed;
 
-  // ✅ overrides instant (logo/avatar)
   const [localLogoUrlRaw, setLocalLogoUrlRaw] = useState("");
   const [logoTick, setLogoTick] = useState(0);
   const [localAvatarUrlRaw, setLocalAvatarUrlRaw] = useState("");
@@ -508,7 +518,6 @@ export default function Sidebar({
     document.documentElement.style.setProperty("--sidebar-w", `${actualWidth}px`);
   }, [actualWidth]);
 
-  // --- derived UI data ---
   const jewelryName = auth.jewelry?.name ?? (auth.loading ? "Cargando..." : "Sin joyería");
   const user = auth.user ?? null;
   const userName: string = (user as any)?.name || (user as any)?.email || "Usuario";
@@ -563,7 +572,6 @@ export default function Sidebar({
     }
   }
 
-  // --- auto open active group ---
   useEffect(() => {
     const firstMatch = SIDEBAR_NAV.find((it) => {
       if (it.kind !== "group") return false;
@@ -605,12 +613,14 @@ export default function Sidebar({
         className={cn(
           "fixed left-0 top-0 z-50 flex h-screen flex-col border-r border-border bg-bg",
           isMobile
-            ? cn("transition-transform duration-200 will-change-transform", drawerOpen ? "translate-x-0" : "-translate-x-full")
+            ? cn(
+                "transition-transform duration-200 will-change-transform",
+                drawerOpen ? "translate-x-0" : "-translate-x-full"
+              )
             : ""
         )}
         style={{ width: asideWidth }}
       >
-        {/* HEADER */}
         <div className={cn("border-b border-border px-4 py-4", effectiveCollapsed && !isMobile && "px-3")}>
           <div className="flex items-center justify-between gap-3">
             <div className="flex items-center gap-3 min-w-0">
@@ -649,7 +659,6 @@ export default function Sidebar({
           </div>
         </div>
 
-        {/* NAV */}
         <nav className="flex-1 space-y-3 overflow-y-auto px-3 py-4 tp-scroll">
           {SIDEBAR_NAV.map((item: NavItem, idx: number) => {
             if (item.kind === "divider") return <Divider key={idx} collapsed={effectiveCollapsed} />;
@@ -695,7 +704,6 @@ export default function Sidebar({
           })}
         </nav>
 
-        {/* FOOTER */}
         <div className="border-t border-border px-4 py-4">
           <div className="flex items-center gap-3 mb-3">
             <Avatar src={avatarUrlFinalRaw} name={userName} email={userEmail} size={40} bust={avatarBustFinal} />
@@ -716,7 +724,6 @@ export default function Sidebar({
           </button>
         </div>
 
-        {/* RESIZER */}
         {!mini && !collapsed && (
           <div
             onMouseDown={() => {

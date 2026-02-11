@@ -52,11 +52,26 @@ import type { Permission } from "../services/permissions";
 import { LS_TOKEN_KEY, SS_TOKEN_KEY } from "../lib/api";
 import { absUrl } from "../lib/url";
 
-
 /** ✅ flag para “abrir modal y scrollear a Adjuntos” */
 const OPEN_USERS_ATTACHMENTS_KEY = "tptech_users_open_attachments_v1";
 /** ✅ evento que ya escucha UsersTable.tsx */
 const PIN_EVENT = "tptech:user-pin-updated";
+
+/** ✅ evento que escucha Sidebar.tsx */
+const USER_AVATAR_EVENT = "tptech:user_avatar_changed";
+
+function emitUserAvatarChanged(args: { userId: string; avatarUrl: string | null | undefined }) {
+  try {
+    window.dispatchEvent(
+      new CustomEvent(USER_AVATAR_EVENT, {
+        detail: {
+          userId: String(args.userId || ""),
+          avatarUrl: args.avatarUrl ?? "",
+        },
+      })
+    );
+  } catch {}
+}
 
 function parseTabParam(v: string | null): TabKey | null {
   const s = String(v || "").trim().toUpperCase();
@@ -1325,8 +1340,15 @@ export function useUsersPage() {
       await updateUserAvatarForUser(targetId, file);
       setAvatarFileDraft(null);
 
-      await refreshDetailOnly(targetId, { hydrate: false });
+      const refreshed = await refreshDetailOnly(targetId, { hydrate: false });
 
+      // ✅ refresca sidebar instantáneo
+      emitUserAvatarChanged({
+        userId: targetId,
+        avatarUrl: String((refreshed as any)?.avatarUrl || ""),
+      });
+
+      // opcional: limpiar preview blob (evita quedarse con blob viejo)
       setAvatarPreview((prev) => {
         if (prev?.startsWith("blob:")) URL.revokeObjectURL(prev);
         return "";
@@ -1349,7 +1371,14 @@ export function useUsersPage() {
     setErr(null);
     try {
       await removeAvatarForUser(targetId);
-      await refreshDetailOnly(targetId, { hydrate: false });
+      const refreshed = await refreshDetailOnly(targetId, { hydrate: false });
+
+      // ✅ refresca sidebar instantáneo
+      emitUserAvatarChanged({
+        userId: targetId,
+        avatarUrl: String((refreshed as any)?.avatarUrl || ""),
+      });
+
       await load();
     } catch (e: unknown) {
       setErr(getErrorMessage(e, "Error quitando avatar"));
@@ -1496,8 +1525,7 @@ export function useUsersPage() {
 
   const totalLabel = `${total} ${total === 1 ? "Usuario" : "Usuarios"}`;
 
-  const busyClose =
-    modalBusy || avatarBusy || specialSaving || uploadingAttachments || Boolean(deletingAttId) || pinBusy;
+  const busyClose = modalBusy || avatarBusy || specialSaving || uploadingAttachments || Boolean(deletingAttId) || pinBusy;
 
   return {
     // utils

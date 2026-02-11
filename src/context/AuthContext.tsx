@@ -315,9 +315,7 @@ function clearLockedPersisted() {
 
 /**
  * ✅ Con cookie httpOnly, NO podemos “ver” la sesión desde JS.
- * Antes intentábamos /auth/me en boot SIEMPRE.
- *
- * ✅ Nuevo enfoque:
+ * Nuevo enfoque:
  * - En boot NO llamamos /auth/me (evita ruido en /login).
  * - La validación se hace al entrar a rutas protegidas (ProtectedRoute).
  */
@@ -358,7 +356,7 @@ export type QuickUser = {
   pinEnabled: boolean;
 
   // ✅ roles (para LockScreen)
-  roles?: Role[] | Array<{ id?: string; name?: string }> | string[];
+  roles?: Role[] | Array<{ id?: string; name?: string }> | string[]; // tolerante
   roleNames?: string[];
   roleLabel?: string;
   role?: string;
@@ -426,6 +424,9 @@ export type AuthState = {
   roles: Role[];
   permissions: string[];
   loading: boolean;
+
+  /** ✅ ya intentamos validar sesión al menos 1 vez (para evitar flash /login) */
+  bootstrapped: boolean;
 
   locked: boolean;
   setLocked: (v: boolean) => void;
@@ -588,6 +589,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   // ✅ en vez de “bloquear” la app al boot, arrancamos público y validamos en ProtectedRoute
   const [loading, setLoading] = useState(false);
 
+  // ✅ para evitar flash de Login: cuando ProtectedRoute llama refreshMe por 1ra vez, esto pasa a true
+  const [bootstrapped, setBootstrapped] = useState(false);
+
   // ✅ inicia con el lock persistido (F5 NO saltea el lock)
   const [locked, setLockedState] = useState<boolean>(() => readLockedPersisted());
 
@@ -675,6 +679,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setQuickSwitchEnabled(false);
     setLoading(false);
 
+    // ✅ si quedamos “público”, el próximo ProtectedRoute debe re-chequear
+    setBootstrapped(false);
+
     // favicon público (TPT negro)
     applyAppFavicon({ user: null, jewelry: null });
   }, [setLocked]);
@@ -726,6 +733,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
       bumpActivity();
       emitAuthEvent({ type: "LOGIN", at: Date.now() });
+
+      // ✅ ya tenemos una sesión válida
+      setBootstrapped(true);
 
       applyAppFavicon({ user: p.user, jewelry: p.jewelry ?? null, loading: false });
     },
@@ -789,6 +799,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         } finally {
           setLoading(false);
           refreshPromiseRef.current = null;
+
+          // ✅ importantísimo: ya intentamos validar sesión al menos 1 vez
+          setBootstrapped(true);
         }
       })();
 
@@ -967,18 +980,25 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   /* =========================
      PIN LOCK SETTINGS (JOYERÍA)
+     ✅ AHORA MANDA LOS ALIASES NUEVOS (enabled/timeoutMinutes/requireOnUserSwitch)
+     ✅ El backend (pinLockSettingsSchema) los normaliza a canonical
   ========================= */
   const setPinLockSettingsForJewelry = useCallback(
-    async (args: { enabled: boolean; timeoutMinutes: number; requireOnUserSwitch: boolean; quickSwitchEnabled: boolean }) => {
+    async (args: {
+      enabled: boolean;
+      timeoutMinutes: number;
+      requireOnUserSwitch: boolean;
+      quickSwitchEnabled: boolean;
+    }) => {
       const timeoutMinutes = clamp(Math.floor(Number(args.timeoutMinutes) || 1), 1, 60 * 12);
 
       await apiFetch("/auth/company/security/pin-lock", {
         method: "PATCH",
         body: {
+          enabled: Boolean(args.enabled),
+          timeoutMinutes,
+          requireOnUserSwitch: Boolean(args.requireOnUserSwitch),
           quickSwitchEnabled: Boolean(args.quickSwitchEnabled),
-          pinLockEnabled: Boolean(args.enabled),
-          pinLockTimeoutSec: timeoutMinutes * 60,
-          pinLockRequireOnUserSwitch: Boolean(args.requireOnUserSwitch),
         } as any,
         timeoutMs: 10_000,
       });
@@ -992,7 +1012,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   );
 
   const setPinLockSettings = useCallback(
-    async (args: { enabled: boolean; timeoutMinutes: number; requireOnUserSwitch: boolean; quickSwitchEnabled: boolean }) => {
+    async (args: {
+      enabled: boolean;
+      timeoutMinutes: number;
+      requireOnUserSwitch: boolean;
+      quickSwitchEnabled: boolean;
+    }) => {
       await setPinLockSettingsForJewelry(args);
     },
     [setPinLockSettingsForJewelry]
@@ -1172,6 +1197,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       permissions,
       loading,
 
+      bootstrapped,
+
       locked,
       setLocked,
       lockNow,
@@ -1220,6 +1247,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       roles,
       permissions,
       loading,
+      bootstrapped,
       locked,
       lockNow,
       openQuickSwitch,

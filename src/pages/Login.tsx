@@ -146,24 +146,18 @@ export default function Login() {
   }, [email]);
 
   const showTenantSelect = useMemo(() => tenants.length > 1, [tenants.length]);
-  const autoTenant = useMemo(() => (tenants.length === 1 ? tenants[0]?.id : ""), [tenants]);
 
   // ✅ mostramos fallback manual SOLO cuando ya intentamos lookup
   const showManualTenantInput = useMemo(() => {
     return Boolean(didLookup && emailOk && !loadingTenants && tenants.length === 0);
   }, [didLookup, emailOk, loadingTenants, tenants.length]);
 
-  // tenant efectivo: si hay tenants -> tenantId, si no -> manualTenantId
+  // ✅ tenant efectivo: si hay 1 sola → usar directo (sin esperar setTenantId)
   const effectiveTenantId = useMemo(() => {
-    if (tenants.length > 0) return tenantId.trim();
+    if (tenants.length === 1) return String(tenants[0]?.id || "").trim();
+    if (tenants.length > 1) return tenantId.trim();
     return manualTenantId.trim();
-  }, [tenants.length, tenantId, manualTenantId]);
-
-  // cuando hay 1 sola, la seleccionamos sin mostrar
-  useEffect(() => {
-    if (autoTenant) setTenantId(autoTenant);
-    if (!autoTenant && tenants.length === 0) setTenantId("");
-  }, [autoTenant, tenants.length]);
+  }, [tenants, tenantId, manualTenantId]);
 
   // ✅ buscar joyerías asociadas al email (debounce)
   useEffect(() => {
@@ -199,7 +193,8 @@ export default function Login() {
           setTenants(list);
 
           if (list.length === 1) {
-            setTenantId(list[0].id);
+            // no hace falta setTenantId, effectiveTenantId ya lo toma de tenants[0]
+            setTenantId("");
             return;
           }
 
@@ -254,7 +249,8 @@ export default function Login() {
       const resp = await apiFetch<LoginResponseMaybe>("/auth/login", {
         method: "POST",
         body: {
-          tenantId: effectiveTenantId,
+          // tenantId: backend lo puede tratar opcional, pero si lo tenemos lo mandamos
+          ...(effectiveTenantId ? { tenantId: effectiveTenantId } : {}),
           email: email.trim().toLowerCase(),
           password: pass,
         },
@@ -263,7 +259,7 @@ export default function Login() {
       });
 
       // recordar “última joyería” para este email (solo si vino por options/selección)
-      if (lastTenantKey && tenants.length > 0 && tenantId) safeSet(lastTenantKey, tenantId);
+      if (lastTenantKey && tenants.length > 1 && tenantId) safeSet(lastTenantKey, tenantId);
 
       // ✅ si vino token, guardamos y emitimos LOGIN (multi-tab)
       const maybeToken = String(resp?.accessToken || resp?.token || "").trim();
