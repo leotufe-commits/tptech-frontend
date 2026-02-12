@@ -34,6 +34,9 @@ type Props = {
 
   specialListSorted: Override[];
 
+  // ✅ para que coincida con SectionConfig (modal de confirmación si al deshabilitar PIN se limpian especiales)
+  setConfirmDisablePinClearsSpecialOpen: (v: boolean) => void;
+
   pinRemovedVisual: boolean;
   setPinRemovedVisual: (v: boolean) => void;
 
