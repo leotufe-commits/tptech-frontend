@@ -21,6 +21,9 @@ type Props = {
   pinBusy: boolean;
   pinToggling: boolean;
 
+  // ✅ NEW (para que coincida con SectionConfig)
+  pinPillsDisabled: boolean;
+
   pinMsg: string | null;
   showPinMessage: boolean;
 
@@ -45,6 +48,7 @@ export default function PinConfigSection(props: Props) {
 
     pinBusy,
     pinToggling,
+    pinPillsDisabled,
 
     pinMsg,
     showPinMessage,
@@ -65,6 +69,9 @@ export default function PinConfigSection(props: Props) {
 
   const canEditPin = isSelf || canAdmin;
 
+  // ✅ un solo flag de disabled para esta sección
+  const disabled = !canEditPin || busy || pinPillsDisabled;
+
   useEffect(() => {
     setPinRemovedVisual(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -73,15 +80,10 @@ export default function PinConfigSection(props: Props) {
   const effectiveEnabled = Boolean(detailPinEnabled) && !pinRemovedVisual;
 
   return (
-    <Section
-      title="Clave rápida (PIN)"
-      desc="PIN de 4 dígitos para desbloqueo/cambio rápido."
-    >
+    <Section title="Clave rápida (PIN)" desc="PIN de 4 dígitos para desbloqueo/cambio rápido.">
       {/* mensaje backend */}
       {showPinMessage && pinMsg ? (
-        <div className="mb-3 rounded-xl border border-border bg-bg px-3 py-2 text-sm text-muted">
-          {pinMsg}
-        </div>
+        <div className="mb-3 rounded-xl border border-border bg-bg px-3 py-2 text-sm text-muted">{pinMsg}</div>
       ) : null}
 
       {/* Estado */}
@@ -102,8 +104,8 @@ export default function PinConfigSection(props: Props) {
       <div className="flex justify-start gap-2 pt-2">
         <button
           type="button"
-          className={cn("tp-btn-primary", "h-[42px] px-4 py-2 text-sm", (!canEditPin || busy) && "opacity-60")}
-          disabled={!canEditPin || busy}
+          className={cn("tp-btn-primary", "h-[42px] px-4 py-2 text-sm", disabled && "opacity-60")}
+          disabled={disabled}
           onClick={() => {
             setPinRemovedVisual(false);
             openPinFlow();
@@ -128,9 +130,9 @@ export default function PinConfigSection(props: Props) {
               "tp-btn-secondary",
               "h-[42px] px-4 py-2 text-sm",
               "text-red-600 border-red-600/40 hover:border-red-600/70",
-              (!canEditPin || busy) && "opacity-60"
+              disabled && "opacity-60"
             )}
-            disabled={!canEditPin || busy}
+            disabled={disabled}
             onClick={() => {
               if (isSelf) {
                 onAskDeleteSelf();
