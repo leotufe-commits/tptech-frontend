@@ -21,11 +21,14 @@ type Props = {
   pinBusy: boolean;
   pinToggling: boolean;
 
-  // ✅ NEW (para que coincida con SectionConfig)
+  // ✅ para que coincida con SectionConfig
   pinPillsDisabled: boolean;
 
   pinMsg: string | null;
   showPinMessage: boolean;
+
+  // ✅ para que coincida con SectionConfig (aunque acá todavía no lo usemos)
+  adminTogglePinEnabled: (next: boolean, opts?: { confirmRemoveOverrides?: boolean }) => Promise<void>;
 
   adminRemovePin: (opts?: { confirmRemoveOverrides?: boolean; currentPin?: string }) => Promise<void>;
 
