@@ -1,6 +1,7 @@
 // src/pages/perfilJoyeria/PerfilJoyeriaPage.tsx
 import React from "react";
-import { Pencil, Save, Loader2, X } from "lucide-react";
+import { Pencil, Save, Loader2, X, ChevronLeft } from "lucide-react";
+import { useNavigate } from "react-router-dom";
 
 import ConfirmUnsavedChangesDialog from "../../components/ui/ConfirmUnsavedChangesDialog";
 
@@ -12,6 +13,7 @@ import PerfilJoyeriaEdit from "./PerfilJoyeriaEdit";
 
 export default function PerfilJoyeriaPage() {
   const p = usePerfilJoyeria();
+  const nav = useNavigate();
 
   if (p.loading) {
     return (
@@ -67,9 +69,19 @@ export default function PerfilJoyeriaPage() {
           <h1 className="text-2xl font-semibold truncate">Empresa</h1>
         </div>
 
-        {/* ✅ En VIEW: solo Editar. En EDIT: acciones van al final */}
+        {/* ✅ En VIEW: Volver + Editar. En EDIT: acciones van al final */}
         {!p.isEditMode && (
           <div className="flex items-center gap-2">
+            <button
+              type="button"
+              className="tp-btn-secondary inline-flex items-center gap-2"
+              onClick={() => nav(-1)}
+              title="Volver"
+            >
+              <ChevronLeft className="h-4 w-4" />
+              Volver
+            </button>
+
             <button
               type="button"
               onClick={p.goToEditMode}

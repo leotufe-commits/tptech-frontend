@@ -128,19 +128,16 @@ export function PinFlowModal({
   pinFlowStep: "NEW" | "CONFIRM";
   setPinFlowStep: (v: "NEW" | "CONFIRM") => void;
 
-  // ✅ nuevo PIN
   pinDraft: string;
   setPinDraft: (v: string) => void;
 
-  // ✅ confirmación nuevo PIN
   pinDraft2: string;
   setPinDraft2: (v: string) => void;
 
   pinBusy: boolean;
   pinToggling: boolean;
 
-  // ✅ ahora permite recibir payload (no rompe si tu handler no usa params)
-  onConfirm: (payload?: { pin: string; currentPin?: string }) => Promise<void> | void;
+  onConfirm: (payload?: { pin: string; pin2: string; currentPin?: string }) => Promise<void> | void;
 }) {
   const busy = pinBusy || pinToggling;
 
@@ -149,37 +146,12 @@ export function PinFlowModal({
 
   const [focusKey, setFocusKey] = React.useState(0);
 
-  React.useEffect(() => {
-    if (!open) return;
-    setFocusKey((k) => k + 1);
-  }, [open]);
+  // ✅ focus dedicado para “PIN nuevo” cuando se completa el PIN actual
+  const [newPinFocusKey, setNewPinFocusKey] = React.useState(0);
+  const prevCurrentLenRef = React.useRef(0);
 
-  React.useEffect(() => {
-    if (!open) return;
-    setFocusKey((k) => k + 1);
-  }, [pinFlowStep, open]);
-
-  React.useEffect(() => {
-    if (!open) return;
-    // cada vez que abre, reseteo el pin actual (evita “pin viejo” en pantalla)
-    setCurrentPinDraft("");
-  }, [open]);
-
-  const pinMismatch =
-    pinFlowStep === "CONFIRM" &&
-    pinDraft.length === 4 &&
-    pinDraft2.length === 4 &&
-    pinDraft !== pinDraft2;
-
-  // ✅ si ya tenía PIN, en NEW primero debe estar el PIN actual
-  const canContinue = !busy && pinDraft.length === 4 && (!hasPin || currentPinDraft.length === 4);
-
-  const canConfirm =
-    !busy &&
-    pinDraft.length === 4 &&
-    pinDraft2.length === 4 &&
-    pinDraft === pinDraft2 &&
-    (!hasPin || currentPinDraft.length === 4);
+  const actionLabel = hasPin ? "Actualizar PIN" : "Crear PIN";
+  const modalTitle = title || actionLabel;
 
   function resetAll() {
     setCurrentPinDraft("");
@@ -187,9 +159,64 @@ export function PinFlowModal({
     setPinDraft2("");
     setPinFlowStep("NEW");
     setFocusKey((k) => k + 1);
+
+    setNewPinFocusKey(0);
+    prevCurrentLenRef.current = 0;
   }
 
-  // ✅ Acción primaria: NEW -> confirmar; CONFIRM -> confirmar y cerrar (si OK)
+  React.useEffect(() => {
+    if (!open) return;
+    resetAll();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
+
+  React.useEffect(() => {
+    if (!open) return;
+    setFocusKey((k) => k + 1);
+  }, [pinFlowStep, open]);
+
+  // ✅ cuando completo PIN actual, disparamos focus al bloque nuevo
+  React.useEffect(() => {
+    if (!open) return;
+    if (!hasPin) return;
+    if (pinFlowStep !== "NEW") return;
+
+    const len = currentPinDraft.length;
+    const prev = prevCurrentLenRef.current;
+
+    if (prev < 4 && len === 4) {
+      setNewPinFocusKey((k) => k + 1);
+    }
+
+    prevCurrentLenRef.current = len;
+  }, [open, hasPin, pinFlowStep, currentPinDraft]);
+
+  const pinMismatch =
+    pinFlowStep === "CONFIRM" &&
+    pinDraft.length === 4 &&
+    pinDraft2.length === 4 &&
+    pinDraft !== pinDraft2;
+
+  const currentOk = !hasPin || currentPinDraft.length === 4;
+  const showNewPinBlock = !hasPin || currentOk;
+
+  const canContinue = !busy && pinDraft.length === 4 && currentOk;
+
+  const canConfirm =
+    !busy &&
+    pinDraft.length === 4 &&
+    pinDraft2.length === 4 &&
+    pinDraft === pinDraft2 &&
+    currentOk;
+
+  // ✅ CTA guía (sin cambiar lógica)
+  const primaryLabel =
+    pinFlowStep === "NEW"
+      ? hasPin && !currentOk
+        ? "Ingresá tu PIN actual"
+        : "Continuar"
+      : actionLabel;
+
   async function doPrimaryAction() {
     if (busy) return;
 
@@ -201,30 +228,37 @@ export function PinFlowModal({
 
     if (!canConfirm) return;
 
-    // ✅ NO cerrar si falla
     try {
       await onConfirm({
         pin: pinDraft,
+        pin2: pinDraft2,
         ...(hasPin ? { currentPin: currentPinDraft } : {}),
       });
       onClose();
+      resetAll();
     } catch {
-      // el error lo maneja el padre (toast / setErr)
-      // mantenemos abierto
+      // lo maneja el padre (toast / msg)
     }
   }
+
+  const stepLabel =
+    pinFlowStep === "NEW" ? "Paso 1 de 2" : "Paso 2 de 2";
 
   return (
     <Modal
       open={open}
-      title={title}
-      onClose={onClose}
+      title={modalTitle}
+      onClose={() => {
+        if (busy) return;
+        onClose();
+        resetAll();
+      }}
       wide={false}
       overlayClassName={overlayClassName}
       className="max-w-[380px]"
     >
       <div
-        className="w-full min-h-[300px] px-4"
+        className="w-full min-h-[280px] px-4"
         onKeyDownCapture={(e) => {
           if (!open) return;
 
@@ -244,11 +278,15 @@ export function PinFlowModal({
             e.preventDefault();
             e.stopPropagation();
             onClose();
+            resetAll();
           }
         }}
       >
-        <div className="flex min-h-[300px] items-center justify-center">
+        <div className="flex min-h-[280px] items-center justify-center">
           <div className="w-full max-w-[320px] text-center">
+            {/* ✅ progreso */}
+            <div className="mb-2 text-[11px] text-muted">{stepLabel}</div>
+
             <div
               className="tp-card rounded-2xl px-4 py-5 space-y-4"
               style={{
@@ -256,12 +294,13 @@ export function PinFlowModal({
                 background: "color-mix(in oklab, var(--card) 92%, var(--bg))",
               }}
             >
-              {/* STEP NEW */}
               {pinFlowStep === "NEW" ? (
                 <>
                   {hasPin ? (
                     <div>
-                      <div className="text-xs text-muted mb-2">Ingresá tu PIN actual.</div>
+                      <div className="text-xs text-muted mb-2">
+                        Ingresá tu PIN actual para continuar.
+                      </div>
                       <div className="flex justify-center">
                         <PinBoxes
                           value={currentPinDraft}
@@ -277,30 +316,31 @@ export function PinFlowModal({
                     </div>
                   ) : null}
 
-                  <div className={cn(hasPin && currentPinDraft.length !== 4 && "opacity-55")}>
+                  {/* ✅ Oculto hasta completar PIN actual */}
+                  <div
+                    className={cn(
+                      "transition-all duration-200",
+                      showNewPinBlock ? "opacity-100 translate-y-0" : "opacity-0 -translate-y-1 pointer-events-none h-0 overflow-hidden"
+                    )}
+                  >
                     <div className="text-xs text-muted mb-2">
-                      {hasPin ? "Ingresá el nuevo PIN." : "Ingresá el nuevo PIN."}
+                      Ahora ingresá el nuevo PIN.
                     </div>
 
                     <div className="flex justify-center">
                       <PinBoxes
                         value={pinDraft}
                         onChange={(v) => setPinDraft(v)}
-                        disabled={busy || (hasPin && currentPinDraft.length !== 4)}
-                        autoFocus={!hasPin}
-                        focusKey={focusKey + (hasPin ? 999 : 0)}
+                        disabled={busy}
+                        autoFocus={showNewPinBlock}
+                        focusKey={!hasPin ? focusKey : newPinFocusKey}
                       />
                     </div>
-
-                    {hasPin && currentPinDraft.length !== 4 ? (
-                      <div className="text-[11px] text-muted mt-2">Primero completá el PIN actual.</div>
-                    ) : null}
                   </div>
                 </>
               ) : (
-                /* STEP CONFIRM */
                 <>
-                  <div className="text-xs text-muted mb-2">Confirmá el PIN.</div>
+                  <div className="text-xs text-muted mb-2">Confirmá el nuevo PIN.</div>
                   <div className="flex justify-center">
                     <PinBoxes
                       value={pinDraft2}
@@ -316,7 +356,8 @@ export function PinFlowModal({
               )}
             </div>
 
-            <div className="mt-10 flex justify-center gap-2">
+            {/* ✅ menos aire */}
+            <div className="mt-6 flex justify-center gap-2">
               <button type="button" className="tp-btn-secondary" disabled={busy} onClick={resetAll}>
                 Limpiar
               </button>
@@ -327,11 +368,7 @@ export function PinFlowModal({
                 disabled={pinFlowStep === "NEW" ? !canContinue : !canConfirm}
                 onClick={() => void doPrimaryAction()}
               >
-                {pinFlowStep === "NEW"
-                  ? "Continuar"
-                  : hasPin
-                  ? "Actualizar PIN"
-                  : "Crear PIN"}
+                {primaryLabel}
               </button>
             </div>
           </div>

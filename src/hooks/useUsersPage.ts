@@ -82,7 +82,8 @@ function parseTabParam(v: string | null): TabKey | null {
 
 function parsePinAction(v: string | null): "create" | null {
   const s = String(v || "").trim().toLowerCase();
-  if (s === "create" || s === "new" || s === "set" || s === "setup" || s === "1" || s === "true") return "create";
+  if (s === "create" || s === "new" || s === "set" || s === "setup" || s === "1" || s === "true")
+    return "create";
   return null;
 }
 
@@ -467,7 +468,7 @@ export function useUsersPage() {
         const hasQuickPin =
           typeof (u as any)?.hasQuickPin === "boolean"
             ? Boolean((u as any).hasQuickPin)
-            : pinEnabled; // ✅ fallback razonable si el backend no manda hasQuickPin
+            : pinEnabled;
 
         return {
           ...(u as any),
@@ -682,8 +683,10 @@ export function useUsersPage() {
     if (!userId) return;
 
     emitPinEvent(userId, {
-      hasQuickPin: typeof (patch as any)?.hasQuickPin === "boolean" ? Boolean((patch as any).hasQuickPin) : undefined,
-      pinEnabled: typeof (patch as any)?.pinEnabled === "boolean" ? Boolean((patch as any).pinEnabled) : undefined,
+      hasQuickPin:
+        typeof (patch as any)?.hasQuickPin === "boolean" ? Boolean((patch as any).hasQuickPin) : undefined,
+      pinEnabled:
+        typeof (patch as any)?.pinEnabled === "boolean" ? Boolean((patch as any).pinEnabled) : undefined,
     });
 
     setUsers((prev) =>
@@ -694,7 +697,7 @@ export function useUsersPage() {
     );
   }
 
-  // ✅ UPDATED: acepta pin/pin2 (para no depender de state) y usa fallback a pinNew/pinNew2
+  // ✅ FIX: errores de PIN se muestran en el modal (pinMsg) y NO contaminan err global
   async function adminSetOrResetPin(opts?: { currentPin?: string; pin?: string; pin2?: string }) {
     if (!canManagePinHere()) return;
 
@@ -721,7 +724,6 @@ export function useUsersPage() {
 
     if (modalMode !== "EDIT" || !targetId) return;
 
-    // ✅ en EDIT: si vienen pin/pin2 desde el modal, se usan esos
     const raw1 = String(opts?.pin ?? pinNew ?? "").trim();
     const raw2 = String(opts?.pin2 ?? pinNew2 ?? "").trim();
 
@@ -778,8 +780,9 @@ export function useUsersPage() {
 
       resetPinForm();
       setPinClearOverridesOnSave(false);
+      flashPinMsg("PIN guardado.", 2000);
     } catch (e: any) {
-      setErr(getErrorMessage(e, "Error configurando PIN"));
+      flashPinMsg(getErrorMessage(e, "Error configurando PIN"), 3500);
     } finally {
       setPinBusy(false);
     }
@@ -825,7 +828,7 @@ export function useUsersPage() {
       await refreshDetailOnly(targetId, { hydrate: false });
       flashPinMsg(nextEnabled ? "PIN habilitado." : "PIN deshabilitado.", 2000);
     } catch (e: any) {
-      setErr(getErrorMessage(e, "Error actualizando estado del PIN"));
+      flashPinMsg(getErrorMessage(e, "Error actualizando estado del PIN"), 3500);
     } finally {
       setPinBusy(false);
     }
@@ -885,7 +888,7 @@ export function useUsersPage() {
       setPinClearOverridesOnSave(false);
       flashPinMsg("PIN eliminado.", 2000);
     } catch (e: any) {
-      setErr(getErrorMessage(e, "Error eliminando PIN"));
+      flashPinMsg(getErrorMessage(e, "Error eliminando PIN"), 3500);
     } finally {
       setPinBusy(false);
     }
@@ -1504,7 +1507,9 @@ export function useUsersPage() {
       return;
     }
 
-    const downloadUrl = absUrl(`/users/${encodeURIComponent(userId)}/attachments/${encodeURIComponent(attId)}/download`);
+    const downloadUrl = absUrl(
+      `/users/${encodeURIComponent(userId)}/attachments/${encodeURIComponent(attId)}/download`
+    );
 
     const resp = await fetch(downloadUrl, {
       method: "GET",
@@ -1540,9 +1545,62 @@ export function useUsersPage() {
     }
   }
 
+  // ✅ NUEVO: abrir adjunto con auth (blob) para que "Ver" funcione incluso si requiere token
+  async function handleOpenSavedAttachment(att: UserAttachment) {
+    const userId = String((detail as any)?.id || "");
+    const attId = String((att as any)?.id || "");
+    if (!userId || !attId) return;
+
+    const token = getAccessToken();
+    if (!token) {
+      setErr("Sesión expirada. Volvé a iniciar sesión.");
+      return;
+    }
+
+    const downloadUrl = absUrl(
+      `/users/${encodeURIComponent(userId)}/attachments/${encodeURIComponent(attId)}/download`
+    );
+
+    const resp = await fetch(downloadUrl, {
+      method: "GET",
+      headers: { Authorization: `Bearer ${token}` },
+      credentials: "include",
+    });
+
+    if (!resp.ok) {
+      let msg = `No se pudo abrir el archivo (${resp.status}).`;
+      try {
+        const j = await resp.json();
+        if ((j as any)?.message) msg = String((j as any).message);
+      } catch {}
+      throw new Error(msg);
+    }
+
+    const blob = await resp.blob();
+    const url = URL.createObjectURL(blob);
+
+    const w = window.open(url, "_blank", "noopener,noreferrer");
+    if (!w) {
+      try {
+        URL.revokeObjectURL(url);
+      } catch {}
+      // fallback: si bloquean popups, descargamos
+      await handleDownloadSavedAttachment(att);
+      return;
+    }
+
+    // liberar luego (evita leaks)
+    window.setTimeout(() => {
+      try {
+        URL.revokeObjectURL(url);
+      } catch {}
+    }, 60_000);
+  }
+
   const totalLabel = `${total} ${total === 1 ? "Usuario" : "Usuarios"}`;
 
-  const busyClose = modalBusy || avatarBusy || specialSaving || uploadingAttachments || Boolean(deletingAttId) || pinBusy;
+  const busyClose =
+    modalBusy || avatarBusy || specialSaving || uploadingAttachments || Boolean(deletingAttId) || pinBusy;
 
   return {
     // utils
@@ -1669,6 +1727,7 @@ export function useUsersPage() {
     removeSavedAttachment,
     savedAttachments,
     handleDownloadSavedAttachment,
+    handleOpenSavedAttachment,
 
     // status toggle
     toggleStatus,

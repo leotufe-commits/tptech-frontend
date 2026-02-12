@@ -254,6 +254,34 @@ export function emitOpenQuickSwitch() {
 }
 
 /* =========================
+   ✅ ABRIR FLUJO PIN EN USUARIOS (para evitar lock sin PIN)
+========================= */
+const OPEN_PIN_FLOW_EVENT = "tptech:open-pin-flow";
+function emitOpenPinFlow(userId: string) {
+  try {
+    window.dispatchEvent(new CustomEvent(OPEN_PIN_FLOW_EVENT, { detail: { userId: String(userId || "") } }));
+  } catch {
+    // ignore
+  }
+}
+
+/* =========================
+   ✅ PIN EVENT (sync estado del user en AuthContext)
+========================= */
+const PIN_EVENT = "tptech:user-pin-updated";
+
+function readPinEvent(ev: Event): { userId: string; hasQuickPin?: boolean; pinEnabled?: boolean } {
+  const anyEv = ev as any;
+  const d = anyEv?.detail ?? {};
+  const userId = String(d?.userId ?? d?.id ?? "").trim();
+  const hasQuickPin =
+    typeof d?.hasQuickPin === "boolean" ? (d.hasQuickPin as boolean) : undefined;
+  const pinEnabled =
+    typeof d?.pinEnabled === "boolean" ? (d.pinEnabled as boolean) : undefined;
+  return { userId, hasQuickPin, pinEnabled };
+}
+
+/* =========================
    DEV LOCK BYPASS
 ========================= */
 const DEV = import.meta.env.DEV;
@@ -328,6 +356,11 @@ export type User = {
   // ✅ para cache-bust del avatar en Sidebar
   updatedAt?: string | null;
   avatarUpdatedAt?: string | null;
+
+  // ✅ IMPORTANTÍSIMO: para flujos PIN
+  hasQuickPin?: boolean;
+  pinEnabled?: boolean;
+  quickPinEnabled?: boolean;
 };
 
 export type Jewelry = Record<string, any>;
@@ -576,6 +609,16 @@ function getServerLockFromJewelry(j: any): {
   return out;
 }
 
+function userHasQuickPin(u: any): boolean {
+  if (!u) return false;
+  if (typeof u.hasQuickPin === "boolean") return u.hasQuickPin;
+  if (typeof u.quickPinEnabled === "boolean") return u.quickPinEnabled;
+  if (typeof u.pinEnabled === "boolean") return u.pinEnabled;
+  if (u.quickPinHash) return true;
+  if (u.pinHash) return true;
+  return false;
+}
+
 /* =========================
    PROVIDER
 ========================= */
@@ -598,8 +641,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [lockEnabledLocal, setLockEnabledLocalState] = useState(readLockEnabledLocal);
   const [lockTimeoutMinutesLocal, setLockTimeoutMinutesLocalState] = useState(readLockTimeoutMinLocal);
 
-  const [quickSwitchEnabled, setQuickSwitchEnabled] = useState(false);
-
   const lastActivityRef = useRef(Date.now());
   const timerRef = useRef<number | null>(null);
   const refreshPromiseRef = useRef<Promise<void> | null>(null);
@@ -617,6 +658,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     };
   }, [jewelry, lockEnabledLocal, lockTimeoutMinutesLocal]);
 
+  const canLockThisUser = Boolean(user && userHasQuickPin(user));
+
   /* =========================
      LOCK STATE
   ========================= */
@@ -630,12 +673,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   /** 🔒 Bloqueo manual (candado topbar)
-   *  - Si había bypass DEV, se limpia
+   *  - Si no hay PIN en el usuario actual: NO bloquear, abrir flujo PIN
    */
   const lockNow = useCallback(() => {
     if (DEV) clearDevLockBypass();
+
+    const meId = String((user as any)?.id || "");
+    if (effectiveLock.enabled && meId && !userHasQuickPin(user)) {
+      emitOpenPinFlow(meId);
+      return;
+    }
+
     setLocked(true);
-  }, [setLocked]);
+  }, [setLocked, user, effectiveLock.enabled]);
 
   /** 👥 Abrir Quick Switch / Lock UI
    *  - Limpia bypass DEV para forzar UI real
@@ -676,7 +726,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setRoles([]);
     setPermissions([]);
     setLocked(false);
-    setQuickSwitchEnabled(false);
     setLoading(false);
 
     // ✅ si quedamos “público”, el próximo ProtectedRoute debe re-chequear
@@ -778,7 +827,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           } catch {}
 
           const serverFlags = getServerLockFromJewelry(data.jewelry);
-          setQuickSwitchEnabled(Boolean(serverFlags.quickSwitchEnabled));
 
           if (hasDevLockBypass()) setLocked(false);
 
@@ -810,6 +858,43 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     },
     [setLocked, clearSessionLocalOnly]
   );
+
+  /* =========================
+     ✅ ESCUCHAR EVENTO PIN ACTUALIZADO
+     - actualiza AuthContext.user al instante (clave para SystemPinSettings)
+  ========================= */
+  useEffect(() => {
+    const onPinUpdated = (ev: Event) => {
+      try {
+        const { userId, hasQuickPin, pinEnabled } = readPinEvent(ev);
+        if (!userId) return;
+
+        setUser((prev) => {
+          if (!prev) return prev;
+          if (String(prev.id) !== String(userId)) return prev;
+
+          const next: any = { ...prev };
+          if (typeof hasQuickPin === "boolean") next.hasQuickPin = hasQuickPin;
+          if (typeof pinEnabled === "boolean") {
+            next.pinEnabled = pinEnabled;
+            next.quickPinEnabled = pinEnabled;
+          }
+
+          // si te deshabilitan/quitan el PIN y estabas locked, salimos para evitar “encerrado”
+          if ((typeof hasQuickPin === "boolean" && hasQuickPin === false) || (typeof pinEnabled === "boolean" && pinEnabled === false)) {
+            setLocked(false);
+          }
+
+          return next;
+        });
+      } catch {
+        // ignore
+      }
+    };
+
+    window.addEventListener(PIN_EVENT, onPinUpdated as any);
+    return () => window.removeEventListener(PIN_EVENT, onPinUpdated as any);
+  }, [setLocked]);
 
   /* =========================
      ✅ ESCUCHAR EVENTO LOGO CAMBIADO
@@ -956,7 +1041,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     async (args: { targetUserId: string; pin4?: string; pin?: string }) => {
       const body: any = { targetUserId: args.targetUserId };
 
-      const maybePin = args.pin4 ?? args.pin;
+      // ✅ si viene vacío, NO mandar pin (así funciona el switch sin PIN)
+      const maybePin = String(args.pin4 ?? args.pin ?? "").trim();
       if (maybePin) body.pin = assertPin4(maybePin);
 
       const data = await apiFetch<MeResponse>("/auth/me/pin/switch", {
@@ -978,7 +1064,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     [setSession, bumpActivity]
   );
 
-    /* =========================
+  /* =========================
      PIN LOCK SETTINGS (JOYERÍA)
      ✅ AHORA USA EL ENDPOINT NUEVO:
         PATCH /company/settings/security
@@ -1002,7 +1088,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
       await apiFetch("/company/settings/security", {
         method: "PATCH",
-        body: JSON.stringify(payload),
+        body: payload as any,
         timeoutMs: 10_000,
       });
 
@@ -1124,9 +1210,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   /* =========================
      AUTO LOCK (INACTIVIDAD)
+     ✅ NO bloquear si el usuario no tiene PIN (evita “encerrado”)
   ========================= */
   useEffect(() => {
     if (!user || !effectiveLock.enabled) return;
+    if (!canLockThisUser) return;
 
     const onVisibility = () => {
       if (document.visibilityState === "visible") bumpActivity();
@@ -1147,11 +1235,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       window.removeEventListener("scroll", bumpActivity);
       document.removeEventListener("visibilitychange", onVisibility);
     };
-  }, [user, effectiveLock.enabled, bumpActivity]);
+  }, [user, effectiveLock.enabled, bumpActivity, canLockThisUser]);
 
   useEffect(() => {
     if (timerRef.current) clearInterval(timerRef.current);
     if (!user || !effectiveLock.enabled) return;
+    if (!canLockThisUser) return;
 
     timerRef.current = window.setInterval(() => {
       if (locked) return;
@@ -1167,7 +1256,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       if (timerRef.current) clearInterval(timerRef.current);
       timerRef.current = null;
     };
-  }, [user, effectiveLock.enabled, effectiveLock.timeoutMin, locked, setLocked]);
+  }, [user, effectiveLock.enabled, effectiveLock.timeoutMin, locked, setLocked, canLockThisUser]);
 
   /* =========================
      BOOT
@@ -1225,7 +1314,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         writeLockTimeoutMinLocal(safe);
       },
 
-      quickSwitchEnabled,
+      // ✅ SIEMPRE consistente con servidor/local (evita des-sync)
+      quickSwitchEnabled: effectiveLock.quickSwitchEnabled,
 
       pinSet,
       pinRemove,
@@ -1255,7 +1345,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       lockNow,
       openQuickSwitch,
       effectiveLock,
-      quickSwitchEnabled,
       pinSet,
       pinRemove,
       pinUnlock,

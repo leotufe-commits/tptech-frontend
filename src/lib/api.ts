@@ -85,6 +85,32 @@ export function forceLogout() {
   emitAuthEvent({ type: "LOGOUT", at: Date.now() });
 }
 
+/**
+ * ✅ Legacy: guardar token + emitir LOGIN (compat con pantallas viejas).
+ * - Si persist=true => localStorage
+ * - Si persist=false (default) => sessionStorage
+ */
+export function storeTokenAndEmitLogin(token: string, opts?: { persist?: boolean }) {
+  const t = String(token || "").trim();
+  if (!t) return;
+
+  const persist = !!opts?.persist;
+
+  try {
+    if (persist) {
+      localStorage.setItem(LS_TOKEN_KEY, t);
+      sessionStorage.removeItem(SS_TOKEN_KEY);
+    } else {
+      sessionStorage.setItem(SS_TOKEN_KEY, t);
+      localStorage.removeItem(LS_TOKEN_KEY);
+    }
+  } catch {
+    // ignore
+  }
+
+  emitLogin();
+}
+
 // =========================
 // URL HELPERS
 // =========================
@@ -242,7 +268,7 @@ async function parsePayload(res: Response) {
 // =========================
 // API ERROR
 // =========================
-class ApiError extends Error {
+export class ApiError extends Error {
   status: number;
   data: any;
   url?: string;
@@ -306,46 +332,70 @@ export async function apiFetch<T = any>(path: string, options: ApiFetchOptions =
     }
   }
 
-  let res: Response;
-  let payload: any;
+  // ✅ Dedupe (GET/HEAD)
+  const dedupeKey = `${method}:${url}`;
+  const shouldDedupe = options.dedupe ?? (method === "GET" || method === "HEAD");
 
-  try {
-    res = await fetch(url, {
-      ...options,
-      method,
-      headers,
-      body: bodyToSend,
-      credentials,
-      cache: method === "GET" ? "no-store" : options.cache,
-      signal,
-    });
-
-    payload = await parsePayload(res);
-  } catch (err: any) {
-    if (isAbortError(err)) throw new Error("Tiempo de espera agotado.");
-    throw new Error("Error de red.");
+  if (shouldDedupe && inFlight.has(dedupeKey)) {
+    return (await inFlight.get(dedupeKey)) as T;
   }
 
-  // 401
-  if (res.status === 401) {
-    const mode = options.on401 ?? "logout";
+  const doFetch = async () => {
+    let res: Response;
+    let payload: any;
 
-    if (mode === "logout") {
-      forceLogout();
-      throw new ApiError("Sesión expirada", { status: 401, data: payload, url, method });
+    try {
+      res = await fetch(url, {
+        ...options,
+        method,
+        headers,
+        body: bodyToSend,
+        credentials,
+        cache: method === "GET" ? "no-store" : options.cache,
+        signal,
+      });
+
+      payload = await parsePayload(res);
+    } catch (err: any) {
+      if (isAbortError(err)) throw new Error("Tiempo de espera agotado.");
+      throw new Error("Error de red.");
     }
 
-    throw new ApiError("No autorizado (401)", { status: 401, data: payload, url, method });
+    // 401
+    if (res.status === 401) {
+      const mode = options.on401 ?? "logout";
+
+      if (mode === "logout") {
+        forceLogout();
+        throw new ApiError("Sesión expirada", { status: 401, data: payload, url, method });
+      }
+
+      throw new ApiError("No autorizado (401)", { status: 401, data: payload, url, method });
+    }
+
+    if (!res.ok) {
+      const msg =
+        (payload && typeof payload === "object" && payload.message) ||
+        (typeof payload === "string" && payload) ||
+        `HTTP ${res.status}`;
+
+      throw new ApiError(msg, { status: res.status, data: payload, url, method });
+    }
+
+    return payload as T;
+  };
+
+  const p = doFetch();
+
+  if (shouldDedupe) {
+    inFlight.set(dedupeKey, p);
+    try {
+      const out = await p;
+      return out;
+    } finally {
+      inFlight.delete(dedupeKey);
+    }
   }
 
-  if (!res.ok) {
-    const msg =
-      (payload && typeof payload === "object" && payload.message) ||
-      (typeof payload === "string" && payload) ||
-      `HTTP ${res.status}`;
-
-    throw new ApiError(msg, { status: res.status, data: payload, url, method });
-  }
-
-  return payload as T;
+  return (await p) as T;
 }

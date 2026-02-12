@@ -14,7 +14,12 @@ import { cn, Tabs, type TabKey, initialsFrom, absUrl, permLabelByModuleAction } 
 import type { Override, OverrideEffect, Role, UserAttachment, UserDetail } from "../../services/users";
 import type { Permission } from "../../services/permissions";
 
-import { shouldHidePinMsg, safeReadAutoPin, safeClearAutoPin, draftKeyOfFile } from "./edit/helpers/userEditModal.helpers";
+import {
+  shouldHidePinMsg,
+  safeReadAutoPin,
+  safeClearAutoPin,
+  draftKeyOfFile,
+} from "./edit/helpers/userEditModal.helpers";
 
 import { useDraftAttachmentPreviews } from "./edit/hooks/useDraftAttachmentPreviews";
 import UserAvatarCard from "./edit/partials/UserAvatarCard";
@@ -262,7 +267,11 @@ export default function UserEditModal(props: Props) {
   const [showPassword, setShowPassword] = useState(false);
 
   const isOwner = Boolean(
-    detail?.roles?.some((r) => String((r as any)?.code || (r as any)?.name || "").toUpperCase().trim() === "OWNER")
+    detail?.roles?.some((r) =>
+      String((r as any)?.code || (r as any)?.name || "")
+        .toUpperCase()
+        .trim() === "OWNER"
+    )
   );
 
   /* ============================================================
@@ -272,11 +281,13 @@ export default function UserEditModal(props: Props) {
     const userId = String((detail as any)?.id || "").trim();
     if (!userId) return;
 
-    window.dispatchEvent(
-      new CustomEvent(PIN_EVENT, {
-        detail: { userId, ...payload },
-      })
-    );
+    try {
+      window.dispatchEvent(
+        new CustomEvent(PIN_EVENT, {
+          detail: { userId, ...payload },
+        })
+      );
+    } catch {}
   }
 
   /* ============================================================
@@ -294,6 +305,7 @@ export default function UserEditModal(props: Props) {
 
   async function adminTogglePinEnabledWrapped(next: boolean, opts?: { confirmRemoveOverrides?: boolean }) {
     await adminTogglePinEnabled(next, opts);
+    // si togglean enabled/disabled, existe pin real => hasQuickPin true
     emitPinUpdated({ hasQuickPin: true, pinEnabled: Boolean(next) });
   }
 
@@ -390,6 +402,7 @@ export default function UserEditModal(props: Props) {
   }, [open, modalMode, (detail as any)?.id, tab, pinFlowOpen, pinBusy, pinToggling, autoOpenPinFlow]);
 
   function handleSubmit(e?: FormEvent) {
+    // si el pinFlow modal está abierto, no dejamos submit del formulario principal
     if (e && pinFlowOpen) {
       e.preventDefault();
       e.stopPropagation();
@@ -398,7 +411,6 @@ export default function UserEditModal(props: Props) {
     return onSubmit(e);
   }
 
-  // previews attachments draft (hook)
   const { previewByKey: draftPreviewByKey } = useDraftAttachmentPreviews(attachmentsDraft);
 
   const [hiddenSavedAttIds, setHiddenSavedAttIds] = useState<Set<string>>(new Set());
@@ -439,7 +451,10 @@ export default function UserEditModal(props: Props) {
   const hasPin = detailHasQuickPin;
 
   const canShowPinToggle = Boolean(detailHasQuickPin);
-  const pinPillsDisabled = pinBusy || pinToggling || !canAdmin || !canShowPinToggle || disableAdminDangerZone;
+
+  // ✅ FIX: NO bloquear PIN por self-edit.
+  const canEditPin = Boolean(isSelf || canAdmin);
+  const pinPillsDisabled = pinBusy || pinToggling || !canShowPinToggle || !canEditPin;
 
   const detailAvatar = !forceHideDetailAvatar && detail?.avatarUrl ? absUrl(String(detail.avatarUrl)) : "";
   const avatarSrc = avatarPreview || detailAvatar;
@@ -557,6 +572,9 @@ export default function UserEditModal(props: Props) {
   const specialBlocked = disableAdminDangerZone || isOwner;
   const confirmOverlay = "bg-black/70 backdrop-blur-[1px]";
 
+  // ✅ importante: el footer va DENTRO del form para que el submit funcione SIEMPRE
+  const busyClose = modalBusy || avatarBusy || specialSaving || uploadingAttachments || Boolean(deletingAttId) || pinBusy;
+
   return (
     <>
       <ConfirmModals
@@ -572,7 +590,15 @@ export default function UserEditModal(props: Props) {
         onConfirmDisableSpecialAndClear={() => void confirmDisableSpecialAndClear()}
       />
 
-      <Modal open={open} wide={wide} title={title} onClose={safeClose}>
+      <Modal
+        open={open}
+        wide={wide}
+        title={title}
+        onClose={safeClose}
+        busy={modalBusy}
+        // ✅ NO usar footer del Modal: necesitamos que el botón submit esté dentro del form
+        footer={null as any}
+      >
         {modalLoading ? (
           <div className={cn("tp-card p-4 text-sm text-muted flex items-center gap-2")}>
             <Loader2 className="h-4 w-4 animate-spin" />
@@ -712,7 +738,16 @@ export default function UserEditModal(props: Props) {
               />
             ) : null}
 
-            <UserEditFooter modalBusy={modalBusy} modalMode={modalMode} onCancel={safeClose} />
+            <div className="pt-2 flex justify-end">
+  <UserEditFooter
+    modalBusy={modalBusy}
+    modalMode={modalMode}
+    onCancel={safeClose}
+  />
+</div>
+
+            {/* si querés, podés evitar submit cuando está “busyClose” desde UserEditFooter */}
+            {busyClose ? null : null}
           </form>
         )}
       </Modal>

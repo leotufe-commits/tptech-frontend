@@ -10,6 +10,7 @@ import type { Permission } from "../../../../services/permissions";
 
 import DeletePinConfirmModal from "../partials/DeletePinConfirmModal";
 import PinConfigSection from "../partials/PinConfigSection";
+import { PinFlowModal } from "./PinFlowModal";
 import { isPin4 } from "../helpers/sectionConfig.helpers";
 
 type Props = {
@@ -23,6 +24,7 @@ type Props = {
   detailHasQuickPin: boolean;
   detailPinEnabled: boolean;
 
+  // modal Print 2
   pinFlowOpen: boolean;
   openPinFlow: () => void;
   closePinFlow: () => void;
@@ -43,12 +45,13 @@ type Props = {
   pinMsg: string | null;
   showPinMessage: boolean;
 
+  // legacy compat (limpiamos cuando corresponde)
   pinNew: string;
   pinNew2: string;
   setPinNew: (v: string) => void;
   setPinNew2: (v: string) => void;
 
-  adminSetOrResetPin: (opts?: { currentPin?: string }) => Promise<void>;
+  adminSetOrResetPin: (opts?: { currentPin?: string; pin?: string; pin2?: string }) => Promise<void>;
   adminTogglePinEnabled: (next: boolean, opts?: { confirmRemoveOverrides?: boolean }) => Promise<void>;
   adminRemovePin: (opts?: { confirmRemoveOverrides?: boolean; currentPin?: string }) => Promise<void>;
 
@@ -110,6 +113,7 @@ export default function SectionConfig(props: Props) {
     openPinFlow,
     closePinFlow,
 
+    hasPin,
     pinFlowStep,
     setPinFlowStep,
     pinDraft,
@@ -124,8 +128,6 @@ export default function SectionConfig(props: Props) {
     pinMsg,
     showPinMessage,
 
-    pinNew,
-    pinNew2,
     setPinNew,
     setPinNew2,
 
@@ -170,7 +172,7 @@ export default function SectionConfig(props: Props) {
     selfOwnerChecked,
   } = props;
 
-  // ✅ OPCIÓN A (solo visual)
+  // ✅ solo visual
   const [pinRemovedVisual, setPinRemovedVisual] = useState(false);
 
   // ✅ modal para pedir PIN ACTUAL al borrar (SELF)
@@ -189,6 +191,46 @@ export default function SectionConfig(props: Props) {
 
   return (
     <div className="w-full space-y-4">
+      {/* =========================
+          ✅ PIN (UNIFICADO)
+      ========================= */}
+
+      <PinFlowModal
+        open={pinFlowOpen}
+        title={hasPin ? "Actualizar PIN" : "Crear PIN"}
+        onClose={closePinFlow}
+        overlayClassName={confirmOverlay}
+        hasPin={hasPin}
+        pinFlowStep={pinFlowStep}
+        setPinFlowStep={setPinFlowStep}
+        pinDraft={pinDraft}
+        setPinDraft={setPinDraft}
+        pinDraft2={pinDraft2}
+        setPinDraft2={setPinDraft2}
+        pinBusy={pinBusy}
+        pinToggling={pinToggling}
+        onConfirm={async (payload) => {
+          if (!payload) return;
+
+          const { currentPin, pin, pin2 } = payload;
+
+          // guardrails
+          if (!isPin4(pin) || !isPin4(pin2) || pin !== pin2) return;
+          if (hasPin && !isPin4(currentPin || "")) return;
+
+          await adminSetOrResetPin({
+            currentPin: hasPin ? currentPin : undefined,
+            pin,
+            pin2,
+          });
+
+          // limpiar legacy + visual
+          setPinNew("");
+          setPinNew2("");
+          setPinRemovedVisual(false);
+        }}
+      />
+
       <DeletePinConfirmModal
         open={showDeletePinConfirm}
         busy={busyDeleteSelf}
@@ -228,25 +270,12 @@ export default function SectionConfig(props: Props) {
         isSelf={isSelf}
         detailHasQuickPin={detailHasQuickPin}
         detailPinEnabled={detailPinEnabled}
-        pinFlowOpen={pinFlowOpen}
         openPinFlow={openPinFlow}
-        closePinFlow={closePinFlow}
-        pinFlowStep={pinFlowStep}
-        setPinFlowStep={setPinFlowStep}
-        pinDraft={pinDraft}
-        setPinDraft={setPinDraft}
-        pinDraft2={pinDraft2}
-        setPinDraft2={setPinDraft2}
         pinBusy={pinBusy}
         pinToggling={pinToggling}
         pinPillsDisabled={pinPillsDisabled}
         pinMsg={pinMsg}
         showPinMessage={showPinMessage}
-        pinNew={pinNew}
-        pinNew2={pinNew2}
-        setPinNew={setPinNew}
-        setPinNew2={setPinNew2}
-        adminSetOrResetPin={adminSetOrResetPin}
         adminTogglePinEnabled={adminTogglePinEnabled}
         adminRemovePin={adminRemovePin}
         specialListSorted={specialListSorted}

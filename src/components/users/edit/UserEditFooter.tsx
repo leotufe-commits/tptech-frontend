@@ -10,7 +10,7 @@ type Props = {
 
 export default function UserEditFooter({ modalBusy, modalMode, onCancel }: Props) {
   return (
-    <div className="flex justify-end gap-2 pt-2">
+    <>
       <button
         className={cn("tp-btn-secondary", "h-[42px] px-3 py-2 text-sm", modalBusy && "opacity-60")}
         type="button"
@@ -30,7 +30,7 @@ export default function UserEditFooter({ modalBusy, modalMode, onCancel }: Props
       >
         {modalBusy ? "Guardando…" : modalMode === "CREATE" ? "Crear" : "Guardar"}
       </button>
-    </div>
+    </>
   );
 }
 

@@ -1,5 +1,6 @@
 // tptech-frontend/src/components/users/edit/sections/SectionData.tsx
 import React from "react";
+import { Download, Eye, Loader2, Trash2 } from "lucide-react";
 
 import { cn, Section, formatBytes, safeFileLabel, absUrl } from "../../users.ui";
 import type { UserAttachment } from "../../../../services/users";
@@ -66,15 +67,17 @@ type Props = {
   filteredSavedAttachments: UserAttachment[];
   handleRemoveSavedAttachment: (id: string) => Promise<void>;
 
-  // ✅ descargar adjunto guardado
+  // ✅ descargar adjunto guardado (con auth)
   handleDownloadSavedAttachment: (att: UserAttachment) => void;
+
+  // ✅ ver adjunto guardado (con auth) - opcional (fallback a window.open)
+  handleOpenSavedAttachment?: (att: UserAttachment) => void;
 
   // previews
   draftKey: (f: File) => string;
   draftPreviewByKey: Record<string, string>;
 
-  // ✅ FIX build: SectionData recibe estas props desde UserEditModal
-  // (aunque hoy no las use acá, deben existir en el type)
+  // (no usados acá, pero deben existir)
   initialsFrom: (s: string) => string;
   avatarInitialsBase: string;
 };
@@ -92,6 +95,34 @@ function isLikelyImage(nameOrMime: string) {
     s.endsWith(".jpeg") ||
     s.endsWith(".webp") ||
     s.endsWith(".gif")
+  );
+}
+
+/* =========================
+   UI: icon buttons (igual Empresa)
+========================= */
+function IconActionButton({
+  title,
+  onClick,
+  disabled,
+  children,
+}: {
+  title: string;
+  onClick?: () => void;
+  disabled?: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      className={cn("tp-btn-secondary !px-2 !py-2")}
+      onClick={onClick}
+      disabled={disabled}
+      title={title}
+      aria-label={title}
+    >
+      {children}
+    </button>
   );
 }
 
@@ -147,6 +178,7 @@ export default function SectionData(props: Props) {
     handleRemoveSavedAttachment,
 
     handleDownloadSavedAttachment,
+    handleOpenSavedAttachment,
 
     draftKey,
     draftPreviewByKey,
@@ -154,6 +186,7 @@ export default function SectionData(props: Props) {
 
   const isCreate = modalMode === "CREATE";
   const busyAttachments = modalBusy || uploadingAttachments || Boolean(deletingAttId);
+
   const hasDraft = attachmentsDraft.length > 0;
   const hasSaved = filteredSavedAttachments.length > 0;
 
@@ -167,16 +200,93 @@ export default function SectionData(props: Props) {
   // dropzone state
   const [dragOver, setDragOver] = React.useState(false);
 
+  // ✅ reemplazo de draft (usamos icono Download como pediste)
+  const replaceInputRef = React.useRef<HTMLInputElement>(null);
+  const [replaceIdx, setReplaceIdx] = React.useState<number | null>(null);
+
+  function openFilePicker() {
+    if (busyAttachments) return;
+    requestAnimationFrame(() => {
+      try {
+        attInputRef.current?.click();
+      } catch {
+        // no-op
+      }
+    });
+  }
+
+  function openReplacePicker(idx: number) {
+    if (busyAttachments) return;
+    setReplaceIdx(idx);
+    requestAnimationFrame(() => {
+      try {
+        replaceInputRef.current?.click();
+      } catch {
+        // no-op
+      }
+    });
+  }
+
   async function onPickFiles(files: File[]) {
     if (!files.length) return;
+    await addAttachments(files);
+  }
 
-    // ✅ CLAVE: evitar unhandled rejection (puede tumbar UI y “parecer” logout)
+  // ✅ “Ver” draft (blob)
+  function onViewDraftFile(f: File) {
     try {
-      await addAttachments(files);
-    } catch (e) {
-      console.error("Error subiendo adjuntos:", e);
-      // Ideal: toast. Por ahora, no rompemos el modal/UI.
+      const key = draftKey(f);
+      const preview = draftPreviewByKey[key];
+      const isImg = Boolean(preview) && isLikelyImage(f.type || f.name);
+
+      const url = isImg && preview ? preview : URL.createObjectURL(f);
+
+      const w = window.open(url, "_blank", "noopener,noreferrer");
+      if (!w) {
+        // popup bloqueado => no crashear
+      }
+
+      // si era objectURL nuestro, lo liberamos
+      if (!(isImg && preview)) {
+        window.setTimeout(() => {
+          try {
+            URL.revokeObjectURL(url);
+          } catch {}
+        }, 60_000);
+      }
+    } catch {
+      // no-op
     }
+  }
+
+  // ✅ evita que el navegador “abra” el archivo al soltarlo
+  React.useEffect(() => {
+    if (!dragOver) return;
+
+    function prevent(e: DragEvent) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
+
+    window.addEventListener("dragover", prevent);
+    window.addEventListener("drop", prevent);
+
+    return () => {
+      window.removeEventListener("dragover", prevent);
+      window.removeEventListener("drop", prevent);
+    };
+  }, [dragOver]);
+
+  function onViewSaved(att: UserAttachment) {
+    // ✅ preferimos abrir con auth (blob) si nos lo pasan
+    if (handleOpenSavedAttachment) {
+      handleOpenSavedAttachment(att);
+      return;
+    }
+
+    // fallback: abrir URL directa
+    const url = absUrl((att as any)?.url);
+    if (url) window.open(url, "_blank", "noopener,noreferrer");
   }
 
   return (
@@ -193,9 +303,7 @@ export default function SectionData(props: Props) {
               disabled={modalMode === "EDIT" || modalBusy}
               autoComplete="email"
             />
-            {modalMode === "EDIT" && (
-              <p className="mt-1 text-[11px] text-muted">(El email no se edita desde aquí)</p>
-            )}
+            {modalMode === "EDIT" && <p className="mt-1 text-[11px] text-muted">(El email no se edita desde aquí)</p>}
           </div>
 
           <div>
@@ -306,22 +414,12 @@ export default function SectionData(props: Props) {
               <div className="grid grid-cols-1 md:grid-cols-12 gap-3">
                 <div className="md:col-span-5">
                   <label className="mb-1 block text-xs text-muted">Calle</label>
-                  <input
-                    className="tp-input"
-                    value={fStreet}
-                    onChange={(e) => setFStreet(e.target.value)}
-                    disabled={modalBusy}
-                  />
+                  <input className="tp-input" value={fStreet} onChange={(e) => setFStreet(e.target.value)} disabled={modalBusy} />
                 </div>
 
                 <div className="md:col-span-2">
                   <label className="mb-1 block text-xs text-muted">Número</label>
-                  <input
-                    className="tp-input"
-                    value={fNumber}
-                    onChange={(e) => setFNumber(e.target.value)}
-                    disabled={modalBusy}
-                  />
+                  <input className="tp-input" value={fNumber} onChange={(e) => setFNumber(e.target.value)} disabled={modalBusy} />
                 </div>
 
                 <div className="md:col-span-5">
@@ -366,12 +464,7 @@ export default function SectionData(props: Props) {
 
                 <div className="md:col-span-4">
                   <label className="mb-1 block text-xs text-muted">Código postal</label>
-                  <input
-                    className="tp-input"
-                    value={fPostalCode}
-                    onChange={(e) => setFPostalCode(e.target.value)}
-                    disabled={modalBusy}
-                  />
+                  <input className="tp-input" value={fPostalCode} onChange={(e) => setFPostalCode(e.target.value)} disabled={modalBusy} />
                 </div>
 
                 <div className="md:col-span-4">
@@ -412,7 +505,7 @@ export default function SectionData(props: Props) {
 
         <Section title="Adjuntos" desc="Archivos del usuario (PDF, imágenes, etc.).">
           <div className="space-y-3">
-            {/* input hidden */}
+            {/* input hidden (agregar) */}
             <input
               ref={attInputRef}
               type="file"
@@ -430,15 +523,39 @@ export default function SectionData(props: Props) {
               disabled={busyAttachments}
             />
 
-            {/* panel */}
+            {/* ✅ input hidden (reemplazar 1 archivo) */}
+            <input
+              ref={replaceInputRef}
+              type="file"
+              className="hidden"
+              onChange={async (e) => {
+                const f = (e.target.files && e.target.files[0]) || null;
+                e.currentTarget.value = "";
+                const idx = replaceIdx;
+                setReplaceIdx(null);
+
+                if (!f) return;
+                if (idx === null || idx < 0) return;
+
+                try {
+                  // “reemplazar” sin setter: quitamos el viejo y agregamos el nuevo
+                  removeDraftAttachmentByIndex(idx);
+                  await onPickFiles([f]);
+                } catch (err) {
+                  console.error("Error replacing draft attachment:", err);
+                }
+              }}
+              disabled={busyAttachments}
+            />
+
             <div className="rounded-2xl border bg-surface p-3" style={{ borderColor: "var(--border)" }}>
               <div
                 role="button"
                 tabIndex={0}
-                onClick={() => !busyAttachments && attInputRef.current?.click()}
+                onClick={openFilePicker}
                 onKeyDown={(e) => {
                   if (busyAttachments) return;
-                  if (e.key === "Enter" || e.key === " ") attInputRef.current?.click();
+                  if (e.key === "Enter" || e.key === " ") openFilePicker();
                 }}
                 onDragEnter={(e) => {
                   e.preventDefault();
@@ -472,9 +589,9 @@ export default function SectionData(props: Props) {
                 className={cn(
                   "w-full rounded-2xl border border-dashed border-border/60 bg-surface",
                   "min-h-[180px] flex flex-col items-center justify-center text-center px-6 py-6",
-                  "transition",
+                  "transition select-none cursor-pointer",
                   dragOver && "!border-primary/60 bg-primary/10",
-                  busyAttachments && "opacity-60 pointer-events-none"
+                  busyAttachments && "opacity-60 pointer-events-none cursor-default"
                 )}
                 style={{
                   borderColor: dragOver
@@ -521,35 +638,46 @@ export default function SectionData(props: Props) {
                           return (
                             <div
                               key={key}
-                              className="flex items-center gap-3 rounded-xl border border-border bg-card/40 px-3 py-2"
+                              className="flex items-center justify-between gap-3 rounded-xl border border-border bg-card/40 px-3 py-2"
                             >
-                              <div className="h-10 w-10 shrink-0 overflow-hidden rounded-lg border border-border bg-card">
-                                {showImg ? (
-                                  <img
-                                    src={preview}
-                                    alt={safeFileLabel(f.name)}
-                                    className="h-full w-full object-cover"
-                                  />
-                                ) : (
-                                  <div className="h-full w-full grid place-items-center text-[10px] text-muted">
-                                    FILE
-                                  </div>
-                                )}
+                              <div className="flex items-center gap-3 min-w-0 flex-1">
+                                <div className="h-10 w-10 shrink-0 overflow-hidden rounded-lg border border-border bg-card">
+                                  {showImg ? (
+                                    <img src={preview} alt={safeFileLabel(f.name)} className="h-full w-full object-cover" />
+                                  ) : (
+                                    <div className="h-full w-full grid place-items-center text-[10px] text-muted">FILE</div>
+                                  )}
+                                </div>
+
+                                <div className="min-w-0 flex-1">
+                                  <div className="truncate text-sm text-text">{safeFileLabel(f.name)}</div>
+                                  <div className="text-[11px] text-muted">{formatBytes(f.size)}</div>
+                                </div>
                               </div>
 
-                              <div className="min-w-0 flex-1">
-                                <div className="truncate text-sm text-text">{safeFileLabel(f.name)}</div>
-                                <div className="text-[11px] text-muted">{formatBytes(f.size)}</div>
-                              </div>
+                              {/* ✅ Ver / “Descargar” (reemplazar) / Eliminar (draft) */}
+                              <div className="flex items-center gap-2">
+                                <IconActionButton title="Ver" disabled={busyAttachments} onClick={() => onViewDraftFile(f)}>
+                                  <Eye className="h-4 w-4" />
+                                </IconActionButton>
 
-                              <button
-                                type="button"
-                                className={cn("tp-btn-secondary !px-3 !py-1 text-xs")}
-                                onClick={() => removeDraftAttachmentByIndex(idx)}
-                                disabled={busyAttachments}
-                              >
-                                Quitar
-                              </button>
+                                {/* 🔁 este botón abre picker para reemplazar (icono Download como pediste) */}
+                                <IconActionButton
+                                  title="Reemplazar"
+                                  disabled={busyAttachments}
+                                  onClick={() => openReplacePicker(idx)}
+                                >
+                                  <Download className="h-4 w-4" />
+                                </IconActionButton>
+
+                                <IconActionButton
+                                  title="Eliminar"
+                                  disabled={busyAttachments}
+                                  onClick={() => removeDraftAttachmentByIndex(idx)}
+                                >
+                                  <Trash2 className="h-4 w-4" />
+                                </IconActionButton>
+                              </div>
                             </div>
                           );
                         })}
@@ -563,47 +691,44 @@ export default function SectionData(props: Props) {
 
                       <div className="space-y-2">
                         {filteredSavedAttachments.map((a) => {
-                          const url = absUrl(a.url);
+                          const filename = safeFileLabel(a.filename);
                           const busyRow = deletingAttId === a.id || busyAttachments;
 
                           return (
                             <div
                               key={a.id}
-                              className="flex items-center gap-3 rounded-xl border border-border bg-card/40 px-3 py-2"
+                              className="flex items-center justify-between gap-3 rounded-xl border border-border bg-card/40 px-3 py-2"
                             >
                               <div className="min-w-0 flex-1">
-                                <a
-                                  href={url}
-                                  target="_blank"
-                                  rel="noreferrer"
-                                  className="truncate text-sm text-primary underline"
-                                  title={safeFileLabel(a.filename)}
-                                >
-                                  {safeFileLabel(a.filename)}
-                                </a>
+                                <div className="truncate text-sm text-text" title={filename}>
+                                  {filename}
+                                </div>
                                 <div className="text-[11px] text-muted">
                                   {typeof a.size === "number" ? formatBytes(a.size) : ""}
                                 </div>
                               </div>
 
-                              <button
-                                type="button"
-                                className={cn("tp-btn-secondary !px-3 !py-1 text-xs")}
-                                onClick={() => handleDownloadSavedAttachment(a)}
-                                disabled={busyRow}
-                                title="Descargar"
-                              >
-                                Descargar
-                              </button>
+                              <div className="flex items-center gap-2">
+                                <IconActionButton title="Ver" disabled={busyRow} onClick={() => onViewSaved(a)}>
+                                  <Eye className="h-4 w-4" />
+                                </IconActionButton>
 
-                              <button
-                                type="button"
-                                className={cn("tp-btn-secondary !px-3 !py-1 text-xs")}
-                                onClick={() => handleRemoveSavedAttachment(a.id)}
-                                disabled={busyRow}
-                              >
-                                {deletingAttId === a.id ? "Quitando…" : "Eliminar"}
-                              </button>
+                                <IconActionButton title="Descargar" disabled={busyRow} onClick={() => handleDownloadSavedAttachment(a)}>
+                                  <Download className="h-4 w-4" />
+                                </IconActionButton>
+
+                                <IconActionButton
+                                  title={deletingAttId === a.id ? "Quitando…" : "Eliminar"}
+                                  disabled={busyRow}
+                                  onClick={() => handleRemoveSavedAttachment(a.id)}
+                                >
+                                  {deletingAttId === a.id ? (
+                                    <Loader2 className="h-4 w-4 animate-spin" />
+                                  ) : (
+                                    <Trash2 className="h-4 w-4" />
+                                  )}
+                                </IconActionButton>
+                              </div>
                             </div>
                           );
                         })}

@@ -15,7 +15,6 @@ import {
   User as UserIcon,
   Users,
   Fingerprint,
-  Trash2,
   Mail,
   Warehouse,
 } from "lucide-react";
@@ -27,12 +26,10 @@ import { cn, absUrl, initialsFrom } from "./users.ui";
 import { TPBadge } from "../ui/TPBadges";
 
 import { prefetchUserDetail, getRolesCached, getPermsCached } from "./users.data";
-import { deleteUser } from "../../services/users";
 
 import type { UserDetail, Role, Override } from "../../services/users";
 import type { Permission } from "../../services/permissions";
 
-import ConfirmDeleteDialog from "../ui/ConfirmDeleteDialog";
 import ButtonBar from "../ui/ButtonBar";
 
 const OPEN_USERS_EDIT_KEY = "tptech_users_open_edit_v1";
@@ -173,9 +170,6 @@ export default function UserView() {
   const [perms, setPerms] = useState<Permission[]>([]);
   const [permsLoading, setPermsLoading] = useState(false);
 
-  const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
-  const [deleting, setDeleting] = useState(false);
-
   const roleById = useMemo(() => {
     const m = new Map<string, Role>();
     for (const r of roles) m.set(String((r as any).id), r);
@@ -276,18 +270,15 @@ export default function UserView() {
     if (!detail) return;
 
     const hasPin = Boolean((detail as any)?.hasQuickPin || (detail as any)?.quickPinEnabled);
-    // Solo tiene sentido auto-abrir si NO tiene PIN (tu caso)
     if (hasPin) return;
 
     alreadyRedirectedRef.current = true;
 
-    // Guardamos un payload para que Users.tsx / UserEditModal pueda abrir directo el modal de "Crear PIN inicial"
     try {
       sessionStorage.setItem(
         OPEN_USERS_EDIT_KEY,
         JSON.stringify({
           userId,
-          // flags sugeridas (si tu Users.tsx ya lee OPEN_USERS_EDIT_KEY, te sirven)
           openSection: "PIN",
           pinSetup: true,
           ts: Date.now(),
@@ -297,7 +288,6 @@ export default function UserView() {
       // ignore
     }
 
-    // Redirigir al listado con el edit abierto + query para señalizar "setup"
     nav(`/configuracion/usuarios?edit=${encodeURIComponent(userId)}&pin=setup`, { replace: true });
   }, [wantsPinSetup, loading, detail, nav, userId]);
 
@@ -318,31 +308,9 @@ export default function UserView() {
     ? warehouseLabelById(detail.favoriteWarehouseId) ?? detail.favoriteWarehouseId
     : null;
 
-  function onAskDelete() {
-    if (isMe || deleting) return;
-    setConfirmDeleteOpen(true);
-  }
-
-  async function onConfirmDelete() {
-    if (!userId || deleting) return;
-
-    setDeleting(true);
-    try {
-      await deleteUser(userId);
-      setConfirmDeleteOpen(false);
-      nav("/configuracion/usuarios");
-    } catch (e: any) {
-      setErr(String(e?.message || "No se pudo eliminar el usuario."));
-      setConfirmDeleteOpen(false);
-    } finally {
-      setDeleting(false);
-    }
-  }
-
   function downloadUrl(attId: string) {
     const id = String(attId || "").trim();
     if (!id) return "";
-    // ✅ Igual que ya tenías en tu UserView original
     return absUrl(`/users/${encodeURIComponent(userId)}/attachments/${encodeURIComponent(id)}/download`);
   }
 
@@ -368,21 +336,6 @@ export default function UserView() {
 
   return (
     <div className="p-4 md:p-6 space-y-4 min-h-0">
-      <ConfirmDeleteDialog
-        open={confirmDeleteOpen}
-        title="Eliminar usuario"
-        description="Esta acción no se puede deshacer."
-        dangerHint="Se eliminará el usuario y perderá acceso al sistema."
-        confirmText={deleting ? "Eliminando…" : "Eliminar"}
-        cancelText="Cancelar"
-        loading={deleting}
-        onClose={() => {
-          if (deleting) return;
-          setConfirmDeleteOpen(false);
-        }}
-        onConfirm={onConfirmDelete}
-      />
-
       {/* Header */}
       <div className="flex items-center justify-between gap-3">
         <div className="min-w-0">
@@ -401,36 +354,20 @@ export default function UserView() {
           </button>
 
           {canAdmin && (
-            <>
-              <button
-                type="button"
-                className="tp-btn-primary inline-flex items-center gap-2"
-                onClick={() => {
-                  try {
-                    sessionStorage.setItem(OPEN_USERS_EDIT_KEY, JSON.stringify({ userId }));
-                  } catch {}
-                  nav(`/configuracion/usuarios?edit=${encodeURIComponent(userId)}`);
-                }}
-                title={isMe ? "Editar" : "Editar usuario"}
-              >
-                <Pencil className="h-4 w-4" />
-                Editar
-              </button>
-
-              <button
-                type="button"
-                className={cn(
-                  "tp-btn-secondary inline-flex items-center gap-2",
-                  (isMe || deleting) && "opacity-60 pointer-events-none"
-                )}
-                onClick={onAskDelete}
-                title={isMe ? "No podés eliminar tu propio usuario" : "Eliminar usuario"}
-                aria-disabled={isMe || deleting}
-              >
-                {deleting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
-                Eliminar
-              </button>
-            </>
+            <button
+              type="button"
+              className="tp-btn-primary inline-flex items-center gap-2"
+              onClick={() => {
+                try {
+                  sessionStorage.setItem(OPEN_USERS_EDIT_KEY, JSON.stringify({ userId }));
+                } catch {}
+                nav(`/configuracion/usuarios?edit=${encodeURIComponent(userId)}`);
+              }}
+              title={isMe ? "Editar" : "Editar usuario"}
+            >
+              <Pencil className="h-4 w-4" />
+              Editar
+            </button>
           )}
         </ButtonBar>
       </div>

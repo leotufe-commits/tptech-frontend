@@ -1,6 +1,16 @@
 // src/pages/perfilJoyeria/PerfilJoyeriaView.tsx
 import React from "react";
-import { Building2, Globe, Mail, MapPin, Paperclip, Phone, Receipt, StickyNote, Tag } from "lucide-react";
+import {
+  Building2,
+  Globe,
+  Mail,
+  MapPin,
+  Paperclip,
+  Phone,
+  Receipt,
+  StickyNote,
+  Tag,
+} from "lucide-react";
 
 import { SectionShell, InfoCard } from "./perfilJoyeria.ui";
 import { absUrl, cardBase, cn, formatBytes, safeFileLabel, valueOrDash } from "./perfilJoyeria.utils";
@@ -66,7 +76,9 @@ export default function PerfilJoyeriaView(props: Props) {
       <SectionShell title="Notas" icon={<StickyNote className="h-4 w-4" />}>
         <div className={cn(cardBase("p-3"))}>
           <div className="text-xs text-muted mb-1">Notas</div>
-          <div className="font-semibold whitespace-pre-wrap break-words">{String(company.notes || "").trim() || "—"}</div>
+          <div className="font-semibold whitespace-pre-wrap break-words">
+            {String(company.notes || "").trim() || "—"}
+          </div>
         </div>
       </SectionShell>
 

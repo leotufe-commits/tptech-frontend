@@ -4,16 +4,11 @@ import { cn } from "./tp";
 
 /**
  * ✅ Modal DRAGGABLE (arrastrable) + stack (nested-safe)
- * - Si hay 2 modales abiertos, el overlay no se duplica fuerte
- * - Solo el modal TOP responde al click en backdrop / ESC
- *
- * ✅ overlayClassName (opcional)
- * - Permite oscurecer SOLO algunos modales (ej: confirms destructivos)
- * - Si no se pasa, usa el overlay por defecto (y respeta stack)
- *
- * ✅ NUEVO: busy (opcional)
- * - Si busy=true, bloquea cierre por ESC / backdrop / botón "Cerrar"
+ * ✅ overlayClassName opcional
+ * ✅ busy bloquea cierre
+ * ✅ footer opcional con alineación a la derecha
  */
+
 let __tp_modal_stack: string[] = [];
 
 export function Modal({
@@ -24,7 +19,10 @@ export function Modal({
   wide,
   overlayClassName,
   className,
-  busy, // ✅ NUEVO
+  bodyClassName,
+  busy,
+  footer,
+  footerClassName,
 }: {
   open: boolean;
   title: string;
@@ -33,12 +31,14 @@ export function Modal({
   wide?: boolean;
   overlayClassName?: string;
   className?: string;
-  busy?: boolean; // ✅ NUEVO
+  bodyClassName?: string;
+  busy?: boolean;
+  footer?: React.ReactNode;
+  footerClassName?: string;
 }) {
   const modalRef = useRef<HTMLDivElement | null>(null);
   const headerRef = useRef<HTMLDivElement | null>(null);
 
-  // id estable por instancia
   const instanceId = useMemo(() => `m_${Math.random().toString(36).slice(2)}`, []);
 
   const [pos, setPos] = useState({ x: 0, y: 0 });
@@ -53,8 +53,8 @@ export function Modal({
 
   const lastDragAtRef = useRef<number>(0);
 
-  // ✅ stack register/unregister
   const [depth, setDepth] = useState(0);
+
   useEffect(() => {
     if (!open) return;
 
@@ -85,7 +85,7 @@ export function Modal({
 
     function onKeyDown(e: KeyboardEvent) {
       if (e.key === "Escape") {
-        if (!isTopMost) return; // ✅ solo el top
+        if (!isTopMost) return;
         if (busy) {
           e.preventDefault();
           return;
@@ -152,14 +152,10 @@ export function Modal({
 
   const recentlyDragged = () => Date.now() - lastDragAtRef.current < 220;
 
-  // ✅ overlay más suave si hay stack (evita “doble oscuro”)
   const stackSize = __tp_modal_stack.length;
   const defaultOverlayClass = stackSize > 1 ? "bg-black/25" : "bg-black/40";
-
-  // ✅ si el caller pasa overlayClassName, se usa ese; sino, el default
   const overlayClass = overlayClassName ?? defaultOverlayClass;
 
-  // ✅ z-index por profundidad
   const zBase = 50 + depth * 10;
 
   return (
@@ -198,12 +194,13 @@ export function Modal({
         onMouseDown={(e) => e.stopPropagation()}
         onClick={(e) => e.stopPropagation()}
       >
+        {/* HEADER */}
         <div
           ref={headerRef}
           tabIndex={-1}
           className="p-6 pb-4 border-b border-border flex items-center justify-between gap-3 cursor-move select-none"
           onPointerDown={(e) => {
-            if (!isTopMost) return; // ✅ solo el top arrastra
+            if (!isTopMost) return;
             if (busy) return;
             if ((e as any).button != null && (e as any).button !== 0) return;
 
@@ -227,13 +224,28 @@ export function Modal({
             }}
             type="button"
             disabled={busy || !isTopMost}
-            title={busy ? "Hay una operación en curso" : "Cerrar"}
           >
             Cerrar
           </button>
         </div>
 
-        <div className="p-6 pt-4 overflow-y-auto tp-scroll">{children}</div>
+        {/* BODY */}
+        <div className={cn("p-6 pt-4 overflow-y-auto tp-scroll flex-1", bodyClassName)}>
+          {children}
+        </div>
+
+        {/* FOOTER (alineado a la derecha) */}
+        {footer ? (
+          <div
+            className={cn(
+              "px-6 py-4 border-t border-border",
+              "flex items-center justify-end gap-2",
+              footerClassName
+            )}
+          >
+            {footer}
+          </div>
+        ) : null}
       </div>
     </div>
   );

@@ -221,7 +221,8 @@ export default function LockScreen() {
   const [pinFocused, setPinFocused] = useState(false);
 
   /**
-   * ✅ Si la joyería permite switch SIN PIN, no mostramos teclado nunca.
+   * ✅ Si la joyería permite switch SIN PIN, no pedimos PIN para desbloquear.
+   * PERO: seguimos permitiendo "Continuar" sin seleccionar usuario (desbloqueo actual).
    */
   const switchingWithoutPin = useMemo(
     () => Boolean(quickSwitchEnabled && !pinLockRequireOnUserSwitch),
@@ -229,6 +230,7 @@ export default function LockScreen() {
   );
 
   const mustEnterPin = !switchingWithoutPin;
+  const currentUserId = useMemo(() => String((user as any)?.id ?? ""), [user]);
 
   const lastDeviceUserKey = useMemo(() => {
     const jId = (jewelry as any)?.id ? String((jewelry as any).id) : "no-jewelry";
@@ -289,17 +291,6 @@ export default function LockScreen() {
     return getUserRoleLabel(u);
   }, [targetUserId, quickUsers]);
 
-  const allowContinue = useMemo(() => {
-    if (busy) return false;
-    if (!mustEnterPin) return Boolean(targetUserId);
-    return pin.length === 4;
-  }, [busy, mustEnterPin, pin.length, targetUserId]);
-
-  const continueLabel = useMemo(() => {
-    if (busy) return "Verificando…";
-    return targetUserId ? "Continuar" : "Desbloquear";
-  }, [busy, targetUserId]);
-
   function isUserSelectable(u: QuickUser) {
     if (!pinLockRequireOnUserSwitch) return true;
     const has = Boolean(u.hasQuickPin ?? u.hasPin);
@@ -321,7 +312,8 @@ export default function LockScreen() {
     setError(null);
     setBusy(true);
     try {
-      await pinSwitchUser({ targetUserId: targetId, pin4: "" } as any);
+      // ✅ CLAVE: NO mandar pin4/pin vacío (si lo mandás, el backend lo valida y falla)
+      await pinSwitchUser({ targetUserId: targetId } as any);
       rememberLastDeviceUser(targetId);
       setLocked(false);
       setPin("");
@@ -337,15 +329,25 @@ export default function LockScreen() {
   async function handleUnlock() {
     if (busy) return;
 
+    // ✅ Si NO pide PIN: permitir desbloquear sin seleccionar usuario.
     if (!mustEnterPin) {
-      if (!targetUserId) {
-        setError("Seleccioná un usuario para continuar.");
+      setError(null);
+
+      // si seleccionó otro usuario, switch sin PIN
+      if (targetUserId && targetUserId !== currentUserId && quickSwitchEnabled) {
+        await doSwitchNoPin(targetUserId);
         return;
       }
-      await doSwitchNoPin(targetUserId);
+
+      // si no seleccionó (o seleccionó el mismo), simplemente desbloquear
+      setLocked(false);
+      setPin("");
+      setTargetUserId(null);
+      setShowPin(false);
       return;
     }
 
+    // ✅ pide PIN
     if (pin.length !== 4) return;
 
     setError(null);
@@ -357,7 +359,8 @@ export default function LockScreen() {
 
     setBusy(true);
     try {
-      if (targetUserId && quickSwitchEnabled) {
+      // ✅ Si elige el mismo usuario, NO hacemos switch. Desbloqueamos.
+      if (targetUserId && quickSwitchEnabled && targetUserId !== currentUserId) {
         await pinSwitchUser({ targetUserId, pin4: pin } as any);
         rememberLastDeviceUser(targetUserId);
       } else {
@@ -439,7 +442,6 @@ export default function LockScreen() {
 
         setError(null);
         setShowPin(false);
-        // no borramos targetUserId: dejamos el último preselect de dispositivo
         setLocked(true);
 
         queueMicrotask(() => {
@@ -500,7 +502,6 @@ export default function LockScreen() {
         .then((res: any) => {
           const usersRaw = (res?.enabled ? (res?.users ?? []) : []) as any[];
 
-          const currentUserId = String((user as any)?.id ?? "");
           const roleArr = Array.isArray(roles) ? roles : [];
 
           const users = usersRaw.map((u: any) =>
@@ -535,9 +536,9 @@ export default function LockScreen() {
     pinQuickUsers,
     DEV,
     lastDeviceUserKey,
-    user,
     roles,
     mustEnterPin,
+    currentUserId,
   ]);
 
   // ✅ teclado físico (global) — Enter simula botón
@@ -585,9 +586,7 @@ export default function LockScreen() {
       const nodes = root.querySelectorAll<HTMLElement>(
         ["button", "[href]", "input", "select", "textarea", "[tabindex]:not([tabindex='-1'])"].join(",")
       );
-      return Array.from(nodes).filter(
-        (el) => !el.hasAttribute("disabled") && !el.getAttribute("aria-hidden")
-      );
+      return Array.from(nodes).filter((el) => !el.hasAttribute("disabled") && !el.getAttribute("aria-hidden"));
     }
 
     function onKeyDown(e: KeyboardEvent) {
@@ -621,8 +620,19 @@ export default function LockScreen() {
 
   if (!locked || !pinLockEnabled || !user || bypass) return null;
 
+  const allowContinue = (() => {
+    if (busy) return false;
+    if (!mustEnterPin) return true; // ✅ siempre se puede “continuar” sin PIN
+    return pin.length === 4;
+  })();
+
+  const continueLabel = (() => {
+    if (busy) return "Verificando…";
+    if (!mustEnterPin) return targetUserId && targetUserId !== currentUserId ? "Cambiar y continuar" : "Continuar";
+    return targetUserId ? "Continuar" : "Desbloquear";
+  })();
+
   return (
-    // ✅ FIX: z-index alto para quedar SIEMPRE por encima del Topbar (z-[999])
     <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-black/60" />
 
@@ -708,11 +718,7 @@ export default function LockScreen() {
           <div className="flex items-center gap-4">
             <div className="h-14 w-14 rounded-2xl border border-border bg-surface grid place-items-center overflow-hidden">
               {(user as any).avatarUrl ? (
-                <img
-                  src={(user as any).avatarUrl}
-                  className="h-full w-full object-cover"
-                  alt="avatar"
-                />
+                <img src={(user as any).avatarUrl} className="h-full w-full object-cover" alt="avatar" />
               ) : (
                 <div className="text-sm font-bold text-primary">{initials}</div>
               )}
@@ -721,17 +727,12 @@ export default function LockScreen() {
             <div className="min-w-0">
               <div className="font-semibold truncate">{displayName}</div>
               <div className="text-xs text-muted truncate">{(user as any).email}</div>
-              <div className="mt-0.5 text-[11px] text-muted truncate">
-                {currentUserRoleLabel || "Sin rol"}
-              </div>
+              <div className="mt-0.5 text-[11px] text-muted truncate">{currentUserRoleLabel || "Sin rol"}</div>
 
               {selectedUserLabel && (
                 <div className="mt-1 text-[11px] text-muted truncate">
-                  Cambiar a:{" "}
-                  <span className="text-text font-semibold">{selectedUserLabel}</span>
-                  <span className="ml-2 text-[11px] text-muted">
-                    ({selectedUserRoleLabel || "Sin rol"})
-                  </span>
+                  Cambiar a: <span className="text-text font-semibold">{selectedUserLabel}</span>
+                  <span className="ml-2 text-[11px] text-muted">({selectedUserRoleLabel || "Sin rol"})</span>
                 </div>
               )}
 
@@ -758,7 +759,6 @@ export default function LockScreen() {
                     {quickUsers.map((u) => {
                       const selectable = isUserSelectable(u);
                       const selected = targetUserId === u.id;
-
                       const roleLabel = getUserRoleLabel(u) || "Sin rol";
 
                       return (
@@ -792,6 +792,7 @@ export default function LockScreen() {
                             setTargetUserId(u.id);
 
                             if (!pinLockRequireOnUserSwitch) {
+                              // ✅ sin pin: cambiamos directo (como estaba)
                               void doSwitchNoPin(u.id);
                               return;
                             }
@@ -981,9 +982,7 @@ export default function LockScreen() {
             {continueLabel}
           </button>
 
-          {error && (
-            <div className="text-sm text-red-500 bg-red-500/10 rounded-xl px-3 py-2">{error}</div>
-          )}
+          {error && <div className="text-sm text-red-500 bg-red-500/10 rounded-xl px-3 py-2">{error}</div>}
         </div>
       </div>
     </div>

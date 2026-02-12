@@ -1,4 +1,7 @@
+// src/pages/PerfilJoyeria/PerfilJoyeriaEdit.tsx
 import React from "react";
+import { Eye, Download, Trash2 } from "lucide-react";
+
 import TPComboCreatable from "../../components/ui/TPComboCreatable";
 import { Field } from "./perfilJoyeria.ui";
 import { absUrl, cn, formatBytes, onlyDigits, safeFileLabel } from "./perfilJoyeria.utils";
@@ -77,6 +80,40 @@ export default function PerfilJoyeriaEdit(p: Props) {
     await p.uploadAttachmentsInstant(list);
   }
 
+  function openInNewTab(url: string) {
+    try {
+      window.open(url, "_blank", "noreferrer");
+    } catch {
+      // no-op
+    }
+  }
+
+  async function downloadFile(url: string, filename?: string) {
+    const safeName = String(filename || "archivo").trim() || "archivo";
+
+    try {
+      // ✅ fetch -> blob -> download
+      // (si tu storage es cross-domain y no permite CORS/credentials, cae al fallback)
+      const res = await fetch(url, { credentials: "include" });
+      if (!res.ok) throw new Error("HTTP " + res.status);
+
+      const blob = await res.blob();
+      const blobUrl = URL.createObjectURL(blob);
+
+      const a = document.createElement("a");
+      a.href = blobUrl;
+      a.download = safeName;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+
+      setTimeout(() => URL.revokeObjectURL(blobUrl), 10_000);
+    } catch {
+      // fallback: abrir en pestaña (algunos hosts no dejan fetch)
+      openInNewTab(url);
+    }
+  }
+
   return (
     <div
       className="rounded-2xl p-4 sm:p-6"
@@ -153,7 +190,7 @@ export default function PerfilJoyeriaEdit(p: Props) {
               readOnly={p.readonly}
               disabled={p.readonly}
             />
-              </Field>
+          </Field>
 
           <div className="grid grid-cols-1 sm:grid-cols-12 gap-3">
             <div className="sm:col-span-4">
@@ -171,7 +208,7 @@ export default function PerfilJoyeriaEdit(p: Props) {
                   disabled={p.readonly}
                   placeholder="Ej: AR +54"
                 />
-                  </Field>
+              </Field>
             </div>
 
             <div className="sm:col-span-8">
@@ -183,7 +220,7 @@ export default function PerfilJoyeriaEdit(p: Props) {
                   readOnly={p.readonly}
                   disabled={p.readonly}
                 />
-                  </Field>
+              </Field>
             </div>
           </div>
 
@@ -378,8 +415,12 @@ export default function PerfilJoyeriaEdit(p: Props) {
                   busyAttachments && "opacity-60 pointer-events-none"
                 )}
                 style={{
-                  borderColor: dragOver ? "color-mix(in oklab, var(--primary) 60%, var(--border))" : "var(--border)",
-                  background: dragOver ? "color-mix(in oklab, var(--primary) 10%, var(--card))" : "var(--surface)",
+                  borderColor: dragOver
+                    ? "color-mix(in oklab, var(--primary) 60%, var(--border))"
+                    : "var(--border)",
+                  background: dragOver
+                    ? "color-mix(in oklab, var(--primary) 10%, var(--card))"
+                    : "var(--surface)",
                   color: "var(--muted)",
                 }}
               >
@@ -391,9 +432,7 @@ export default function PerfilJoyeriaEdit(p: Props) {
                   {dragOver ? "Soltá para adjuntar" : "También podés arrastrar y soltar acá"}
                 </HelpText>
 
-                {hasSaved && (
-                  <HelpText className="mt-3">{p.savedAttachments.length} guardado(s)</HelpText>
-                )}
+                {hasSaved && <HelpText className="mt-3">{p.savedAttachments.length} guardado(s)</HelpText>}
               </div>
 
               <HelpText className="mt-3">Podés agregar o eliminar adjuntos cuando quieras.</HelpText>
@@ -401,7 +440,10 @@ export default function PerfilJoyeriaEdit(p: Props) {
 
             {/* list */}
             {hasSaved && (
-              <div className="rounded-2xl p-3" style={{ border: "1px solid var(--border)", background: "var(--card)" }}>
+              <div
+                className="rounded-2xl p-3"
+                style={{ border: "1px solid var(--border)", background: "var(--card)" }}
+              >
                 <div className="space-y-2">
                   <div className="text-xs font-semibold" style={{ color: "var(--text)" }}>
                     Guardados
@@ -433,7 +475,12 @@ export default function PerfilJoyeriaEdit(p: Props) {
                             }}
                           >
                             {isImg && url ? (
-                              <img src={url} alt={filename} className="h-full w-full object-cover" loading="lazy" />
+                              <img
+                                src={url}
+                                alt={filename}
+                                className="h-full w-full object-cover"
+                                loading="lazy"
+                              />
                             ) : (
                               <div className="text-[10px]" style={{ color: "var(--muted)" }}>
                                 DOC
@@ -442,36 +489,47 @@ export default function PerfilJoyeriaEdit(p: Props) {
                           </div>
 
                           <div className="min-w-0 flex-1">
-                            {url ? (
-                              <a
-                                href={url}
-                                target="_blank"
-                                rel="noreferrer"
-                                className="truncate text-sm text-primary underline"
-                                title={filename}
-                              >
-                                {filename}
-                              </a>
-                            ) : (
-                              <div className="truncate text-sm" style={{ color: "var(--text)" }} title={filename}>
-                                {filename}
-                              </div>
-                            )}
+                            <div className="truncate text-sm" style={{ color: "var(--text)" }} title={filename}>
+                              {filename}
+                            </div>
 
-                            <HelpText className="mt-0.5">
-                              {typeof a?.size === "number" ? formatBytes(a.size) : ""}
-                            </HelpText>
+                            <HelpText className="mt-0.5">{typeof a?.size === "number" ? formatBytes(a.size) : ""}</HelpText>
                           </div>
 
-                          <button
-                            type="button"
-                            className={cn("tp-btn-secondary !px-3 !py-1 text-xs")}
-                            onClick={() => p.deleteSavedAttachment(id)}
-                            disabled={busyRow || !id}
-                            title="Eliminar"
-                          >
-                            {p.deletingAttId === id ? "Quitando…" : "Eliminar"}
-                          </button>
+                          <div className="flex items-center gap-2">
+                            <button
+                              type="button"
+                              className={cn("tp-btn-secondary !px-2 !py-2")}
+                              onClick={() => url && openInNewTab(url)}
+                              disabled={!url || busyRow}
+                              title="Ver"
+                              aria-label="Ver"
+                            >
+                              <Eye className="h-4 w-4" />
+                            </button>
+
+                            <button
+                              type="button"
+                              className={cn("tp-btn-secondary !px-2 !py-2")}
+                              onClick={() => url && downloadFile(url, filename)}
+                              disabled={!url || busyRow}
+                              title="Descargar"
+                              aria-label="Descargar"
+                            >
+                              <Download className="h-4 w-4" />
+                            </button>
+
+                            <button
+                              type="button"
+                              className={cn("tp-btn-secondary !px-2 !py-2")}
+                              onClick={() => p.deleteSavedAttachment(id)}
+                              disabled={busyRow || !id}
+                              title="Eliminar"
+                              aria-label="Eliminar"
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </button>
+                          </div>
                         </div>
                       );
                     })}
@@ -480,9 +538,7 @@ export default function PerfilJoyeriaEdit(p: Props) {
               </div>
             )}
 
-            {!hasSaved && !p.uploadingAttachments ? (
-              <HelpText>Todavía no hay adjuntos.</HelpText>
-            ) : null}
+            {!hasSaved && !p.uploadingAttachments ? <HelpText>Todavía no hay adjuntos.</HelpText> : null}
           </div>
         </div>
       </div>

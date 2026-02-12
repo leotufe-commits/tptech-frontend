@@ -1,7 +1,7 @@
 // tptech-frontend/src/components/ui/TPComboCreatable.tsx
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { ChevronDown, X } from "lucide-react";
+import { ChevronDown, X, Plus } from "lucide-react";
 import { cn } from "./tp";
 import type { CatalogItem, CatalogType } from "../../services/catalogs";
 
@@ -167,6 +167,13 @@ export default function TPComboCreatable({
 
   const didAutoPickRef = useRef(false);
 
+  // ✅ NUEVO: pedir refocus al cerrar el modal (Agregar/Cancelar/Escape/click afuera)
+  const refocusAfterCreateRef = useRef(false);
+  function closeCreateModalAndRefocus() {
+    refocusAfterCreateRef.current = true;
+    setCreateOpen(false);
+  }
+
   /* =========================
      Keyboard navigation
   ========================= */
@@ -215,6 +222,14 @@ export default function TPComboCreatable({
     }
   }, [createOpen]);
 
+  // ✅ NUEVO: al cerrar el modal, volver foco al combo correspondiente
+  useEffect(() => {
+    if (!createOpen && refocusAfterCreateRef.current) {
+      refocusAfterCreateRef.current = false;
+      setTimeout(() => inputRef.current?.focus(), 0);
+    }
+  }, [createOpen]);
+
   function openDropdown() {
     if (disabled || creating) return;
     setErrMsg(null);
@@ -238,7 +253,7 @@ export default function TPComboCreatable({
   }
 
   async function doCreate() {
-    if (!onCreate) return setCreateOpen(false);
+    if (!onCreate) return closeCreateModalAndRefocus();
     const clean = norm(createDraft);
     if (!clean) return;
 
@@ -247,12 +262,20 @@ export default function TPComboCreatable({
       await onCreate(clean);
       onChange(clean);
       onRefresh?.();
-      setCreateOpen(false);
+      closeCreateModalAndRefocus(); // ✅ aquí
     } catch (e: any) {
       setErrMsg(String(e?.message || "No se pudo crear el ítem."));
     } finally {
       setCreating(false);
     }
+  }
+
+  function openCreateFromCurrent() {
+    if (disabled || creating) return;
+    setCreateDraft(norm(value));
+    setCreateOpen(true);
+    // importante: cerramos el dropdown para que no quede arriba
+    setOpen(false);
   }
 
   const canClear = Boolean(value) && !disabled && !creating;
@@ -359,7 +382,6 @@ export default function TPComboCreatable({
                 {activeItems.map((it, idx) => (
                   <button
                     key={it.id}
-                    // ✅ FIX TS2322: callback ref NO debe retornar el elemento
                     ref={(el) => {
                       itemRefs.current[idx] = el;
                     }}
@@ -379,13 +401,21 @@ export default function TPComboCreatable({
                 {allowCreate && (
                   <button
                     type="button"
-                    className="mt-2 text-sm underline text-primary"
-                    onClick={() => {
-                      setCreateDraft(norm(value));
-                      setCreateOpen(true);
-                    }}
+                    tabIndex={-1}
+                    // ✅ clave: evitar blur antes de abrir el modal (y que no “coma” el click)
+                    onMouseDown={(e) => e.preventDefault()}
+                    // ✅ clave: el click en toda la fila ejecuta “Agregar/Aceptar”
+                    onClick={openCreateFromCurrent}
+                    className={cn(
+                      "mt-2 w-full rounded-xl px-3 py-2 text-left text-sm",
+                      "border border-dashed border-border hover:bg-primary/10",
+                      "flex items-center gap-2 text-primary"
+                    )}
+                    title="Agregar nuevo ítem"
                   >
-                    Agregar ítem
+                    <Plus className="h-4 w-4" />
+                    <span className="underline">Agregar ítem</span>
+                    {norm(value) ? <span className="text-muted no-underline">“{norm(value)}”</span> : null}
                   </button>
                 )}
               </div>
@@ -402,7 +432,7 @@ export default function TPComboCreatable({
         confirmText="Agregar"
         cancelText="Cancelar"
         loading={creating}
-        onClose={() => !creating && setCreateOpen(false)}
+        onClose={() => !creating && closeCreateModalAndRefocus()} // ✅ aquí
         onConfirm={doCreate}
       >
         <div className="space-y-2">
@@ -411,6 +441,16 @@ export default function TPComboCreatable({
             ref={createInputRef}
             value={createDraft}
             onChange={(e) => setCreateDraft(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                doCreate();
+              }
+              if (e.key === "Escape") {
+                e.preventDefault();
+                if (!creating) closeCreateModalAndRefocus(); // ✅ aquí
+              }
+            }}
             className="tp-input w-full"
             placeholder="Escribí el ítem…"
           />
