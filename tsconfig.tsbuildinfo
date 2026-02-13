@@ -1,1 +1,29 @@
-{"root":["./src/app.tsx","./src/main.tsx","./src/router.tsx","./src/vite-env.d.ts","./src/components/eyeicon.tsx","./src/components/jewelryquickswitchtoggle.tsx","./src/components/lockscreen.tsx","./src/components/logincard.tsx","./src/components/protectedroute.tsx","./src/components/requirepermission.tsx","./src/components/sidebar.tsx","./src/components/themeswitcher.tsx","./src/components/topbar.tsx","./src/components/userpermissionseditor.tsx","./src/components/userpinsettings.tsx","./src/components/sidebar/sidebar.icons.tsx","./src/components/sidebar/sidebar.nav.ts","./src/components/sidebar/sidebar.utils.ts","./src/components/topbar/portalmenu.tsx","./src/components/topbar/topbar.meta.ts","./src/components/topbar/topbar.utils.ts","./src/components/ui/avatar.tsx","./src/components/ui/buttonbar.tsx","./src/components/ui/confirmactiondialog.tsx","./src/components/ui/confirmdeletedialog.tsx","./src/components/ui/confirmunsavedchangesdialog.tsx","./src/components/ui/modal.tsx","./src/components/ui/tpbadges.tsx","./src/components/ui/tpcombocreatable.tsx","./src/components/ui/tpsort.tsx","./src/components/ui/tptable.tsx","./src/components/ui/toaster.tsx","./src/components/ui/tp.ts","./src/components/users/usereditmodal.tsx","./src/components/users/userview.tsx","./src/components/users/userstable.tsx","./src/components/users/users.data.ts","./src/components/users/users.ui.tsx","./src/components/users/edit/usereditfooter.tsx","./src/components/users/edit/helpers/sectionconfig.helpers.ts","./src/components/users/edit/helpers/ui.tsx","./src/components/users/edit/helpers/usereditmodal.helpers.ts","./src/components/users/edit/hooks/usedraftattachmentpreviews.ts","./src/components/users/edit/partials/deletepinconfirmmodal.tsx","./src/components/users/edit/partials/pinconfigsection.tsx","./src/components/users/edit/partials/useravatarcard.tsx","./src/components/users/edit/sections/confirmmodals.tsx","./src/components/users/edit/sections/pinflowmodal.tsx","./src/components/users/edit/sections/sectionconfig.tsx","./src/components/users/edit/sections/sectiondata.tsx","./src/context/authcontext.tsx","./src/context/inventorycontext.tsx","./src/context/themecontext.tsx","./src/hooks/usecatalog.ts","./src/hooks/usecatalogadmin.ts","./src/hooks/useconfirmdelete.ts","./src/hooks/useme.ts","./src/hooks/usepermissions.ts","./src/hooks/useuserspage.ts","./src/layouts/mainlayout.tsx","./src/lib/api.ts","./src/lib/authtoken.ts","./src/lib/deleteerrormapper.ts","./src/lib/toast.ts","./src/lib/url.ts","./src/lib/users.api.ts","./src/pages/catalogos.tsx","./src/pages/comprasproveedores.tsx","./src/pages/configuracionsistema.tsx","./src/pages/configuracionsistemainformes.tsx","./src/pages/configuracionsistemaitems.tsx","./src/pages/configuracionsistemavendedor.tsx","./src/pages/cuenta.tsx","./src/pages/dashboard.tsx","./src/pages/divisas.tsx","./src/pages/forgotpassword.tsx","./src/pages/inventarioalmacenes.tsx","./src/pages/inventarioarticulos.tsx","./src/pages/inventariomovimientos.tsx","./src/pages/login.tsx","./src/pages/perfiljoyeria.tsx","./src/pages/placeholder.tsx","./src/pages/register.tsx","./src/pages/resetpassword.tsx","./src/pages/roles.tsx","./src/pages/systempinsettings.tsx","./src/pages/systemthemesettings.tsx","./src/pages/systemuicatalog.tsx","./src/pages/systemuishowcase.tsx","./src/pages/users.tsx","./src/pages/ventasclientes.tsx","./src/pages/perfiljoyeria/perfiljoyeriaedit.tsx","./src/pages/perfiljoyeria/perfiljoyeriapage.tsx","./src/pages/perfiljoyeria/perfiljoyeriaview.tsx","./src/pages/perfiljoyeria/perfiljoyeria.types.ts","./src/pages/perfiljoyeria/perfiljoyeria.ui.tsx","./src/pages/perfiljoyeria/perfiljoyeria.utils.ts","./src/pages/perfiljoyeria/useperfiljoyeria.ts","./src/services/catalogs.ts","./src/services/company.ts","./src/services/permissions.ts","./src/services/roles.ts","./src/services/users.ts"],"version":"5.9.3"}
+
+function getApiBase(): string {
+  const raw = String(import.meta.env.VITE_API_URL || "").trim();
+  return raw.replace(/\/+$/, "");
+}
+
+function isAbsolute(url: string) {
+  return /^https?:\/\//i.test(url);
+}
+
+export function absUrl(input: string | null | undefined): string {
+  const v = String(input || "").trim();
+  if (!v) return "";
+
+  // ya absoluta → no tocar
+  if (isAbsolute(v)) return v;
+
+  const API = getApiBase();
+
+  // uploads deben apuntar al backend
+  if (API && (v.startsWith("/uploads/") || v.startsWith("/api/uploads/"))) {
+    return API + v;
+  }
+
+  // si empieza con / pero no es uploads, dejar relativo
+  if (v.startsWith("/")) return v;
+
+  return v;
+}

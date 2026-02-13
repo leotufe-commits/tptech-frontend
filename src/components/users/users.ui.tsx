@@ -1,9 +1,37 @@
 import React from "react";
 import { cn } from "../ui/tp";
-import { absUrl } from "../../lib/url";
+import { absUrl as absUrlBase } from "../../lib/url";
 
 // 👇 re-export de compatibilidad (MUY IMPORTANTE)
-export { cn, absUrl };
+// ⚠️ OJO: sobreescribimos absUrl para que /uploads apunte al BACKEND en prod
+export { cn };
+
+function getApiBase() {
+  // Ej: https://api.tptechsoftware.com  o  https://tptech-backend.onrender.com
+  const raw = String((import.meta as any)?.env?.VITE_API_URL || "").trim();
+  return raw.replace(/\/+$/, "");
+}
+
+/**
+ * absUrl (Users): además de lo que ya hace absUrlBase,
+ * si la ruta es /uploads/* o /api/uploads/*, la resolvemos contra VITE_API_URL
+ * (porque en producción /uploads NO está en el dominio del frontend).
+ */
+export function absUrl(u: string) {
+  const v = String(u || "").trim();
+  if (!v) return "";
+
+  // ya es absoluta
+  if (/^https?:\/\//i.test(v)) return v;
+
+  const API = getApiBase();
+  if (API && (v.startsWith("/uploads/") || v.startsWith("/api/uploads/"))) {
+    return API + v;
+  }
+
+  // fallback a la implementación existente
+  return absUrlBase(v);
+}
 
 /* =========================
    Sort arrows (como Roles)
