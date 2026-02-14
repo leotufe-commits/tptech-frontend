@@ -1,6 +1,6 @@
 // tptech-frontend/src/components/users/UserEditModal.tsx
-import React, { type FormEvent, useEffect, useMemo, useState } from "react";
-import { Loader2 } from "lucide-react";
+import React, { type FormEvent, useEffect, useMemo, useState, useRef } from "react";
+import { Loader2, Mail } from "lucide-react";
 
 import { Modal } from "../ui/Modal";
 import UserEditFooter from "./edit/UserEditFooter";
@@ -23,6 +23,9 @@ import {
 
 import { useDraftAttachmentPreviews } from "./edit/hooks/useDraftAttachmentPreviews";
 import UserAvatarCard from "./edit/partials/UserAvatarCard";
+
+// ✅ API (cookie httpOnly)
+import { apiFetch } from "../../lib/api";
 
 /* =========================
    PROPS
@@ -275,6 +278,65 @@ export default function UserEditModal(props: Props) {
   );
 
   /* ============================================================
+     ✅ INVITE en MODAL (solo ADMIN + PENDING + EDIT + no self)
+  ============================================================ */
+  const [inviteBusy, setInviteBusy] = useState(false);
+  const [inviteFlash, setInviteFlash] = useState<{ type: "ok" | "err"; msg: string } | null>(null);
+  const inviteCooldownRef = useRef<number | null>(null);
+  const inviteFlashTimerRef = useRef<number | null>(null);
+
+  const detailStatus = String((detail as any)?.status || "").toUpperCase();
+  const isPending = detailStatus === "PENDING";
+
+  const canInviteHere =
+    modalMode === "EDIT" && canAdmin && !isSelf && isPending && Boolean(String((detail as any)?.id || "").trim());
+
+  function flashInvite(msg: string, type: "ok" | "err", ms: number) {
+    setInviteFlash({ type, msg });
+    if (inviteFlashTimerRef.current) window.clearTimeout(inviteFlashTimerRef.current);
+    inviteFlashTimerRef.current = window.setTimeout(() => {
+      setInviteFlash(null);
+      inviteFlashTimerRef.current = null;
+    }, ms);
+  }
+
+  async function sendInviteFromModal() {
+    if (!canInviteHere) return;
+    if (inviteBusy) return;
+    if (inviteCooldownRef.current) return;
+
+    const id = String((detail as any)?.id || "").trim();
+    if (!id) return;
+
+    setInviteBusy(true);
+    setInviteFlash(null);
+
+    try {
+      await apiFetch<{ ok: boolean }>(`/users/${encodeURIComponent(id)}/invite`, { method: "POST" });
+      flashInvite(`Invitación enviada a ${String((detail as any)?.email || "usuario")}.`, "ok", 2500);
+    } catch (e: any) {
+      flashInvite(e?.message || "No se pudo enviar la invitación.", "err", 3500);
+    } finally {
+      setInviteBusy(false);
+
+      // cooldown 1.2s anti-spam
+      inviteCooldownRef.current = window.setTimeout(() => {
+        inviteCooldownRef.current = null;
+      }, 1200);
+    }
+  }
+
+  useEffect(() => {
+    return () => {
+      if (inviteFlashTimerRef.current) window.clearTimeout(inviteFlashTimerRef.current);
+      inviteFlashTimerRef.current = null;
+
+      if (inviteCooldownRef.current) window.clearTimeout(inviteCooldownRef.current);
+      inviteCooldownRef.current = null;
+    };
+  }, []);
+
+  /* ============================================================
      ✅ EMIT HELPER: avisa a UsersTable para que refleje el estado
   ============================================================ */
   function emitPinUpdated(payload: { hasQuickPin?: boolean; pinEnabled?: boolean }) {
@@ -305,7 +367,6 @@ export default function UserEditModal(props: Props) {
 
   async function adminTogglePinEnabledWrapped(next: boolean, opts?: { confirmRemoveOverrides?: boolean }) {
     await adminTogglePinEnabled(next, opts);
-    // si togglean enabled/disabled, existe pin real => hasQuickPin true
     emitPinUpdated({ hasQuickPin: true, pinEnabled: Boolean(next) });
   }
 
@@ -402,7 +463,6 @@ export default function UserEditModal(props: Props) {
   }, [open, modalMode, (detail as any)?.id, tab, pinFlowOpen, pinBusy, pinToggling, autoOpenPinFlow]);
 
   function handleSubmit(e?: FormEvent) {
-    // si el pinFlow modal está abierto, no dejamos submit del formulario principal
     if (e && pinFlowOpen) {
       e.preventDefault();
       e.stopPropagation();
@@ -439,6 +499,9 @@ export default function UserEditModal(props: Props) {
     setPinDraft2("");
     setPinNew("");
     setPinNew2("");
+
+    setInviteBusy(false);
+    setInviteFlash(null);
   }, [open, detail?.id, setPinNew, setPinNew2]);
 
   function safeClose() {
@@ -447,7 +510,7 @@ export default function UserEditModal(props: Props) {
 
   // ✅ ESTADO REAL DEL PIN
   const detailHasQuickPin = Boolean(detail?.hasQuickPin);
-  const detailPinEnabled = Boolean(detail?.pinEnabled);
+  const detailPinEnabled = Boolean((detail as any)?.pinEnabled);
   const hasPin = detailHasQuickPin;
 
   const canShowPinToggle = Boolean(detailHasQuickPin);
@@ -606,6 +669,20 @@ export default function UserEditModal(props: Props) {
           </div>
         ) : (
           <form onSubmit={handleSubmit} className="space-y-4">
+            {/* Flash invite */}
+            {inviteFlash ? (
+              <div
+                className={cn(
+                  "rounded-xl px-4 py-3 text-sm border",
+                  inviteFlash.type === "ok"
+                    ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-200"
+                    : "border-red-500/30 bg-red-500/10 text-red-200"
+                )}
+              >
+                {inviteFlash.msg}
+              </div>
+            ) : null}
+
             <UserAvatarCard
               modalMode={modalMode}
               modalBusy={modalBusy}
@@ -738,15 +815,35 @@ export default function UserEditModal(props: Props) {
               />
             ) : null}
 
-            <div className="pt-2 flex justify-end">
-  <UserEditFooter
-    modalBusy={modalBusy}
-    modalMode={modalMode}
-    onCancel={safeClose}
-  />
-</div>
+            {/* Footer row: Invite (izq) + Footer (der) */}
+            <div className="pt-2 flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                {canInviteHere ? (
+                  <button
+                    type="button"
+                    className={cn("tp-btn-secondary", (inviteBusy || busyClose) && "opacity-60")}
+                    disabled={inviteBusy || busyClose}
+                    onClick={() => void sendInviteFromModal()}
+                    title={inviteBusy ? "Enviando…" : "Enviar invitación"}
+                  >
+                    {inviteBusy ? (
+                      <span className="inline-flex items-center gap-2">
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                        Enviando…
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center gap-2">
+                        <Mail className="h-4 w-4" />
+                        Enviar invitación
+                      </span>
+                    )}
+                  </button>
+                ) : null}
+              </div>
 
-            {/* si querés, podés evitar submit cuando está “busyClose” desde UserEditFooter */}
+              <UserEditFooter modalBusy={modalBusy} modalMode={modalMode} onCancel={safeClose} />
+            </div>
+
             {busyClose ? null : null}
           </form>
         )}

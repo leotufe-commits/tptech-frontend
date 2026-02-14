@@ -49,7 +49,7 @@ import {
 } from "../services/users";
 
 import type { Permission } from "../services/permissions";
-import { LS_TOKEN_KEY, SS_TOKEN_KEY } from "../lib/api";
+import { apiFetch, LS_TOKEN_KEY, SS_TOKEN_KEY } from "../lib/api";
 import { absUrl } from "../lib/url";
 
 /** ✅ flag para “abrir modal y scrollear a Adjuntos” */
@@ -349,6 +349,55 @@ export function useUsersPage() {
   }, [detail?.attachments]);
 
   /* =========================
+     ✅ INVITE (ADMIN)
+     POST /users/:id/invite
+  ========================= */
+  const [inviteBusyId, setInviteBusyId] = useState<string | null>(null);
+  const [inviteMsg, setInviteMsg] = useState<string | null>(null);
+  const inviteMsgTimerRef = useRef<number | null>(null);
+
+  function flashInviteMsg(msg: string, ms = 3000) {
+    setInviteMsg(msg);
+    if (inviteMsgTimerRef.current) window.clearTimeout(inviteMsgTimerRef.current);
+    inviteMsgTimerRef.current = window.setTimeout(() => {
+      setInviteMsg(null);
+      inviteMsgTimerRef.current = null;
+    }, ms);
+  }
+
+  useEffect(() => {
+    return () => {
+      if (inviteMsgTimerRef.current) window.clearTimeout(inviteMsgTimerRef.current);
+    };
+  }, []);
+
+  async function sendInvite(userId?: string) {
+    if (!canAdmin) return;
+
+    const id = String(userId || targetId || "").trim();
+    if (!id) return;
+
+    setErr(null);
+    setInviteMsg(null);
+    setInviteBusyId(id);
+
+    try {
+      // ✅ cookie httpOnly: apiFetch ya va con credentials
+      await apiFetch(`/users/${encodeURIComponent(id)}/invite`, { method: "POST" });
+
+      // opcional: mostrar mensaje corto (sin exponer link)
+      flashInviteMsg("Invitación enviada.", 3000);
+    } catch (e: unknown) {
+      const msg = getErrorMessage(e, "No se pudo enviar la invitación.");
+      flashInviteMsg(msg, 4000);
+      // si querés también en err global:
+      // setErr(msg);
+    } finally {
+      setInviteBusyId(null);
+    }
+  }
+
+  /* =========================
      ✅ DIRTY CHECK
   ========================= */
   const [confirmUnsavedOpen, setConfirmUnsavedOpen] = useState(false);
@@ -585,6 +634,14 @@ export function useUsersPage() {
 
     setAutoOpenPinFlow(false);
 
+    // invite UI
+    setInviteBusyId(null);
+    setInviteMsg(null);
+    if (inviteMsgTimerRef.current) {
+      window.clearTimeout(inviteMsgTimerRef.current);
+      inviteMsgTimerRef.current = null;
+    }
+
     if (pinMsgTimerRef.current) {
       window.clearTimeout(pinMsgTimerRef.current);
       pinMsgTimerRef.current = null;
@@ -628,6 +685,8 @@ export function useUsersPage() {
     setPinClearOverridesOnSave(false);
     resetPinForm();
     setPinMsg(null);
+
+    setInviteMsg(null);
   }
 
   async function refreshDetailOnly(userId: string, opts?: { hydrate?: boolean }) {
@@ -1756,6 +1815,11 @@ export function useUsersPage() {
     adminRemovePin,
     autoOpenPinFlow,
     setAutoOpenPinFlow,
+
+    // invite
+    inviteBusyId,
+    inviteMsg,
+    sendInvite,
 
     // self-edit flag
     isSelfEditing,

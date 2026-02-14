@@ -14,6 +14,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Eye, // ✅ view icon
+  Mail, // ✅ invite
 } from "lucide-react";
 
 import { cn, initialsFrom, absUrl } from "./users.ui";
@@ -29,6 +30,9 @@ import { prefetchUserDetail as prefetchUserDetailInternal } from "./users.data";
 
 // ✅ Descarga con cookie httpOnly (NO <a href> sin credenciales)
 import { downloadUserAttachmentFile } from "../../lib/users.api";
+
+// ✅ API (cookie httpOnly)
+import { apiFetch } from "../../lib/api";
 
 /* ======================================================
    Utils fecha
@@ -172,7 +176,7 @@ type Props = {
   openEdit: (u: UserListItem) => Promise<void> | void;
   askDelete: (u: UserListItem) => void;
 
-  // ✅ lo dejamos opcional para compatibilidad (en tu Users.tsx hoy es undefined as any)
+  // ✅ lo dejamos opcional para compatibilidad
   prefetchUserDetail?: (id: string) => Promise<any>;
 };
 
@@ -200,7 +204,6 @@ export default function UsersTable(props: Props) {
     toggleStatus,
     openEdit,
     askDelete,
-    // ✅ si viene prop lo usamos; si no, usamos el internal
     prefetchUserDetail,
   } = props;
 
@@ -237,11 +240,9 @@ export default function UsersTable(props: Props) {
       const prev = pinOverridesRef.current.get(userId) ?? {};
       const next: PinOverride = { ...prev };
 
-      // ✅ NO pisar valores previos con undefined
       if (hasQuickPin !== undefined) next.hasQuickPin = hasQuickPin;
       if (pinEnabled !== undefined) next.pinEnabled = pinEnabled;
 
-      // ✅ coherencia: si no hay PIN, nunca puede quedar enabled=true
       if (hasQuickPin === false) next.pinEnabled = false;
 
       pinOverridesRef.current.set(userId, next);
@@ -252,12 +253,6 @@ export default function UsersTable(props: Props) {
     return () => window.removeEventListener(PIN_EVENT, onPinUpdated as any);
   }, []);
 
-  /**
-   * ✅ Regla importante para tu caso (lock screen / cancelar):
-   * - "pinEnabled" NO es prueba de que exista PIN.
-   * - Si el backend no manda hasQuickPin, NO inferimos hasQuickPin desde pinEnabled.
-   *   Solo usamos señales más seguras (hasQuickPin explícito o quickPinUpdatedAt).
-   */
   function effectivePin(u: any) {
     const id = String(u?.id ?? "");
     const ov = id ? pinOverridesRef.current.get(id) : undefined;
@@ -270,7 +265,7 @@ export default function UsersTable(props: Props) {
         ? ov.hasQuickPin
         : rawHas !== undefined
         ? rawHas
-        : Boolean(rawUpdatedAt); // ✅ fallback más seguro que pinEnabled
+        : Boolean(rawUpdatedAt);
 
     let pinEnabled =
       typeof ov?.pinEnabled === "boolean"
@@ -281,7 +276,6 @@ export default function UsersTable(props: Props) {
         ? Boolean(u.quickPinEnabled)
         : false;
 
-    // ✅ coherencia: si no hay PIN, pinEnabled siempre false
     if (!hasQuickPin) pinEnabled = false;
 
     return { hasQuickPin, pinEnabled };
@@ -319,8 +313,12 @@ export default function UsersTable(props: Props) {
         ak = norm(aRoles + (hasSpecial(a) ? " permiso especial" : ""));
         bk = norm(bRoles + (hasSpecial(b) ? " permiso especial" : ""));
       } else {
-        const aFav = a?.favoriteWarehouseId ? warehouseLabelById(a.favoriteWarehouseId) ?? a.favoriteWarehouseId : "";
-        const bFav = b?.favoriteWarehouseId ? warehouseLabelById(b.favoriteWarehouseId) ?? b.favoriteWarehouseId : "";
+        const aFav = a?.favoriteWarehouseId
+          ? warehouseLabelById(a.favoriteWarehouseId) ?? a.favoriteWarehouseId
+          : "";
+        const bFav = b?.favoriteWarehouseId
+          ? warehouseLabelById(b.favoriteWarehouseId) ?? b.favoriteWarehouseId
+          : "";
         ak = norm(aFav);
         bk = norm(bFav);
       }
@@ -338,7 +336,6 @@ export default function UsersTable(props: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [users, sortBy, sortDir, roleLabel, warehouseLabelById, pinTick]);
 
-  // ✅ Botón ícono (outline)
   const iconBtnBase =
     "inline-flex items-center justify-center rounded-lg border border-border bg-transparent " +
     "h-9 w-9 text-text/90 hover:bg-surface2/60 " +
@@ -346,8 +343,92 @@ export default function UsersTable(props: Props) {
 
   const disabledCls = "opacity-40 cursor-not-allowed hover:bg-transparent";
 
-  // ✅ Pill violeta para “permisos especiales”
   const specialPillCls = "border-violet-500/30 bg-violet-500/10 text-violet-300 dark:text-violet-200";
+
+  /* ======================================================
+     INVITE (ADMIN)  POST /users/:id/invite
+     ✅ FIX: busy en state (re-render garantizado)
+  ====================================================== */
+  const [inviteBusyIds, setInviteBusyIds] = useState<Set<string>>(() => new Set());
+  const [inviteFlash, setInviteFlash] = useState<{ type: "ok" | "err"; msg: string } | null>(null);
+
+  const inviteCooldownRef = useRef<Map<string, number>>(new Map());
+  const inviteFlashTimerRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (inviteFlashTimerRef.current) window.clearTimeout(inviteFlashTimerRef.current);
+      inviteFlashTimerRef.current = null;
+
+      for (const [, t] of inviteCooldownRef.current) {
+        try {
+          window.clearTimeout(t);
+        } catch {}
+      }
+      inviteCooldownRef.current.clear();
+    };
+  }, []);
+
+  function isInviteBusy(userId: string) {
+    return inviteBusyIds.has(String(userId || ""));
+  }
+
+  function setInviteBusy(userId: string, busy: boolean) {
+    const id = String(userId || "").trim();
+    if (!id) return;
+
+    setInviteBusyIds((prev) => {
+      const next = new Set(prev);
+      if (busy) next.add(id);
+      else next.delete(id);
+      return next;
+    });
+  }
+
+  function flashInvite(msg: string, type: "ok" | "err", ms: number) {
+    setInviteFlash({ type, msg });
+    if (inviteFlashTimerRef.current) window.clearTimeout(inviteFlashTimerRef.current);
+    inviteFlashTimerRef.current = window.setTimeout(() => {
+      setInviteFlash(null);
+      inviteFlashTimerRef.current = null;
+    }, ms);
+  }
+
+  async function sendInvite(u: any) {
+    const id = String(u?.id || "").trim();
+    if (!id) return;
+
+    // anti doble click
+    if (isInviteBusy(id)) return;
+
+    setInviteBusy(id, true);
+    setInviteFlash(null);
+
+    try {
+      await apiFetch<{ ok: boolean }>(`/users/${encodeURIComponent(id)}/invite`, {
+        method: "POST",
+      });
+
+      flashInvite(`Invitación enviada a ${String(u?.email || "usuario")}.`, "ok", 2500);
+    } catch (e: any) {
+      flashInvite(e?.message || "No se pudo enviar la invitación.", "err", 3500);
+    } finally {
+      // cooldown breve para evitar spam
+      const prevT = inviteCooldownRef.current.get(id);
+      if (prevT) {
+        try {
+          window.clearTimeout(prevT);
+        } catch {}
+      }
+
+      const t = window.setTimeout(() => {
+        setInviteBusy(id, false);
+        inviteCooldownRef.current.delete(id);
+      }, 1200);
+
+      inviteCooldownRef.current.set(id, t as any);
+    }
+  }
 
   /* ======================================================
      Attachments panel (clic en 📎)
@@ -386,7 +467,6 @@ export default function UsersTable(props: Props) {
     setAttTick((x) => x + 1);
 
     try {
-      // ✅ usa prop si viene, si no usa internal
       const fn = prefetchUserDetail || prefetchUserDetailInternal;
       const d = await fn(userId);
 
@@ -466,6 +546,20 @@ export default function UsersTable(props: Props) {
 
   return (
     <TPTableWrap className="w-full">
+      {/* Flash msg */}
+      {inviteFlash ? (
+        <div
+          className={cn(
+            "mb-3 rounded-xl px-4 py-3 text-sm border",
+            inviteFlash.type === "ok"
+              ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-200"
+              : "border-red-500/30 bg-red-500/10 text-red-200"
+          )}
+        >
+          {inviteFlash.msg}
+        </div>
+      ) : null}
+
       {/* =========================
           MOBILE (cards)
          ========================= */}
@@ -487,6 +581,10 @@ export default function UsersTable(props: Props) {
             const canToggleThis = canEditStatus && !isMe;
             const canEditThis = (canAdmin || isMe) && true;
             const canDeleteThis = canAdmin && !isMe;
+
+            // ✅ INVITE: solo admin + PENDING + no vos
+            const canInviteThis = canAdmin && !isMe && isPending;
+            const inviteBusy = isInviteBusy(String(u.id)) || false;
 
             const avatarSrc = u.avatarUrl ? absUrl(u.avatarUrl) : "";
             const initials = initialsFrom(u.name || u.email || "U");
@@ -524,7 +622,9 @@ export default function UsersTable(props: Props) {
                         {u.name || "Sin nombre"} {isMe && <span className="text-[11px] text-muted">(vos)</span>}
                       </div>
                       <div className="text-xs text-muted truncate">{u.email}</div>
-                      {u.createdAt && <div className="text-[11px] text-muted">Creado: {formatDateTime(u.createdAt)}</div>}
+                      {u.createdAt && (
+                        <div className="text-[11px] text-muted">Creado: {formatDateTime(u.createdAt)}</div>
+                      )}
 
                       <div className="mt-2 flex flex-wrap gap-2">
                         <TPBadge tone={isActive ? "success" : isPending ? "warning" : "danger"}>
@@ -533,7 +633,11 @@ export default function UsersTable(props: Props) {
 
                         {pinHas ? (
                           <TPBadge tone={pinEnabled ? "success" : "danger"} className="gap-1">
-                            {pinEnabled ? <KeyRound className="h-3.5 w-3.5" /> : <Shield className="h-3.5 w-3.5" />}
+                            {pinEnabled ? (
+                              <KeyRound className="h-3.5 w-3.5" />
+                            ) : (
+                              <Shield className="h-3.5 w-3.5" />
+                            )}
                             {pinEnabled ? "PIN habilitado" : "PIN deshabilitado"}
                           </TPBadge>
                         ) : (
@@ -541,7 +645,9 @@ export default function UsersTable(props: Props) {
                         )}
 
                         {u.favoriteWarehouseId ? (
-                          <TPBadge tone="neutral">⭐ {warehouseLabelById(u.favoriteWarehouseId) ?? u.favoriteWarehouseId}</TPBadge>
+                          <TPBadge tone="neutral">
+                            ⭐ {warehouseLabelById(u.favoriteWarehouseId) ?? u.favoriteWarehouseId}
+                          </TPBadge>
                         ) : (
                           <TPBadge tone="neutral">⭐ —</TPBadge>
                         )}
@@ -570,6 +676,29 @@ export default function UsersTable(props: Props) {
                   <div className="shrink-0 flex flex-col gap-2">
                     <button type="button" className={cn(iconBtnBase)} onClick={() => openView(u)} title="Ver">
                       <Eye className="h-4 w-4" />
+                    </button>
+
+                    {/* ✅ INVITAR */}
+                    <button
+                      type="button"
+                      className={cn(iconBtnBase, (!canInviteThis || inviteBusy) && disabledCls)}
+                      disabled={!canInviteThis || inviteBusy}
+                      onClick={() => {
+                        if (canInviteThis && !inviteBusy) void sendInvite(u);
+                      }}
+                      title={
+                        !canAdmin
+                          ? "Sin permisos"
+                          : isMe
+                          ? "No aplica"
+                          : !isPending
+                          ? "Solo disponible para Pendiente"
+                          : inviteBusy
+                          ? "Enviando…"
+                          : "Enviar invitación"
+                      }
+                    >
+                      {inviteBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Mail className="h-4 w-4" />}
                     </button>
 
                     <button
@@ -758,6 +887,10 @@ export default function UsersTable(props: Props) {
                   const canEditThis = (canAdmin || isMe) && true;
                   const canDeleteThis = canAdmin && !isMe;
 
+                  // ✅ INVITE: solo admin + PENDING + no vos
+                  const canInviteThis = canAdmin && !isMe && isPending;
+                  const inviteBusy = isInviteBusy(String(u.id)) || false;
+
                   const avatarSrc = u.avatarUrl ? absUrl(u.avatarUrl) : "";
                   const initials = initialsFrom(u.name || u.email || "U");
 
@@ -772,11 +905,7 @@ export default function UsersTable(props: Props) {
                       <td className="px-5 py-3 align-top">
                         <button
                           type="button"
-                          className={cn(
-                            "w-full text-left",
-                            "rounded-xl",
-                            "hover:opacity-95 active:scale-[0.995] transition"
-                          )}
+                          className={cn("w-full text-left", "rounded-xl", "hover:opacity-95 active:scale-[0.995] transition")}
                           onClick={() => openView(u)}
                           title="Ver usuario"
                         >
@@ -831,11 +960,7 @@ export default function UsersTable(props: Props) {
                             title={pinEnabled ? "PIN habilitado" : "PIN deshabilitado"}
                             className="gap-1"
                           >
-                            {pinEnabled ? (
-                              <KeyRound className="h-3.5 w-3.5" />
-                            ) : (
-                              <Shield className="h-3.5 w-3.5" />
-                            )}
+                            {pinEnabled ? <KeyRound className="h-3.5 w-3.5" /> : <Shield className="h-3.5 w-3.5" />}
                             {pinEnabled ? "Habilitado" : "Deshabilitado"}
                           </TPBadge>
                         ) : (
@@ -867,9 +992,7 @@ export default function UsersTable(props: Props) {
 
                       <td className="px-5 py-3 align-top">
                         {u.favoriteWarehouseId ? (
-                          <TPBadge tone="neutral">
-                            ⭐ {warehouseLabelById(u.favoriteWarehouseId) ?? u.favoriteWarehouseId}
-                          </TPBadge>
+                          <TPBadge tone="neutral">⭐ {warehouseLabelById(u.favoriteWarehouseId) ?? u.favoriteWarehouseId}</TPBadge>
                         ) : (
                           <span className="text-muted">—</span>
                         )}
@@ -879,6 +1002,29 @@ export default function UsersTable(props: Props) {
                         <div className="flex justify-end gap-2">
                           <button type="button" className={cn(iconBtnBase)} onClick={() => openView(u)} title="Ver">
                             <Eye className="h-4 w-4" />
+                          </button>
+
+                          {/* ✅ INVITAR */}
+                          <button
+                            type="button"
+                            className={cn(iconBtnBase, (!canInviteThis || inviteBusy) && disabledCls)}
+                            disabled={!canInviteThis || inviteBusy}
+                            onClick={() => {
+                              if (canInviteThis && !inviteBusy) void sendInvite(u);
+                            }}
+                            title={
+                              !canAdmin
+                                ? "Sin permisos"
+                                : isMe
+                                ? "No aplica"
+                                : !isPending
+                                ? "Solo disponible para Pendiente"
+                                : inviteBusy
+                                ? "Enviando…"
+                                : "Enviar invitación"
+                            }
+                          >
+                            {inviteBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Mail className="h-4 w-4" />}
                           </button>
 
                           <button
@@ -957,13 +1103,7 @@ export default function UsersTable(props: Props) {
         <div className="text-xs text-muted">{totalLabel}</div>
 
         <div className="flex items-center gap-2">
-          <button
-            className={cn(iconBtnBase, page <= 1 && disabledCls)}
-            type="button"
-            disabled={page <= 1}
-            onClick={onPrev}
-            title="Anterior"
-          >
+          <button className={cn(iconBtnBase, page <= 1 && disabledCls)} type="button" disabled={page <= 1} onClick={onPrev} title="Anterior">
             <ChevronLeft className="h-4 w-4" />
           </button>
 
@@ -971,13 +1111,7 @@ export default function UsersTable(props: Props) {
             <b className="text-text">{page}</b> / {totalPages}
           </div>
 
-          <button
-            className={cn(iconBtnBase, page >= totalPages && disabledCls)}
-            type="button"
-            disabled={page >= totalPages}
-            onClick={onNext}
-            title="Siguiente"
-          >
+          <button className={cn(iconBtnBase, page >= totalPages && disabledCls)} type="button" disabled={page >= totalPages} onClick={onNext} title="Siguiente">
             <ChevronRight className="h-4 w-4" />
           </button>
         </div>
