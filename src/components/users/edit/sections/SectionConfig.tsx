@@ -1,5 +1,5 @@
 // tptech-frontend/src/components/users/edit/sections/SectionConfig.tsx
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { Loader2 } from "lucide-react";
 
 import { TPSegmentedPills } from "../../../ui/TPBadges";
@@ -175,6 +175,19 @@ export default function SectionConfig(props: Props) {
   // ✅ solo visual
   const [pinRemovedVisual, setPinRemovedVisual] = useState(false);
 
+  // ✅ mini-mensaje local (PIN guardado/eliminado)
+  const [pinLocalFlash, setPinLocalFlash] = useState<{ type: "ok" | "err"; msg: string } | null>(null);
+  const pinLocalFlashTimerRef = useRef<number | null>(null);
+
+  function flashPin(msg: string, type: "ok" | "err", ms = 2200) {
+    setPinLocalFlash({ type, msg });
+    if (pinLocalFlashTimerRef.current) window.clearTimeout(pinLocalFlashTimerRef.current);
+    pinLocalFlashTimerRef.current = window.setTimeout(() => {
+      setPinLocalFlash(null);
+      pinLocalFlashTimerRef.current = null;
+    }, ms);
+  }
+
   // ✅ modal para pedir PIN ACTUAL al borrar (SELF)
   const [showDeletePinConfirm, setShowDeletePinConfirm] = useState(false);
   const [deletePinCurrent, setDeletePinCurrent] = useState("");
@@ -185,7 +198,18 @@ export default function SectionConfig(props: Props) {
     setShowDeletePinConfirm(false);
     setDeletePinCurrent("");
     setDeletePinErr(null);
+    setPinLocalFlash(null);
+
+    if (pinLocalFlashTimerRef.current) window.clearTimeout(pinLocalFlashTimerRef.current);
+    pinLocalFlashTimerRef.current = null;
   }, [detailHasQuickPin, modalMode]);
+
+  useEffect(() => {
+    return () => {
+      if (pinLocalFlashTimerRef.current) window.clearTimeout(pinLocalFlashTimerRef.current);
+      pinLocalFlashTimerRef.current = null;
+    };
+  }, []);
 
   const busyDeleteSelf = pinBusy || pinToggling;
 
@@ -218,16 +242,24 @@ export default function SectionConfig(props: Props) {
           if (!isPin4(pin) || !isPin4(pin2) || pin !== pin2) return;
           if (hasPin && !isPin4(currentPin || "")) return;
 
-          await adminSetOrResetPin({
-            currentPin: hasPin ? currentPin : undefined,
-            pin,
-            pin2,
-          });
+          try {
+            await adminSetOrResetPin({
+              currentPin: hasPin ? currentPin : undefined,
+              pin,
+              pin2,
+            });
 
-          // limpiar legacy + visual
-          setPinNew("");
-          setPinNew2("");
-          setPinRemovedVisual(false);
+            // ✅ cerrar modal PIN + limpiar legacy + visual
+            closePinFlow();
+            setPinNew("");
+            setPinNew2("");
+            setPinRemovedVisual(false);
+
+            flashPin("PIN guardado.", "ok");
+          } catch (e: any) {
+            flashPin(e?.message || "No se pudo guardar el PIN.", "err", 3000);
+            throw e;
+          }
         }}
       />
 
@@ -250,17 +282,37 @@ export default function SectionConfig(props: Props) {
             return;
           }
 
-          void adminRemovePin({ currentPin }).then(() => {
-            setPinNew("");
-            setPinNew2("");
-            setPinRemovedVisual(true);
+          void adminRemovePin({ currentPin })
+            .then(() => {
+              setPinNew("");
+              setPinNew2("");
+              setPinRemovedVisual(true);
 
-            setShowDeletePinConfirm(false);
-            setDeletePinCurrent("");
-            setDeletePinErr(null);
-          });
+              setShowDeletePinConfirm(false);
+              setDeletePinCurrent("");
+              setDeletePinErr(null);
+
+              flashPin("PIN eliminado.", "ok");
+            })
+            .catch((e: any) => {
+              flashPin(e?.message || "No se pudo eliminar el PIN.", "err", 3000);
+            });
         }}
       />
+
+      {/* ✅ Mensajito local (simple) */}
+      {pinLocalFlash ? (
+        <div
+          className={cn(
+            "rounded-xl px-3 py-2 text-sm border",
+            pinLocalFlash.type === "ok"
+              ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-200"
+              : "border-red-500/30 bg-red-500/10 text-red-200"
+          )}
+        >
+          {pinLocalFlash.msg}
+        </div>
+      ) : null}
 
       <PinConfigSection
         modalMode={modalMode}

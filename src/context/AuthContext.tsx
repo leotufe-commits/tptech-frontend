@@ -274,10 +274,8 @@ function readPinEvent(ev: Event): { userId: string; hasQuickPin?: boolean; pinEn
   const anyEv = ev as any;
   const d = anyEv?.detail ?? {};
   const userId = String(d?.userId ?? d?.id ?? "").trim();
-  const hasQuickPin =
-    typeof d?.hasQuickPin === "boolean" ? (d.hasQuickPin as boolean) : undefined;
-  const pinEnabled =
-    typeof d?.pinEnabled === "boolean" ? (d.pinEnabled as boolean) : undefined;
+  const hasQuickPin = typeof d?.hasQuickPin === "boolean" ? (d.hasQuickPin as boolean) : undefined;
+  const pinEnabled = typeof d?.pinEnabled === "boolean" ? (d.pinEnabled as boolean) : undefined;
   return { userId, hasQuickPin, pinEnabled };
 }
 
@@ -881,7 +879,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           }
 
           // si te deshabilitan/quitan el PIN y estabas locked, salimos para evitar “encerrado”
-          if ((typeof hasQuickPin === "boolean" && hasQuickPin === false) || (typeof pinEnabled === "boolean" && pinEnabled === false)) {
+          if (
+            (typeof hasQuickPin === "boolean" && hasQuickPin === false) ||
+            (typeof pinEnabled === "boolean" && pinEnabled === false)
+          ) {
             setLocked(false);
           }
 
@@ -959,6 +960,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   /* =========================
      PIN API
+     ✅ FIX: endpoints correctos (CON /auth/me)
   ========================= */
   const pinSet = useCallback(
     async (pin: PinArg) => {

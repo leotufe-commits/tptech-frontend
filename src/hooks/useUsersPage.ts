@@ -1061,11 +1061,18 @@ export function useUsersPage() {
     }
   }
 
+  // ✅ CAMBIO: permitir abrir modal por ID para SELF aunque no sea ADMIN (para configurar PIN propio)
   async function openEditById(userId: string, opts?: { tab?: TabKey; pinAction?: "create" | null }) {
-    if (!canAdmin) return;
-    if (!userId) return;
+    const uid = String(userId || "").trim();
+    if (!uid) return;
 
-    if (modalOpen && modalMode === "EDIT" && String(targetId) === String(userId)) {
+    const isSelf = Boolean(me?.id && String(me.id) === uid);
+
+    // ✅ ADMIN puede editar cualquiera.
+    // ✅ NO-ADMIN solo puede abrir SU propio modal (para PIN / ver datos).
+    if (!canAdmin && !isSelf) return;
+
+    if (modalOpen && modalMode === "EDIT" && String(targetId) === String(uid)) {
       if (opts?.tab) setTab(opts.tab);
       if (opts?.pinAction === "create") setAutoOpenPinFlow(true);
       return;
@@ -1081,8 +1088,8 @@ export function useUsersPage() {
       await ensureRolesLoaded();
       const perms = await ensurePermsLoaded();
 
-      setTargetId(userId);
-      await refreshDetailOnly(userId, { hydrate: true });
+      setTargetId(uid);
+      await refreshDetailOnly(uid, { hydrate: true });
 
       setSpecialPermPick(perms[0]?.id || "");
       setSpecialEffectPick("ALLOW");

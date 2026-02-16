@@ -103,6 +103,8 @@ export default function UsersPage() {
       <UserEditModal
         open={p.modalOpen}
         wide
+        // ✅ NUEVO: cuando venís desde SystemPinSettings, se oculta el modal grande y solo se muestra el PIN
+        pinOnly={Boolean((p as any).pinOnly)}
         modalMode={p.modalMode}
         modalBusy={p.modalBusy}
         modalLoading={p.modalLoading}

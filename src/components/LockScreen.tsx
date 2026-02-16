@@ -119,10 +119,7 @@ function getUserRoleLabel(u: any): string {
   return prettyRoleName(String(direct || "").trim());
 }
 
-function normalizeQuickUser(
-  u: any,
-  opts?: { currentUserId?: string; currentUserRoles?: any[] }
-): QuickUser {
+function normalizeQuickUser(u: any, opts?: { currentUserId?: string; currentUserRoles?: any[] }): QuickUser {
   const currentUserId = opts?.currentUserId ? String(opts.currentUserId) : "";
   const sameAsCurrent = currentUserId && String(u?.id ?? "") === currentUserId;
 
@@ -361,10 +358,12 @@ export default function LockScreen() {
     try {
       // ✅ Si elige el mismo usuario, NO hacemos switch. Desbloqueamos.
       if (targetUserId && quickSwitchEnabled && targetUserId !== currentUserId) {
-        await pinSwitchUser({ targetUserId, pin4: pin } as any);
+        // ✅ FIX: usar `pin` (no `pin4`)
+        await pinSwitchUser({ targetUserId, pin } as any);
         rememberLastDeviceUser(targetUserId);
       } else {
-        await pinUnlock({ pin4: pin } as any);
+        // ✅ FIX: usar `pin` (no `pin4`)
+        await pinUnlock({ pin } as any);
         if ((user as any)?.id) rememberLastDeviceUser((user as any).id);
       }
 
@@ -529,17 +528,7 @@ export default function LockScreen() {
       if (mustEnterPin) focusPin();
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [
-    locked,
-    pinLockEnabled,
-    quickSwitchEnabled,
-    pinQuickUsers,
-    DEV,
-    lastDeviceUserKey,
-    roles,
-    mustEnterPin,
-    currentUserId,
-  ]);
+  }, [locked, pinLockEnabled, quickSwitchEnabled, pinQuickUsers, DEV, lastDeviceUserKey, roles, mustEnterPin, currentUserId]);
 
   // ✅ teclado físico (global) — Enter simula botón
   useEffect(() => {

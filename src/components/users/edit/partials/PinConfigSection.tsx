@@ -1,6 +1,7 @@
 // tptech-frontend/src/components/users/edit/partials/PinConfigSection.tsx
 import React, { useEffect } from "react";
-import { Loader2 } from "lucide-react";
+import { Loader2, ArrowRight } from "lucide-react";
+import { useNavigate } from "react-router-dom";
 
 import { cn, Section } from "../../users.ui";
 import type { Override } from "../../../../services/users";
@@ -44,6 +45,8 @@ type Props = {
 };
 
 export default function PinConfigSection(props: Props) {
+  const navigate = useNavigate();
+
   const {
     modalMode,
     canAdmin,
@@ -78,6 +81,9 @@ export default function PinConfigSection(props: Props) {
   // ✅ un solo flag de disabled para esta sección
   const disabled = !canEditPin || busy || pinPillsDisabled;
 
+  // ✅ Ruta a la configuración del sistema PIN
+  const SYSTEM_PIN_ROUTE = "/configuracion-sistema/pin";
+
   useEffect(() => {
     setPinRemovedVisual(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -85,8 +91,34 @@ export default function PinConfigSection(props: Props) {
 
   const effectiveEnabled = Boolean(detailPinEnabled) && !pinRemovedVisual;
 
+  const showSystemDisabledNote = Boolean(pinPillsDisabled);
+
   return (
     <Section title="Clave rápida (PIN)" desc="PIN de 4 dígitos para desbloqueo/cambio rápido.">
+      {/* ✅ Nota principal cuando el sistema PIN está apagado */}
+      {showSystemDisabledNote ? (
+        <div className="mb-3 rounded-xl border border-amber-500/20 bg-amber-500/10 px-3 py-2 text-sm text-amber-800">
+          <div className="font-semibold">El PIN está deshabilitado en la configuración del sistema.</div>
+          <div className="mt-1 text-xs text-amber-800/80">
+            Activá la opción en <b>Configuración del sistema → PIN</b> para poder crear o editar PINs de usuarios.
+          </div>
+
+          <div className="mt-2">
+            <button
+              type="button"
+              className={cn(
+                "inline-flex items-center gap-2 rounded-xl border border-amber-500/30 bg-card px-3 py-2 text-xs font-semibold",
+                "text-amber-900 hover:bg-amber-500/10 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-amber-500/20"
+              )}
+              onClick={() => navigate(SYSTEM_PIN_ROUTE)}
+            >
+              Ir a Configuración PIN
+              <ArrowRight className="h-4 w-4" />
+            </button>
+          </div>
+        </div>
+      ) : null}
+
       {/* mensaje backend */}
       {showPinMessage && pinMsg ? (
         <div className="mb-3 rounded-xl border border-border bg-bg px-3 py-2 text-sm text-muted">{pinMsg}</div>
@@ -116,6 +148,7 @@ export default function PinConfigSection(props: Props) {
             setPinRemovedVisual(false);
             openPinFlow();
           }}
+          title={pinPillsDisabled ? "El PIN está deshabilitado en Configuración del sistema" : undefined}
         >
           {busy ? (
             <span className="inline-flex items-center gap-2">
@@ -148,7 +181,13 @@ export default function PinConfigSection(props: Props) {
               void adminRemovePin({ confirmRemoveOverrides: hasSpecial });
               setPinRemovedVisual(true);
             }}
-            title={isSelf ? "Requiere tu PIN actual" : "Eliminar PIN"}
+            title={
+              pinPillsDisabled
+                ? "El PIN está deshabilitado en Configuración del sistema"
+                : isSelf
+                ? "Requiere tu PIN actual"
+                : "Eliminar PIN"
+            }
           >
             Eliminar
           </button>

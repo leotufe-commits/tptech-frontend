@@ -121,7 +121,7 @@ function joinUrl(base: string, path: string) {
 }
 
 // =========================
-// LEGACY TOKEN READ (solo si se fuerza Bearer)
+// LEGACY TOKEN READ (si hay token)
 // =========================
 function readStoredToken(): string | null {
   try {
@@ -155,7 +155,8 @@ export type ApiFetchOptions = Omit<RequestInit, "body" | "signal"> & {
 
   /**
    * 🔑 IMPORTANTE
-   * Bearer SOLO si se pide explícitamente
+   * - Por defecto: usa Bearer si hay token
+   * - Para apagarlo en un request puntual: forceBearer: false
    */
   forceBearer?: boolean;
 };
@@ -324,8 +325,8 @@ export async function apiFetch<T = any>(path: string, options: ApiFetchOptions =
     }
   }
 
-  // 🔑 Bearer SOLO si se pide explícitamente
-  if (options.forceBearer === true) {
+  // 🔑 Bearer por defecto si hay token (solo se apaga si forceBearer === false)
+  if (options.forceBearer !== false) {
     const token = readStoredToken();
     if (token && !headers.has("Authorization")) {
       headers.set("Authorization", `Bearer ${token}`);
