@@ -15,6 +15,9 @@ import { prefetchUserDetail as prefetchUserDetailFn } from "../components/users/
 export default function UsersPage() {
   const p = useUsersPage();
 
+  // ✅ FIX TS: pinOnly puede existir en runtime pero no está tipado en el return del hook
+  const pinOnly = Boolean((p as any)?.pinOnly);
+
   if (!p.canView) return <div className="p-6">Sin permisos para ver usuarios.</div>;
 
   return (
@@ -104,7 +107,7 @@ export default function UsersPage() {
         open={p.modalOpen}
         wide
         // ✅ NUEVO: cuando venís desde SystemPinSettings, se oculta el modal grande y solo se muestra el PIN
-        pinOnly={Boolean(p.pinOnly)}
+        pinOnly={pinOnly}
         modalMode={p.modalMode}
         modalBusy={p.modalBusy}
         modalLoading={p.modalLoading}
