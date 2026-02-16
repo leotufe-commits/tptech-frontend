@@ -33,6 +33,10 @@ import { apiFetch } from "../../lib/api";
 type Props = {
   open: boolean;
   wide?: boolean;
+
+  /** ✅ NUEVO: modo “solo PIN” (sin formulario completo detrás) */
+  pinOnly?: boolean;
+
   modalMode: "CREATE" | "EDIT";
   modalBusy: boolean;
   modalLoading: boolean;
@@ -158,6 +162,8 @@ export default function UserEditModal(props: Props) {
   const {
     open,
     wide,
+    pinOnly, // ✅ nuevo
+
     modalMode,
     modalBusy,
     modalLoading,
@@ -438,6 +444,30 @@ export default function UserEditModal(props: Props) {
   }, [open, autoOpenPinFlow, modalMode, (detail as any)?.id, tab, pinFlowOpen, pinBusy, pinToggling]);
 
   /* ============================================================
+     ✅ PIN-ONLY: si pinOnly=true, aseguramos CONFIG + abrimos flow
+  ============================================================ */
+  useEffect(() => {
+    if (!open) return;
+    if (!pinOnly) return;
+    if (modalMode !== "EDIT") return;
+
+    const hasRealPin = Boolean((detail as any)?.hasQuickPin);
+
+    if (tab !== "CONFIG") {
+      setTab("CONFIG");
+      return;
+    }
+
+    // En pinOnly queremos SOLO el setup (si ya tiene PIN, no forzamos nada)
+    if (hasRealPin) return;
+
+    if (!pinFlowOpen && !pinBusy && !pinToggling) {
+      openPinFlow();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, pinOnly, modalMode, tab, (detail as any)?.hasQuickPin, pinFlowOpen, pinBusy, pinToggling]);
+
+  /* ============================================================
      ✅ AUTO PIN LEGACY (sessionStorage)
   ============================================================ */
   useEffect(() => {
@@ -658,10 +688,17 @@ export default function UserEditModal(props: Props) {
   const busyClose = modalBusy || avatarBusy || specialSaving || uploadingAttachments || Boolean(deletingAttId) || pinBusy;
 
   /* ============================================================
-     ✅ MODO SOLO PIN (sin modal de edición detrás)
-     Se activa cuando estamos en CONFIG, el flow está abierto y el usuario NO tiene PIN.
+     ✅ MODO SOLO PIN
+     - Si props.pinOnly=true => forzamos este modo (siempre que sea EDIT)
+     - Si no, mantenemos el auto-modo legacy
   ============================================================ */
-  const pinOnlyMode = Boolean(open && tab === "CONFIG" && pinFlowOpen && !detailHasQuickPin);
+  const pinOnlyMode = Boolean(
+    open &&
+      modalMode === "EDIT" &&
+      tab === "CONFIG" &&
+      !detailHasQuickPin &&
+      (Boolean(pinOnly) || Boolean(pinFlowOpen))
+  );
 
   // helpers UI PIN-only
   const pinBoxRefs = useRef<Array<HTMLInputElement | null>>([]);
@@ -734,8 +771,7 @@ export default function UserEditModal(props: Props) {
 
   if (pinOnlyMode) {
     const stepTitle = pinFlowStep === "NEW" ? "Paso 1 de 2" : "Paso 2 de 2";
-    const stepText =
-      pinFlowStep === "NEW" ? "Ahora ingresá el nuevo PIN." : "Repetí el PIN para confirmar.";
+    const stepText = pinFlowStep === "NEW" ? "Ahora ingresá el nuevo PIN." : "Repetí el PIN para confirmar.";
 
     const cur = pinFlowStep === "NEW" ? pinDraft : pinDraft2;
     const done4 = /^\d{4}$/.test(String(cur || ""));
@@ -826,7 +862,6 @@ export default function UserEditModal(props: Props) {
                         if (pinFlowStep === "NEW") {
                           const s = String(pinDraft || "");
                           if (s[i]) {
-                            // borrar el dígito actual
                             const next = setDigitAt(s, i, "");
                             setPinDraft(next);
                             return;
@@ -893,10 +928,7 @@ export default function UserEditModal(props: Props) {
       {/* ✅ Modal: “PIN ya guardado” al cancelar */}
       {showLeavePinConfirm ? (
         <div className="fixed inset-0 z-50">
-          <div
-            className="absolute inset-0 bg-black/40"
-            onClick={() => !busyClose && setShowLeavePinConfirm(false)}
-          />
+          <div className="absolute inset-0 bg-black/40" onClick={() => !busyClose && setShowLeavePinConfirm(false)} />
           <div className="absolute left-1/2 top-1/2 w-[92vw] max-w-lg -translate-x-1/2 -translate-y-1/2 rounded-2xl border border-border bg-card p-5 shadow-soft">
             <div className="flex items-start gap-3">
               <div className="grid h-10 w-10 place-items-center rounded-2xl border border-border bg-surface2 text-primary">

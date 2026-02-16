@@ -104,7 +104,7 @@ export default function UsersPage() {
         open={p.modalOpen}
         wide
         // ✅ NUEVO: cuando venís desde SystemPinSettings, se oculta el modal grande y solo se muestra el PIN
-        pinOnly={Boolean((p as any).pinOnly)}
+        pinOnly={Boolean(p.pinOnly)}
         modalMode={p.modalMode}
         modalBusy={p.modalBusy}
         modalLoading={p.modalLoading}

@@ -21,13 +21,14 @@ export default function ForgotPassword() {
     try {
       setLoading(true);
 
-      // Backend: POST /auth/forgot-password
       await apiFetch<{ ok: boolean }>("/auth/forgot-password", {
         method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
         body: JSON.stringify({ email: v }),
       });
 
-      // Por seguridad, el backend siempre responde ok:true
       setSent(true);
     } catch (err: any) {
       setError(err?.message || "No se pudo enviar el email.");
