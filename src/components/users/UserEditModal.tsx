@@ -1,6 +1,6 @@
 // tptech-frontend/src/components/users/UserEditModal.tsx
-import React, { type FormEvent, useEffect, useMemo, useState, useRef } from "react";
-import { Loader2, Mail, AlertTriangle, X, ArrowRight } from "lucide-react";
+import React, { type FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { AlertTriangle, ArrowRight, Loader2, Mail, X } from "lucide-react";
 
 import { Modal } from "../ui/Modal";
 import UserEditFooter from "./edit/UserEditFooter";
@@ -34,7 +34,7 @@ type Props = {
   open: boolean;
   wide?: boolean;
 
-  /** ✅ NUEVO: modo “solo PIN” (sin formulario completo detrás) */
+  /** ✅ modo “solo PIN” (sin formulario completo detrás) */
   pinOnly?: boolean;
 
   modalMode: "CREATE" | "EDIT";
@@ -114,9 +114,10 @@ type Props = {
   setPinNew: (v: string) => void;
   pinNew2: string;
   setPinNew2: (v: string) => void;
+
   adminTogglePinEnabled: (next: boolean, opts?: { confirmRemoveOverrides?: boolean }) => Promise<void>;
 
-  // ✅ CAMBIO: acepta pin/pin2 para no depender del state (evita “no dispara request”)
+  // ✅ acepta pin/pin2 para no depender del state
   adminSetOrResetPin: (opts?: { currentPin?: string; pin?: string; pin2?: string }) => Promise<void>;
 
   adminRemovePin: (opts?: { confirmRemoveOverrides?: boolean; currentPin?: string }) => Promise<void>;
@@ -158,11 +159,23 @@ type Props = {
 ============================================================ */
 const PIN_EVENT = "tptech:user-pin-updated";
 
+function norm(v: any) {
+  return String(v ?? "").trim();
+}
+
+function sameSet(a: string[], b: string[]) {
+  const sa = new Set((a || []).map((x) => String(x)));
+  const sb = new Set((b || []).map((x) => String(x)));
+  if (sa.size !== sb.size) return false;
+  for (const x of sa) if (!sb.has(x)) return false;
+  return true;
+}
+
 export default function UserEditModal(props: Props) {
   const {
     open,
     wide,
-    pinOnly, // ✅ nuevo
+    pinOnly,
 
     modalMode,
     modalBusy,
@@ -295,7 +308,11 @@ export default function UserEditModal(props: Props) {
   const isPending = detailStatus === "PENDING";
 
   const canInviteHere =
-    modalMode === "EDIT" && canAdmin && !isSelf && isPending && Boolean(String((detail as any)?.id || "").trim());
+    modalMode === "EDIT" &&
+    canAdmin &&
+    !isSelf &&
+    isPending &&
+    Boolean(String((detail as any)?.id || "").trim());
 
   function flashInvite(msg: string, type: "ok" | "err", ms: number) {
     setInviteFlash({ type, msg });
@@ -343,7 +360,7 @@ export default function UserEditModal(props: Props) {
   }, []);
 
   /* ============================================================
-     ✅ NUEVO: bandera para saber si el PIN se guardó en esta edición
+     ✅ bandera para saber si el PIN se guardó en esta edición
   ============================================================ */
   const [pinChangedThisEdit, setPinChangedThisEdit] = useState(false);
   const [showLeavePinConfirm, setShowLeavePinConfirm] = useState(false);
@@ -366,7 +383,6 @@ export default function UserEditModal(props: Props) {
 
   /* ============================================================
      ✅ WRAPPERS: luego de la acción real, notificamos a la tabla
-     + marcamos que el PIN ya fue guardado
   ============================================================ */
   async function adminSetOrResetPinWrapped(opts?: { currentPin?: string; pin?: string; pin2?: string }) {
     await adminSetOrResetPin(opts);
@@ -394,6 +410,15 @@ export default function UserEditModal(props: Props) {
 
   const [confirmDisablePinClearsSpecialOpen, setConfirmDisablePinClearsSpecialOpen] = useState(false);
   const [pinToggling, setPinToggling] = useState(false);
+
+  // ============================================================
+  // ✅ ESTADO REAL DEL PIN + pinOnlyMode (definido UNA sola vez)
+  // ============================================================
+  const detailHasQuickPin = Boolean(detail?.hasQuickPin);
+  const detailPinEnabled = Boolean((detail as any)?.pinEnabled);
+  const hasPin = detailHasQuickPin;
+
+  const pinOnlyMode = open && modalMode === "EDIT" && Boolean(pinOnly) && !detailHasQuickPin;
 
   function openPinFlow() {
     setPinDraft("");
@@ -444,31 +469,25 @@ export default function UserEditModal(props: Props) {
   }, [open, autoOpenPinFlow, modalMode, (detail as any)?.id, tab, pinFlowOpen, pinBusy, pinToggling]);
 
   /* ============================================================
-     ✅ PIN-ONLY: si pinOnly=true, aseguramos CONFIG + abrimos flow
+     ✅ PIN-ONLY MODE auto-open
   ============================================================ */
   useEffect(() => {
     if (!open) return;
-    if (!pinOnly) return;
-    if (modalMode !== "EDIT") return;
-
-    const hasRealPin = Boolean((detail as any)?.hasQuickPin);
+    if (!pinOnlyMode) return;
 
     if (tab !== "CONFIG") {
       setTab("CONFIG");
       return;
     }
 
-    // En pinOnly queremos SOLO el setup (si ya tiene PIN, no forzamos nada)
-    if (hasRealPin) return;
-
     if (!pinFlowOpen && !pinBusy && !pinToggling) {
       openPinFlow();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, pinOnly, modalMode, tab, (detail as any)?.hasQuickPin, pinFlowOpen, pinBusy, pinToggling]);
+  }, [open, pinOnlyMode, tab, pinFlowOpen, pinBusy, pinToggling]);
 
   /* ============================================================
-     ✅ AUTO PIN LEGACY (sessionStorage)
+     ✅ AUTO PIN LEGACY (sessionStorage) - solo si NO viene autoOpenPinFlow
   ============================================================ */
   useEffect(() => {
     if (!open) return;
@@ -502,6 +521,9 @@ export default function UserEditModal(props: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, modalMode, (detail as any)?.id, tab, pinFlowOpen, pinBusy, pinToggling, autoOpenPinFlow]);
 
+  /* ============================================================
+     ✅ SUBMIT GUARD
+  ============================================================ */
   function handleSubmit(e?: FormEvent) {
     if (e && pinFlowOpen) {
       e.preventDefault();
@@ -511,6 +533,7 @@ export default function UserEditModal(props: Props) {
     return onSubmit(e);
   }
 
+  // --- sigue ---
   const { previewByKey: draftPreviewByKey } = useDraftAttachmentPreviews(attachmentsDraft);
 
   const [hiddenSavedAttIds, setHiddenSavedAttIds] = useState<Set<string>>(new Set());
@@ -557,16 +580,17 @@ export default function UserEditModal(props: Props) {
     onClose();
   }
 
-  // ✅ ESTADO REAL DEL PIN
-  const detailHasQuickPin = Boolean(detail?.hasQuickPin);
-  const detailPinEnabled = Boolean((detail as any)?.pinEnabled);
-  const hasPin = detailHasQuickPin;
+  // Mostrar toggle solo si ya tiene PIN
+const canShowPinToggle = Boolean(detailHasQuickPin);
 
-  const canShowPinToggle = Boolean(detailHasQuickPin);
+// Puede editar PIN si es self o admin
+const canEditPin = Boolean(isSelf || canAdmin);
 
-  // ✅ FIX: NO bloquear PIN por self-edit.
-  const canEditPin = Boolean(isSelf || canAdmin);
-  const pinPillsDisabled = pinBusy || pinToggling || !canShowPinToggle || !canEditPin;
+// 🔥 IMPORTANTE:
+// pinPillsDisabled ahora SOLO bloquea por busy o falta de permisos.
+// NO depende de si el usuario tiene PIN.
+const pinPillsDisabled = pinBusy || pinToggling || !canEditPin;
+
 
   const detailAvatar = !forceHideDetailAvatar && detail?.avatarUrl ? absUrl(String(detail.avatarUrl)) : "";
   const avatarSrc = avatarPreview || detailAvatar;
@@ -685,291 +709,123 @@ export default function UserEditModal(props: Props) {
   const confirmOverlay = "bg-black/70 backdrop-blur-[1px]";
 
   // ✅ importante: el footer va DENTRO del form para que el submit funcione SIEMPRE
-  const busyClose = modalBusy || avatarBusy || specialSaving || uploadingAttachments || Boolean(deletingAttId) || pinBusy;
+  const busyClose =
+    modalBusy || avatarBusy || specialSaving || uploadingAttachments || Boolean(deletingAttId) || pinBusy;
 
-  /* ============================================================
-     ✅ MODO SOLO PIN
-     - Si props.pinOnly=true => forzamos este modo (siempre que sea EDIT)
-     - Si no, mantenemos el auto-modo legacy
-  ============================================================ */
-  const pinOnlyMode = Boolean(
-    open &&
-      modalMode === "EDIT" &&
-      tab === "CONFIG" &&
-      !detailHasQuickPin &&
-      (Boolean(pinOnly) || Boolean(pinFlowOpen))
-  );
-
-  // helpers UI PIN-only
-  const pinBoxRefs = useRef<Array<HTMLInputElement | null>>([]);
-  const pinBox2Refs = useRef<Array<HTMLInputElement | null>>([]);
-
-  function setDigitAt(str: string, idx: number, digit: string) {
-    const s = String(str || "").padEnd(4, " ");
-    const arr = s.split("").slice(0, 4);
-    arr[idx] = digit;
-    return arr.join("").replace(/\s/g, "");
-  }
-
-  function digitsOnly(v: string) {
-    return String(v || "").replace(/\D/g, "").slice(0, 1);
-  }
-
-  function focusBox(step: "NEW" | "CONFIRM", idx: number) {
-    const refArr = step === "NEW" ? pinBoxRefs.current : pinBox2Refs.current;
-    const el = refArr[idx] || null;
-    if (el) {
-      try {
-        el.focus();
-        el.select?.();
-      } catch {}
+  // ============================================================
+  // ✅ CAMBIOS REALES DEL FORM (PIN NO CUENTA)
+  // ============================================================
+  const hasFormChanges = useMemo(() => {
+    if (modalMode === "CREATE") {
+      // en CREATE siempre permitimos submit (crear usuario)
+      return true;
     }
-  }
+    if (!detail) return false;
 
-  function firstEmptyIndex(s: string) {
-    const v = String(s || "");
-    if (v.length >= 4) return 3;
-    return Math.max(0, v.length);
-  }
+    const d: any = detail;
 
-  useEffect(() => {
-    if (!pinOnlyMode) return;
+    const changed =
+      norm(fEmail) !== norm(d.email) ||
+      norm(fName) !== norm(d.name) ||
+      // password solo cuenta si escribiste algo
+      norm(fPassword) !== "" ||
+      norm(fPhoneCountry) !== norm(d.phoneCountry) ||
+      norm(fPhoneNumber) !== norm(d.phoneNumber) ||
+      norm(fDocType) !== norm(d.documentType) ||
+      norm(fDocNumber) !== norm(d.documentNumber) ||
+      norm(fStreet) !== norm(d.street) ||
+      norm(fNumber) !== norm(d.number) ||
+      norm(fCity) !== norm(d.city) ||
+      norm(fProvince) !== norm(d.province) ||
+      norm(fPostalCode) !== norm(d.postalCode) ||
+      norm(fCountry) !== norm(d.country) ||
+      norm(fNotes) !== norm(d.notes) ||
+      norm(fFavWarehouseId) !== norm(d.favoriteWarehouseId);
 
-    // enfocar primer vacío del step actual
-    const idx = pinFlowStep === "NEW" ? firstEmptyIndex(pinDraft) : firstEmptyIndex(pinDraft2);
-    window.setTimeout(() => focusBox(pinFlowStep, idx), 50);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pinOnlyMode, pinFlowStep]);
+    // roles
+    const detailRoleIds = Array.isArray(d.roles) ? d.roles.map((r: any) => String(r?.id || r)).filter(Boolean) : [];
+    const rolesChanged = !sameSet(fRoleIds || [], detailRoleIds);
 
-  async function pinOnlyContinue() {
-    if (pinBusy || pinToggling) return;
+    return Boolean(changed || rolesChanged);
+  }, [
+    modalMode,
+    detail,
+    fEmail,
+    fName,
+    fPassword,
+    fPhoneCountry,
+    fPhoneNumber,
+    fDocType,
+    fDocNumber,
+    fStreet,
+    fNumber,
+    fCity,
+    fProvince,
+    fPostalCode,
+    fCountry,
+    fNotes,
+    fFavWarehouseId,
+    fRoleIds,
+  ]);
 
-    if (pinFlowStep === "NEW") {
-      if (!/^\d{4}$/.test(String(pinDraft || ""))) return;
-      setPinFlowStep("CONFIRM");
-      window.setTimeout(() => focusBox("CONFIRM", 0), 30);
-      return;
-    }
+  // submit habilitado: no en pinOnly, no si pin modal abierto, no si sin cambios
+  const canSubmit = !pinOnlyMode && !pinFlowOpen;
 
-    // CONFIRM
-    if (!/^\d{4}$/.test(String(pinDraft2 || ""))) return;
-    if (String(pinDraft2) !== String(pinDraft)) return;
-
-    await adminSetOrResetPinWrapped({ pin: pinDraft, pin2: pinDraft2 });
-
-    // cerrar todo
-    closePinFlow();
-    onClose();
-  }
-
-  function pinOnlyClear() {
-    setPinDraft("");
-    setPinDraft2("");
-    setPinFlowStep("NEW");
-    window.setTimeout(() => focusBox("NEW", 0), 30);
-  }
-
-  if (pinOnlyMode) {
-    const stepTitle = pinFlowStep === "NEW" ? "Paso 1 de 2" : "Paso 2 de 2";
-    const stepText = pinFlowStep === "NEW" ? "Ahora ingresá el nuevo PIN." : "Repetí el PIN para confirmar.";
-
-    const cur = pinFlowStep === "NEW" ? pinDraft : pinDraft2;
-    const done4 = /^\d{4}$/.test(String(cur || ""));
-    const mismatch =
-      pinFlowStep === "CONFIRM" &&
-      /^\d{4}$/.test(String(pinDraft2 || "")) &&
-      String(pinDraft2) !== String(pinDraft);
-
-    const showMsg = showPinMessage && pinMsg;
-
-    return (
-      <>
-        <ConfirmModals
-          confirmOverlay={confirmOverlay}
-          confirmDisablePinClearsSpecialOpen={confirmDisablePinClearsSpecialOpen}
-          setConfirmDisablePinClearsSpecialOpen={setConfirmDisablePinClearsSpecialOpen}
-          pinToggling={pinToggling}
-          specialClearing={specialClearing}
-          specialCount={specialListSorted.length}
-          onConfirmDisablePinAndClearSpecial={() => void confirmDisablePinAndClearSpecial()}
-          confirmDisableSpecialOpen={confirmDisableSpecialOpen}
-          setConfirmDisableSpecialOpen={setConfirmDisableSpecialOpen}
-          onConfirmDisableSpecialAndClear={() => void confirmDisableSpecialAndClear()}
-        />
-
-        <Modal
-          open={open}
-          title="Crear PIN"
-          wide={false}
-          onClose={() => {
-            if (busyClose || pinBusy || pinToggling) return;
-            closePinFlow();
-            onClose();
-          }}
-          footer={null as any}
-        >
-          <div className="space-y-4">
-            {showMsg ? (
-              <div className="rounded-xl border border-border bg-bg px-3 py-2 text-sm text-muted">{pinMsg}</div>
-            ) : null}
-
-            {mismatch ? (
-              <div className="rounded-xl border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-200">
-                Los PIN no coinciden.
-              </div>
-            ) : null}
-
-            <div className="text-center text-xs text-muted">{stepTitle}</div>
-
-            <div className="rounded-2xl border border-border bg-card p-4">
-              <div className="text-center text-sm text-muted">{stepText}</div>
-
-              <div className="mt-4 flex items-center justify-center gap-3">
-                {[0, 1, 2, 3].map((i) => {
-                  const v = String(cur || "")[i] ? String(cur || "")[i] : "";
-                  const refArr = pinFlowStep === "NEW" ? pinBoxRefs : pinBox2Refs;
-
-                  return (
-                    <input
-                      key={i}
-                      ref={(el) => {
-                        refArr.current[i] = el;
-                      }}
-                      inputMode="numeric"
-                      autoComplete="one-time-code"
-                      className={cn(
-                        "h-12 w-12 rounded-xl border border-border bg-bg text-center text-lg font-semibold",
-                        "focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-primary/20"
-                      )}
-                      value={v}
-                      onChange={(e) => {
-                        const d = digitsOnly(e.target.value);
-                        if (!d) return;
-
-                        if (pinFlowStep === "NEW") {
-                          const next = setDigitAt(pinDraft, i, d);
-                          setPinDraft(next);
-                          if (i < 3) focusBox("NEW", i + 1);
-                        } else {
-                          const next = setDigitAt(pinDraft2, i, d);
-                          setPinDraft2(next);
-                          if (i < 3) focusBox("CONFIRM", i + 1);
-                        }
-                      }}
-                      onKeyDown={(e) => {
-                        if (e.key !== "Backspace") return;
-
-                        if (pinFlowStep === "NEW") {
-                          const s = String(pinDraft || "");
-                          if (s[i]) {
-                            const next = setDigitAt(s, i, "");
-                            setPinDraft(next);
-                            return;
-                          }
-                          if (i > 0) {
-                            focusBox("NEW", i - 1);
-                            const prev = setDigitAt(s, i - 1, "");
-                            setPinDraft(prev);
-                          }
-                        } else {
-                          const s = String(pinDraft2 || "");
-                          if (s[i]) {
-                            const next = setDigitAt(s, i, "");
-                            setPinDraft2(next);
-                            return;
-                          }
-                          if (i > 0) {
-                            focusBox("CONFIRM", i - 1);
-                            const prev = setDigitAt(s, i - 1, "");
-                            setPinDraft2(prev);
-                          }
-                        }
-                      }}
-                    />
-                  );
-                })}
-              </div>
-
-              <div className="mt-5 flex items-center justify-center gap-3">
-                <button
-                  type="button"
-                  className={cn("tp-btn-secondary", (pinBusy || pinToggling) && "opacity-60")}
-                  disabled={pinBusy || pinToggling}
-                  onClick={pinOnlyClear}
-                >
-                  Limpiar
-                </button>
-
-                <button
-                  type="button"
-                  className={cn("tp-btn-primary", (!done4 || mismatch || pinBusy || pinToggling) && "opacity-60")}
-                  disabled={!done4 || mismatch || pinBusy || pinToggling}
-                  onClick={() => void pinOnlyContinue()}
-                >
-                  {pinBusy || pinToggling ? (
-                    <span className="inline-flex items-center gap-2">
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                      Procesando…
-                    </span>
-                  ) : (
-                    "Continuar"
-                  )}
-                </button>
-              </div>
-            </div>
-          </div>
-        </Modal>
-      </>
-    );
-  }
+  const submitLabel =
+    modalBusy ? "Guardando…" : modalMode === "CREATE" ? "Crear" : "Guardar";
 
   return (
     <>
       {/* ✅ Modal: “PIN ya guardado” al cancelar */}
-      {showLeavePinConfirm ? (
-        <div className="fixed inset-0 z-50">
-          <div className="absolute inset-0 bg-black/40" onClick={() => !busyClose && setShowLeavePinConfirm(false)} />
-          <div className="absolute left-1/2 top-1/2 w-[92vw] max-w-lg -translate-x-1/2 -translate-y-1/2 rounded-2xl border border-border bg-card p-5 shadow-soft">
-            <div className="flex items-start gap-3">
-              <div className="grid h-10 w-10 place-items-center rounded-2xl border border-border bg-surface2 text-primary">
-                <AlertTriangle className="h-5 w-5" />
-              </div>
+{showLeavePinConfirm ? (
+  <div className="fixed inset-0 z-[1000]">
+    <div
+      className="absolute inset-0 bg-black/40"
+      onClick={() => !busyClose && setShowLeavePinConfirm(false)}
+    />
 
-              <div className="min-w-0">
-                <div className="text-base font-semibold text-text">El PIN ya fue guardado</div>
-                <div className="mt-1 text-sm text-muted">
-                  Cancelar este formulario <b>no deshará</b> el cambio de PIN. ¿Querés salir igual?
-                </div>
-              </div>
-            </div>
+    <div className="absolute left-1/2 top-1/2 w-[92vw] max-w-lg -translate-x-1/2 -translate-y-1/2 rounded-2xl border border-border bg-card p-5 shadow-soft">
+      <div className="flex items-start gap-3">
+        <div className="grid h-10 w-10 place-items-center rounded-2xl border border-border bg-surface2 text-primary">
+          <AlertTriangle className="h-5 w-5" />
+        </div>
 
-            <div className="mt-4 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
-              <button
-                type="button"
-                disabled={busyClose}
-                onClick={() => setShowLeavePinConfirm(false)}
-                className="inline-flex items-center justify-center gap-2 rounded-xl border-2 border-border bg-transparent px-4 py-2 text-sm font-semibold text-text hover:bg-surface2 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-primary/20 disabled:opacity-60"
-              >
-                <X className="h-4 w-4" />
-                Seguir editando
-              </button>
-
-              <button
-                type="button"
-                disabled={busyClose}
-                onClick={() => {
-                  setShowLeavePinConfirm(false);
-                  onClose();
-                }}
-                className="inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2 text-sm font-semibold text-white bg-primary hover:opacity-95 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-primary/20 disabled:opacity-60"
-              >
-                Salir igual
-                <ArrowRight className="h-4 w-4" />
-              </button>
-            </div>
+        <div className="min-w-0">
+          <div className="text-base font-semibold text-text">El PIN ya fue guardado</div>
+          <div className="mt-1 text-sm text-muted">
+            Cancelar este formulario <b>no deshará</b> el cambio de PIN. ¿Querés salir igual?
           </div>
         </div>
-      ) : null}
+      </div>
+
+      <div className="mt-4 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+        <button
+          type="button"
+          disabled={busyClose}
+          onClick={() => setShowLeavePinConfirm(false)}
+          className="inline-flex items-center justify-center gap-2 rounded-xl border-2 border-border bg-transparent px-4 py-2 text-sm font-semibold text-text hover:bg-surface2 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-primary/20 disabled:opacity-60"
+        >
+          <X className="h-4 w-4" />
+          Seguir editando
+        </button>
+
+        <button
+          type="button"
+          disabled={busyClose}
+          onClick={() => {
+            setShowLeavePinConfirm(false);
+            onClose();
+          }}
+          className="inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2 text-sm font-semibold text-white bg-primary hover:opacity-95 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-primary/20 disabled:opacity-60"
+        >
+          Salir igual
+          <ArrowRight className="h-4 w-4" />
+        </button>
+      </div>
+    </div>
+  </div>
+) : null}
+
 
       <ConfirmModals
         confirmOverlay={confirmOverlay}
@@ -1175,7 +1031,14 @@ export default function UserEditModal(props: Props) {
 
               {/* DERECHA (Cancelar + Guardar juntos) */}
               <div className="flex flex-row items-center gap-3">
-                <UserEditFooter modalBusy={modalBusy} modalMode={modalMode} onCancel={safeClose} />
+                <UserEditFooter
+                  modalBusy={modalBusy}
+                  modalMode={modalMode}
+                  onCancel={safeClose}
+                  hideSubmit={pinOnlyMode}
+                  canSubmit={canSubmit}
+                  submitLabel={submitLabel}
+                />
               </div>
             </div>
 

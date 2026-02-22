@@ -52,7 +52,6 @@ export function Modal({
   });
 
   const lastDragAtRef = useRef<number>(0);
-
   const [depth, setDepth] = useState(0);
 
   useEffect(() => {
@@ -204,6 +203,12 @@ export function Modal({
             if (busy) return;
             if ((e as any).button != null && (e as any).button !== 0) return;
 
+            // ✅ NO iniciar drag si el pointerdown viene de un control clickeable
+            const target = e.target as HTMLElement | null;
+            if (target?.closest?.("button, a, input, textarea, select, [data-no-drag='1']")) {
+              return;
+            }
+
             drag.current.active = true;
             drag.current.startX = e.clientX;
             drag.current.startY = e.clientY;
@@ -215,7 +220,11 @@ export function Modal({
           <h2 className="text-lg font-semibold">{title}</h2>
 
           <button
+            data-no-drag="1"
             className={cn("tp-btn cursor-pointer", (busy || !isTopMost) && "opacity-60")}
+            // ✅ evita que el header “capture” el drag al tocar el botón
+            onPointerDown={(e) => e.stopPropagation()}
+            onMouseDown={(e) => e.stopPropagation()}
             onClick={(e) => {
               e.stopPropagation();
               if (!isTopMost) return;
@@ -230,9 +239,7 @@ export function Modal({
         </div>
 
         {/* BODY */}
-        <div className={cn("p-6 pt-4 overflow-y-auto tp-scroll flex-1", bodyClassName)}>
-          {children}
-        </div>
+        <div className={cn("p-6 pt-4 overflow-y-auto tp-scroll flex-1", bodyClassName)}>{children}</div>
 
         {/* FOOTER (alineado a la derecha) */}
         {footer ? (

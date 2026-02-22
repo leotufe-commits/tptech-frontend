@@ -319,3 +319,139 @@ body,
   caret-color: var(--text);
   box-shadow: 0 0 0px 1000px color-mix(in oklab, var(--card) 82%, #000) inset;
 }
+/* tptech-frontend/src/index.css */
+
+/* ✅ NO importar themes.css acá.
+   Se importa en main.tsx para asegurar orden y evitar rutas incorrectas. */
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* =====================================
+   ✅ GLOBAL FOCUS (THEME AWARE)
+   ===================================== */
+
+* {
+  -webkit-tap-highlight-color: transparent;
+}
+
+:root {
+  accent-color: rgb(var(--primary-rgb) / 1);
+}
+
+:where(a, button, input, select, textarea, summary, [role="button"], [tabindex]):focus {
+  outline: none;
+}
+
+:where(a, button, input, select, textarea, summary, [role="button"], [tabindex]):focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 4px color-mix(in oklab, var(--primary) 28%, transparent);
+}
+
+:where(input, select, textarea):focus-visible {
+  border-color: color-mix(in oklab, var(--primary) 55%, var(--border));
+}
+
+:where(*):focus-visible {
+  outline-color: var(--primary);
+}
+
+:where(input, textarea) {
+  caret-color: rgb(var(--primary-rgb) / 1);
+}
+
+/* =====================================
+   Base global
+   ===================================== */
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+}
+
+/* =====================================
+   Inputs
+   ===================================== */
+.tp-input {
+  width: 100%;
+  border-radius: 0.75rem;
+  border: 1px solid var(--border);
+  padding: 0.75rem 1rem;
+  outline: none;
+  background: var(--card);
+  color: var(--text);
+  font-size: 0.95rem;
+  transition: box-shadow 180ms ease, border-color 180ms ease, opacity 180ms ease, background 180ms ease;
+}
+
+.tp-input::placeholder {
+  color: var(--muted);
+}
+
+.tp-input:focus {
+  border-color: color-mix(in oklab, var(--primary) 55%, var(--border));
+  box-shadow: 0 0 0 4px color-mix(in oklab, var(--primary) 28%, transparent);
+}
+
+.tp-input:hover {
+  border-color: color-mix(in oklab, var(--border) 65%, var(--primary));
+  box-shadow: 0 6px 18px color-mix(in oklab, var(--primary) 10%, transparent);
+}
+
+[data-theme="dark"] .tp-input {
+  background: color-mix(in oklab, var(--card) 82%, #000);
+  border-color: rgba(255, 255, 255, 0.22);
+}
+
+[data-theme="dark"] .tp-input:hover {
+  border-color: rgba(255, 255, 255, 0.3);
+}
+
+[data-theme="dark"] .tp-input:focus {
+  border-color: color-mix(in oklab, var(--primary) 60%, rgba(255, 255, 255, 0.22));
+  box-shadow:
+    0 0 0 4px color-mix(in oklab, var(--primary) 26%, transparent),
+    0 10px 26px rgba(0, 0, 0, 0.35);
+}
+
+/* =====================================
+   🔥 TPNumberInput FIX
+   Oculta flechas nativas del navegador
+   ===================================== */
+
+.tp-number-no-spin::-webkit-outer-spin-button,
+.tp-number-no-spin::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+.tp-number-no-spin {
+  -moz-appearance: textfield; /* Firefox */
+  appearance: textfield;
+}
+
+/* =====================================
+   FIX autofill
+   ===================================== */
+.tp-input:-webkit-autofill,
+.tp-input:-webkit-autofill:hover,
+.tp-input:-webkit-autofill:focus,
+.tp-input:-webkit-autofill:active {
+  -webkit-text-fill-color: var(--text);
+  caret-color: var(--text);
+  box-shadow: 0 0 0px 1000px var(--card) inset;
+  transition: background-color 9999s ease-in-out 0s;
+}
+
+[data-theme="dark"] .tp-input:-webkit-autofill,
+[data-theme="dark"] .tp-input:-webkit-autofill:hover,
+[data-theme="dark"] .tp-input:-webkit-autofill:focus,
+[data-theme="dark"] .tp-input:-webkit-autofill:active {
+  -webkit-text-fill-color: var(--text);
+  caret-color: var(--text);
+  box-shadow: 0 0 0px 1000px color-mix(in oklab, var(--card) 82%, #000) inset;
+}

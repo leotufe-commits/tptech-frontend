@@ -118,6 +118,44 @@ function filenameFromContentDisposition(cd: string | null, fallback: string) {
   return name || fallback;
 }
 
+/* ============================================================
+   ✅ NORMALIZACIÓN DEL DETAIL (MISMA LÓGICA QUE LA LISTA)
+   - backend puede mandar pinEnabled / quickPinEnabled / hasQuickPin
+============================================================ */
+function normalizeUserDetail(d: UserDetail): UserDetail {
+  const anyD: any = d as any;
+
+  const pinEnabled =
+    typeof anyD?.pinEnabled === "boolean"
+      ? Boolean(anyD.pinEnabled)
+      : typeof anyD?.quickPinEnabled === "boolean"
+      ? Boolean(anyD.quickPinEnabled)
+      : false;
+
+  const hasQuickPin =
+    typeof anyD?.hasQuickPin === "boolean"
+      ? Boolean(anyD.hasQuickPin)
+      : pinEnabled;
+
+  // roles pueden venir como objetos o ids
+  const rolesRaw = Array.isArray(anyD?.roles) ? anyD.roles : [];
+  const rolesNorm = rolesRaw
+    .map((r: any) => {
+      if (!r) return null;
+      if (typeof r === "string") return { id: r };
+      if (typeof r === "object" && r.id) return r;
+      return null;
+    })
+    .filter(Boolean);
+
+  return {
+    ...(d as any),
+    pinEnabled,
+    hasQuickPin,
+    roles: rolesNorm as any,
+  } as any;
+}
+
 export function useUsersPage() {
   const nav = useNavigate();
   const location = useLocation();
@@ -161,6 +199,22 @@ export function useUsersPage() {
   const canAdmin = permissions.includes("USERS_ROLES:ADMIN");
 
   const inv = useInventory();
+
+  /**
+   * ✅ NUEVO: pinLockEnabled (defensivo)
+   * - Dependiendo de cómo venga InventoryContext, lo leemos de varias rutas posibles.
+   * - Si no existe en tu contexto, queda false (no bloquea nada).
+   */
+  const pinLockEnabled = useMemo(() => {
+    const v =
+      (inv as any)?.joyeria?.pinLockEnabled ??
+      (inv as any)?.jewelry?.pinLockEnabled ??
+      (inv as any)?.config?.pinLockEnabled ??
+      (inv as any)?.pinLockEnabled ??
+      false;
+    return Boolean(v);
+  }, [inv]);
+
   const almacenes = (inv?.almacenes ?? []) as Array<{
     id: string;
     nombre: string;
@@ -192,6 +246,19 @@ export function useUsersPage() {
   const [limit] = useState(30);
   const [total, setTotal] = useState(0);
   const totalPages = useMemo(() => Math.max(1, Math.ceil(total / limit)), [total, limit]);
+
+  /**
+   * ✅ NUEVO: cuántos usuarios tienen PIN (hasQuickPin)
+   * - Esto es lo que después usa la UI para bloquear "Eliminar" si es el último PIN.
+   */
+  const usersWithPinCount = useMemo(() => {
+    const list = users ?? [];
+    let c = 0;
+    for (const u of list) {
+      if (Boolean((u as any)?.hasQuickPin)) c++;
+    }
+    return c;
+  }, [users]);
 
   const [roles, setRoles] = useState<Role[]>([]);
   const [rolesLoading, setRolesLoading] = useState(false);
@@ -390,8 +457,6 @@ export function useUsersPage() {
     } catch (e: unknown) {
       const msg = getErrorMessage(e, "No se pudo enviar la invitación.");
       flashInviteMsg(msg, 4000);
-      // si querés también en err global:
-      // setErr(msg);
     } finally {
       setInviteBusyId(null);
     }
@@ -654,15 +719,23 @@ export function useUsersPage() {
     setConfirmUnsavedOpen(false);
   }
 
-  function hydrateFromDetail(d: UserDetail) {
+  function hydrateFromDetail(raw: UserDetail) {
+    const d = normalizeUserDetail(raw);
+
     setDetail(d);
 
-    setFEmail(d.email ?? "");
-    setFName(d.name ?? "");
+    setFEmail((d as any).email ?? "");
+    setFName((d as any).name ?? "");
     setFPassword("");
 
-    setFRoleIds((d.roles ?? []).map((r) => r.id));
-    setFFavWarehouseId(d.favoriteWarehouseId ? String(d.favoriteWarehouseId) : "");
+    const roleIds = Array.isArray((d as any).roles)
+      ? (d as any).roles
+          .map((r: any) => String(r?.id || r || ""))
+          .filter(Boolean)
+      : [];
+    setFRoleIds(roleIds);
+
+    setFFavWarehouseId((d as any).favoriteWarehouseId ? String((d as any).favoriteWarehouseId) : "");
 
     setFPhoneCountry((d as any).phoneCountry ?? "");
     setFPhoneNumber((d as any).phoneNumber ?? "");
@@ -678,7 +751,7 @@ export function useUsersPage() {
 
     setFNotes((d as any).notes ?? "");
 
-    const ov = (d.permissionOverrides ?? []) as Override[];
+    const ov = ((d as any).permissionOverrides ?? []) as Override[];
     setSpecialList(ov);
     setSpecialEnabledState(ov.length > 0);
 
@@ -691,8 +764,10 @@ export function useUsersPage() {
 
   async function refreshDetailOnly(userId: string, opts?: { hydrate?: boolean }) {
     invalidateUserDetail(userId);
-    const refreshed = await prefetchUserDetail(userId);
-    if (!refreshed) return refreshed;
+    const refreshedRaw = await prefetchUserDetail(userId);
+    if (!refreshedRaw) return refreshedRaw;
+
+    const refreshed = normalizeUserDetail(refreshedRaw);
 
     const ov = (refreshed.permissionOverrides ?? []) as Override[];
     setSpecialList(ov);
@@ -1573,9 +1648,7 @@ export function useUsersPage() {
       return;
     }
 
-    const downloadUrl = absUrl(
-      `/users/${encodeURIComponent(userId)}/attachments/${encodeURIComponent(attId)}/download`
-    );
+    const downloadUrl = absUrl(`/users/${encodeURIComponent(userId)}/attachments/${encodeURIComponent(attId)}/download`);
 
     const resp = await fetch(downloadUrl, {
       method: "GET",
@@ -1623,9 +1696,7 @@ export function useUsersPage() {
       return;
     }
 
-    const downloadUrl = absUrl(
-      `/users/${encodeURIComponent(userId)}/attachments/${encodeURIComponent(attId)}/download`
-    );
+    const downloadUrl = absUrl(`/users/${encodeURIComponent(userId)}/attachments/${encodeURIComponent(attId)}/download`);
 
     const resp = await fetch(downloadUrl, {
       method: "GET",
@@ -1673,6 +1744,10 @@ export function useUsersPage() {
     cn,
     returnToRef,
     goBackIfReturnTo,
+
+    // ✅ NUEVO: config pin-lock + conteo de PINs
+    pinLockEnabled,
+    usersWithPinCount,
 
     // auth
     me,

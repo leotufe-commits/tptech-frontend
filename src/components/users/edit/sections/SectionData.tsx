@@ -7,6 +7,10 @@ import type { UserAttachment } from "../../../../services/users";
 
 import { TPCard, InputWithEye } from "../helpers/ui";
 
+// ✅ UI system
+import TPInput from "../../../ui/TPInput";
+import { TPIconButton } from "../../../ui/TPIconButton";
+
 // combo + hook
 import TPComboCreatable from "../../../ui/TPComboCreatable";
 import { useCatalog } from "../../../../hooks/useCatalog";
@@ -98,34 +102,6 @@ function isLikelyImage(nameOrMime: string) {
   );
 }
 
-/* =========================
-   UI: icon buttons (igual Empresa)
-========================= */
-function IconActionButton({
-  title,
-  onClick,
-  disabled,
-  children,
-}: {
-  title: string;
-  onClick?: () => void;
-  disabled?: boolean;
-  children: React.ReactNode;
-}) {
-  return (
-    <button
-      type="button"
-      className={cn("tp-btn-secondary !px-2 !py-2")}
-      onClick={onClick}
-      disabled={disabled}
-      title={title}
-      aria-label={title}
-    >
-      {children}
-    </button>
-  );
-}
-
 export default function SectionData(props: Props) {
   const {
     modalMode,
@@ -200,7 +176,7 @@ export default function SectionData(props: Props) {
   // dropzone state
   const [dragOver, setDragOver] = React.useState(false);
 
-  // ✅ reemplazo de draft (usamos icono Download como pediste)
+  // ✅ reemplazo de draft
   const replaceInputRef = React.useRef<HTMLInputElement>(null);
   const [replaceIdx, setReplaceIdx] = React.useState<number | null>(null);
 
@@ -209,9 +185,7 @@ export default function SectionData(props: Props) {
     requestAnimationFrame(() => {
       try {
         attInputRef.current?.click();
-      } catch {
-        // no-op
-      }
+      } catch {}
     });
   }
 
@@ -221,9 +195,7 @@ export default function SectionData(props: Props) {
     requestAnimationFrame(() => {
       try {
         replaceInputRef.current?.click();
-      } catch {
-        // no-op
-      }
+      } catch {}
     });
   }
 
@@ -232,7 +204,6 @@ export default function SectionData(props: Props) {
     await addAttachments(files);
   }
 
-  // ✅ “Ver” draft (blob)
   function onViewDraftFile(f: File) {
     try {
       const key = draftKey(f);
@@ -241,12 +212,8 @@ export default function SectionData(props: Props) {
 
       const url = isImg && preview ? preview : URL.createObjectURL(f);
 
-      const w = window.open(url, "_blank", "noopener,noreferrer");
-      if (!w) {
-        // popup bloqueado => no crashear
-      }
+      window.open(url, "_blank", "noopener,noreferrer");
 
-      // si era objectURL nuestro, lo liberamos
       if (!(isImg && preview)) {
         window.setTimeout(() => {
           try {
@@ -254,12 +221,9 @@ export default function SectionData(props: Props) {
           } catch {}
         }, 60_000);
       }
-    } catch {
-      // no-op
-    }
+    } catch {}
   }
 
-  // ✅ evita que el navegador “abra” el archivo al soltarlo
   React.useEffect(() => {
     if (!dragOver) return;
 
@@ -278,13 +242,10 @@ export default function SectionData(props: Props) {
   }, [dragOver]);
 
   function onViewSaved(att: UserAttachment) {
-    // ✅ preferimos abrir con auth (blob) si nos lo pasan
     if (handleOpenSavedAttachment) {
       handleOpenSavedAttachment(att);
       return;
     }
-
-    // fallback: abrir URL directa
     const url = absUrl((att as any)?.url);
     if (url) window.open(url, "_blank", "noopener,noreferrer");
   }
@@ -293,19 +254,14 @@ export default function SectionData(props: Props) {
     <div className="space-y-4">
       <Section title="Cuenta" desc="Email y contraseña inicial.">
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-          <div>
-            <label className="mb-1 block text-xs text-muted">Email</label>
-            <input
-              className="tp-input"
-              value={fEmail}
-              onChange={(e) => setFEmail(e.target.value)}
-              placeholder="usuario@correo.com"
-              disabled={modalMode === "EDIT" || modalBusy}
-              autoComplete="email"
-            />
-            {modalMode === "EDIT" && <p className="mt-1 text-[11px] text-muted">(El email no se edita desde aquí)</p>}
-          </div>
-
+          <TPInput
+            label="Email"
+            value={fEmail}
+            onChange={setFEmail}
+            placeholder="usuario@correo.com"
+            disabled={modalMode === "EDIT" || modalBusy}
+            autoComplete="email"
+          />
           <div>
             <label className="mb-1 block text-xs text-muted">
               {isCreate ? "Contraseña (opcional)" : "Nueva contraseña (opcional)"}
@@ -328,6 +284,7 @@ export default function SectionData(props: Props) {
             ) : (
               <p className="mt-1 text-[11px] text-muted">(Solo se cambia si escribís una nueva)</p>
             )}
+            {modalMode === "EDIT" && <p className="mt-1 text-[11px] text-muted">(El email no se edita desde aquí)</p>}
           </div>
         </div>
       </Section>
@@ -335,11 +292,10 @@ export default function SectionData(props: Props) {
       <Section title="Datos personales" desc="Nombre, documento y dirección.">
         <div className="grid grid-cols-1 md:grid-cols-12 gap-3">
           <div className="md:col-span-12">
-            <label className="mb-1 block text-xs text-muted">Nombre y apellido *</label>
-            <input
-              className="tp-input"
+            <TPInput
+              label="Nombre y apellido *"
               value={fName}
-              onChange={(e) => setFName(e.target.value)}
+              onChange={setFName}
               placeholder="Nombre Apellido"
               disabled={modalBusy}
             />
@@ -366,11 +322,10 @@ export default function SectionData(props: Props) {
           </div>
 
           <div className="md:col-span-3">
-            <label className="mb-1 block text-xs text-muted">Nro. doc.</label>
-            <input
-              className="tp-input"
+            <TPInput
+              label="Nro. doc."
               value={fDocNumber}
-              onChange={(e) => setFDocNumber(e.target.value)}
+              onChange={setFDocNumber}
               placeholder="12345678"
               disabled={modalBusy}
             />
@@ -397,11 +352,10 @@ export default function SectionData(props: Props) {
           </div>
 
           <div className="md:col-span-4">
-            <label className="mb-1 block text-xs text-muted">Teléfono</label>
-            <input
-              className="tp-input"
+            <TPInput
+              label="Teléfono"
               value={fPhoneNumber}
-              onChange={(e) => setFPhoneNumber(e.target.value)}
+              onChange={setFPhoneNumber}
               placeholder="11 1234 5678"
               disabled={modalBusy}
             />
@@ -413,13 +367,11 @@ export default function SectionData(props: Props) {
 
               <div className="grid grid-cols-1 md:grid-cols-12 gap-3">
                 <div className="md:col-span-5">
-                  <label className="mb-1 block text-xs text-muted">Calle</label>
-                  <input className="tp-input" value={fStreet} onChange={(e) => setFStreet(e.target.value)} disabled={modalBusy} />
+                  <TPInput label="Calle" value={fStreet} onChange={setFStreet} disabled={modalBusy} />
                 </div>
 
                 <div className="md:col-span-2">
-                  <label className="mb-1 block text-xs text-muted">Número</label>
-                  <input className="tp-input" value={fNumber} onChange={(e) => setFNumber(e.target.value)} disabled={modalBusy} />
+                  <TPInput label="Número" value={fNumber} onChange={setFNumber} disabled={modalBusy} />
                 </div>
 
                 <div className="md:col-span-5">
@@ -463,8 +415,7 @@ export default function SectionData(props: Props) {
                 </div>
 
                 <div className="md:col-span-4">
-                  <label className="mb-1 block text-xs text-muted">Código postal</label>
-                  <input className="tp-input" value={fPostalCode} onChange={(e) => setFPostalCode(e.target.value)} disabled={modalBusy} />
+                  <TPInput label="Código postal" value={fPostalCode} onChange={setFPostalCode} disabled={modalBusy} />
                 </div>
 
                 <div className="md:col-span-4">
@@ -494,6 +445,7 @@ export default function SectionData(props: Props) {
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <Section title="Notas" desc="Notas internas.">
+          {/* ✅ ideal: crear TPTextarea. Por ahora dejamos igual */}
           <textarea
             className="tp-input min-h-[180px]"
             value={fNotes}
@@ -505,7 +457,6 @@ export default function SectionData(props: Props) {
 
         <Section title="Adjuntos" desc="Archivos del usuario (PDF, imágenes, etc.).">
           <div className="space-y-3">
-            {/* input hidden (agregar) */}
             <input
               ref={attInputRef}
               type="file"
@@ -523,7 +474,6 @@ export default function SectionData(props: Props) {
               disabled={busyAttachments}
             />
 
-            {/* ✅ input hidden (reemplazar 1 archivo) */}
             <input
               ref={replaceInputRef}
               type="file"
@@ -538,7 +488,6 @@ export default function SectionData(props: Props) {
                 if (idx === null || idx < 0) return;
 
                 try {
-                  // “reemplazar” sin setter: quitamos el viejo y agregamos el nuevo
                   removeDraftAttachmentByIndex(idx);
                   await onPickFiles([f]);
                 } catch (err) {
@@ -599,12 +548,8 @@ export default function SectionData(props: Props) {
                     : "var(--border)",
                 }}
               >
-                <div className="text-sm text-text">
-                  {uploadingAttachments ? "Subiendo archivos…" : "Click para agregar archivos +"}
-                </div>
-                <div className="mt-1 text-[11px] text-muted">
-                  {dragOver ? "Soltá para adjuntar" : "También podés arrastrar y soltar acá"}
-                </div>
+                <div className="text-sm text-text">{uploadingAttachments ? "Subiendo archivos…" : "Click para agregar archivos +"}</div>
+                <div className="mt-1 text-[11px] text-muted">{dragOver ? "Soltá para adjuntar" : "También podés arrastrar y soltar acá"}</div>
 
                 {(hasDraft || hasSaved) && (
                   <div className="mt-3 text-[11px] text-muted">
@@ -636,10 +581,7 @@ export default function SectionData(props: Props) {
                           const showImg = Boolean(preview) && isLikelyImage(f.type || f.name);
 
                           return (
-                            <div
-                              key={key}
-                              className="flex items-center justify-between gap-3 rounded-xl border border-border bg-card/40 px-3 py-2"
-                            >
+                            <div key={key} className="flex items-center justify-between gap-3 rounded-xl border border-border bg-card/40 px-3 py-2">
                               <div className="flex items-center gap-3 min-w-0 flex-1">
                                 <div className="h-10 w-10 shrink-0 overflow-hidden rounded-lg border border-border bg-card">
                                   {showImg ? (
@@ -655,28 +597,18 @@ export default function SectionData(props: Props) {
                                 </div>
                               </div>
 
-                              {/* ✅ Ver / “Descargar” (reemplazar) / Eliminar (draft) */}
                               <div className="flex items-center gap-2">
-                                <IconActionButton title="Ver" disabled={busyAttachments} onClick={() => onViewDraftFile(f)}>
+                                <TPIconButton title="Ver" disabled={busyAttachments} onClick={() => onViewDraftFile(f)}>
                                   <Eye className="h-4 w-4" />
-                                </IconActionButton>
+                                </TPIconButton>
 
-                                {/* 🔁 este botón abre picker para reemplazar (icono Download como pediste) */}
-                                <IconActionButton
-                                  title="Reemplazar"
-                                  disabled={busyAttachments}
-                                  onClick={() => openReplacePicker(idx)}
-                                >
+                                <TPIconButton title="Reemplazar" disabled={busyAttachments} onClick={() => openReplacePicker(idx)}>
                                   <Download className="h-4 w-4" />
-                                </IconActionButton>
+                                </TPIconButton>
 
-                                <IconActionButton
-                                  title="Eliminar"
-                                  disabled={busyAttachments}
-                                  onClick={() => removeDraftAttachmentByIndex(idx)}
-                                >
+                                <TPIconButton title="Eliminar" disabled={busyAttachments} onClick={() => removeDraftAttachmentByIndex(idx)}>
                                   <Trash2 className="h-4 w-4" />
-                                </IconActionButton>
+                                </TPIconButton>
                               </div>
                             </div>
                           );
@@ -695,39 +627,30 @@ export default function SectionData(props: Props) {
                           const busyRow = deletingAttId === a.id || busyAttachments;
 
                           return (
-                            <div
-                              key={a.id}
-                              className="flex items-center justify-between gap-3 rounded-xl border border-border bg-card/40 px-3 py-2"
-                            >
+                            <div key={a.id} className="flex items-center justify-between gap-3 rounded-xl border border-border bg-card/40 px-3 py-2">
                               <div className="min-w-0 flex-1">
                                 <div className="truncate text-sm text-text" title={filename}>
                                   {filename}
                                 </div>
-                                <div className="text-[11px] text-muted">
-                                  {typeof a.size === "number" ? formatBytes(a.size) : ""}
-                                </div>
+                                <div className="text-[11px] text-muted">{typeof a.size === "number" ? formatBytes(a.size) : ""}</div>
                               </div>
 
                               <div className="flex items-center gap-2">
-                                <IconActionButton title="Ver" disabled={busyRow} onClick={() => onViewSaved(a)}>
+                                <TPIconButton title="Ver" disabled={busyRow} onClick={() => onViewSaved(a)}>
                                   <Eye className="h-4 w-4" />
-                                </IconActionButton>
+                                </TPIconButton>
 
-                                <IconActionButton title="Descargar" disabled={busyRow} onClick={() => handleDownloadSavedAttachment(a)}>
+                                <TPIconButton title="Descargar" disabled={busyRow} onClick={() => handleDownloadSavedAttachment(a)}>
                                   <Download className="h-4 w-4" />
-                                </IconActionButton>
+                                </TPIconButton>
 
-                                <IconActionButton
+                                <TPIconButton
                                   title={deletingAttId === a.id ? "Quitando…" : "Eliminar"}
                                   disabled={busyRow}
                                   onClick={() => handleRemoveSavedAttachment(a.id)}
                                 >
-                                  {deletingAttId === a.id ? (
-                                    <Loader2 className="h-4 w-4 animate-spin" />
-                                  ) : (
-                                    <Trash2 className="h-4 w-4" />
-                                  )}
-                                </IconActionButton>
+                                  {deletingAttId === a.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+                                </TPIconButton>
                               </div>
                             </div>
                           );

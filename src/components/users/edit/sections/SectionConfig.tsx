@@ -13,6 +13,12 @@ import PinConfigSection from "../partials/PinConfigSection";
 import { PinFlowModal } from "./PinFlowModal";
 import { isPin4 } from "../helpers/sectionConfig.helpers";
 
+// ✅ UI system
+import TPSelect from "../../../ui/TPSelect";
+import TPCheckbox from "../../../ui/TPCheckbox";
+import { TPButton } from "../../../ui/TPButton";
+import TPAlert from "../../../ui/TPAlert";
+
 type Props = {
   modalMode: "CREATE" | "EDIT";
   disableAdminDangerZone: boolean;
@@ -44,6 +50,10 @@ type Props = {
 
   pinMsg: string | null;
   showPinMessage: boolean;
+
+  // ✅ NUEVO: estado global del sistema y conteo
+  pinLockEnabled?: boolean;
+  usersWithPinCount?: number;
 
   // legacy compat (limpiamos cuando corresponde)
   pinNew: string;
@@ -128,6 +138,10 @@ export default function SectionConfig(props: Props) {
     pinMsg,
     showPinMessage,
 
+    // ✅ NUEVO
+    pinLockEnabled,
+    usersWithPinCount,
+
     setPinNew,
     setPinNew2,
 
@@ -151,6 +165,7 @@ export default function SectionConfig(props: Props) {
 
     allPerms,
     permsLoading,
+
     addOrUpdateSpecial,
     removeSpecial,
     labelByPermId,
@@ -301,18 +316,7 @@ export default function SectionConfig(props: Props) {
       />
 
       {/* ✅ Mensajito local (simple) */}
-      {pinLocalFlash ? (
-        <div
-          className={cn(
-            "rounded-xl px-3 py-2 text-sm border",
-            pinLocalFlash.type === "ok"
-              ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-200"
-              : "border-red-500/30 bg-red-500/10 text-red-200"
-          )}
-        >
-          {pinLocalFlash.msg}
-        </div>
-      ) : null}
+      {pinLocalFlash ? <TPAlert tone={pinLocalFlash.type === "ok" ? "success" : "danger"}>{pinLocalFlash.msg}</TPAlert> : null}
 
       <PinConfigSection
         modalMode={modalMode}
@@ -326,6 +330,9 @@ export default function SectionConfig(props: Props) {
         pinBusy={pinBusy}
         pinToggling={pinToggling}
         pinPillsDisabled={pinPillsDisabled}
+        // ✅ NUEVO: para regla “último PIN”
+        pinLockEnabled={pinLockEnabled}
+        usersWithPinCount={usersWithPinCount}
         pinMsg={pinMsg}
         showPinMessage={showPinMessage}
         adminTogglePinEnabled={adminTogglePinEnabled}
@@ -343,7 +350,7 @@ export default function SectionConfig(props: Props) {
 
       {/* ✅ Almacén favorito */}
       <Section title="Almacén favorito" desc="Se usará por defecto en operaciones.">
-        <select className="tp-input" value={fFavWarehouseId} onChange={(e) => setFFavWarehouseId(e.target.value)}>
+        <TPSelect value={fFavWarehouseId} onChange={setFFavWarehouseId}>
           <option value="">Sin favorito</option>
           {activeAlmacenes.map((a) => {
             const isSelected = String(fFavWarehouseId) === String(a.id);
@@ -354,34 +361,24 @@ export default function SectionConfig(props: Props) {
               </option>
             );
           })}
-        </select>
+        </TPSelect>
 
         <div className="mt-2 text-xs text-muted">
-          {fFavWarehouseId
-            ? `Seleccionado: ${warehouseLabelById(fFavWarehouseId) ?? fFavWarehouseId}`
-            : "Sin almacén favorito"}
+          {fFavWarehouseId ? `Seleccionado: ${warehouseLabelById(fFavWarehouseId) ?? fFavWarehouseId}` : "Sin almacén favorito"}
         </div>
       </Section>
 
       {/* ✅ Mensaje entre Almacén y Roles */}
       {disableAdminDangerZone ? (
-        <div
-          className="tp-card p-3 text-sm flex gap-3 items-start"
-          style={{
-            border: "1px solid color-mix(in oklab, var(--primary) 22%, var(--border))",
-            background: "color-mix(in oklab, var(--card) 88%, var(--bg))",
-          }}
-        >
-          <div className="min-w-0">
-            <div className="font-semibold">Configuración restringida</div>
-            <div className="text-xs text-muted">
-              Estás editando tu propio usuario. Para evitar perder acceso o expirar la sesión, desde acá no podés cambiar
-              roles/permisos.
-              <br />
-              ✅ Tu PIN y tu almacén favorito sí los podés gestionar.
-            </div>
+        <TPAlert tone="info" className="text-sm">
+          <div className="font-semibold">Configuración restringida</div>
+          <div className="text-xs text-muted">
+            Estás editando tu propio usuario. Para evitar perder acceso o expirar la sesión, desde acá no podés cambiar
+            roles/permisos.
+            <br />
+            ✅ Tu PIN y tu almacén favorito sí los podés gestionar.
           </div>
-        </div>
+        </TPAlert>
       ) : null}
 
       {/* ✅ Roles */}
@@ -404,21 +401,22 @@ export default function SectionConfig(props: Props) {
                   disableAdminDangerZone || Boolean(isSelf && ownerRoleId && rid === ownerRoleId && selfOwnerChecked);
 
                 return (
-                  <label key={rid} className={cn("flex items-center gap-2 text-sm", disableThis && "cursor-not-allowed")}>
-                    <input
-                      type="checkbox"
-                      className="h-4 w-4"
-                      checked={checked}
-                      disabled={disableThis}
-                      onChange={(e) =>
-                        setFRoleIds((prev) => (e.target.checked ? [...prev, rid] : prev.filter((id) => id !== rid)))
-                      }
-                    />
-                    <span className={cn(disableThis && "text-muted")}>{roleLabel(r)}</span>
-                    {isSelf && ownerRoleId && rid === ownerRoleId && selfOwnerChecked ? (
-                      <span className="ml-2 text-[11px] text-muted">(obligatorio)</span>
-                    ) : null}
-                  </label>
+                  <TPCheckbox
+                    key={rid}
+                    checked={checked}
+                    disabled={disableThis}
+                    label={
+                      <span className={cn(disableThis && "text-muted")}>
+                        {roleLabel(r)}
+                        {isSelf && ownerRoleId && rid === ownerRoleId && selfOwnerChecked ? (
+                          <span className="ml-2 text-[11px] text-muted">(obligatorio)</span>
+                        ) : null}
+                      </span>
+                    }
+                    onChange={(next) =>
+                      setFRoleIds((prev) => (next ? [...prev, rid] : prev.filter((id) => id !== rid)))
+                    }
+                  />
                 );
               })}
             </div>
@@ -432,7 +430,10 @@ export default function SectionConfig(props: Props) {
         )}
       </Section>
 
-      {/* ✅ Permisos especiales */}
+      {/* =========================
+          ✅ Permisos especiales
+      ========================= */}
+
       <Section
         title={<span className="inline-flex items-center gap-2">Permisos especiales</span>}
         right={
@@ -478,10 +479,9 @@ export default function SectionConfig(props: Props) {
           <div className={cn("grid grid-cols-1 md:grid-cols-12 gap-2 items-end", specialBlocked && "opacity-60")}>
             <div className="md:col-span-7">
               <label className="mb-1 block text-xs text-muted">Permiso</label>
-              <select
-                className="tp-input"
+              <TPSelect
                 value={specialPermPick}
-                onChange={(e) => setSpecialPermPick(e.target.value)}
+                onChange={setSpecialPermPick}
                 disabled={permsLoading || !specialEnabled || specialBlocked || specialClearing}
               >
                 <option value="">{specialEnabled ? "Seleccionar…" : "Permisos especiales deshabilitados"}</option>
@@ -494,37 +494,33 @@ export default function SectionConfig(props: Props) {
                     </option>
                   );
                 })}
-              </select>
+              </TPSelect>
             </div>
 
             <div className="md:col-span-5">
               <label className="mb-1 block text-xs text-muted">Acción</label>
 
               <div className="flex gap-2">
-                <select
-                  className="tp-input"
+                <TPSelect
                   value={specialEffectPick}
-                  onChange={(e) => setSpecialEffectPick(e.target.value as any)}
+                  onChange={(v) => setSpecialEffectPick(v as any)}
                   disabled={!specialEnabled || specialBlocked || specialClearing}
                 >
                   <option value="ALLOW">Permitir</option>
                   <option value="DENY">Denegar</option>
-                </select>
+                </TPSelect>
 
-                <button
+                <TPButton
                   type="button"
+                  variant="primary"
                   onClick={() => void addOrUpdateSpecial()}
                   disabled={!specialEnabled || !specialPermPick || specialBlocked || specialClearing || specialSaving}
-                  className={cn(
-                    "tp-btn-primary",
-                    "h-[42px] w-[42px] px-0 grid place-items-center",
-                    specialSaving && "opacity-60"
-                  )}
+                  className={cn("h-[42px] w-[42px] px-0 grid place-items-center", specialSaving && "opacity-60")}
                   title="Agregar / Actualizar"
                   aria-label="Agregar / Actualizar"
                 >
                   {specialSaving ? "…" : "+"}
-                </button>
+                </TPButton>
               </div>
             </div>
 

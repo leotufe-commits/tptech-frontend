@@ -174,6 +174,9 @@ export default function UsersPage() {
         adminTogglePinEnabled={p.adminTogglePinEnabled}
         adminSetOrResetPin={p.adminSetOrResetPin}
         adminRemovePin={p.adminRemovePin}
+        // ✅ NUEVO: regla “último PIN” (bloqueo por PIN activo)
+        pinLockEnabled={p.pinLockEnabled}
+        usersWithPinCount={p.usersWithPinCount}
         fFavWarehouseId={p.fFavWarehouseId}
         setFFavWarehouseId={p.setFFavWarehouseId}
         activeAlmacenes={p.activeAlmacenes}

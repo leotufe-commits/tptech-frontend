@@ -862,40 +862,37 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
      - actualiza AuthContext.user al instante (clave para SystemPinSettings)
   ========================= */
   useEffect(() => {
-    const onPinUpdated = (ev: Event) => {
-      try {
-        const { userId, hasQuickPin, pinEnabled } = readPinEvent(ev);
-        if (!userId) return;
+  const onPinUpdated = async (ev: Event) => {
+    try {
+      const { userId, hasQuickPin, pinEnabled } = readPinEvent(ev);
+      if (!userId) return;
 
-        setUser((prev) => {
-          if (!prev) return prev;
-          if (String(prev.id) !== String(userId)) return prev;
+      setUser((prev) => {
+        if (!prev) return prev;
+        if (String(prev.id) !== String(userId)) return prev;
 
-          const next: any = { ...prev };
-          if (typeof hasQuickPin === "boolean") next.hasQuickPin = hasQuickPin;
-          if (typeof pinEnabled === "boolean") {
-            next.pinEnabled = pinEnabled;
-            next.quickPinEnabled = pinEnabled;
-          }
+        const next: any = { ...prev };
+        if (typeof hasQuickPin === "boolean") next.hasQuickPin = hasQuickPin;
+        if (typeof pinEnabled === "boolean") {
+          next.pinEnabled = pinEnabled;
+          next.quickPinEnabled = pinEnabled;
+        }
 
-          // si te deshabilitan/quitan el PIN y estabas locked, salimos para evitar “encerrado”
-          if (
-            (typeof hasQuickPin === "boolean" && hasQuickPin === false) ||
-            (typeof pinEnabled === "boolean" && pinEnabled === false)
-          ) {
-            setLocked(false);
-          }
+        return next;
+      });
 
-          return next;
-        });
-      } catch {
-        // ignore
-      }
-    };
+      // 🔥 CLAVE: refrescamos joyería y flags reales del backend
+      await refreshMe({ silent: true, force: true });
 
-    window.addEventListener(PIN_EVENT, onPinUpdated as any);
-    return () => window.removeEventListener(PIN_EVENT, onPinUpdated as any);
-  }, [setLocked]);
+    } catch {
+      // ignore
+    }
+  };
+
+  window.addEventListener(PIN_EVENT, onPinUpdated as any);
+  return () => window.removeEventListener(PIN_EVENT, onPinUpdated as any);
+}, [refreshMe]);
+
 
   /* =========================
      ✅ ESCUCHAR EVENTO LOGO CAMBIADO

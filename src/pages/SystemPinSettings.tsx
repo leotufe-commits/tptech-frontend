@@ -5,6 +5,10 @@ import { KeyRound, Save, X, Users, ArrowRight, AlertTriangle } from "lucide-reac
 import { useNavigate } from "react-router-dom";
 import { TPSegmentedPills } from "../components/ui/TPBadges";
 
+// ✅ reutilizamos el modal de PIN (4 dígitos) sin navegar a Usuarios
+import { PinFlowModal } from "../components/users/edit/sections/PinFlowModal";
+import { setMyQuickPin } from "../components/users/users.data";
+
 function cn(...classes: Array<string | false | null | undefined>) {
   return classes.filter(Boolean).join(" ");
 }
@@ -44,7 +48,9 @@ export default function SystemPinSettings() {
   const [quickSwitchEnabled, setQuickSwitchEnabled] = useState<boolean>(Boolean(auth.quickSwitchEnabled));
   const [requireOnSwitch, setRequireOnSwitch] = useState<boolean>(Boolean(auth.pinLockRequireOnUserSwitch));
 
+  // ✅ busy SOLO para guardar settings (no debe bloquear cierre del modal PIN)
   const [busy, setBusy] = useState(false);
+
   const [saved, setSaved] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
 
@@ -134,7 +140,7 @@ export default function SystemPinSettings() {
 
   /** ✅ Heurística tolerante para detectar si MI usuario tiene PIN */
   const meId = String((auth.user as any)?.id || "");
-  const meHasQuickPin = useMemo(() => {
+  const meHasQuickPinRaw = useMemo(() => {
     const u: any = auth.user || {};
     if (typeof u.hasQuickPin === "boolean") return u.hasQuickPin;
     if (typeof u.quickPinEnabled === "boolean") return u.quickPinEnabled;
@@ -143,6 +149,38 @@ export default function SystemPinSettings() {
     if (u.pinHash) return true;
     return false;
   }, [auth.user]);
+
+  // ✅ si creamos PIN desde ESTE panel, no dependemos de refresh del auth.user
+  const [localHasQuickPin, setLocalHasQuickPin] = useState(false);
+  const meHasQuickPin = Boolean(meHasQuickPinRaw || localHasQuickPin);
+
+  // =========================
+  // ✅ PIN FLOW (MODAL) SOBRE SYSTEM SETTINGS
+  // =========================
+  const [pinFlowOpen, setPinFlowOpen] = useState(false);
+  const [pinFlowStep, setPinFlowStep] = useState<"NEW" | "CONFIRM">("NEW");
+  const [pinDraft, setPinDraft] = useState("");
+  const [pinDraft2, setPinDraft2] = useState("");
+
+  // ✅ busy del modal de PIN (independiente del "busy" del panel)
+  const [pinSaving, setPinSaving] = useState(false);
+
+  function openPinFlow() {
+    setPinDraft("");
+    setPinDraft2("");
+    setPinFlowStep("NEW");
+    setPinFlowOpen(true);
+  }
+
+  function closePinFlow() {
+    // ✅ solo bloquea si el PIN se está guardando (no por guardar settings)
+    if (pinSaving) return;
+
+    setPinFlowOpen(false);
+    setPinDraft("");
+    setPinDraft2("");
+    setPinFlowStep("NEW");
+  }
 
   function goToMyUserPinSetup() {
     // ✅ ruta: abrir edición + tab=config + abrir flujo PIN + volver
@@ -241,7 +279,7 @@ export default function SystemPinSettings() {
 
     if (!raw) return;
 
-    // si todavía no hay PIN, no hacemos nada (pero limpiamos si querés)
+    // si todavía no hay PIN, no hacemos nada
     if (!meHasQuickPin) return;
 
     // aplicar y guardar una sola vez
@@ -252,12 +290,11 @@ export default function SystemPinSettings() {
     setRequireOnSwitch(Boolean(raw.requireOnUserSwitch));
     setTimeoutMin(clamp(Number(raw.timeoutMinutes || 5), 1, 720));
 
-    // guardado automático (sin pedir al usuario)
     void (async () => {
       try {
         await onSave();
       } catch {
-        // si falla, dejamos UI en estado aplicado pero mostramos err
+        // ignore
       }
     })();
 
@@ -325,8 +362,50 @@ export default function SystemPinSettings() {
       ? { off: "No aplica", on: "Requerir" }
       : { off: "No requerir", on: "Requerir" };
 
+  // ✅ overlay consistente con el resto
+  const confirmOverlay = "bg-black/70 backdrop-blur-[1px]";
+
   return (
     <div className="p-6 space-y-5">
+      {/* ✅ MODAL PIN 4 dígitos (encima de SystemPinSettings) */}
+      <PinFlowModal
+        open={pinFlowOpen}
+        title={"Crear PIN"}
+        onClose={closePinFlow}
+        overlayClassName={confirmOverlay}
+        hasPin={false}
+        pinFlowStep={pinFlowStep}
+        setPinFlowStep={setPinFlowStep}
+        pinDraft={pinDraft}
+        setPinDraft={setPinDraft}
+        pinDraft2={pinDraft2}
+        setPinDraft2={setPinDraft2}
+        // ✅ el modal NO debe depender del busy del panel de settings
+        pinBusy={false}
+        pinToggling={pinSaving}
+        onConfirm={async (payload) => {
+          if (!payload) return;
+
+          const { pin, pin2 } = payload;
+
+          // guardrails mínimos: PinFlowModal ya valida, pero no molestamos.
+          if (!pin || !pin2 || String(pin) !== String(pin2)) return;
+
+          setPinSaving(true);
+          try {
+            await setMyQuickPin(String(pin));
+            setLocalHasQuickPin(true);
+
+            // ✅ cerramos directo (no llamamos closePinFlow acá para evitar bloqueos por flags)
+            setPinFlowOpen(false);
+
+            // si el usuario venía intentando habilitar, el effect de "pending enable" lo hace solo
+          } finally {
+            setPinSaving(false);
+          }
+        }}
+      />
+
       {/* ✅ Modal: no permitir activar lock sin PIN propio */}
       {showNeedPinConfirm && (
         <div className="fixed inset-0 z-50">
@@ -368,17 +447,32 @@ export default function SystemPinSettings() {
                   setQuickSwitchEnabled(false);
                   setRequireOnSwitch(false);
 
-                  // ✅ dejamos “pendiente” para auto-habilitar al volver si completa PIN
+                  // ✅ dejamos “pendiente” para auto-habilitar al terminar PIN
                   setPendingEnableSnapshot();
 
+                  // ✅ CERRAR confirm y abrir modal de PIN SOBRE ESTA pantalla
                   setShowNeedPinConfirm(false);
-                  goToMyUserPinSetup();
+                  openPinFlow();
                 }}
                 className="inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2 text-sm font-semibold text-white bg-primary hover:opacity-95 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-primary/20 disabled:opacity-60"
               >
                 <Users className="h-4 w-4" />
                 Configurar mi PIN
                 <ArrowRight className="h-4 w-4" />
+              </button>
+            </div>
+
+            <div className="mt-3 text-xs text-muted">
+              Si preferís, también podés configurarlo desde Usuarios.
+              <button
+                type="button"
+                className="ml-2 underline hover:opacity-90"
+                onClick={() => {
+                  setShowNeedPinConfirm(false);
+                  goToMyUserPinSetup();
+                }}
+              >
+                Ir a Usuarios
               </button>
             </div>
           </div>
@@ -495,7 +589,6 @@ export default function SystemPinSettings() {
                     setEnabled(false);
                     setQuickSwitchEnabled(false);
                     setRequireOnSwitch(false);
-                    // si apaga manualmente, limpiamos pendiente
                     try {
                       sessionStorage.removeItem(PINLOCK_PENDING_KEY);
                     } catch {}
@@ -520,7 +613,7 @@ export default function SystemPinSettings() {
 
             {!meHasQuickPin ? (
               <div className="mt-3 text-[11px] text-muted">
-                Para activar el bloqueo por PIN, primero configurá <b>tu</b> PIN en Usuarios.
+                Para activar el bloqueo por PIN, primero configurá <b>tu</b> PIN.
               </div>
             ) : null}
           </div>
@@ -640,9 +733,7 @@ export default function SystemPinSettings() {
           <div
             className={cn(
               "text-sm rounded-xl px-3 py-2 border",
-              err
-                ? "text-red-400 bg-red-500/10 border-red-500/15"
-                : "text-emerald-400 bg-emerald-500/10 border-emerald-500/15"
+              err ? "text-red-400 bg-red-500/10 border-red-500/15" : "text-emerald-400 bg-emerald-500/10 border-emerald-500/15"
             )}
           >
             {err || saved}
