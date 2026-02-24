@@ -1,21 +1,48 @@
 // tptech-frontend/src/components/ui/Modal.tsx
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import { X } from "lucide-react";
 import { cn } from "./tp";
 
 /**
  * ✅ Modal DRAGGABLE (arrastrable) + stack (nested-safe)
  * ✅ overlayClassName opcional
  * ✅ busy bloquea cierre
- * ✅ footer opcional con alineación a la derecha
+ * ✅ footer opcional
+ * ✅ NUEVO:
+ *    - maxWidth (sm/md/lg/xl/2xl/3xl/4xl/6xl)
+ *    - hideHeaderClose (oculta botón del header)
+ *    - subtitle / description (diseño más cuidado)
+ *    - headerRight (acciones custom a la derecha)
+ *    - showCloseIcon (X) + closeLabel (texto opcional)
  */
 
 let __tp_modal_stack: string[] = [];
 
+type MaxWidth = "sm" | "md" | "lg" | "xl" | "2xl" | "3xl" | "4xl" | "6xl";
+
+function maxWidthClass(maxWidth?: MaxWidth, wide?: boolean) {
+  // ✅ compat: si no pasan maxWidth, respetamos wide como antes
+  if (!maxWidth) return wide ? "max-w-6xl" : "max-w-4xl";
+
+  if (maxWidth === "sm") return "max-w-sm";
+  if (maxWidth === "md") return "max-w-md";
+  if (maxWidth === "lg") return "max-w-lg";
+  if (maxWidth === "xl") return "max-w-xl";
+  if (maxWidth === "2xl") return "max-w-2xl";
+  if (maxWidth === "3xl") return "max-w-3xl";
+  if (maxWidth === "4xl") return "max-w-4xl";
+  if (maxWidth === "6xl") return "max-w-6xl";
+  return wide ? "max-w-6xl" : "max-w-4xl";
+}
+
 export function Modal({
   open,
   title,
+  subtitle,
+  description,
   children,
   onClose,
+
   wide,
   overlayClassName,
   className,
@@ -23,11 +50,26 @@ export function Modal({
   busy,
   footer,
   footerClassName,
+
+  // ✅ nuevo
+  maxWidth,
+  hideHeaderClose,
+
+  // ✅ nuevo diseño
+  headerRight,
+  showCloseIcon = true,
+  closeLabel = "Cerrar",
 }: {
   open: boolean;
   title: string;
+
+  /** ✅ opcionales (diseño más cuidado) */
+  subtitle?: string;
+  description?: string;
+
   children: React.ReactNode;
   onClose: () => void;
+
   wide?: boolean;
   overlayClassName?: string;
   className?: string;
@@ -35,6 +77,21 @@ export function Modal({
   busy?: boolean;
   footer?: React.ReactNode;
   footerClassName?: string;
+
+  /** ✅ ancho real del modal (si se pasa, reemplaza wide) */
+  maxWidth?: MaxWidth;
+
+  /** ✅ oculta botón "Cerrar" del header */
+  hideHeaderClose?: boolean;
+
+  /** ✅ acciones extra a la derecha del header (ej: botones) */
+  headerRight?: React.ReactNode;
+
+  /** ✅ muestra botón X */
+  showCloseIcon?: boolean;
+
+  /** ✅ texto del botón cerrar (si lo querés mostrar) */
+  closeLabel?: string;
 }) {
   const modalRef = useRef<HTMLDivElement | null>(null);
   const headerRef = useRef<HTMLDivElement | null>(null);
@@ -156,6 +213,9 @@ export function Modal({
   const overlayClass = overlayClassName ?? defaultOverlayClass;
 
   const zBase = 50 + depth * 10;
+  const wCls = maxWidthClass(maxWidth, wide);
+
+  const hasMeta = Boolean(subtitle || description);
 
   return (
     <div className="fixed inset-0 flex items-center justify-center px-4" style={{ zIndex: zBase }}>
@@ -180,7 +240,7 @@ export function Modal({
         aria-label={title}
         className={cn(
           "relative w-full rounded-2xl border border-border bg-card shadow-soft",
-          wide ? "max-w-6xl" : "max-w-4xl",
+          wCls,
           "max-h-[85vh] flex flex-col",
           className
         )}
@@ -197,7 +257,11 @@ export function Modal({
         <div
           ref={headerRef}
           tabIndex={-1}
-          className="p-6 pb-4 border-b border-border flex items-center justify-between gap-3 cursor-move select-none"
+          className={cn(
+            "border-b border-border select-none",
+            "px-6 pt-5 pb-4",
+            "cursor-move"
+          )}
           onPointerDown={(e) => {
             if (!isTopMost) return;
             if (busy) return;
@@ -217,31 +281,82 @@ export function Modal({
             lastDragAtRef.current = Date.now();
           }}
         >
-          <h2 className="text-lg font-semibold">{title}</h2>
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <h2 className="text-lg font-bold text-text leading-tight truncate">{title}</h2>
 
-          <button
-            data-no-drag="1"
-            className={cn("tp-btn cursor-pointer", (busy || !isTopMost) && "opacity-60")}
-            // ✅ evita que el header “capture” el drag al tocar el botón
-            onPointerDown={(e) => e.stopPropagation()}
-            onMouseDown={(e) => e.stopPropagation()}
-            onClick={(e) => {
-              e.stopPropagation();
-              if (!isTopMost) return;
-              if (busy) return;
-              onClose();
-            }}
-            type="button"
-            disabled={busy || !isTopMost}
-          >
-            Cerrar
-          </button>
+              {subtitle ? (
+                <div className="text-sm text-muted mt-1">{subtitle}</div>
+              ) : null}
+
+              {description ? (
+                <div className="text-xs text-muted mt-1">{description}</div>
+              ) : null}
+            </div>
+
+            <div className="flex items-center gap-2 shrink-0" data-no-drag="1">
+              {headerRight ? <div className="flex items-center gap-2">{headerRight}</div> : null}
+
+              {/* ✅ opcional: ocultar botón del header */}
+              {!hideHeaderClose ? (
+                <div className="flex items-center gap-2">
+                  {/* Botón texto (opcional, más “clásico”) */}
+                  {closeLabel ? (
+                    <button
+                      data-no-drag="1"
+                      className={cn("tp-btn cursor-pointer", (busy || !isTopMost) && "opacity-60")}
+                      onPointerDown={(e) => e.stopPropagation()}
+                      onMouseDown={(e) => e.stopPropagation()}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (!isTopMost) return;
+                        if (busy) return;
+                        onClose();
+                      }}
+                      type="button"
+                      disabled={busy || !isTopMost}
+                    >
+                      {closeLabel}
+                    </button>
+                  ) : null}
+
+                  {/* Botón X (moderno) */}
+                  {showCloseIcon ? (
+                    <button
+                      data-no-drag="1"
+                      type="button"
+                      title="Cerrar"
+                      className={cn(
+                        "h-9 w-9 rounded-xl border border-border bg-surface2/40",
+                        "grid place-items-center hover:bg-surface2 transition",
+                        (busy || !isTopMost) && "opacity-60"
+                      )}
+                      onPointerDown={(e) => e.stopPropagation()}
+                      onMouseDown={(e) => e.stopPropagation()}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (!isTopMost) return;
+                        if (busy) return;
+                        onClose();
+                      }}
+                      disabled={busy || !isTopMost}
+                    >
+                      <X className="h-4 w-4" />
+                    </button>
+                  ) : null}
+                </div>
+              ) : null}
+            </div>
+          </div>
+
+          {/* separador extra sutil si hay meta */}
+          {hasMeta ? <div className="mt-4" /> : null}
         </div>
 
         {/* BODY */}
         <div className={cn("p-6 pt-4 overflow-y-auto tp-scroll flex-1", bodyClassName)}>{children}</div>
 
-        {/* FOOTER (alineado a la derecha) */}
+        {/* FOOTER */}
         {footer ? (
           <div
             className={cn(

@@ -1,6 +1,45 @@
 // tptech-frontend/src/services/valuation.ts
 import { apiFetch } from "../lib/api";
 
+/* =========================
+   Events (auto-refresh global)
+========================= */
+
+export const TPTECH_VALUATION_CHANGED = "tptech:valuation-changed";
+
+export type ValuationChangedDetail =
+  | { kind: "currencies:created"; currencyId?: string }
+  | { kind: "currencies:updated"; currencyId: string }
+  | { kind: "currencies:deleted"; currencyId: string }
+  | { kind: "currencies:base-changed"; newBaseId: string }
+  | { kind: "currencies:active-changed"; currencyId: string; isActive: boolean }
+  | { kind: "currencies:rate-added"; currencyId: string }
+  | { kind: "metals:created"; metalId?: string }
+  | { kind: "metals:updated"; metalId: string }
+  | { kind: "metals:deleted"; metalId: string }
+  | { kind: "metals:active-changed"; metalId: string; isActive: boolean }
+  | { kind: "metals:moved"; metalId: string; dir: "UP" | "DOWN" }
+  | { kind: "variants:created"; metalId: string; variantId?: string }
+  | { kind: "variants:updated"; variantId: string }
+  | { kind: "variants:deleted"; variantId: string }
+  | { kind: "variants:active-changed"; variantId: string; isActive: boolean }
+  | { kind: "variants:favorite-changed"; variantId?: string | null; metalId?: string }
+  | { kind: "variants:pricing-updated"; variantId: string }
+  | { kind: "quotes:added"; variantId: string };
+
+function emitValuationChanged(detail: ValuationChangedDetail) {
+  try {
+    if (typeof window === "undefined") return;
+    window.dispatchEvent(new CustomEvent(TPTECH_VALUATION_CHANGED, { detail }));
+  } catch {
+    // noop
+  }
+}
+
+/* =========================
+   Types
+========================= */
+
 export type CurrencyRow = {
   id: string;
   code: string;
@@ -38,14 +77,14 @@ export type MetalVariantRow = {
   isActive: boolean;
   isFavorite: boolean;
 
-  // ✅ NUEVO: persistidos
+  // ✅ persistidos
   buyFactor?: number;
   saleFactor?: number;
   purchasePriceOverride?: number | null;
   salePriceOverride?: number | null;
   pricingMode?: "AUTO" | "OVERRIDE" | string;
 
-  // ✅ NUEVO: calculados backend
+  // ✅ calculados backend
   suggestedPrice?: number;
   finalPurchasePrice?: number;
   finalSalePrice?: number;
@@ -99,34 +138,55 @@ export async function listCurrencies() {
 }
 
 export async function createCurrency(data: { code: string; name: string; symbol: string }) {
-  return apiFetch("/valuation/currencies", { method: "POST", body: data as any });
+  const resp = await apiFetch("/valuation/currencies", { method: "POST", body: data as any });
+
+  // Si el backend devuelve la moneda creada, intentamos sacar id
+  const createdId =
+    (resp as any)?.row?.id ??
+    (resp as any)?.data?.row?.id ??
+    (resp as any)?.currency?.id ??
+    (resp as any)?.data?.currency?.id ??
+    undefined;
+
+  emitValuationChanged({ kind: "currencies:created", currencyId: createdId });
+  return resp;
 }
 
 export async function updateCurrency(currencyId: string, data: { code: string; name: string; symbol: string }) {
-  return apiFetch(`/valuation/currencies/${currencyId}`, { method: "PATCH", body: data as any });
+  const resp = await apiFetch(`/valuation/currencies/${currencyId}`, { method: "PATCH", body: data as any });
+  emitValuationChanged({ kind: "currencies:updated", currencyId });
+  return resp;
 }
 
 export async function deleteCurrency(currencyId: string) {
-  return apiFetch(`/valuation/currencies/${currencyId}`, { method: "DELETE" });
+  const resp = await apiFetch(`/valuation/currencies/${currencyId}`, { method: "DELETE" });
+  emitValuationChanged({ kind: "currencies:deleted", currencyId });
+  return resp;
 }
 
 export async function setBaseCurrency(currencyId: string, _opts?: { effectiveAt?: string | Date }) {
   // backend usa effectiveAt = now en controller; dejamos opts por compatibilidad
-  return apiFetch(`/valuation/currencies/${currencyId}/set-base`, { method: "POST" });
+  const resp = await apiFetch(`/valuation/currencies/${currencyId}/set-base`, { method: "POST" });
+  emitValuationChanged({ kind: "currencies:base-changed", newBaseId: currencyId });
+  return resp;
 }
 
 export async function toggleCurrencyActive(currencyId: string, isActive: boolean) {
-  return apiFetch(`/valuation/currencies/${currencyId}/active`, {
+  const resp = await apiFetch(`/valuation/currencies/${currencyId}/active`, {
     method: "PATCH",
     body: { isActive } as any,
   });
+  emitValuationChanged({ kind: "currencies:active-changed", currencyId, isActive });
+  return resp;
 }
 
 export async function addCurrencyRate(currencyId: string, data: { rate: number; effectiveAt: string | Date }) {
-  return apiFetch(`/valuation/currencies/${currencyId}/rates`, {
+  const resp = await apiFetch(`/valuation/currencies/${currencyId}/rates`, {
     method: "POST",
     body: data as any,
   });
+  emitValuationChanged({ kind: "currencies:rate-added", currencyId });
+  return resp;
 }
 
 export async function getCurrencyRates(currencyId: string, take = 50) {
@@ -138,6 +198,10 @@ export async function listCurrencyRates(currencyId: string, take = 50) {
   return getCurrencyRates(currencyId, take);
 }
 
+/**
+ * ⚠️ OJO: esta ruta /history parece legacy (en tu backend actual usás /rates).
+ * La dejo para no romper imports, pero si no existe te va a dar 404.
+ */
 export async function getCurrencyRateHistory(currencyId: string, take = 80) {
   return apiFetch(`/valuation/currencies/${currencyId}/history?take=${take}`);
 }
@@ -156,22 +220,41 @@ export async function listMetals() {
 }
 
 export async function createMetal(data: { name: string; symbol?: string; referenceValue?: number }) {
-  return apiFetch("/valuation/metals", { method: "POST", body: data as any });
+  const resp = await apiFetch("/valuation/metals", { method: "POST", body: data as any });
+
+  const createdId =
+    (resp as any)?.row?.id ??
+    (resp as any)?.data?.row?.id ??
+    (resp as any)?.metal?.id ??
+    (resp as any)?.data?.metal?.id ??
+    undefined;
+
+  emitValuationChanged({ kind: "metals:created", metalId: createdId });
+  return resp;
 }
 
 export async function updateMetal(metalId: string, data: { name: string; symbol?: string; referenceValue?: number }) {
-  return apiFetch(`/valuation/metals/${metalId}`, { method: "PATCH", body: data as any });
+  const resp = await apiFetch(`/valuation/metals/${metalId}`, { method: "PATCH", body: data as any });
+  emitValuationChanged({ kind: "metals:updated", metalId });
+
+  // ✅ IMPORTANTE: si cambia referenceValue, las variantes “referidas” deberían refrescarse.
+  // Eso lo resolvemos en el listener (useValuation / panel de variantes) recargando variantes del metal seleccionado.
+  return resp;
 }
 
 export async function deleteMetal(metalId: string) {
-  return apiFetch(`/valuation/metals/${metalId}`, { method: "DELETE" });
+  const resp = await apiFetch(`/valuation/metals/${metalId}`, { method: "DELETE" });
+  emitValuationChanged({ kind: "metals:deleted", metalId });
+  return resp;
 }
 
 export async function toggleMetalActive(metalId: string, isActive: boolean) {
-  return apiFetch(`/valuation/metals/${metalId}/active`, {
+  const resp = await apiFetch(`/valuation/metals/${metalId}/active`, {
     method: "PATCH",
     body: { isActive } as any,
   });
+  emitValuationChanged({ kind: "metals:active-changed", metalId, isActive });
+  return resp;
 }
 
 export async function getMetalRefHistory(
@@ -191,10 +274,12 @@ export async function moveMetal(
   metalId: string,
   dir: "UP" | "DOWN"
 ): Promise<{ ok: boolean; changed: boolean; rows?: MetalRow[]; error?: string }> {
-  return apiFetch(`/valuation/metals/${metalId}/move`, {
+  const resp = await apiFetch(`/valuation/metals/${metalId}/move`, {
     method: "POST",
     body: { dir } as any,
   });
+  emitValuationChanged({ kind: "metals:moved", metalId, dir });
+  return resp as any;
 }
 
 /* =========================
@@ -213,12 +298,21 @@ export async function createVariant(data: {
   purchasePriceOverride?: number | null;
   salePriceOverride?: number | null;
 }) {
-  return apiFetch("/valuation/variants", { method: "POST", body: data as any });
+  const resp = await apiFetch("/valuation/variants", { method: "POST", body: data as any });
+
+  const createdId =
+    (resp as any)?.row?.id ??
+    (resp as any)?.data?.row?.id ??
+    (resp as any)?.variant?.id ??
+    (resp as any)?.data?.variant?.id ??
+    undefined;
+
+  emitValuationChanged({ kind: "variants:created", metalId: data.metalId, variantId: createdId });
+  return resp;
 }
 
 /**
- * ✅ NUEVO: editar variante (para reutilizar CreateVariantModal en modo EDIT)
- * Ruta esperada:
+ * ✅ editar variante (reutilizar CreateVariantModal en modo EDIT)
  *   PATCH /valuation/variants/:variantId
  */
 export async function updateVariant(
@@ -231,22 +325,27 @@ export async function updateVariant(
     salePriceOverride?: number | null;
   }
 ) {
-  return apiFetch(`/valuation/variants/${variantId}`, {
+  const resp = await apiFetch(`/valuation/variants/${variantId}`, {
     method: "PATCH",
     body: data as any,
   });
+  emitValuationChanged({ kind: "variants:updated", variantId });
+  return resp;
 }
 
 export async function updateVariantPricing(variantId: string, patch: VariantPricingPatch) {
-  return apiFetch(`/valuation/variants/${variantId}/pricing`, {
+  const resp = await apiFetch(`/valuation/variants/${variantId}/pricing`, {
     method: "PATCH",
     body: patch as any,
   });
+  emitValuationChanged({ kind: "variants:pricing-updated", variantId });
+  return resp;
 }
 
-// ✅ eliminar variante (lo usa useValuation + ConfirmDeleteDialog)
 export async function deleteVariant(variantId: string) {
-  return apiFetch(`/valuation/variants/${variantId}`, { method: "DELETE" });
+  const resp = await apiFetch(`/valuation/variants/${variantId}`, { method: "DELETE" });
+  emitValuationChanged({ kind: "variants:deleted", variantId });
+  return resp;
 }
 
 export async function getVariants(
@@ -294,10 +393,12 @@ export async function listVariants(
 }
 
 export async function toggleVariantActive(variantId: string, isActive: boolean) {
-  return apiFetch(`/valuation/variants/${variantId}/active`, {
+  const resp = await apiFetch(`/valuation/variants/${variantId}/active`, {
     method: "PATCH",
     body: { isActive } as any,
   });
+  emitValuationChanged({ kind: "variants:active-changed", variantId, isActive });
+  return resp;
 }
 
 /**
@@ -305,17 +406,20 @@ export async function toggleVariantActive(variantId: string, isActive: boolean) 
  * Backend actual: POST /valuation/variants/:variantId/set-favorite
  */
 export async function setFavoriteVariant(variantId: string) {
-  return apiFetch(`/valuation/variants/${variantId}/set-favorite`, { method: "POST" });
+  const resp = await apiFetch(`/valuation/variants/${variantId}/set-favorite`, { method: "POST" });
+  emitValuationChanged({ kind: "variants:favorite-changed", variantId });
+  return resp;
 }
 
 /**
- * ✅ limpiar favorito del metal para que no quede ninguno seleccionado.
- *
- * Requiere endpoint en backend:
+ * ✅ limpiar favorito del metal
+ * Requiere endpoint:
  *   POST /valuation/metals/:metalId/clear-favorite
  */
 export async function clearFavoriteVariant(metalId: string) {
-  return apiFetch(`/valuation/metals/${metalId}/clear-favorite`, { method: "POST" });
+  const resp = await apiFetch(`/valuation/metals/${metalId}/clear-favorite`, { method: "POST" });
+  emitValuationChanged({ kind: "variants:favorite-changed", variantId: null, metalId });
+  return resp;
 }
 
 /* =========================
@@ -329,7 +433,9 @@ export async function addQuote(data: {
   salePrice: number;
   effectiveAt?: string | Date;
 }) {
-  return apiFetch("/valuation/quotes", { method: "POST", body: data as any });
+  const resp = await apiFetch("/valuation/quotes", { method: "POST", body: data as any });
+  emitValuationChanged({ kind: "quotes:added", variantId: data.variantId });
+  return resp;
 }
 
 export async function getQuotes(variantId: string, take = 50) {

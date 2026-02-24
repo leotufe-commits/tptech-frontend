@@ -1,5 +1,5 @@
 // src/pages/PerfilJoyeria/PerfilJoyeriaEdit.tsx
-import React from "react";
+import React, { useEffect, useRef } from "react";
 
 import TPComboCreatable from "../../components/ui/TPComboCreatable";
 import TPInput from "../../components/ui/TPInput";
@@ -17,14 +17,11 @@ type Props = {
   existing: ExistingBody;
   company: CompanyBody;
   readonly: boolean;
-
   allowCreate: boolean;
 
-  // setters
   setExistingField: <K extends keyof ExistingBody>(key: K, value: ExistingBody[K]) => void;
   setCompanyField: <K extends keyof CompanyBody>(key: K, value: CompanyBody[K]) => void;
 
-  // catalogs
   catIva: CatalogItem[];
   catPrefix: CatalogItem[];
   catCity: CatalogItem[];
@@ -34,8 +31,7 @@ type Props = {
   ensureCatalog: (type: CatalogType, force?: boolean) => Promise<void>;
   createAndRefresh: (type: CatalogType, label: string) => Promise<void>;
 
-  // attachments
-  attInputRef: React.RefObject<HTMLInputElement>; // (ya no se usa acá, lo dejamos por compat)
+  attInputRef: React.RefObject<HTMLInputElement>;
   uploadingAttachments: boolean;
   deletingAttId: string | null;
   uploadAttachmentsInstant: (files: File[]) => Promise<void>;
@@ -47,9 +43,7 @@ function HelpText(props: { className?: string; children: React.ReactNode }) {
   return (
     <div
       className={cn("text-[11px] leading-snug", props.className)}
-      style={{
-        color: "color-mix(in oklab, var(--muted) 70%, var(--text))",
-      }}
+      style={{ color: "color-mix(in oklab, var(--muted) 70%, var(--text))" }}
     >
       {props.children}
     </div>
@@ -57,34 +51,30 @@ function HelpText(props: { className?: string; children: React.ReactNode }) {
 }
 
 export default function PerfilJoyeriaEdit(p: Props) {
+  // ✅ evita crash si algo viene undefined en primer render
+  const catLoading = p.catLoading ?? {};
+
   const busyAttachments = p.readonly || p.uploadingAttachments || Boolean(p.deletingAttId);
   const hasSaved = (p.savedAttachments || []).length > 0;
 
   function openInNewTab(url: string) {
     try {
       window.open(url, "_blank", "noreferrer");
-    } catch {
-      // no-op
-    }
+    } catch {}
   }
 
   async function downloadFile(url: string, filename?: string) {
     const safeName = String(filename || "archivo").trim() || "archivo";
-
     try {
       const res = await fetch(url, { credentials: "include" });
-      if (!res.ok) throw new Error("HTTP " + res.status);
-
       const blob = await res.blob();
       const blobUrl = URL.createObjectURL(blob);
-
       const a = document.createElement("a");
       a.href = blobUrl;
       a.download = safeName;
       document.body.appendChild(a);
       a.click();
       a.remove();
-
       setTimeout(() => URL.revokeObjectURL(blobUrl), 10_000);
     } catch {
       openInNewTab(url);
@@ -99,8 +89,31 @@ export default function PerfilJoyeriaEdit(p: Props) {
     mimeType: String(a?.mimeType ?? a?.mimetype ?? a?.type ?? "") || undefined,
   }));
 
+  // ✅ TAB horizontal: primero izquierda, luego derecha, luego domicilio, luego notas, luego adjuntos
+  let t = 1;
+
+  // ✅ Auto-focus al primer campo (Razón social = tabIndex 1)
+  const rootRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (p.readonly) return;
+    const el = rootRef.current;
+    if (!el) return;
+
+    const target = el.querySelector('[tabindex="1"]') as HTMLElement | null;
+    if (!target) return;
+
+    const id = window.setTimeout(() => {
+      try {
+        target.focus();
+      } catch {}
+    }, 0);
+
+    return () => window.clearTimeout(id);
+  }, [p.readonly]);
+
   return (
     <div
+      ref={rootRef}
       className="rounded-2xl p-4 sm:p-6"
       style={{
         border: "1px solid var(--border)",
@@ -108,12 +121,14 @@ export default function PerfilJoyeriaEdit(p: Props) {
         boxShadow: "var(--shadow)",
       }}
     >
-      {/* COLUMNAS */}
       <div className="grid grid-cols-1 gap-8 lg:grid-cols-2">
-        {/* IZQUIERDA */}
+        {/* =========================
+            IZQUIERDA (primero TAB)
+        ========================= */}
         <div className="space-y-4">
           <TPField label="Razón social">
             <TPInput
+              tabIndex={t++}
               value={p.company.legalName}
               onChange={(v) => p.setCompanyField("legalName", v)}
               readOnly={p.readonly}
@@ -125,17 +140,17 @@ export default function PerfilJoyeriaEdit(p: Props) {
             <div className="sm:col-span-5">
               <TPField label="Condición de IVA">
                 <TPComboCreatable
+                  tabIndex={t++}
                   mode="edit"
                   type="IVA_CONDITION"
                   items={p.catIva}
-                  loading={!!p.catLoading["IVA_CONDITION"]}
+                  loading={!!catLoading?.["IVA_CONDITION"]}
                   onRefresh={() => p.ensureCatalog("IVA_CONDITION")}
                   value={p.company.ivaCondition}
                   onChange={(v) => p.setCompanyField("ivaCondition", v)}
                   allowCreate={p.allowCreate}
                   onCreate={(label) => p.createAndRefresh("IVA_CONDITION", label)}
                   disabled={p.readonly}
-                  placeholder="Condición de IVA…"
                 />
               </TPField>
             </div>
@@ -143,6 +158,7 @@ export default function PerfilJoyeriaEdit(p: Props) {
             <div className="sm:col-span-7">
               <TPField label="CUIT">
                 <TPInput
+                  tabIndex={t++}
                   value={p.company.cuit}
                   onChange={(v) => p.setCompanyField("cuit", v)}
                   onlyDigits
@@ -155,6 +171,7 @@ export default function PerfilJoyeriaEdit(p: Props) {
 
           <TPField label="Sitio web">
             <TPInput
+              tabIndex={t++}
               value={p.company.website}
               onChange={(v) => p.setCompanyField("website", v)}
               readOnly={p.readonly}
@@ -163,10 +180,13 @@ export default function PerfilJoyeriaEdit(p: Props) {
           </TPField>
         </div>
 
-        {/* DERECHA */}
+        {/* =========================
+            DERECHA (después TAB)
+        ========================= */}
         <div className="space-y-4">
           <TPField label="Nombre de Fantasía">
             <TPInput
+              tabIndex={t++}
               value={p.existing.name}
               onChange={(v) => p.setExistingField("name", v)}
               readOnly={p.readonly}
@@ -178,17 +198,17 @@ export default function PerfilJoyeriaEdit(p: Props) {
             <div className="sm:col-span-4">
               <TPField label="Prefijo">
                 <TPComboCreatable
+                  tabIndex={t++}
                   mode="edit"
                   type="PHONE_PREFIX"
                   items={p.catPrefix}
-                  loading={!!p.catLoading["PHONE_PREFIX"]}
+                  loading={!!catLoading?.["PHONE_PREFIX"]}
                   onRefresh={() => p.ensureCatalog("PHONE_PREFIX")}
                   value={p.existing.phoneCountry}
                   onChange={(v) => p.setExistingField("phoneCountry", v)}
                   allowCreate={p.allowCreate}
                   onCreate={(label) => p.createAndRefresh("PHONE_PREFIX", label)}
                   disabled={p.readonly}
-                  placeholder="Ej: AR +54"
                 />
               </TPField>
             </div>
@@ -196,6 +216,7 @@ export default function PerfilJoyeriaEdit(p: Props) {
             <div className="sm:col-span-8">
               <TPField label="Teléfono">
                 <TPInput
+                  tabIndex={t++}
                   value={p.existing.phoneNumber}
                   onChange={(v) => p.setExistingField("phoneNumber", v)}
                   readOnly={p.readonly}
@@ -207,6 +228,7 @@ export default function PerfilJoyeriaEdit(p: Props) {
 
           <TPField label="Correo electrónico">
             <TPInput
+              tabIndex={t++}
               value={p.company.email}
               onChange={(v) => p.setCompanyField("email", v)}
               readOnly={p.readonly}
@@ -216,7 +238,9 @@ export default function PerfilJoyeriaEdit(p: Props) {
         </div>
       </div>
 
-      {/* DOMICILIO */}
+      {/* =========================
+          DOMICILIO (sigue TAB)
+      ========================= */}
       <div className="mt-6 rounded-2xl p-4 sm:p-5" style={{ border: "1px solid var(--border)" }}>
         <div className="font-semibold text-sm mb-4">Domicilio</div>
 
@@ -224,6 +248,7 @@ export default function PerfilJoyeriaEdit(p: Props) {
           <div className="md:col-span-5">
             <TPField label="Calle">
               <TPInput
+                tabIndex={t++}
                 value={p.existing.street}
                 onChange={(v) => p.setExistingField("street", v)}
                 readOnly={p.readonly}
@@ -235,6 +260,7 @@ export default function PerfilJoyeriaEdit(p: Props) {
           <div className="md:col-span-2">
             <TPField label="Número">
               <TPInput
+                tabIndex={t++}
                 value={p.existing.number}
                 onChange={(v) => p.setExistingField("number", v)}
                 readOnly={p.readonly}
@@ -246,17 +272,17 @@ export default function PerfilJoyeriaEdit(p: Props) {
           <div className="md:col-span-5">
             <TPField label="Ciudad">
               <TPComboCreatable
+                tabIndex={t++}
                 mode="edit"
                 type="CITY"
                 items={p.catCity}
-                loading={!!p.catLoading["CITY"]}
+                loading={!!catLoading?.["CITY"]}
                 onRefresh={() => p.ensureCatalog("CITY")}
                 value={p.existing.city}
                 onChange={(v) => p.setExistingField("city", v)}
                 allowCreate={p.allowCreate}
                 onCreate={(label) => p.createAndRefresh("CITY", label)}
                 disabled={p.readonly}
-                placeholder="Ciudad"
               />
             </TPField>
           </div>
@@ -264,17 +290,17 @@ export default function PerfilJoyeriaEdit(p: Props) {
           <div className="md:col-span-4">
             <TPField label="Provincia">
               <TPComboCreatable
+                tabIndex={t++}
                 mode="edit"
                 type="PROVINCE"
                 items={p.catProvince}
-                loading={!!p.catLoading["PROVINCE"]}
+                loading={!!catLoading?.["PROVINCE"]}
                 onRefresh={() => p.ensureCatalog("PROVINCE")}
                 value={p.existing.province}
                 onChange={(v) => p.setExistingField("province", v)}
                 allowCreate={p.allowCreate}
                 onCreate={(label) => p.createAndRefresh("PROVINCE", label)}
                 disabled={p.readonly}
-                placeholder="Provincia"
               />
             </TPField>
           </div>
@@ -282,6 +308,7 @@ export default function PerfilJoyeriaEdit(p: Props) {
           <div className="md:col-span-3">
             <TPField label="Código Postal">
               <TPInput
+                tabIndex={t++}
                 value={p.existing.postalCode}
                 onChange={(v) => p.setExistingField("postalCode", v)}
                 readOnly={p.readonly}
@@ -293,29 +320,32 @@ export default function PerfilJoyeriaEdit(p: Props) {
           <div className="md:col-span-5">
             <TPField label="País">
               <TPComboCreatable
+                tabIndex={t++}
                 mode="edit"
                 type="COUNTRY"
                 items={p.catCountry}
-                loading={!!p.catLoading["COUNTRY"]}
+                loading={!!catLoading?.["COUNTRY"]}
                 onRefresh={() => p.ensureCatalog("COUNTRY")}
                 value={p.existing.country}
                 onChange={(v) => p.setExistingField("country", v)}
                 allowCreate={p.allowCreate}
                 onCreate={(label) => p.createAndRefresh("COUNTRY", label)}
                 disabled={p.readonly}
-                placeholder="País"
               />
             </TPField>
           </div>
         </div>
       </div>
 
-      {/* NOTAS + ADJUNTOS */}
+      {/* =========================
+          NOTAS + ADJUNTOS (final TAB)
+      ========================= */}
       <div className="mt-6 grid grid-cols-1 lg:grid-cols-2 gap-6">
         <div className="rounded-2xl p-4 sm:p-5" style={{ border: "1px solid var(--border)" }}>
           <div className="font-semibold text-sm mb-3">Notas</div>
 
           <TPTextarea
+            tabIndex={t++}
             value={p.company.notes}
             onChange={(v) => p.setCompanyField("notes", v)}
             readOnly={p.readonly}
@@ -331,6 +361,7 @@ export default function PerfilJoyeriaEdit(p: Props) {
 
           <div className="space-y-3">
             <TPDropzone
+              tabIndex={t++}
               multiple
               disabled={busyAttachments}
               loading={p.uploadingAttachments}

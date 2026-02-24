@@ -27,6 +27,9 @@ type Props = {
 
   /** create = puede usar favorito | edit = nunca */
   mode: "create" | "edit";
+
+  /** ✅ NUEVO: para tab horizontal */
+  tabIndex?: number;
 };
 
 /* =========================
@@ -151,6 +154,8 @@ export default function TPComboCreatable({
 
   disabled = false,
   mode,
+
+  tabIndex,
 }: Props) {
   const wrapRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
@@ -167,20 +172,15 @@ export default function TPComboCreatable({
 
   const didAutoPickRef = useRef(false);
 
-  // ✅ NUEVO: pedir refocus al cerrar el modal (Agregar/Cancelar/Escape/click afuera)
   const refocusAfterCreateRef = useRef(false);
   function closeCreateModalAndRefocus() {
     refocusAfterCreateRef.current = true;
     setCreateOpen(false);
   }
 
-  /* =========================
-     Keyboard navigation
-  ========================= */
   const [activeIndex, setActiveIndex] = useState<number>(-1);
   const itemRefs = useRef<Array<HTMLButtonElement | null>>([]);
 
-  /* Auto-pick favorito solo en CREATE */
   useEffect(() => {
     if (mode !== "create") return;
     if (disabled || creating) return;
@@ -215,14 +215,10 @@ export default function TPComboCreatable({
     setActiveIndex(activeItems.length ? (idx >= 0 ? idx : 0) : -1);
   }, [open, activeItems, value]);
 
-  // ✅ foco automático al abrir el modal de crear
   useEffect(() => {
-    if (createOpen) {
-      setTimeout(() => createInputRef.current?.focus(), 0);
-    }
+    if (createOpen) setTimeout(() => createInputRef.current?.focus(), 0);
   }, [createOpen]);
 
-  // ✅ NUEVO: al cerrar el modal, volver foco al combo correspondiente
   useEffect(() => {
     if (!createOpen && refocusAfterCreateRef.current) {
       refocusAfterCreateRef.current = false;
@@ -262,7 +258,7 @@ export default function TPComboCreatable({
       await onCreate(clean);
       onChange(clean);
       onRefresh?.();
-      closeCreateModalAndRefocus(); // ✅ aquí
+      closeCreateModalAndRefocus();
     } catch (e: any) {
       setErrMsg(String(e?.message || "No se pudo crear el ítem."));
     } finally {
@@ -274,7 +270,6 @@ export default function TPComboCreatable({
     if (disabled || creating) return;
     setCreateDraft(norm(value));
     setCreateOpen(true);
-    // importante: cerramos el dropdown para que no quede arriba
     setOpen(false);
   }
 
@@ -330,14 +325,24 @@ export default function TPComboCreatable({
     if (!next || !wrapRef.current?.contains(next)) closeDropdown();
   }
 
+  const labelText = String(label || "");
+  const showRealLabel = Boolean(labelText.trim());
+
   return (
     <>
-      <div ref={wrapRef} className="w-full" onBlurCapture={onWrapBlurCapture}>
-        {label && <div className="mb-2 text-sm text-muted">{label}</div>}
+      <div ref={wrapRef} className="tp-field w-full" onBlurCapture={onWrapBlurCapture}>
+        <label
+          className={cn("tp-field-label", !showRealLabel && "tp-field-label--empty")}
+          aria-hidden={!showRealLabel}
+        >
+          {showRealLabel ? labelText : "\u00A0"}
+        </label>
 
-        <div className="relative">
+        {/* ✅ fijo alto del “slot” del control para evitar micro-diferencias */}
+        <div className="relative h-[42px]">
           <input
             ref={inputRef}
+            tabIndex={tabIndex}
             value={value}
             disabled={disabled || creating}
             placeholder={placeholder}
@@ -348,7 +353,7 @@ export default function TPComboCreatable({
               onChange(e.target.value);
               openDropdown();
             }}
-            className={cn("tp-input w-full pr-16", disabled && "opacity-70")}
+            className="tp-input w-full pr-16"
           />
 
           {canClear && (
@@ -402,9 +407,7 @@ export default function TPComboCreatable({
                   <button
                     type="button"
                     tabIndex={-1}
-                    // ✅ clave: evitar blur antes de abrir el modal (y que no “coma” el click)
                     onMouseDown={(e) => e.preventDefault()}
-                    // ✅ clave: el click en toda la fila ejecuta “Agregar/Aceptar”
                     onClick={openCreateFromCurrent}
                     className={cn(
                       "mt-2 w-full rounded-xl px-3 py-2 text-left text-sm",
@@ -432,7 +435,7 @@ export default function TPComboCreatable({
         confirmText="Agregar"
         cancelText="Cancelar"
         loading={creating}
-        onClose={() => !creating && closeCreateModalAndRefocus()} // ✅ aquí
+        onClose={() => !creating && closeCreateModalAndRefocus()}
         onConfirm={doCreate}
       >
         <div className="space-y-2">
@@ -448,7 +451,7 @@ export default function TPComboCreatable({
               }
               if (e.key === "Escape") {
                 e.preventDefault();
-                if (!creating) closeCreateModalAndRefocus(); // ✅ aquí
+                if (!creating) closeCreateModalAndRefocus();
               }
             }}
             className="tp-input w-full"

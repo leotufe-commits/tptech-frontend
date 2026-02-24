@@ -1,10 +1,10 @@
-import React from "react";
+import React, { useEffect, useRef } from "react";
 import { cn } from "./tp";
 
-type TPCheckboxProps = {
+type TPCheckboxProps = Omit<React.InputHTMLAttributes<HTMLInputElement>, "checked" | "onChange" | "type"> & {
   checked: boolean;
   onChange: (v: boolean) => void;
-  disabled?: boolean;
+  indeterminate?: boolean;
   label?: React.ReactNode;
   className?: string;
 };
@@ -12,10 +12,18 @@ type TPCheckboxProps = {
 export function TPCheckbox({
   checked,
   onChange,
+  indeterminate,
   disabled,
   label,
   className,
+  ...rest
 }: TPCheckboxProps) {
+  const ref = useRef<HTMLInputElement | null>(null);
+
+  useEffect(() => {
+    if (ref.current) ref.current.indeterminate = Boolean(indeterminate);
+  }, [indeterminate]);
+
   return (
     <label
       className={cn(
@@ -25,11 +33,13 @@ export function TPCheckbox({
       )}
     >
       <input
+        ref={ref}
         type="checkbox"
         className="h-4 w-4 accent-primary"
         checked={checked}
         disabled={disabled}
         onChange={(e) => onChange(e.target.checked)}
+        {...rest}
       />
       {label}
     </label>

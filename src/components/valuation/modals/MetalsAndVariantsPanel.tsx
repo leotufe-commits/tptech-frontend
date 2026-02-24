@@ -1,5 +1,5 @@
 // src/components/valuation/modals/MetalsAndVariantsPanel.tsx
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowDown,
   ArrowUp,
@@ -30,6 +30,9 @@ import {
   TPTd,
   TPEmptyRow,
 } from "../../ui/TPTable";
+
+// ✅ evento global valuation
+import { TPTECH_VALUATION_CHANGED, type ValuationChangedDetail } from "../../../services/valuation";
 
 function fmtNum(n: any, digits = 6) {
   const v = Number(n);
@@ -197,6 +200,26 @@ export default function MetalsAndVariantsPanel({
   >([]);
   const [refHistMetal, setRefHistMetal] = useState<MetalRow | null>(null);
 
+  // ✅ debounce refresh variantes por eventos globales
+  const refreshTimerRef = useRef<any>(null);
+
+  // ✅ refs para que el listener NO dependa de qVar/onlyFav (evita re-add listener)
+  const selectedMetalIdRef = useRef("");
+  const qVarRef = useRef("");
+  const onlyFavRef = useRef(false);
+
+  useEffect(() => {
+    selectedMetalIdRef.current = selectedMetalId;
+  }, [selectedMetalId]);
+
+  useEffect(() => {
+    qVarRef.current = qVar;
+  }, [qVar]);
+
+  useEffect(() => {
+    onlyFavRef.current = onlyFav;
+  }, [onlyFav]);
+
   useEffect(() => {
     if (selectedMetalId) return;
     if (!metals.length) return;
@@ -225,15 +248,18 @@ export default function MetalsAndVariantsPanel({
     return s ? list.filter((m: any) => norm(m.name).includes(s) || norm(m.symbol).includes(s)) : list;
   }, [metals, qMetal]);
 
-  async function loadVariants() {
-    if (!selectedMetalId) return;
+  const loadVariants = useCallback(async () => {
+    const mid = selectedMetalIdRef.current;
+    if (!mid) return;
+
     setVariantsErr(null);
 
     try {
       setVariantsLoading(true);
-      const r = await getVariants(selectedMetalId, {
-        q: qVar.trim() || undefined,
-        onlyFavorites: onlyFav || undefined,
+
+      const r = await getVariants(mid, {
+        q: qVarRef.current.trim() || undefined,
+        onlyFavorites: onlyFavRef.current || undefined,
       });
 
       if (!r.ok) {
@@ -241,16 +267,83 @@ export default function MetalsAndVariantsPanel({
         setVariants([]);
         return;
       }
+
       setVariants(r.rows || []);
     } finally {
       setVariantsLoading(false);
     }
-  }
+  }, [getVariants]);
 
+  // carga normal por UI (metal/busqueda/fav)
   useEffect(() => {
     void loadVariants();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedMetalId, qVar, onlyFav]);
+
+  /* =========================
+     ✅ Auto-refresh variantes (Punto 3)
+     - listener estable (no se recrea al tipear)
+     - filtra por kind
+     - filtra por metalId si viene
+     - debounce
+  ========================= */
+  useEffect(() => {
+    function scheduleRefresh() {
+      const mid = selectedMetalIdRef.current;
+      if (!mid) return;
+
+      if (refreshTimerRef.current) clearTimeout(refreshTimerRef.current);
+
+      refreshTimerRef.current = setTimeout(() => {
+        refreshTimerRef.current = null;
+        void loadVariants();
+      }, 120);
+    }
+
+    function shouldRefresh(detail: ValuationChangedDetail | undefined) {
+      if (!detail || typeof (detail as any).kind !== "string") return true;
+
+      const kind = (detail as any).kind as ValuationChangedDetail["kind"];
+      const mid = String((detail as any).metalId || "").trim();
+      const selected = selectedMetalIdRef.current;
+
+      // si el evento trae metalId y no coincide con el seleccionado => ignorar
+      if (mid && selected && mid !== selected) return false;
+
+      // refrescar por cambios que afectan la tabla de variantes del metal seleccionado
+      if (kind.startsWith("variants:")) return true;
+      if (kind.startsWith("quotes:")) return true;
+
+      // si cambia la moneda base, el backend recalcula metales/precios => refrescar variantes del metal actual
+      if (kind === "currencies:base-changed") return true;
+
+      // si cambia el metal seleccionado (ej referenceValue), refrescar variantes
+      if (kind === "metals:updated" || kind === "metals:active-changed") return true;
+
+      // el resto (rates, moves, etc.) no hace falta refrescar variantes
+      return false;
+    }
+
+    function onValuationChanged(e: any) {
+      const detail = (e as any)?.detail as ValuationChangedDetail | undefined;
+      if (!shouldRefresh(detail)) return;
+      scheduleRefresh();
+    }
+
+    if (typeof window !== "undefined") {
+      window.addEventListener(TPTECH_VALUATION_CHANGED, onValuationChanged as any);
+    }
+
+    return () => {
+      if (typeof window !== "undefined") {
+        window.removeEventListener(TPTECH_VALUATION_CHANGED, onValuationChanged as any);
+      }
+      if (refreshTimerRef.current) {
+        clearTimeout(refreshTimerRef.current);
+        refreshTimerRef.current = null;
+      }
+    };
+  }, [loadVariants]);
 
   function toggleVarSort(nextKey: VarSortKey) {
     if (varSortKey === nextKey) {
@@ -322,7 +415,6 @@ export default function MetalsAndVariantsPanel({
   }
 
   async function onFavorite(row: VariantRow) {
-    // ✅ si ya es favorita => limpiar (que no quede ninguna)
     const isFav = !!(row as any).isFavorite;
     const r = await setFavoriteVariant(isFav ? null : row.id);
     if (r.ok) await loadVariants();
@@ -524,7 +616,11 @@ export default function MetalsAndVariantsPanel({
                         </div>
 
                         <div className="flex items-center justify-end gap-2">
-                          <IconBtn title="Ver historial valor ref." onClick={(e) => void openRefHistory(e, m)} disabled={saving}>
+                          <IconBtn
+                            title="Ver historial valor ref."
+                            onClick={(e) => void openRefHistory(e, m)}
+                            disabled={saving}
+                          >
                             <Eye className="h-4 w-4" />
                           </IconBtn>
 

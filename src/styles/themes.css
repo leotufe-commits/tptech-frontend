@@ -186,54 +186,38 @@ textarea::placeholder {
 }
 
 /* =====================================================
-   TP INPUT / COMBOS
-   Jerarquía de texto + bordes
+   ✅ TP INPUT / COMBOS (solo ELEMENTOS reales)
+   - Evita pegarle a wrappers y generar inconsistencias
    ===================================================== */
-.tp-input {
+input.tp-input,
+textarea.tp-input,
+select.tp-input {
   /* TEXTO INTERMEDIO (fantasma controlado) */
   color: color-mix(in oklab, var(--input-text) 55%, var(--muted)) !important;
 
-  /* borde */
+  /* borde (misma jerarquía) */
   border-color: color-mix(in oklab, var(--text) 42%, var(--border)) !important;
 }
 
-.tp-input:hover {
+input.tp-input:hover,
+textarea.tp-input:hover,
+select.tp-input:hover {
   border-color: color-mix(in oklab, var(--text) 58%, var(--border)) !important;
 }
 
-.tp-input:focus,
-.tp-input:focus-within {
+input.tp-input:focus,
+textarea.tp-input:focus,
+select.tp-input:focus,
+input.tp-input:focus-within,
+textarea.tp-input:focus-within,
+select.tp-input:focus-within {
   /* TEXTO FIRME EN FOCUS */
   color: var(--input-text) !important;
   border-color: color-mix(in oklab, var(--primary) 82%, var(--border)) !important;
 }
 
-/* wrappers (combos / inputs internos) */
-.tp-input input,
-.tp-input textarea,
-.tp-input select {
-  color: color-mix(in oklab, var(--input-text) 55%, var(--muted)) !important;
-  border-color: color-mix(in oklab, var(--text) 42%, var(--border)) !important;
-}
-
-.tp-input input:hover,
-.tp-input textarea:hover,
-.tp-input select:hover {
-  border-color: color-mix(in oklab, var(--text) 58%, var(--border)) !important;
-}
-
-.tp-input input:focus,
-.tp-input textarea:focus,
-.tp-input select:focus,
-.tp-input input:focus-within,
-.tp-input textarea:focus-within,
-.tp-input select:focus-within {
-  color: var(--input-text) !important;
-  border-color: color-mix(in oklab, var(--primary) 82%, var(--border)) !important;
-}
-
-.tp-input input::placeholder,
-.tp-input textarea::placeholder {
+input.tp-input::placeholder,
+textarea.tp-input::placeholder {
   color: var(--placeholder, var(--text-muted)) !important;
   opacity: 1 !important;
 }

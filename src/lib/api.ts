@@ -155,8 +155,8 @@ export type ApiFetchOptions = Omit<RequestInit, "body" | "signal"> & {
 
   /**
    * 🔑 IMPORTANTE
-   * - Por defecto: usa Bearer si hay token
-   * - Para apagarlo en un request puntual: forceBearer: false
+   * - DEFAULT: NO ENVIAR Bearer (cookie httpOnly manda)
+   * - Para legacy / compat: forceBearer: true
    */
   forceBearer?: boolean;
 };
@@ -325,8 +325,9 @@ export async function apiFetch<T = any>(path: string, options: ApiFetchOptions =
     }
   }
 
-  // 🔑 Bearer por defecto si hay token (solo se apaga si forceBearer === false)
-  if (options.forceBearer !== false) {
+  // ✅ DEFAULT: NO mandar Bearer (cookie manda)
+  // 🔑 Legacy/compat: solo si forceBearer === true
+  if (options.forceBearer === true) {
     const token = readStoredToken();
     if (token && !headers.has("Authorization")) {
       headers.set("Authorization", `Bearer ${token}`);
@@ -376,11 +377,11 @@ export async function apiFetch<T = any>(path: string, options: ApiFetchOptions =
 
     if (!res.ok) {
       const msg =
-        (payload && typeof payload === "object" && payload.message) ||
+        (payload && typeof payload === "object" && (payload.message || payload.error)) ||
         (typeof payload === "string" && payload) ||
         `HTTP ${res.status}`;
 
-      throw new ApiError(msg, { status: res.status, data: payload, url, method });
+      throw new ApiError(String(msg), { status: res.status, data: payload, url, method });
     }
 
     return payload as T;

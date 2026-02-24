@@ -42,12 +42,34 @@ export function TPButton({
     <button
       type={type}
       disabled={isDisabled}
-      className={cn(variantCls(variant), "inline-flex items-center justify-center gap-2", className)}
+      className={cn(
+        variantCls(variant),
+        "inline-flex items-center justify-center gap-2",
+        "disabled:opacity-60 disabled:cursor-not-allowed",
+        className
+      )}
       {...rest}
     >
-      {loading ? <Loader2 size={16} className="animate-spin" /> : iconLeft}
+      {/* LEFT ICON / LOADER */}
+      {loading ? (
+        <Loader2 className="h-4 w-4 animate-spin shrink-0" />
+      ) : iconLeft ? (
+        <span className="flex items-center shrink-0">
+          {iconLeft}
+        </span>
+      ) : null}
+
+      {/* LABEL */}
       <span className="leading-none">{children}</span>
-      {iconRight}
+
+      {/* RIGHT ICON */}
+      {!loading && iconRight ? (
+        <span className="flex items-center shrink-0">
+          {iconRight}
+        </span>
+      ) : null}
     </button>
   );
 }
+
+export default TPButton;

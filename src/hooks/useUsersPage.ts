@@ -19,16 +19,10 @@ import {
   getPermsCached,
   prefetchUserDetail,
   invalidateUserDetail,
-  uploadUserAttachmentsInstant,
-  deleteUserAttachmentInstant,
-  setUserQuickPinEnabledAdmin,
-  removeUserQuickPinAdmin,
-  setMyQuickPin,
-  removeMyQuickPin,
-  setUserQuickPinAdmin,
 } from "../components/users/users.data";
 
 import {
+  // CRUD + perfil
   assignRolesToUser,
   createUser,
   deleteUser,
@@ -40,6 +34,21 @@ import {
   removeAvatarForUser,
   updateFavoriteWarehouseForUser,
   updateUserProfile,
+
+  // adjuntos
+  uploadUserAttachmentsInstant,
+  
+
+  // ✅ QUICK PIN (admin)
+  setUserPinEnabled,
+  removeUserQuickPin,
+  setUserQuickPin,
+
+  // ✅ QUICK PIN (me)
+  setMyQuickPin,
+  removeMyQuickPin,
+
+  // types
   type Role,
   type UserListItem,
   type Override,
@@ -49,112 +58,58 @@ import {
 } from "../services/users";
 
 import type { Permission } from "../services/permissions";
-import { apiFetch, LS_TOKEN_KEY, SS_TOKEN_KEY } from "../lib/api";
-import { absUrl } from "../lib/url";
+import { apiFetch } from "../lib/api";
 
-/** ✅ flag para “abrir modal y scrollear a Adjuntos” */
-const OPEN_USERS_ATTACHMENTS_KEY = "tptech_users_open_attachments_v1";
-/** ✅ evento que ya escucha UsersTable.tsx */
-const PIN_EVENT = "tptech:user-pin-updated";
+/* =========================
+   ✅ split en helpers
+========================= */
+import { OPEN_USERS_ATTACHMENTS_KEY } from "./usersPage/usersPage.constants";
+import { parseTabParam, parsePinAction } from "./usersPage/usersPage.parsers";
 
-/** ✅ evento que escucha Sidebar.tsx */
-const USER_AVATAR_EVENT = "tptech:user_avatar_changed";
+import * as UserHelpers from "./usersPage/usersPage.helpers";
+import * as UsersPageEvents from "./usersPage/usersPage.events";
+import * as UserAttachments from "./usersPage/usersPage.attachments";
 
-function emitUserAvatarChanged(args: { userId: string; avatarUrl: string | null | undefined }) {
-  try {
-    window.dispatchEvent(
-      new CustomEvent(USER_AVATAR_EVENT, {
-        detail: {
-          userId: String(args.userId || ""),
-          avatarUrl: args.avatarUrl ?? "",
-        },
-      })
-    );
-  } catch {}
-}
+import { normalizeUserDetail, normalizeUserListItem } from "./usersPage/usersPage.normalize";
 
-function parseTabParam(v: string | null): TabKey | null {
-  const s = String(v || "").trim().toUpperCase();
-  if (s === "DATA") return "DATA";
-  if (s === "CONFIG") return "CONFIG";
-  return null;
-}
+// ✅ destructuring defensivo (evita romper por exports renombrados)
+const stableJson: (v: any) => string =
+  (UserHelpers as any).stableJson ?? ((v: any) => {
+    try { return JSON.stringify(v); } catch { return ""; }
+  });
 
-function parsePinAction(v: string | null): "create" | null {
-  const s = String(v || "").trim().toLowerCase();
-  if (s === "create" || s === "new" || s === "set" || s === "setup" || s === "1" || s === "true")
-    return "create";
-  return null;
-}
+const draftKey: (f: File) => string =
+  (UserHelpers as any).draftKey ?? ((f: File) => `${f.name}-${f.size}-${f.lastModified}`);
 
-function stableJson(v: any) {
-  try {
-    return JSON.stringify(v);
-  } catch {
-    return "";
-  }
-}
+const assertPin4Local: (pin: string) => string =
+  (UserHelpers as any).assertPin4Local ?? ((pin: string) => {
+    const s = String(pin ?? "").trim();
+    if (!/^\d{4}$/.test(s)) throw new Error("El PIN debe tener 4 dígitos.");
+    return s;
+  });
 
-function draftKey(f: File) {
-  return `${f.name}-${f.size}-${f.lastModified}`;
-}
+// events (si no existen, no rompe)
+const emitUserAvatarChanged: (payload: any) => void =
+  (UsersPageEvents as any).emitUserAvatarChanged ?? (() => {});
 
-function getAccessToken() {
-  return sessionStorage.getItem(SS_TOKEN_KEY) || localStorage.getItem(LS_TOKEN_KEY) || "";
-}
+const emitPinEvent: (userId: string, payload: any) => void =
+  (UsersPageEvents as any).emitPinEvent ??
+  (UsersPageEvents as any).emitPinChanged ??
+  (UsersPageEvents as any).emitUserPinChanged ??
+  (() => {});
 
-function filenameFromContentDisposition(cd: string | null, fallback: string) {
-  if (!cd) return fallback;
+// attachments helpers (si no existen, no rompe)
+const downloadUserAttachmentWithAuth: (args: any) => Promise<void> =
+  (UserAttachments as any).downloadUserAttachmentWithAuth ??
+  (UserAttachments as any).downloadAttachmentWithAuth ??
+  (UserAttachments as any).downloadUserAttachment ??
+  (async () => {});
 
-  const mStar = cd.match(/filename\*\s*=\s*UTF-8''([^;]+)/i);
-  if (mStar?.[1]) {
-    try {
-      return decodeURIComponent(mStar[1]).replace(/["\r\n]/g, "");
-    } catch {}
-  }
-
-  const m = cd.match(/filename\s*=\s*"([^"]+)"/i) || cd.match(/filename\s*=\s*([^;]+)/i);
-  const name = (m?.[1] || "").trim().replace(/["\r\n]/g, "");
-  return name || fallback;
-}
-
-/* ============================================================
-   ✅ NORMALIZACIÓN DEL DETAIL (MISMA LÓGICA QUE LA LISTA)
-   - backend puede mandar pinEnabled / quickPinEnabled / hasQuickPin
-============================================================ */
-function normalizeUserDetail(d: UserDetail): UserDetail {
-  const anyD: any = d as any;
-
-  const pinEnabled =
-    typeof anyD?.pinEnabled === "boolean"
-      ? Boolean(anyD.pinEnabled)
-      : typeof anyD?.quickPinEnabled === "boolean"
-      ? Boolean(anyD.quickPinEnabled)
-      : false;
-
-  const hasQuickPin =
-    typeof anyD?.hasQuickPin === "boolean"
-      ? Boolean(anyD.hasQuickPin)
-      : pinEnabled;
-
-  // roles pueden venir como objetos o ids
-  const rolesRaw = Array.isArray(anyD?.roles) ? anyD.roles : [];
-  const rolesNorm = rolesRaw
-    .map((r: any) => {
-      if (!r) return null;
-      if (typeof r === "string") return { id: r };
-      if (typeof r === "object" && r.id) return r;
-      return null;
-    })
-    .filter(Boolean);
-
-  return {
-    ...(d as any),
-    pinEnabled,
-    hasQuickPin,
-    roles: rolesNorm as any,
-  } as any;
-}
+const openUserAttachmentWithAuth: (args: any) => Promise<void> =
+  (UserAttachments as any).openUserAttachmentWithAuth ??
+  (UserAttachments as any).openAttachmentWithAuth ??
+  (UserAttachments as any).openUserAttachment ??
+  (async () => {});
 
 export function useUsersPage() {
   const nav = useNavigate();
@@ -391,12 +346,6 @@ export function useUsersPage() {
     };
   }, []);
 
-  function assertPin4Local(pin: string) {
-    const s = String(pin ?? "").trim();
-    if (!/^\d{4}$/.test(s)) throw new Error("El PIN debe tener 4 dígitos.");
-    return s;
-  }
-
   // special perms (DRAFT)
   const [specialEnabled, setSpecialEnabledState] = useState(false);
   const [specialPermPick, setSpecialPermPick] = useState<string>("");
@@ -570,26 +519,7 @@ export function useUsersPage() {
       const norm = normalizeUsersResponse(resp);
 
       const rawUsers = (norm.users ?? []) as UserListItem[];
-
-      const normalizedUsers = rawUsers.map((u) => {
-        const pinEnabled =
-          typeof (u as any)?.pinEnabled === "boolean"
-            ? Boolean((u as any).pinEnabled)
-            : typeof (u as any)?.quickPinEnabled === "boolean"
-            ? Boolean((u as any).quickPinEnabled)
-            : false;
-
-        const hasQuickPin =
-          typeof (u as any)?.hasQuickPin === "boolean"
-            ? Boolean((u as any).hasQuickPin)
-            : pinEnabled;
-
-        return {
-          ...(u as any),
-          hasQuickPin,
-          pinEnabled,
-        };
-      });
+      const normalizedUsers = rawUsers.map(normalizeUserListItem);
 
       setUsers(sortUsersAlpha(normalizedUsers));
       setTotal(Number(norm.total ?? 0));
@@ -791,36 +721,12 @@ export function useUsersPage() {
     return Boolean(isSelfEditing || canAdmin);
   }
 
-  function emitPinEvent(userId: string, patch: { hasQuickPin?: boolean; pinEnabled?: boolean }) {
-    const id = String(userId || "").trim();
-    if (!id) return;
-
-    const hasQuickPin = typeof patch?.hasQuickPin === "boolean" ? patch.hasQuickPin : undefined;
-    const pinEnabled = typeof patch?.pinEnabled === "boolean" ? patch.pinEnabled : undefined;
-
-    if (hasQuickPin === undefined && pinEnabled === undefined) return;
-
-    try {
-      window.dispatchEvent(
-        new CustomEvent(PIN_EVENT, {
-          detail: {
-            userId: id,
-            ...(hasQuickPin !== undefined ? { hasQuickPin } : {}),
-            ...(pinEnabled !== undefined ? { pinEnabled } : {}),
-          },
-        })
-      );
-    } catch {}
-  }
-
   function patchUserInList(userId: string, patch: Partial<UserListItem>) {
     if (!userId) return;
 
     emitPinEvent(userId, {
-      hasQuickPin:
-        typeof (patch as any)?.hasQuickPin === "boolean" ? Boolean((patch as any).hasQuickPin) : undefined,
-      pinEnabled:
-        typeof (patch as any)?.pinEnabled === "boolean" ? Boolean((patch as any).pinEnabled) : undefined,
+      hasQuickPin: typeof (patch as any)?.hasQuickPin === "boolean" ? Boolean((patch as any).hasQuickPin) : undefined,
+      pinEnabled: typeof (patch as any)?.pinEnabled === "boolean" ? Boolean((patch as any).pinEnabled) : undefined,
     });
 
     setUsers((prev) =>
@@ -889,13 +795,13 @@ export function useUsersPage() {
 
         await refreshDetailOnly(targetId, { hydrate: false });
       } else {
-        const rSet = await setUserQuickPinAdmin(targetId, p1);
+        const rSet = await setUserQuickPin(targetId, p1);
 
         const enabledFromResp =
           typeof (rSet as any)?.pinEnabled === "boolean" ? Boolean((rSet as any)?.pinEnabled) : true;
 
         if (enabledFromResp === false) {
-          await setUserQuickPinEnabledAdmin(targetId, true);
+          await setUserPinEnabled(targetId, true);
         }
 
         patchUserInList(targetId, {
@@ -936,7 +842,7 @@ export function useUsersPage() {
     setPinMsg(null);
 
     try {
-      const r = await setUserQuickPinEnabledAdmin(targetId, Boolean(nextEnabled), {
+      const r = await setUserPinEnabled(targetId, Boolean(nextEnabled), {
         confirmRemoveOverrides: Boolean(opts?.confirmRemoveOverrides),
       });
 
@@ -992,7 +898,7 @@ export function useUsersPage() {
 
         await refreshDetailOnly(targetId, { hydrate: false });
       } else {
-        const r = await removeUserQuickPinAdmin(targetId, {
+        const r = await removeUserQuickPin(targetId, {
           confirmRemoveOverrides: Boolean(opts?.confirmRemoveOverrides),
         });
 
@@ -1335,8 +1241,8 @@ export function useUsersPage() {
           const p1 = String(pinNew || "").trim();
           const p2 = String(pinNew2 || "").trim();
           if (p1 && p1 === p2 && /^\d{4}$/.test(p1)) {
-            await setUserQuickPinAdmin(createdUserId, p1);
-            await setUserQuickPinEnabledAdmin(createdUserId, true);
+            await setUserQuickPin(createdUserId, p1);
+            await setUserPinEnabled(createdUserId, true);
             resetPinForm();
           }
         });
@@ -1639,105 +1545,39 @@ export function useUsersPage() {
 
   async function handleDownloadSavedAttachment(att: UserAttachment) {
     const userId = String((detail as any)?.id || "");
-    const attId = String((att as any)?.id || "");
-    if (!userId || !attId) return;
+    if (!userId) return;
 
-    const token = getAccessToken();
-    if (!token) {
-      setErr("Sesión expirada. Volvé a iniciar sesión.");
-      return;
-    }
-
-    const downloadUrl = absUrl(`/users/${encodeURIComponent(userId)}/attachments/${encodeURIComponent(attId)}/download`);
-
-    const resp = await fetch(downloadUrl, {
-      method: "GET",
-      headers: { Authorization: `Bearer ${token}` },
-      credentials: "include",
-    });
-
-    if (!resp.ok) {
-      let msg = `No se pudo descargar el archivo (${resp.status}).`;
-      try {
-        const j = await resp.json();
-        if ((j as any)?.message) msg = String((j as any).message);
-      } catch {}
-      throw new Error(msg);
-    }
-
-    const blob = await resp.blob();
-    const cd = resp.headers.get("content-disposition");
-    const fallback = String((att as any)?.filename || "archivo");
-    const filename = filenameFromContentDisposition(cd, fallback);
-
-    const url = URL.createObjectURL(blob);
     try {
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = filename;
-      a.rel = "noopener";
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-    } finally {
-      URL.revokeObjectURL(url);
+      await downloadUserAttachmentWithAuth({ userId, attachment: att });
+    } catch (e: any) {
+      setErr(getErrorMessage(e, "No se pudo descargar el archivo."));
     }
   }
 
-  // ✅ NUEVO: abrir adjunto con auth (blob) para que "Ver" funcione incluso si requiere token
   async function handleOpenSavedAttachment(att: UserAttachment) {
     const userId = String((detail as any)?.id || "");
-    const attId = String((att as any)?.id || "");
-    if (!userId || !attId) return;
+    if (!userId) return;
 
-    const token = getAccessToken();
-    if (!token) {
-      setErr("Sesión expirada. Volvé a iniciar sesión.");
-      return;
+    try {
+      await openUserAttachmentWithAuth({
+        userId,
+        attachment: att,
+        onPopupBlockedDownload: async () => downloadUserAttachmentWithAuth({ userId, attachment: att }),
+      });
+    } catch (e: any) {
+      setErr(getErrorMessage(e, "No se pudo abrir el archivo."));
     }
-
-    const downloadUrl = absUrl(`/users/${encodeURIComponent(userId)}/attachments/${encodeURIComponent(attId)}/download`);
-
-    const resp = await fetch(downloadUrl, {
-      method: "GET",
-      headers: { Authorization: `Bearer ${token}` },
-      credentials: "include",
-    });
-
-    if (!resp.ok) {
-      let msg = `No se pudo abrir el archivo (${resp.status}).`;
-      try {
-        const j = await resp.json();
-        if ((j as any)?.message) msg = String((j as any).message);
-      } catch {}
-      throw new Error(msg);
-    }
-
-    const blob = await resp.blob();
-    const url = URL.createObjectURL(blob);
-
-    const w = window.open(url, "_blank", "noopener,noreferrer");
-    if (!w) {
-      try {
-        URL.revokeObjectURL(url);
-      } catch {}
-      // fallback: si bloquean popups, descargamos
-      await handleDownloadSavedAttachment(att);
-      return;
-    }
-
-    // liberar luego (evita leaks)
-    window.setTimeout(() => {
-      try {
-        URL.revokeObjectURL(url);
-      } catch {}
-    }, 60_000);
   }
 
   const totalLabel = `${total} ${total === 1 ? "Usuario" : "Usuarios"}`;
 
   const busyClose =
-    modalBusy || avatarBusy || specialSaving || uploadingAttachments || Boolean(deletingAttId) || pinBusy;
+    modalBusy ||
+    avatarBusy ||
+    specialSaving ||
+    uploadingAttachments ||
+    Boolean(deletingAttId) ||
+    pinBusy;
 
   return {
     // utils
@@ -1804,7 +1644,6 @@ export function useUsersPage() {
     roleLabel,
     fRoleIds,
     setFRoleIds,
-
     allPerms,
     permsLoading,
 
@@ -1815,7 +1654,6 @@ export function useUsersPage() {
     setFName,
     fPassword,
     setFPassword,
-
     fPhoneCountry,
     setFPhoneCountry,
     fPhoneNumber,
@@ -1824,7 +1662,6 @@ export function useUsersPage() {
     setFDocType,
     fDocNumber,
     setFDocNumber,
-
     fStreet,
     setFStreet,
     fNumber,
@@ -1837,7 +1674,6 @@ export function useUsersPage() {
     setFPostalCode,
     fCountry,
     setFCountry,
-
     fNotes,
     setFNotes,
 

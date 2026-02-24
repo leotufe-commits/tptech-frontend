@@ -165,6 +165,7 @@ export default function UsersPage() {
         removeSavedAttachment={p.removeSavedAttachment}
         savedAttachments={p.savedAttachments}
         handleDownloadSavedAttachment={p.handleDownloadSavedAttachment}
+        handleOpenSavedAttachment={p.handleOpenSavedAttachment}
         pinBusy={p.pinBusy}
         pinMsg={p.pinMsg}
         pinNew={p.pinNew}

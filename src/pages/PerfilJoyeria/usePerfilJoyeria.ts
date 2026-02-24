@@ -211,6 +211,7 @@ export function usePerfilJoyeria() {
     navigate(-1);
   }
 
+  // ✅ FIX: guardar contra /company/me (PATCH)
   async function onSave() {
     if (!existing || !company || !isEditMode) return;
 
@@ -220,9 +221,11 @@ export function usePerfilJoyeria() {
 
       const payload = buildPayload(existing, company);
 
-      const resp = await apiFetch<any>("/auth/me/jewelry", {
-        method: "PUT",
+      // ✅ ESTE es tu endpoint real del backend company.routes.ts
+      const resp = await apiFetch<any>("/company/me", {
+        method: "PATCH",
         body: payload,
+        on401: "throw",
       });
 
       const updated = normalizeJewelryResponse(resp);
@@ -269,20 +272,23 @@ export function usePerfilJoyeria() {
       const fd = new FormData();
       fd.append("logo", file);
 
-      const resp = await apiFetch<{ ok: boolean; logoUrl: string }>("/company/logo", {
-        method: "PUT",
+      // ✅ backend: POST /company/me/logo
+      const resp = await apiFetch<any>("/company/me/logo", {
+        method: "POST",
         body: fd as any,
         timeoutMs: 60_000,
         on401: "throw",
       });
 
-      const nextUrl = String(resp?.logoUrl || "");
+      const updated = normalizeJewelryResponse(resp);
+      setServerJewelry(updated);
 
-      setCompany((p) => (p ? { ...p, logoUrl: nextUrl } : p));
-      setServerJewelry((p: any) => (p ? { ...p, logoUrl: nextUrl } : p));
+      const d = jewelryToDraft(updated);
+      setExisting(d.existing);
+      setCompany(d.company);
 
-      // ✅ el dueño del favicon es AuthContext; acá solo notificamos
-      notifyLogoChanged(nextUrl);
+      // ✅ notificar header/favicon
+      notifyLogoChanged(String(updated?.logoUrl || ""));
 
       setMsg("Logo actualizado ✅");
     } catch (e: any) {
@@ -317,10 +323,10 @@ export function usePerfilJoyeria() {
       if (logoPreview?.startsWith("blob:")) URL.revokeObjectURL(logoPreview);
       setLogoPreview("");
 
-      // ✅ el dueño del favicon es AuthContext; acá solo notificamos
       notifyLogoChanged("");
 
-      await apiFetch<{ ok: boolean }>("/company/logo", {
+      // ✅ backend: DELETE /company/me/logo
+      await apiFetch<{ ok: boolean }>("/company/me/logo", {
         method: "DELETE",
         timeoutMs: 30_000,
         on401: "throw",
@@ -373,23 +379,16 @@ export function usePerfilJoyeria() {
       const fd = new FormData();
       okFiles.forEach((f) => fd.append("attachments", f));
 
-      const resp = await apiFetch<{
-        ok: boolean;
-        createdCount: number;
-        attachments: JewelryAttachment[];
-      }>("/company/attachments", {
-        method: "PUT",
+      // ✅ backend: POST /company/me/attachments
+      const resp = await apiFetch<any>("/company/me/attachments", {
+        method: "POST",
         body: fd as any,
         timeoutMs: 120_000,
         on401: "throw",
       });
 
-      const next = Array.isArray(resp?.attachments) ? resp.attachments : [];
-
-      setServerJewelry((prev: any) => ({
-        ...(prev || {}),
-        attachments: next,
-      }));
+      const updated = normalizeJewelryResponse(resp);
+      setServerJewelry(updated);
 
       if (rejected.length) {
         setMsg(`Adjuntados ${okFiles.length} archivo(s). Se omitieron ${rejected.length} por tamaño.`);
@@ -425,7 +424,8 @@ export function usePerfilJoyeria() {
     try {
       setDeletingAttId(attId);
 
-      await apiFetch("/company/attachments/" + encodeURIComponent(attId), {
+      // ✅ backend: DELETE /company/me/attachments/:id
+      await apiFetch("/company/me/attachments/" + encodeURIComponent(attId), {
         method: "DELETE",
         timeoutMs: 30_000,
         on401: "throw",
@@ -441,8 +441,11 @@ export function usePerfilJoyeria() {
     }
   }
 
-  const headerLogoSrc = (logoPreview || absUrl(company?.logoUrl || "")) as string;
-  const hasLogo = !!headerLogoSrc;
+  // ✅ misma corrección del logo para que no “quede pegado”
+  const headerLogoSrc = (logoPreview ||
+    (String(company?.logoUrl || "").trim() ? absUrl(String(company?.logoUrl || "").trim()) : "")) as string;
+
+  const hasLogo = Boolean(headerLogoSrc);
 
   const busyAny =
     saving || uploadingLogo || deletingLogo || uploadingAttachments || Boolean(deletingAttId);

@@ -13,6 +13,7 @@ import AddQuoteModal from "../components/valuation/modals/AddQuoteModal";
 import CurrencyRatesModal from "../components/valuation/modals/CurrencyRatesModal";
 
 import ConfirmDeleteDialog from "../components/ui/ConfirmDeleteDialog";
+import TPSectionShell from "../components/ui/TPSectionShell";
 
 type MetalDraft = { id?: string; name: string; symbol?: string; referenceValue?: number };
 
@@ -20,9 +21,7 @@ type MetalDraft = { id?: string; name: string; symbol?: string; referenceValue?:
 type VariantDraft = VariantInitial & { id: string; metalId: string };
 
 function normSku(s: any) {
-  return String(s ?? "")
-    .trim()
-    .toLowerCase();
+  return String(s ?? "").trim().toLowerCase();
 }
 
 export default function Divisas() {
@@ -77,12 +76,20 @@ export default function Divisas() {
   const baseCurrencyCode = String(v.baseCurrency?.code || "").trim() || "ARS";
 
   /* =========================
+     Helpers: refetch on ok
+  ========================= */
+
+  async function refetchIfOk(r: any) {
+    if (r?.ok) await v.refetch();
+    return r;
+  }
+
+  /* =========================
      mover metal (UP/DOWN)
   ========================= */
   async function onMoveMetal(metalId: string, dir: "UP" | "DOWN") {
     const r = await v.moveMetal(metalId, dir);
-    if (r?.ok) await v.refetch();
-    return r;
+    return await refetchIfOk(r);
   }
 
   /* =========================
@@ -99,11 +106,13 @@ export default function Divisas() {
     salePrice: number;
     effectiveAt: string;
   }) {
-    return v.addQuote(payload);
+    const r = await v.addQuote(payload);
+    return await refetchIfOk(r);
   }
 
   async function onAddRate(currencyId: string, data: { rate: number; effectiveAt: string }) {
-    return v.addCurrencyRate(currencyId, { rate: data.rate, effectiveAt: data.effectiveAt });
+    const r = await v.addCurrencyRate(currencyId, { rate: data.rate, effectiveAt: data.effectiveAt });
+    return await refetchIfOk(r);
   }
 
   async function onLoadRates(currencyId: string, take = 50) {
@@ -115,7 +124,8 @@ export default function Divisas() {
     const id = String(row?.id || "").trim();
     if (!id) return { ok: false as const, error: "Moneda inválida." };
     if (row?.isBase) return { ok: false as const, error: "No se puede eliminar la moneda base." };
-    return await v.deleteCurrency(id);
+    const r = await v.deleteCurrency(id);
+    return await refetchIfOk(r);
   }
 
   /* =========================
@@ -145,13 +155,15 @@ export default function Divisas() {
 
   async function onSaveMetal(data: { name: string; symbol?: string; referenceValue?: number }) {
     if (metalModalMode === "CREATE") {
-      return await v.createMetal(data);
+      const r = await v.createMetal(data);
+      return await refetchIfOk(r);
     }
 
     const id = String(metalEditing?.id || "").trim();
     if (!id) return { ok: false as const, error: "Metal inválido." };
 
-    return await v.updateMetal(id, data);
+    const r = await v.updateMetal(id, data);
+    return await refetchIfOk(r);
   }
 
   // ✅ pedir confirmación (NO elimina acá)
@@ -350,8 +362,7 @@ export default function Divisas() {
   }) {
     if (variantModalMode === "CREATE") {
       const r = await v.createVariant(p as any);
-      if (r?.ok) await v.refetch();
-      return r as any;
+      return await refetchIfOk(r);
     }
 
     // EDIT
@@ -373,175 +384,205 @@ export default function Divisas() {
       salePriceOverride: p.salePriceOverride ?? null,
     });
 
-    if (r?.ok) await v.refetch();
-    return r as any;
+    return await refetchIfOk(r);
+  }
+
+  async function onCreateCurrency(data: { code: string; name: string; symbol: string }) {
+    const r = await v.createCurrency(data);
+    if (r?.ok) {
+      setOpenCurrency(false);
+      await v.refetch();
+    }
+    return r;
+  }
+
+  async function onSetBaseCurrency(currencyId: string) {
+    const r = await v.setBaseCurrency(currencyId);
+    return await refetchIfOk(r);
+  }
+
+  async function onToggleCurrencyActive(currencyId: string, isActive: boolean) {
+    const r = await v.toggleCurrencyActive(currencyId, isActive);
+    return await refetchIfOk(r);
+  }
+
+  async function onUpdateCurrency(currencyId: string, data: { code: string; name: string; symbol: string }) {
+    const r = await v.updateCurrency(currencyId, data as any);
+    return await refetchIfOk(r);
   }
 
   return (
-    <div className="p-6 space-y-4">
-      <CurrenciesPanel
-        loading={v.loading}
-        saving={v.saving}
-        currencies={v.currencies}
-        baseCurrency={v.baseCurrency}
-        onRefetch={v.refetch}
-        onOpenCreate={() => setOpenCurrency(true)}
-        onSetBase={v.setBaseCurrency}
-        onToggleActive={v.toggleCurrencyActive}
-        onOpenRates={(c: any) => {
-          setRatesCurrency(c);
-          setRatesOpen(true);
-        }}
-        onDelete={onDeleteCurrency}
-      />
+    <TPSectionShell
+      title="Divisas"
+      description="Monedas, tipos de cambio y valuación de metales/variantes."
+      className="p-6"
+    >
+      <div className="space-y-4">
+        <CurrenciesPanel
+          loading={v.loading}
+          saving={v.saving}
+          currencies={v.currencies}
+          baseCurrency={v.baseCurrency}
+          onRefetch={v.refetch}
+          onOpenCreate={() => setOpenCurrency(true)}
+          onSetBase={onSetBaseCurrency}
+          onToggleActive={onToggleCurrencyActive}
+          onOpenRates={(c: any) => {
+            setRatesCurrency(c);
+            setRatesOpen(true);
+          }}
+          onDelete={onDeleteCurrency}
+        />
 
-      <MetalsAndVariantsPanel
-        loading={v.loading}
-        saving={v.saving}
-        metals={v.metals}
-        baseCurrencySymbol={baseCurrencySymbol}
-        getVariants={v.getVariants}
-        createVariant={v.createVariant}
-        toggleVariantActive={v.toggleVariantActive}
-        /**
-         * ✅ FIX FAVORITO:
-         * MetalsAndVariantsPanel llama setFavoriteVariant(null) cuando quiere limpiar.
-         * Nuestro hook necesita metalId para eso.
-         */
-        setFavoriteVariant={(variantIdOrNull) => v.setFavoriteVariant(variantIdOrNull, selectedMetalId)}
-        onOpenMetalCreate={openMetalCreate}
-        onOpenVariantCreate={() => void openVariantCreate()}
-        onSelectedMetalChange={(metalId, metalName, metalReferenceValue) => {
-          setSelectedMetalId(metalId);
-          setSelectedMetalName(metalName);
-          setSelectedMetalRef(metalReferenceValue ?? null);
-        }}
-        onOpenMetalEdit={openMetalEdit}
-        onToggleMetal={v.toggleMetalActive}
-        onDeleteMetal={onAskDeleteMetal}
-        onMoveMetal={onMoveMetal}
-        getMetalRefHistory={onGetMetalRefHistory}
-        onDeleteVariant={onAskDeleteVariant}
-        onOpenVariantView={openVariantView}
-        onOpenVariantEdit={(row) => void openVariantEdit(row)}
-      />
+        <MetalsAndVariantsPanel
+          loading={v.loading}
+          saving={v.saving}
+          metals={v.metals}
+          baseCurrencySymbol={baseCurrencySymbol}
+          getVariants={v.getVariants}
+          createVariant={v.createVariant}
+          toggleVariantActive={v.toggleVariantActive}
+          /**
+           * ✅ FIX FAVORITO:
+           * MetalsAndVariantsPanel llama setFavoriteVariant(null) cuando quiere limpiar.
+           * Nuestro hook necesita metalId para eso.
+           */
+          setFavoriteVariant={(variantIdOrNull) => v.setFavoriteVariant(variantIdOrNull, selectedMetalId)}
+          onOpenMetalCreate={openMetalCreate}
+          onOpenVariantCreate={() => void openVariantCreate()}
+          onSelectedMetalChange={(metalId, metalName, metalReferenceValue) => {
+            setSelectedMetalId(metalId);
+            setSelectedMetalName(metalName);
+            setSelectedMetalRef(metalReferenceValue ?? null);
+          }}
+          onOpenMetalEdit={openMetalEdit}
+          onToggleMetal={async (metalId, isActive) => await refetchIfOk(await v.toggleMetalActive(metalId, isActive))}
+          onDeleteMetal={onAskDeleteMetal}
+          onMoveMetal={onMoveMetal}
+          getMetalRefHistory={onGetMetalRefHistory}
+          onDeleteVariant={onAskDeleteVariant}
+          onOpenVariantView={openVariantView}
+          onOpenVariantEdit={(row) => void openVariantEdit(row)}
+        />
 
-      {/* Modals */}
-      <CreateCurrencyModal open={openCurrency} busy={v.saving} onClose={() => setOpenCurrency(false)} onSave={v.createCurrency} />
+        {/* Modals */}
+        <CreateCurrencyModal
+          open={openCurrency}
+          busy={v.saving}
+          onClose={() => setOpenCurrency(false)}
+          onSave={onCreateCurrency as any}
+        />
 
-      <CurrencyRatesModal
-        open={ratesOpen}
-        busy={v.saving}
-        currency={ratesCurrency}
-        baseCurrencySymbol={baseCurrencySymbol}
-        baseCurrencyCode={baseCurrencyCode}
-        onClose={() => {
-          setRatesOpen(false);
-          setRatesCurrency(null);
-        }}
-        onLoadRates={onLoadRates}
-        onAddRate={onAddRate}
-        onUpdateCurrency={v.updateCurrency}
-      />
+        <CurrencyRatesModal
+          open={ratesOpen}
+          busy={v.saving}
+          currency={ratesCurrency}
+          baseCurrencySymbol={baseCurrencySymbol}
+          baseCurrencyCode={baseCurrencyCode}
+          onClose={() => {
+            setRatesOpen(false);
+            setRatesCurrency(null);
+          }}
+          onLoadRates={onLoadRates}
+          onAddRate={onAddRate}
+          onUpdateCurrency={onUpdateCurrency as any}
+        />
 
-      <CreateMetalModal
-        open={metalModalOpen}
-        busy={v.saving}
-        baseCurrencySymbol={baseCurrencySymbol}
-        onClose={() => {
-          setMetalModalOpen(false);
-          setMetalEditing(null);
-        }}
-        onSave={onSaveMetal}
-        mode={metalModalMode}
-        initial={metalModalMode === "EDIT" ? (metalEditing as any) : null}
-      />
+        <CreateMetalModal
+          open={metalModalOpen}
+          busy={v.saving}
+          baseCurrencySymbol={baseCurrencySymbol}
+          onClose={() => {
+            setMetalModalOpen(false);
+            setMetalEditing(null);
+          }}
+          onSave={onSaveMetal}
+          mode={metalModalMode}
+          initial={metalModalMode === "EDIT" ? (metalEditing as any) : null}
+        />
 
-      <CreateVariantModal
-        open={variantModalOpen}
-        busy={v.saving}
-        onClose={() => {
-          setVariantModalOpen(false);
-          setVariantEditing(null);
-          setVariantModalMode("CREATE");
-          setVariantSkuSet(new Set());
-        }}
-        onSave={onSaveVariant as any}
-        metalId={metalIdForVariant}
-        metalName={selectedMetalNameMemo || undefined}
-        metalReferenceValue={metalRefForVariant}
-        mode={variantModalMode}
-        initial={
-          variantModalMode === "EDIT" && variantEditing
-            ? ({
-                id: variantEditing.id,
-                name: variantEditing.name,
-                sku: variantEditing.sku,
-                purity: variantEditing.purity,
-                saleFactor: variantEditing.saleFactor,
-                salePriceOverride: variantEditing.salePriceOverride ?? null,
-              } as any)
-            : null
-        }
-        /**
-         * ✅ SKU duplicado (solo UI, rápido)
-         * - En EDIT, el modal ya excluye el SKU original.
-         */
-        isSkuTaken={(sku) => {
-          const k = normSku(sku);
-          return k ? variantSkuSet.has(k) : false;
-        }}
-      />
+        <CreateVariantModal
+          open={variantModalOpen}
+          busy={v.saving}
+          onClose={() => {
+            setVariantModalOpen(false);
+            setVariantEditing(null);
+            setVariantModalMode("CREATE");
+            setVariantSkuSet(new Set());
+          }}
+          onSave={onSaveVariant as any}
+          metalId={metalIdForVariant}
+          metalName={selectedMetalNameMemo || undefined}
+          metalReferenceValue={metalRefForVariant}
+          mode={variantModalMode}
+          initial={
+            variantModalMode === "EDIT" && variantEditing
+              ? ({
+                  id: variantEditing.id,
+                  name: variantEditing.name,
+                  sku: variantEditing.sku,
+                  purity: variantEditing.purity,
+                  saleFactor: variantEditing.saleFactor,
+                  salePriceOverride: variantEditing.salePriceOverride ?? null,
+                } as any)
+              : null
+          }
+          isSkuTaken={(sku) => {
+            const k = normSku(sku);
+            return k ? variantSkuSet.has(k) : false;
+          }}
+        />
 
-      <AddQuoteModal
-        open={quoteOpen && !!quoteVariant}
-        busy={v.saving}
-        onClose={() => {
-          setQuoteOpen(false);
-          setQuoteVariant(null);
-        }}
-        onSave={onSaveQuote}
-        variant={quoteVariant}
-        currencies={v.currencies}
-      />
+        <AddQuoteModal
+          open={quoteOpen && !!quoteVariant}
+          busy={v.saving}
+          onClose={() => {
+            setQuoteOpen(false);
+            setQuoteVariant(null);
+          }}
+          onSave={onSaveQuote}
+          variant={quoteVariant}
+          currencies={v.currencies}
+        />
 
-      {/* Confirm Delete Metal */}
-      <ConfirmDeleteDialog
-        open={confirmDelMetalOpen}
-        title={metalDeleteTitle}
-        description="Esta acción no se puede deshacer."
-        confirmText="Eliminar"
-        cancelText="Cancelar"
-        requireTypeToConfirm
-        typeToConfirmText="ELIMINAR"
-        dangerHint="Si este metal tiene variantes o cotizaciones asociadas, el sistema puede impedir su eliminación."
-        loading={confirmDelMetalLoading}
-        onClose={() => {
-          if (confirmDelMetalLoading) return;
-          setConfirmDelMetalOpen(false);
-          setMetalToDelete(null);
-        }}
-        onConfirm={confirmDeleteMetalNow}
-      />
+        {/* Confirm Delete Metal */}
+        <ConfirmDeleteDialog
+          open={confirmDelMetalOpen}
+          title={metalDeleteTitle}
+          description="Esta acción no se puede deshacer."
+          confirmText="Eliminar"
+          cancelText="Cancelar"
+          requireTypeToConfirm
+          typeToConfirmText="ELIMINAR"
+          dangerHint="Si este metal tiene variantes o cotizaciones asociadas, el sistema puede impedir su eliminación."
+          loading={confirmDelMetalLoading}
+          onClose={() => {
+            if (confirmDelMetalLoading) return;
+            setConfirmDelMetalOpen(false);
+            setMetalToDelete(null);
+          }}
+          onConfirm={confirmDeleteMetalNow}
+        />
 
-      {/* Confirm Delete Variant */}
-      <ConfirmDeleteDialog
-        open={confirmDelVarOpen}
-        title={variantDeleteTitle}
-        description={variantDeleteDesc}
-        confirmText="Eliminar"
-        cancelText="Cancelar"
-        requireTypeToConfirm
-        typeToConfirmText="ELIMINAR"
-        dangerHint="Si esta variante tiene cotizaciones asociadas, el sistema puede impedir su eliminación."
-        loading={confirmDelVarLoading}
-        onClose={() => {
-          if (confirmDelVarLoading) return;
-          setConfirmDelVarOpen(false);
-          setVariantToDelete(null);
-        }}
-        onConfirm={confirmDeleteVariantNow}
-      />
-    </div>
+        {/* Confirm Delete Variant */}
+        <ConfirmDeleteDialog
+          open={confirmDelVarOpen}
+          title={variantDeleteTitle}
+          description={variantDeleteDesc}
+          confirmText="Eliminar"
+          cancelText="Cancelar"
+          requireTypeToConfirm
+          typeToConfirmText="ELIMINAR"
+          dangerHint="Si esta variante tiene cotizaciones asociadas, el sistema puede impedir su eliminación."
+          loading={confirmDelVarLoading}
+          onClose={() => {
+            if (confirmDelVarLoading) return;
+            setConfirmDelVarOpen(false);
+            setVariantToDelete(null);
+          }}
+          onConfirm={confirmDeleteVariantNow}
+        />
+      </div>
+    </TPSectionShell>
   );
 }

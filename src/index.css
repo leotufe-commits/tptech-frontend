@@ -22,6 +22,9 @@
    OJO: usamos --primary-rgb para que coincida con Tailwind alpha utilities. */
 :root {
   accent-color: rgb(var(--primary-rgb) / 1);
+
+  /* ✅ micro-ajuste global del gap label↔control */
+  --tp-field-gap: 5px;
 }
 
 /* ✅ ring/outline global (fallback) */
@@ -63,45 +66,95 @@ body,
 }
 
 /* =====================================
-   Inputs (premium + mejoras en DARK)
-   ===================================== */
-.tp-input {
+   ✅ TP FIELD (unificación total)
+   - El gap entre label y control lo maneja el wrapper
+   - Elimina diferencias de 1px por subpixel/margins
+===================================== */
+.tp-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--tp-field-gap); /* ✅ espacio fijo entre label y control */
+}
+
+/* Label unificado (SIN margin-bottom) */
+.tp-field-label {
+  display: block;
+
+  font-size: 12px; /* ~ text-xs */
+  line-height: 16px;
+  color: var(--muted);
+  font-weight: 500;
+
+  min-height: 16px; /* reserva siempre el mismo “hueco” */
+  margin: 0;        /* ✅ clave: NO usar margin */
+  padding: 0;       /* ✅ evita diferencias por defaults */
+}
+
+/* Si un label no existe, igual reservamos el espacio */
+.tp-field-label--empty {
+  visibility: hidden;
+}
+
+/* =====================================
+   Inputs (FUERZA UNIFICACIÓN)
+   - Esta clase la usan:
+     ✅ TPComboCreatable (.tp-input)
+     ✅ TPInput (cuando TP_INPUT = "tp-input")
+===================================== */
+input.tp-input,
+textarea.tp-input,
+select.tp-input {
   width: 100%;
   border-radius: 0.75rem;
   border: 1px solid var(--border);
-  padding: 0.75rem 1rem;
+
+  /* ✅ ALTURA FIJA: iguala visual con combos */
+  height: 42px;
+  padding: 0 1rem;
+  line-height: 42px;
+
   outline: none;
-  background: var(--card);
+
+  /* ✅ fondo unificado */
+  background-color: var(--card) !important;
   color: var(--text);
+
   font-size: 0.95rem;
+
   transition: box-shadow 180ms ease, border-color 180ms ease, opacity 180ms ease, background 180ms ease;
 }
 
-.tp-input::placeholder {
+input.tp-input::placeholder,
+textarea.tp-input::placeholder {
   color: var(--muted);
 }
 
-.tp-input:focus {
+input.tp-input:focus,
+textarea.tp-input:focus {
   border-color: color-mix(in oklab, var(--primary) 55%, var(--border));
   box-shadow: 0 0 0 4px color-mix(in oklab, var(--primary) 28%, transparent);
 }
 
-.tp-input:hover {
+input.tp-input:hover,
+textarea.tp-input:hover {
   border-color: color-mix(in oklab, var(--border) 65%, var(--primary));
   box-shadow: 0 6px 18px color-mix(in oklab, var(--primary) 10%, transparent);
 }
 
 /* ✅ DARK: inputs más distinguibles que el card */
-[data-theme="dark"] .tp-input {
-  background: color-mix(in oklab, var(--card) 82%, #000);
+[data-theme="dark"] input.tp-input,
+[data-theme="dark"] textarea.tp-input {
+  background-color: color-mix(in oklab, var(--card) 82%, #000) !important;
   border-color: rgba(255, 255, 255, 0.22);
 }
 
-[data-theme="dark"] .tp-input:hover {
+[data-theme="dark"] input.tp-input:hover,
+[data-theme="dark"] textarea.tp-input:hover {
   border-color: rgba(255, 255, 255, 0.3);
 }
 
-[data-theme="dark"] .tp-input:focus {
+[data-theme="dark"] input.tp-input:focus,
+[data-theme="dark"] textarea.tp-input:focus {
   border-color: color-mix(in oklab, var(--primary) 60%, rgba(255, 255, 255, 0.22));
   box-shadow:
     0 0 0 4px color-mix(in oklab, var(--primary) 26%, transparent),
@@ -110,17 +163,23 @@ body,
 
 /* =====================================
    Selects / Combos (TPTech - THEME AWARE)
+   ✅ Ajustado para que quede IDÉNTICO a .tp-input
    ===================================== */
 .tp-select {
   width: 100%;
   border-radius: 0.75rem;
   border: 1px solid var(--border);
-  padding: 0.55rem 2.25rem 0.55rem 0.9rem; /* espacio para flecha */
+
+  /* ✅ ALTURA FIJA: iguala con input */
+  height: 42px;
+  padding: 0 2.25rem 0 1rem; /* espacio caret */
+  line-height: 42px;
+
   outline: none;
   background: var(--card);
   color: var(--text);
-  font-size: 0.9rem;
-  line-height: 1.2;
+  font-size: 0.95rem;
+
   transition: box-shadow 180ms ease, border-color 180ms ease, opacity 180ms ease, background 180ms ease;
 
   /* reset del select nativo */
@@ -171,9 +230,23 @@ body,
 }
 
 /* =====================================
+   🔥 TPNumberInput FIX
+   Oculta flechas nativas del navegador
+   ===================================== */
+.tp-number-no-spin::-webkit-outer-spin-button,
+.tp-number-no-spin::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+.tp-number-no-spin {
+  -moz-appearance: textfield; /* Firefox */
+  appearance: textfield;
+}
+
+/* =====================================
    Botones TPTech (THEME AWARE)
    ===================================== */
-
 .tp-btn-primary {
   background: var(--primary);
   color: #fff;
@@ -319,139 +392,31 @@ body,
   caret-color: var(--text);
   box-shadow: 0 0 0px 1000px color-mix(in oklab, var(--card) 82%, #000) inset;
 }
-/* tptech-frontend/src/index.css */
-
-/* ✅ NO importar themes.css acá.
-   Se importa en main.tsx para asegurar orden y evitar rutas incorrectas. */
-
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
 
 /* =====================================
-   ✅ GLOBAL FOCUS (THEME AWARE)
-   ===================================== */
-
-* {
-  -webkit-tap-highlight-color: transparent;
-}
-
-:root {
-  accent-color: rgb(var(--primary-rgb) / 1);
-}
-
-:where(a, button, input, select, textarea, summary, [role="button"], [tabindex]):focus {
-  outline: none;
-}
-
-:where(a, button, input, select, textarea, summary, [role="button"], [tabindex]):focus-visible {
-  outline: none;
-  box-shadow: 0 0 0 4px color-mix(in oklab, var(--primary) 28%, transparent);
-}
-
-:where(input, select, textarea):focus-visible {
-  border-color: color-mix(in oklab, var(--primary) 55%, var(--border));
-}
-
-:where(*):focus-visible {
-  outline-color: var(--primary);
-}
-
-:where(input, textarea) {
-  caret-color: rgb(var(--primary-rgb) / 1);
-}
-
-/* =====================================
-   Base global
-   ===================================== */
-html,
-body,
-#root {
-  height: 100%;
-  margin: 0;
-  background: var(--bg);
-  color: var(--text);
-}
-
-/* =====================================
-   Inputs
-   ===================================== */
-.tp-input {
-  width: 100%;
-  border-radius: 0.75rem;
-  border: 1px solid var(--border);
-  padding: 0.75rem 1rem;
-  outline: none;
+   ✅ FIX: campos deshabilitados/readOnly
+   - evita el gris “raro” del navegador
+   - mantiene el mismo fondo que el resto
+===================================== */
+.tp-input:disabled,
+.tp-select:disabled,
+.tp-input[aria-disabled="true"],
+.tp-select[aria-disabled="true"] {
+  opacity: 0.65;
+  cursor: not-allowed;
   background: var(--card);
-  color: var(--text);
-  font-size: 0.95rem;
-  transition: box-shadow 180ms ease, border-color 180ms ease, opacity 180ms ease, background 180ms ease;
-}
-
-.tp-input::placeholder {
   color: var(--muted);
 }
 
-.tp-input:focus {
-  border-color: color-mix(in oklab, var(--primary) 55%, var(--border));
-  box-shadow: 0 0 0 4px color-mix(in oklab, var(--primary) 28%, transparent);
+.tp-input[readonly],
+.tp-select[readonly] {
+  background: var(--card);
+  color: var(--text);
+  opacity: 0.9;
 }
 
-.tp-input:hover {
-  border-color: color-mix(in oklab, var(--border) 65%, var(--primary));
-  box-shadow: 0 6px 18px color-mix(in oklab, var(--primary) 10%, transparent);
-}
-
-[data-theme="dark"] .tp-input {
-  background: color-mix(in oklab, var(--card) 82%, #000);
-  border-color: rgba(255, 255, 255, 0.22);
-}
-
-[data-theme="dark"] .tp-input:hover {
-  border-color: rgba(255, 255, 255, 0.3);
-}
-
-[data-theme="dark"] .tp-input:focus {
-  border-color: color-mix(in oklab, var(--primary) 60%, rgba(255, 255, 255, 0.22));
-  box-shadow:
-    0 0 0 4px color-mix(in oklab, var(--primary) 26%, transparent),
-    0 10px 26px rgba(0, 0, 0, 0.35);
-}
-
-/* =====================================
-   🔥 TPNumberInput FIX
-   Oculta flechas nativas del navegador
-   ===================================== */
-
-.tp-number-no-spin::-webkit-outer-spin-button,
-.tp-number-no-spin::-webkit-inner-spin-button {
-  -webkit-appearance: none;
-  margin: 0;
-}
-
-.tp-number-no-spin {
-  -moz-appearance: textfield; /* Firefox */
-  appearance: textfield;
-}
-
-/* =====================================
-   FIX autofill
-   ===================================== */
-.tp-input:-webkit-autofill,
-.tp-input:-webkit-autofill:hover,
-.tp-input:-webkit-autofill:focus,
-.tp-input:-webkit-autofill:active {
-  -webkit-text-fill-color: var(--text);
-  caret-color: var(--text);
-  box-shadow: 0 0 0px 1000px var(--card) inset;
-  transition: background-color 9999s ease-in-out 0s;
-}
-
-[data-theme="dark"] .tp-input:-webkit-autofill,
-[data-theme="dark"] .tp-input:-webkit-autofill:hover,
-[data-theme="dark"] .tp-input:-webkit-autofill:focus,
-[data-theme="dark"] .tp-input:-webkit-autofill:active {
-  -webkit-text-fill-color: var(--text);
-  caret-color: var(--text);
-  box-shadow: 0 0 0px 1000px color-mix(in oklab, var(--card) 82%, #000) inset;
+/* ✅ Asegura cálculo de tamaño consistente */
+.tp-input,
+.tp-select {
+  box-sizing: border-box;
 }

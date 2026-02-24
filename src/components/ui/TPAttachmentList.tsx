@@ -15,14 +15,11 @@ export type TPAttachmentItem = {
 
 type Props = {
   items: TPAttachmentItem[];
-
   loading?: boolean;
   deletingId?: string | null;
-
   onView?: (item: TPAttachmentItem) => void;
   onDownload?: (item: TPAttachmentItem) => void;
   onDelete?: (item: TPAttachmentItem) => void;
-
   emptyText?: string;
   className?: string;
 };
@@ -69,7 +66,7 @@ export function TPAttachmentList({
         const img = isImage(item.mimeType, item.name);
 
         return (
-          <TPCard key={item.id} className="p-3 bg-[color-mix(in_oklab,var(--card)_92%,var(--bg))]">
+          <TPCard key={item.id} className="p-3 bg-card">
             <div className="flex items-center gap-3">
               {/* Preview */}
               <div className="h-10 w-10 shrink-0 overflow-hidden rounded-lg grid place-items-center border border-border bg-surface2">
@@ -96,13 +93,19 @@ export function TPAttachmentList({
               {/* Actions */}
               <div className="flex items-center gap-2">
                 {onView && (
-                  <TPIconButton title="Ver" disabled={!item.url || busy} onClick={() => onView(item)}>
+                  <TPIconButton
+                    tabIndex={-1} // ✅ NO entrar en TAB
+                    title="Ver"
+                    disabled={!item.url || busy}
+                    onClick={() => onView(item)}
+                  >
                     <Eye className="h-4 w-4" />
                   </TPIconButton>
                 )}
 
                 {onDownload && (
                   <TPIconButton
+                    tabIndex={-1} // ✅ NO entrar en TAB
                     title="Descargar"
                     disabled={!item.url || busy}
                     onClick={() => onDownload(item)}
@@ -112,7 +115,12 @@ export function TPAttachmentList({
                 )}
 
                 {onDelete && (
-                  <TPIconButton title="Eliminar" disabled={busy} onClick={() => onDelete(item)}>
+                  <TPIconButton
+                    tabIndex={-1} // ✅ NO entrar en TAB
+                    title="Eliminar"
+                    disabled={busy}
+                    onClick={() => onDelete(item)}
+                  >
                     <Trash2 className="h-4 w-4" />
                   </TPIconButton>
                 )}

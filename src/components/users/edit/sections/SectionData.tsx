@@ -1,11 +1,11 @@
 // tptech-frontend/src/components/users/edit/sections/SectionData.tsx
 import React from "react";
-import { Download, Eye, Loader2, Trash2 } from "lucide-react";
+import { Download, Eye, EyeOff, Loader2, Trash2 } from "lucide-react";
 
 import { cn, Section, formatBytes, safeFileLabel, absUrl } from "../../users.ui";
 import type { UserAttachment } from "../../../../services/users";
 
-import { TPCard, InputWithEye } from "../helpers/ui";
+import { TPCard } from "../helpers/ui";
 
 // ✅ UI system
 import TPInput from "../../../ui/TPInput";
@@ -262,19 +262,27 @@ export default function SectionData(props: Props) {
             disabled={modalMode === "EDIT" || modalBusy}
             autoComplete="email"
           />
-          <div>
-            <label className="mb-1 block text-xs text-muted">
-              {isCreate ? "Contraseña (opcional)" : "Nueva contraseña (opcional)"}
-            </label>
 
-            <InputWithEye
+          <div>
+            <TPInput
+              label={isCreate ? "Contraseña (opcional)" : "Nueva contraseña (opcional)"}
               value={fPassword}
               onChange={setFPassword}
               placeholder={isCreate ? "Si la dejás vacía, queda Inactivo" : "Dejar vacía para no cambiar"}
               disabled={modalBusy}
-              show={showPassword}
-              setShow={setShowPassword}
               autoComplete="new-password"
+              type={showPassword ? "text" : "password"}
+              rightIcon={
+                <button
+                  type="button"
+                  className="inline-flex items-center justify-center"
+                  onClick={() => setShowPassword(!showPassword)}
+                  aria-label={showPassword ? "Ocultar contraseña" : "Mostrar contraseña"}
+                  disabled={modalBusy}
+                >
+                  {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                </button>
+              }
             />
 
             {isCreate ? (
@@ -284,7 +292,10 @@ export default function SectionData(props: Props) {
             ) : (
               <p className="mt-1 text-[11px] text-muted">(Solo se cambia si escribís una nueva)</p>
             )}
-            {modalMode === "EDIT" && <p className="mt-1 text-[11px] text-muted">(El email no se edita desde aquí)</p>}
+
+            {modalMode === "EDIT" && (
+              <p className="mt-1 text-[11px] text-muted">(El email no se edita desde aquí)</p>
+            )}
           </div>
         </div>
       </Section>
@@ -302,8 +313,8 @@ export default function SectionData(props: Props) {
           </div>
 
           <div className="md:col-span-3">
-            <label className="mb-1 block text-xs text-muted">Tipo doc.</label>
             <TPComboCreatable
+              label="Tipo doc."
               mode={isCreate ? "create" : "edit"}
               type="DOCUMENT_TYPE"
               items={docTypeCat.items}
@@ -332,8 +343,8 @@ export default function SectionData(props: Props) {
           </div>
 
           <div className="md:col-span-2">
-            <label className="mb-1 block text-xs text-muted">Tel. país</label>
             <TPComboCreatable
+              label="Tel. país"
               mode={isCreate ? "create" : "edit"}
               type="PHONE_PREFIX"
               items={prefixCat.items}
@@ -375,8 +386,8 @@ export default function SectionData(props: Props) {
                 </div>
 
                 <div className="md:col-span-5">
-                  <label className="mb-1 block text-xs text-muted">Ciudad</label>
                   <TPComboCreatable
+                    label="Ciudad"
                     mode={isCreate ? "create" : "edit"}
                     type="CITY"
                     items={cityCat.items}
@@ -395,8 +406,8 @@ export default function SectionData(props: Props) {
                 </div>
 
                 <div className="md:col-span-4">
-                  <label className="mb-1 block text-xs text-muted">Provincia</label>
                   <TPComboCreatable
+                    label="Provincia"
                     mode={isCreate ? "create" : "edit"}
                     type="PROVINCE"
                     items={provCat.items}
@@ -415,12 +426,17 @@ export default function SectionData(props: Props) {
                 </div>
 
                 <div className="md:col-span-4">
-                  <TPInput label="Código postal" value={fPostalCode} onChange={setFPostalCode} disabled={modalBusy} />
+                  <TPInput
+                    label="Código postal"
+                    value={fPostalCode}
+                    onChange={setFPostalCode}
+                    disabled={modalBusy}
+                  />
                 </div>
 
                 <div className="md:col-span-4">
-                  <label className="mb-1 block text-xs text-muted">País</label>
                   <TPComboCreatable
+                    label="País"
                     mode={isCreate ? "create" : "edit"}
                     type="COUNTRY"
                     items={countryCat.items}
@@ -548,8 +564,12 @@ export default function SectionData(props: Props) {
                     : "var(--border)",
                 }}
               >
-                <div className="text-sm text-text">{uploadingAttachments ? "Subiendo archivos…" : "Click para agregar archivos +"}</div>
-                <div className="mt-1 text-[11px] text-muted">{dragOver ? "Soltá para adjuntar" : "También podés arrastrar y soltar acá"}</div>
+                <div className="text-sm text-text">
+                  {uploadingAttachments ? "Subiendo archivos…" : "Click para agregar archivos +"}
+                </div>
+                <div className="mt-1 text-[11px] text-muted">
+                  {dragOver ? "Soltá para adjuntar" : "También podés arrastrar y soltar acá"}
+                </div>
 
                 {(hasDraft || hasSaved) && (
                   <div className="mt-3 text-[11px] text-muted">
@@ -581,13 +601,22 @@ export default function SectionData(props: Props) {
                           const showImg = Boolean(preview) && isLikelyImage(f.type || f.name);
 
                           return (
-                            <div key={key} className="flex items-center justify-between gap-3 rounded-xl border border-border bg-card/40 px-3 py-2">
+                            <div
+                              key={key}
+                              className="flex items-center justify-between gap-3 rounded-xl border border-border bg-card/40 px-3 py-2"
+                            >
                               <div className="flex items-center gap-3 min-w-0 flex-1">
                                 <div className="h-10 w-10 shrink-0 overflow-hidden rounded-lg border border-border bg-card">
                                   {showImg ? (
-                                    <img src={preview} alt={safeFileLabel(f.name)} className="h-full w-full object-cover" />
+                                    <img
+                                      src={preview}
+                                      alt={safeFileLabel(f.name)}
+                                      className="h-full w-full object-cover"
+                                    />
                                   ) : (
-                                    <div className="h-full w-full grid place-items-center text-[10px] text-muted">FILE</div>
+                                    <div className="h-full w-full grid place-items-center text-[10px] text-muted">
+                                      FILE
+                                    </div>
                                   )}
                                 </div>
 
@@ -602,11 +631,19 @@ export default function SectionData(props: Props) {
                                   <Eye className="h-4 w-4" />
                                 </TPIconButton>
 
-                                <TPIconButton title="Reemplazar" disabled={busyAttachments} onClick={() => openReplacePicker(idx)}>
+                                <TPIconButton
+                                  title="Reemplazar"
+                                  disabled={busyAttachments}
+                                  onClick={() => openReplacePicker(idx)}
+                                >
                                   <Download className="h-4 w-4" />
                                 </TPIconButton>
 
-                                <TPIconButton title="Eliminar" disabled={busyAttachments} onClick={() => removeDraftAttachmentByIndex(idx)}>
+                                <TPIconButton
+                                  title="Eliminar"
+                                  disabled={busyAttachments}
+                                  onClick={() => removeDraftAttachmentByIndex(idx)}
+                                >
                                   <Trash2 className="h-4 w-4" />
                                 </TPIconButton>
                               </div>
@@ -627,12 +664,17 @@ export default function SectionData(props: Props) {
                           const busyRow = deletingAttId === a.id || busyAttachments;
 
                           return (
-                            <div key={a.id} className="flex items-center justify-between gap-3 rounded-xl border border-border bg-card/40 px-3 py-2">
+                            <div
+                              key={a.id}
+                              className="flex items-center justify-between gap-3 rounded-xl border border-border bg-card/40 px-3 py-2"
+                            >
                               <div className="min-w-0 flex-1">
                                 <div className="truncate text-sm text-text" title={filename}>
                                   {filename}
                                 </div>
-                                <div className="text-[11px] text-muted">{typeof a.size === "number" ? formatBytes(a.size) : ""}</div>
+                                <div className="text-[11px] text-muted">
+                                  {typeof a.size === "number" ? formatBytes(a.size) : ""}
+                                </div>
                               </div>
 
                               <div className="flex items-center gap-2">
@@ -640,7 +682,11 @@ export default function SectionData(props: Props) {
                                   <Eye className="h-4 w-4" />
                                 </TPIconButton>
 
-                                <TPIconButton title="Descargar" disabled={busyRow} onClick={() => handleDownloadSavedAttachment(a)}>
+                                <TPIconButton
+                                  title="Descargar"
+                                  disabled={busyRow}
+                                  onClick={() => handleDownloadSavedAttachment(a)}
+                                >
                                   <Download className="h-4 w-4" />
                                 </TPIconButton>
 
@@ -649,7 +695,11 @@ export default function SectionData(props: Props) {
                                   disabled={busyRow}
                                   onClick={() => handleRemoveSavedAttachment(a.id)}
                                 >
-                                  {deletingAttId === a.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+                                  {deletingAttId === a.id ? (
+                                    <Loader2 className="h-4 w-4 animate-spin" />
+                                  ) : (
+                                    <Trash2 className="h-4 w-4" />
+                                  )}
                                 </TPIconButton>
                               </div>
                             </div>

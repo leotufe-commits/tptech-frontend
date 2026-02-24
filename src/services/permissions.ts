@@ -13,21 +13,38 @@ export type Permission = {
 export type PermissionsResponse =
   | Permission[]
   | { permissions: Permission[] }
+  | { items: Permission[] }
   | { data: Permission[] };
 
 /* =========================
    Helpers
 ========================= */
-export function normalizePermissions(resp: unknown): Permission[] {
-  if (Array.isArray(resp)) return resp as Permission[];
+function isObject(v: unknown): v is Record<string, any> {
+  return !!v && typeof v === "object";
+}
 
-  if (resp && typeof resp === "object") {
+function normalizePermissionRow(raw: any): Permission | null {
+  if (!raw) return null;
+  const id = String(raw.id ?? "").trim();
+  const module = String(raw.module ?? "").trim();
+  const action = String(raw.action ?? "").trim();
+  if (!id || !module || !action) return null;
+  return { id, module, action };
+}
+
+export function normalizePermissions(resp: unknown): Permission[] {
+  let rows: any[] = [];
+
+  if (Array.isArray(resp)) {
+    rows = resp;
+  } else if (isObject(resp)) {
     const anyResp = resp as any;
-    if (Array.isArray(anyResp.permissions)) return anyResp.permissions as Permission[];
-    if (Array.isArray(anyResp.data)) return anyResp.data as Permission[];
+    if (Array.isArray(anyResp.permissions)) rows = anyResp.permissions;
+    else if (Array.isArray(anyResp.items)) rows = anyResp.items; // ✅ backend actual
+    else if (Array.isArray(anyResp.data)) rows = anyResp.data;
   }
 
-  return [];
+  return rows.map(normalizePermissionRow).filter(Boolean) as Permission[];
 }
 
 /* =========================

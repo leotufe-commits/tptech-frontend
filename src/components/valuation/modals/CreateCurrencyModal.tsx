@@ -1,8 +1,18 @@
-import React, { useEffect, useState } from "react";
-import { Loader2, Save } from "lucide-react";
+// src/components/valuation/modals/CreateCurrencyModal.tsx
+import React, { useEffect, useMemo, useState } from "react";
+import { Loader2, Save, X } from "lucide-react";
 
 import Modal from "../../ui/Modal";
-import { TP_INPUT, TP_BTN_PRIMARY, TP_BTN_SECONDARY } from "../../ui/tp";
+import { TPCard } from "../../ui/TPCard";
+import { TP_INPUT, TP_BTN_PRIMARY, TP_BTN_SECONDARY, cn } from "../../ui/tp";
+
+function normCode(v: string) {
+  const up = String(v || "")
+    .toUpperCase()
+    .replace(/\s+/g, "")
+    .replace(/[^A-Z0-9]/g, "");
+  return up.slice(0, 6);
+}
 
 export default function CreateCurrencyModal({
   open,
@@ -28,8 +38,14 @@ export default function CreateCurrencyModal({
     setSymbol("");
   }, [open]);
 
+  const codeNorm = useMemo(() => normCode(code), [code]);
+
+  const canSubmit = useMemo(() => {
+    return !!codeNorm && !!String(name || "").trim() && !!String(symbol || "").trim() && !busy;
+  }, [busy, codeNorm, name, symbol]);
+
   async function submit() {
-    const c = String(code || "").trim().toUpperCase();
+    const c = codeNorm;
     const n = String(name || "").trim();
     const s = String(symbol || "").trim();
 
@@ -45,10 +61,19 @@ export default function CreateCurrencyModal({
     onClose();
   }
 
+  function onKeyDown(e: React.KeyboardEvent) {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      if (canSubmit) void submit();
+    }
+  }
+
   return (
     <Modal
       open={open}
       title="Nueva moneda"
+      maxWidth="md"
+      hideHeaderClose
       onClose={() => {
         if (busy) return;
         onClose();
@@ -57,10 +82,16 @@ export default function CreateCurrencyModal({
       footer={
         <>
           <button type="button" className={TP_BTN_SECONDARY} onClick={onClose} disabled={busy}>
+            <X size={16} className="inline-block mr-2" />
             Cancelar
           </button>
 
-          <button type="button" className={TP_BTN_PRIMARY} onClick={submit} disabled={busy}>
+          <button
+            type="button"
+            className={cn(TP_BTN_PRIMARY, !canSubmit && "opacity-60")}
+            onClick={submit}
+            disabled={!canSubmit}
+          >
             {busy ? (
               <Loader2 size={16} className="animate-spin inline-block mr-2" />
             ) : (
@@ -71,29 +102,28 @@ export default function CreateCurrencyModal({
         </>
       }
     >
-      <div className="space-y-4">
-        <div className="text-sm text-muted">Definí el código, nombre y símbolo.</div>
+      <div onKeyDown={onKeyDown}>
+        <TPCard className="p-4 space-y-4">
+          {err ? (
+            <div className="rounded-2xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-text">
+              {err}
+            </div>
+          ) : null}
 
-        {err ? (
-          <div className="rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-text">
-            {err}
-          </div>
-        ) : null}
-
-        <div className="grid gap-3 md:grid-cols-3">
           <div>
             <label className="text-xs font-semibold text-muted">Código</label>
             <input
-              value={code}
+              value={codeNorm}
               onChange={(e) => setCode(e.target.value)}
               placeholder="ARS"
               autoFocus
               disabled={busy}
               className={TP_INPUT}
+              maxLength={6}
             />
           </div>
 
-          <div className="md:col-span-2">
+          <div>
             <label className="text-xs font-semibold text-muted">Nombre</label>
             <input
               value={name}
@@ -103,18 +133,18 @@ export default function CreateCurrencyModal({
               className={TP_INPUT}
             />
           </div>
-        </div>
 
-        <div>
-          <label className="text-xs font-semibold text-muted">Símbolo</label>
-          <input
-            value={symbol}
-            onChange={(e) => setSymbol(e.target.value)}
-            placeholder="$ / US$ / €"
-            disabled={busy}
-            className={TP_INPUT}
-          />
-        </div>
+          <div>
+            <label className="text-xs font-semibold text-muted">Símbolo</label>
+            <input
+              value={symbol}
+              onChange={(e) => setSymbol(e.target.value)}
+              placeholder="$"
+              disabled={busy}
+              className={TP_INPUT}
+            />
+          </div>
+        </TPCard>
       </div>
     </Modal>
   );

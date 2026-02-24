@@ -14,7 +14,12 @@ export function TPCard({
   className?: string;
 }) {
   return (
-    <div className={cn("rounded-2xl border border-border bg-surface2 p-4", className)}>
+    <div
+      className={cn(
+        "rounded-2xl border border-border bg-white p-4",
+        className
+      )}
+    >
       {title || right ? (
         <div className="flex items-start justify-between gap-3">
           <div className="text-sm font-semibold text-text">{title}</div>
@@ -25,3 +30,5 @@ export function TPCard({
     </div>
   );
 }
+
+export default TPCard;

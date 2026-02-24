@@ -1,7 +1,17 @@
+// src/components/ui/TPInput.tsx
 import React from "react";
-import { cn, TP_SELECT } from "./tp";
+import { cn } from "./tp";
 
-type TPSelectProps = Omit<React.SelectHTMLAttributes<HTMLSelectElement>, "onChange" | "value"> & {
+/**
+ * TPInput
+ * ✅ Alineado visualmente con TPComboCreatable (mismo look & height)
+ * - Usa la misma clase base "tp-input" que usan los combos
+ * - Mantiene soporte de icons, error, hint, etc.
+ */
+type TPInputProps = Omit<
+  React.InputHTMLAttributes<HTMLInputElement>,
+  "size" | "onChange" | "value"
+> & {
   label?: string;
   hint?: string;
   error?: string | null;
@@ -9,65 +19,91 @@ type TPSelectProps = Omit<React.SelectHTMLAttributes<HTMLSelectElement>, "onChan
   value: string;
   onChange: (v: string) => void;
 
+  onlyDigits?: boolean;
+  maxLen?: number;
+
+  leftIcon?: React.ReactNode;
+  rightIcon?: React.ReactNode;
+
   wrapClassName?: string;
+
+  /** ✅ permite focus desde afuera (ej: modales) */
+  inputRef?: React.Ref<HTMLInputElement>;
 };
 
-export function TPSelect({
+export default function TPInput({
   label,
   hint,
   error,
+
   value,
   onChange,
+
+  onlyDigits,
+  maxLen,
+
+  leftIcon,
+  rightIcon,
+
   className,
   wrapClassName,
+
   disabled,
-  children,
+  inputRef,
   ...rest
-}: TPSelectProps) {
+}: TPInputProps) {
+  const hasLeft = Boolean(leftIcon);
+  const hasRight = Boolean(rightIcon);
+
+  function handleChange(v: string) {
+    let next = v;
+    if (onlyDigits) next = next.replace(/\D+/g, "");
+    if (typeof maxLen === "number" && maxLen > 0) next = next.slice(0, maxLen);
+    onChange(next);
+  }
+
   return (
-    <div className={cn("w-full space-y-1", wrapClassName)}>
-      {label ? (
-        <label className="text-xs font-medium text-muted leading-4">{label}</label>
-      ) : null}
+    <div className={cn("w-full", wrapClassName)}>
+      {label ? <div className="mb-2 text-sm text-muted">{label}</div> : null}
 
       <div className="relative">
-        <select
-          {...rest}
+        {hasLeft ? (
+          <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted pointer-events-none">
+            {leftIcon}
+          </span>
+        ) : null}
+
+        <input
+          ref={inputRef as any}
           disabled={disabled}
           value={value}
-          onChange={(e) => onChange(e.target.value)}
+          onChange={(e) => handleChange(e.target.value)}
           className={cn(
-            TP_SELECT,
-            "h-[42px] leading-5 appearance-none pr-10",
-            error && "border-red-500/60 focus-visible:ring-red-500/20",
+            // ✅ MISMA base que los combos (TPComboCreatable)
+            "tp-input w-full",
+            // ✅ aseguro misma altura (por si algún tp-input viejo no la tiene)
+            "h-[42px]",
+            hasLeft && "pl-10",
+            hasRight && "pr-10",
+            error && "border-red-500/40 focus:border-red-500/50 focus:ring-red-500/20",
+            disabled && "opacity-70",
             className
           )}
-        >
-          {children}
-        </select>
+          {...rest}
+        />
 
-        {/* caret visual sutil (opcional). Si no lo querés, lo saco. */}
-        <svg
-          aria-hidden="true"
-          className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 opacity-60"
-          viewBox="0 0 20 20"
-          fill="currentColor"
-        >
-          <path
-            fillRule="evenodd"
-            d="M5.23 7.21a.75.75 0 0 1 1.06.02L10 10.94l3.71-3.71a.75.75 0 1 1 1.06 1.06l-4.24 4.24a.75.75 0 0 1-1.06 0L5.21 8.29a.75.75 0 0 1 .02-1.08z"
-            clipRule="evenodd"
-          />
-        </svg>
+        {hasRight ? (
+          <span className="absolute right-3 top-1/2 -translate-y-1/2 text-muted pointer-events-none">
+            {rightIcon}
+          </span>
+        ) : null}
       </div>
 
       {error ? (
-        <div className="text-xs text-red-400">{error}</div>
+        <div className="mt-1 text-xs text-red-400">{error}</div>
       ) : hint ? (
-        <div className="text-xs text-muted">{hint}</div>
+        <div className="mt-1 text-xs text-muted">{hint}</div>
       ) : null}
     </div>
   );
 }
-
-export default TPSelect;

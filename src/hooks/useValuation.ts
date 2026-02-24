@@ -1,6 +1,7 @@
 // src/hooks/useValuation.ts
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as valuation from "../services/valuation";
+import { TPTECH_VALUATION_CHANGED } from "../services/valuation";
 
 export type CurrencyRow = {
   id: string;
@@ -111,20 +112,30 @@ function pickRows(resp: any) {
   return resp?.rows ?? resp?.data?.rows ?? resp?.data ?? resp ?? [];
 }
 
+function pickId(resp: any): string | null {
+  const id =
+    resp?.id ??
+    resp?.row?.id ??
+    resp?.data?.id ??
+    resp?.data?.row?.id ??
+    resp?.currency?.id ??
+    resp?.data?.currency?.id ??
+    null;
+
+  const s = String(id ?? "").trim();
+  return s ? s : null;
+}
+
 function normKey(v: any) {
-  return String(v ?? "")
-    .trim()
-    .toLowerCase();
+  return String(v ?? "").trim().toLowerCase();
 }
 
 function normCode(v: any) {
-  return String(v ?? "")
-    .trim()
-    .toUpperCase();
+  return String(v ?? "").trim().toUpperCase();
 }
 
 export function useValuation() {
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(true); // solo para carga inicial / refetch “visible”
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -142,34 +153,116 @@ export function useValuation() {
     };
   }, []);
 
-  const loadCurrencies = useCallback(async () => {
-    const c = await valuation.getCurrencies();
+  // para evitar “race conditions” entre refetches
+  const refetchGenRef = useRef(0);
+
+  // para evitar parpadeo: loading solo en el primer fetch o cuando NO es silent
+  const initialLoadedRef = useRef(false);
+
+  const loadCurrencies = useCallback(async (gen?: number) => {
+    const resp = await valuation.getCurrencies();
     if (!mountedRef.current) return;
-    setCurrencies(pickRows(c));
+
+    // si vino un refetch más nuevo, ignorar
+    if (typeof gen === "number" && gen !== refetchGenRef.current) return;
+
+    setCurrencies(pickRows(resp));
   }, []);
 
-  const loadMetals = useCallback(async () => {
-    const m = await valuation.getMetals();
+  const loadMetals = useCallback(async (gen?: number) => {
+    const resp = await valuation.getMetals();
     if (!mountedRef.current) return;
-    setMetals(pickRows(m));
+
+    if (typeof gen === "number" && gen !== refetchGenRef.current) return;
+
+    setMetals(pickRows(resp));
   }, []);
 
-  const refetch = useCallback(async () => {
-    setError(null);
-    try {
-      setLoading(true);
-      await Promise.all([loadCurrencies(), loadMetals()]);
-    } catch (e) {
-      if (!mountedRef.current) return;
-      setError(getErrorMessage(e));
-    } finally {
-      if (!mountedRef.current) return;
-      setLoading(false);
-    }
-  }, [loadCurrencies, loadMetals]);
+  const refetch = useCallback(
+    async (opts?: { silent?: boolean }) => {
+      const silent = Boolean(opts?.silent);
+
+      setError(null);
+
+      const gen = ++refetchGenRef.current;
+
+      try {
+        if (!silent || !initialLoadedRef.current) setLoading(true);
+        await Promise.all([loadCurrencies(gen), loadMetals(gen)]);
+        if (mountedRef.current && gen === refetchGenRef.current) {
+          initialLoadedRef.current = true;
+        }
+      } catch (e) {
+        if (!mountedRef.current) return;
+        if (gen !== refetchGenRef.current) return;
+        setError(getErrorMessage(e));
+      } finally {
+        if (!mountedRef.current) return;
+        if (gen !== refetchGenRef.current) return;
+        setLoading(false);
+      }
+    },
+    [loadCurrencies, loadMetals]
+  );
 
   useEffect(() => {
     void refetch();
+  }, [refetch]);
+
+  /* =========================
+     ✅ Auto-refresh global (Punto 3)
+     - Si cambia algo en valuation en cualquier lado,
+       recargamos currencies/metals en silent.
+  ========================= */
+  const refreshTimerRef = useRef<any>(null);
+
+  useEffect(() => {
+    function scheduleSilentRefresh(kind?: string) {
+      // agrupamos múltiples eventos seguidos (ej: create + setBase)
+      if (refreshTimerRef.current) clearTimeout(refreshTimerRef.current);
+
+      refreshTimerRef.current = setTimeout(() => {
+        refreshTimerRef.current = null;
+
+        // silent => NO parpadea
+        void refetch({ silent: true });
+      }, 80);
+    }
+
+    function onValuationChanged(e: any) {
+      const kind = String(e?.detail?.kind || "");
+
+      // Si el evento no tiene kind (o viene raro), igual refrescamos
+      if (!kind) {
+        scheduleSilentRefresh();
+        return;
+      }
+
+      // En todos estos casos, currencies/metals pueden cambiar:
+      // - base currency => recalcula metales
+      // - rates => latestRate
+      // - metals update => referenceValue
+      // - move metal => sortOrder
+      // - variantes/quotes NO cambian listas de currencies/metals, pero
+      //   muchas veces el panel quiere refrescar el metal seleccionado.
+      // Como tu UI de variantes usa getVariants on demand, no rompemos nada
+      // y hacemos un silent refresh global (rápido y simple).
+      scheduleSilentRefresh(kind);
+    }
+
+    if (typeof window !== "undefined") {
+      window.addEventListener(TPTECH_VALUATION_CHANGED, onValuationChanged as any);
+    }
+
+    return () => {
+      if (typeof window !== "undefined") {
+        window.removeEventListener(TPTECH_VALUATION_CHANGED, onValuationChanged as any);
+      }
+      if (refreshTimerRef.current) {
+        clearTimeout(refreshTimerRef.current);
+        refreshTimerRef.current = null;
+      }
+    };
   }, [refetch]);
 
   /* =========================
@@ -188,8 +281,23 @@ export function useValuation() {
         if (exists) return { ok: false as const, error: `Ya existe una moneda con código "${code}".` };
 
         setSaving(true);
-        await valuation.createCurrency({ ...data, code });
-        await refetch();
+
+        // ✅ crear
+        const resp = await valuation.createCurrency({ ...data, code });
+
+        // ✅ Punto 2 (queda por compat): en tu backend ya lo hace, pero lo mantenemos.
+        const hasBase = currencies.some((c) => c.isBase);
+        const isFirst = currencies.length === 0 || !hasBase;
+
+        const createdId = pickId(resp);
+
+        if (isFirst && createdId) {
+          await valuation.setBaseCurrency(createdId);
+          await Promise.all([loadCurrencies(refetchGenRef.current), loadMetals(refetchGenRef.current)]);
+        } else {
+          await loadCurrencies(refetchGenRef.current);
+        }
+
         return { ok: true as const };
       } catch (e) {
         const msg = getErrorMessage(e);
@@ -199,7 +307,7 @@ export function useValuation() {
         if (mountedRef.current) setSaving(false);
       }
     },
-    [refetch, currencies]
+    [currencies, loadCurrencies, loadMetals]
   );
 
   const updateCurrency = useCallback(
@@ -218,7 +326,7 @@ export function useValuation() {
 
         setSaving(true);
         await valuation.updateCurrency(id, { ...data, code });
-        await refetch();
+        await loadCurrencies(refetchGenRef.current);
         return { ok: true as const };
       } catch (e) {
         const msg = getErrorMessage(e);
@@ -228,7 +336,7 @@ export function useValuation() {
         if (mountedRef.current) setSaving(false);
       }
     },
-    [refetch, currencies]
+    [currencies, loadCurrencies]
   );
 
   const setBaseCurrency = useCallback(
@@ -237,7 +345,7 @@ export function useValuation() {
       try {
         setSaving(true);
         await valuation.setBaseCurrency(currencyId, opts);
-        await Promise.all([loadCurrencies(), loadMetals()]);
+        await Promise.all([loadCurrencies(refetchGenRef.current), loadMetals(refetchGenRef.current)]);
         return { ok: true as const };
       } catch (e) {
         const msg = getErrorMessage(e);
@@ -256,7 +364,7 @@ export function useValuation() {
       try {
         setSaving(true);
         await valuation.toggleCurrencyActive(currencyId, isActive);
-        await loadCurrencies();
+        await loadCurrencies(refetchGenRef.current);
         return { ok: true as const };
       } catch (e) {
         const msg = getErrorMessage(e);
@@ -275,7 +383,7 @@ export function useValuation() {
       try {
         setSaving(true);
         await valuation.addCurrencyRate(currencyId, data);
-        await loadCurrencies();
+        await loadCurrencies(refetchGenRef.current);
         return { ok: true as const };
       } catch (e) {
         const msg = getErrorMessage(e);
@@ -310,7 +418,7 @@ export function useValuation() {
 
         setSaving(true);
         await valuation.deleteCurrency(id);
-        await loadCurrencies();
+        await loadCurrencies(refetchGenRef.current);
         return { ok: true as const };
       } catch (e) {
         const msg = getErrorMessage(e);
@@ -346,7 +454,7 @@ export function useValuation() {
 
         setSaving(true);
         await valuation.createMetal(data);
-        await loadMetals();
+        await loadMetals(refetchGenRef.current);
         return { ok: true as const };
       } catch (e) {
         const msg = getErrorMessage(e);
@@ -381,7 +489,7 @@ export function useValuation() {
 
         setSaving(true);
         await valuation.updateMetal(id, data as any);
-        await loadMetals();
+        await loadMetals(refetchGenRef.current);
         return { ok: true as const };
       } catch (e) {
         const msg = getErrorMessage(e);
@@ -400,7 +508,7 @@ export function useValuation() {
       try {
         setSaving(true);
         await valuation.toggleMetalActive(metalId, isActive);
-        await loadMetals();
+        await loadMetals(refetchGenRef.current);
         return { ok: true as const };
       } catch (e) {
         const msg = getErrorMessage(e);
@@ -422,7 +530,7 @@ export function useValuation() {
 
         setSaving(true);
         await valuation.deleteMetal(id);
-        await loadMetals();
+        await loadMetals(refetchGenRef.current);
         return { ok: true as const };
       } catch (e) {
         const msg = getErrorMessage(e);
@@ -444,7 +552,7 @@ export function useValuation() {
 
         setSaving(true);
         const r = await valuation.moveMetal(id, dir);
-        if (r?.ok) await loadMetals();
+        if (r?.ok) await loadMetals(refetchGenRef.current);
         return r;
       } catch (e) {
         const msg = getErrorMessage(e);
@@ -546,7 +654,6 @@ export function useValuation() {
     []
   );
 
-  // ✅ NUEVO: editar variante (name/sku/purity + pricing)
   const updateVariant = useCallback(
     async (
       variantId: string,
@@ -622,44 +729,33 @@ export function useValuation() {
     }
   }, []);
 
-  /**
-   * ✅ FAVORITO (con deselección)
-   * - variantId string => setear favorita
-   * - variantId null => limpiar favorito del metal (requiere metalId)
-   *
-   * IMPORTANTE: el panel debe llamar setFavoriteVariant(null, selectedMetalId)
-   */
-  const setFavoriteVariant = useCallback(
-    async (variantId: string | null, metalId?: string) => {
-      setError(null);
-      try {
-        setSaving(true);
+  const setFavoriteVariant = useCallback(async (variantId: string | null, metalId?: string) => {
+    setError(null);
+    try {
+      setSaving(true);
 
-        if (variantId === null) {
-          const mid = String(metalId || "").trim();
-          if (!mid) return { ok: false as const, error: "Metal requerido para quitar favorito." };
+      if (variantId === null) {
+        const mid = String(metalId || "").trim();
+        if (!mid) return { ok: false as const, error: "Metal requerido para quitar favorito." };
 
-          // si existe endpoint dedicado, úsalo
-          if (typeof (valuation as any).clearFavoriteVariant === "function") {
-            await (valuation as any).clearFavoriteVariant(mid);
-            return { ok: true as const };
-          }
-
-          return { ok: false as const, error: "Falta endpoint/service para limpiar favorito del metal." };
+        if (typeof (valuation as any).clearFavoriteVariant === "function") {
+          await (valuation as any).clearFavoriteVariant(mid);
+          return { ok: true as const };
         }
 
-        await valuation.setFavoriteVariant(variantId);
-        return { ok: true as const };
-      } catch (e) {
-        const msg = getErrorMessage(e);
-        if (mountedRef.current) setError(msg);
-        return { ok: false as const, error: msg };
-      } finally {
-        if (mountedRef.current) setSaving(false);
+        return { ok: false as const, error: "Falta endpoint/service para limpiar favorito del metal." };
       }
-    },
-    []
-  );
+
+      await valuation.setFavoriteVariant(variantId);
+      return { ok: true as const };
+    } catch (e) {
+      const msg = getErrorMessage(e);
+      if (mountedRef.current) setError(msg);
+      return { ok: false as const, error: msg };
+    } finally {
+      if (mountedRef.current) setSaving(false);
+    }
+  }, []);
 
   const addQuote = useCallback(
     async (data: {
@@ -731,7 +827,7 @@ export function useValuation() {
     // variantes/quotes
     getVariants,
     createVariant,
-    updateVariant, // ✅ NUEVO
+    updateVariant,
     updateVariantPricing,
     deleteVariant,
     toggleVariantActive,

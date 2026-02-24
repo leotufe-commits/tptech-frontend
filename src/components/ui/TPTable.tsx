@@ -159,3 +159,20 @@ export function TPTableWrap({
     </div>
   );
 }
+
+/* =========================================================
+   FOOTER (contador / resumen)
+========================================================= */
+export function TPTableFooter({
+  children,
+  className,
+}: {
+  children: ReactNode;
+  className?: string;
+}) {
+  return (
+    <div className={cn("border-t border-border px-5 py-3 text-xs text-muted", className)}>
+      {children}
+    </div>
+  );
+}
