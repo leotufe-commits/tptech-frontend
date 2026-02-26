@@ -22,9 +22,6 @@
    OJO: usamos --primary-rgb para que coincida con Tailwind alpha utilities. */
 :root {
   accent-color: rgb(var(--primary-rgb) / 1);
-
-  /* ✅ micro-ajuste global del gap label↔control */
-  --tp-field-gap: 5px;
 }
 
 /* ✅ ring/outline global (fallback) */
@@ -73,7 +70,7 @@ body,
 .tp-field {
   display: flex;
   flex-direction: column;
-  gap: var(--tp-field-gap); /* ✅ espacio fijo entre label y control */
+  gap: 6px; /* ✅ espacio fijo entre label y control */
 }
 
 /* Label unificado (SIN margin-bottom) */
@@ -87,7 +84,6 @@ body,
 
   min-height: 16px; /* reserva siempre el mismo “hueco” */
   margin: 0;        /* ✅ clave: NO usar margin */
-  padding: 0;       /* ✅ evita diferencias por defaults */
 }
 
 /* Si un label no existe, igual reservamos el espacio */
@@ -115,7 +111,7 @@ select.tp-input {
 
   outline: none;
 
-  /* ✅ fondo unificado */
+  /* ✅ CLAVE: evitar que algo lo pise y lo deje blanco */
   background-color: var(--card) !important;
   color: var(--text);
 
@@ -127,6 +123,7 @@ select.tp-input {
 input.tp-input::placeholder,
 textarea.tp-input::placeholder {
   color: var(--muted);
+  opacity: 0.45;   /* 🔥 placeholder más gris y más liviano */
 }
 
 input.tp-input:focus,

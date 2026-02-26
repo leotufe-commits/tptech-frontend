@@ -58,7 +58,7 @@ export function Modal({
   // ✅ nuevo diseño
   headerRight,
   showCloseIcon = true,
-  closeLabel = "Cerrar",
+  closeLabel = "",
 }: {
   open: boolean;
   title: string;

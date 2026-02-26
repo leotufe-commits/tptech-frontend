@@ -16,7 +16,7 @@ export function TPCard({
   return (
     <div
       className={cn(
-        "rounded-2xl border border-border bg-white p-4",
+        "rounded-2xl border border-border bg-card p-4",
         className
       )}
     >

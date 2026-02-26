@@ -1,5 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
-import { ChevronDown, ChevronUp } from "lucide-react";
+import React, { useEffect, useMemo, useRef } from "react";
 import { cn } from "./tp";
 
 type Props = {
@@ -33,11 +32,23 @@ type Props = {
   /** optional: evitar cambiar con rueda del mouse */
   disableWheel?: boolean;
 
-  /**
-   * Si value es null (vacío) y el usuario usa las flechas,
-   * usamos este valor como base inicial (en vez de 0).
-   */
+  /** Si value es null y el user incrementa, base inicial */
   emptyBaseValue?: number;
+
+  /** ✅ NUEVO: ref externo (para focus/select desde modales) */
+  inputRef?: React.Ref<HTMLInputElement>;
+
+  /** ✅ NUEVO: selecciona todo al enfocar */
+  autoSelect?: boolean;
+
+  /** ✅ NUEVO: permitir capturar Enter (y otras teclas) */
+  onKeyDown?: React.KeyboardEventHandler<HTMLInputElement>;
+
+  /** ✅ NUEVO: onBlur externo */
+  onBlur?: React.FocusEventHandler<HTMLInputElement>;
+
+  /** ✅ NUEVO: mostrar/ocultar flechas (custom). Default: false */
+  showArrows?: boolean;
 };
 
 function clamp(n: number, min?: number, max?: number) {
@@ -66,14 +77,13 @@ function parseSmartNumber(raw: string) {
   return Number.isFinite(n) ? n : NaN;
 }
 
-/** Formatea para mostrar SIEMPRE decimales fijos (ej 0,820) */
-function formatFixed(n: number, decimals?: number) {
-  if (!Number.isFinite(n)) return "";
-  if (typeof decimals !== "number") return String(n).replace(".", ",");
-  return n.toFixed(decimals).replace(".", ",");
+function setRef<T>(ref: React.Ref<T> | undefined, value: T) {
+  if (!ref) return;
+  if (typeof ref === "function") ref(value);
+  else (ref as any).current = value;
 }
 
-function TPNumberInput({
+export function TPNumberInput({
   label,
   hint,
   error,
@@ -99,27 +109,20 @@ function TPNumberInput({
   disableWheel = true,
 
   emptyBaseValue,
-}: Props) {
-  const inputRef = useRef<HTMLInputElement | null>(null);
 
-  // estado para manejar display (con ceros) vs edición libre
-  const [isEditing, setIsEditing] = useState(false);
-  const [draft, setDraft] = useState<string>("");
+  inputRef,
+  autoSelect = true,
+  onKeyDown,
+  onBlur,
+
+  showArrows = false,
+}: Props) {
+  const innerRef = useRef<HTMLInputElement | null>(null);
 
   const stepSafe = useMemo(() => {
     const s = Number(step);
     return Number.isFinite(s) && s > 0 ? s : 1;
   }, [step]);
-
-  // sincroniza draft cuando NO estamos editando y cambia el value
-  useEffect(() => {
-    if (isEditing) return;
-    if (typeof value === "number" && Number.isFinite(value)) {
-      setDraft(formatFixed(value, decimals));
-    } else {
-      setDraft("");
-    }
-  }, [value, decimals, isEditing]);
 
   function apply(next: number) {
     const v = roundTo(clamp(next, min, max), decimals);
@@ -139,12 +142,16 @@ function TPNumberInput({
         : 0;
 
     apply(base + dir * stepSafe);
-    inputRef.current?.focus();
+
+    requestAnimationFrame(() => {
+      innerRef.current?.focus();
+      if (autoSelect) innerRef.current?.select();
+    });
   }
 
   useEffect(() => {
     if (!disableWheel) return;
-    const el = inputRef.current;
+    const el = innerRef.current;
     if (!el) return;
 
     function onWheel(e: WheelEvent) {
@@ -163,42 +170,40 @@ function TPNumberInput({
 
       <div className="relative">
         {hasLeft ? (
-          <div className="absolute left-3 top-1/2 -translate-y-1/2 text-muted">{leftIcon}</div>
+          <div className="absolute left-3 top-1/2 -translate-y-1/2 text-muted select-none">
+            {leftIcon}
+          </div>
         ) : null}
 
         <input
-          ref={inputRef}
+          ref={(el) => {
+            innerRef.current = el;
+            setRef(inputRef, el as any);
+          }}
+          // ✅ CLAVE: evitamos spinners nativos usando text
           type="text"
-          value={draft}
+          inputMode="decimal"
+          pattern="^-?\\d*[.,]?\\d*$"
+          value={typeof value === "number" && Number.isFinite(value) ? String(value) : ""}
           placeholder={placeholder}
           disabled={disabled}
           readOnly={readOnly}
-          inputMode="decimal"
           className={cn(
             "tp-input",
             "tp-number-no-spin",
-            "pr-12",
+            // si no hay flechas, no reservamos espacio
+            showArrows ? "pr-12" : "pr-3",
             hasLeft && "pl-10",
             error && "border-red-500/60 focus-visible:ring-red-500/20",
             className
           )}
-          onFocus={() => {
-            setIsEditing(true);
-            if (typeof value === "number" && Number.isFinite(value)) {
-              setDraft(String(value).replace(".", ","));
-            }
+          onFocus={(e) => {
+            if (autoSelect) requestAnimationFrame(() => e.currentTarget.select());
           }}
-          onBlur={() => {
-            setIsEditing(false);
-            if (typeof value === "number" && Number.isFinite(value)) {
-              setDraft(formatFixed(value, decimals));
-            } else {
-              setDraft("");
-            }
-          }}
+          onKeyDown={onKeyDown}
+          onBlur={onBlur}
           onChange={(e) => {
             const raw = e.target.value;
-            setDraft(raw);
 
             if (String(raw ?? "").trim() === "") {
               onChange(null);
@@ -212,44 +217,43 @@ function TPNumberInput({
           }}
         />
 
-        <div className="absolute right-2 top-1/2 -translate-y-1/2 flex flex-col">
-          <button
-            type="button"
-            onClick={() => inc(1)}
-            disabled={disabled || readOnly}
-            className={cn(
-              "h-5 w-8 grid place-items-center rounded-md",
-              "text-muted hover:text-text hover:bg-surface2",
-              "disabled:opacity-50 disabled:hover:bg-transparent disabled:hover:text-muted"
-            )}
-            aria-label="Incrementar"
-            title="Incrementar"
-          >
-            <ChevronUp className="h-4 w-4" />
-          </button>
+        {/* ✅ Flechas custom: opcionales (por defecto apagadas) */}
+        {showArrows ? (
+          <div className="absolute right-2 top-1/2 -translate-y-1/2 flex flex-col">
+            <button
+              type="button"
+              onClick={() => inc(1)}
+              disabled={disabled || readOnly}
+              className={cn(
+                "h-5 w-8 grid place-items-center rounded-md",
+                "text-muted hover:text-text hover:bg-surface2",
+                "disabled:opacity-50 disabled:hover:bg-transparent disabled:hover:text-muted"
+              )}
+              aria-label="Incrementar"
+              title="Incrementar"
+            >
+              ▲
+            </button>
 
-          <button
-            type="button"
-            onClick={() => inc(-1)}
-            disabled={disabled || readOnly}
-            className={cn(
-              "mt-0.5 h-5 w-8 grid place-items-center rounded-md",
-              "text-muted hover:text-text hover:bg-surface2",
-              "disabled:opacity-50 disabled:hover:bg-transparent disabled:hover:text-muted"
-            )}
-            aria-label="Disminuir"
-            title="Disminuir"
-          >
-            <ChevronDown className="h-4 w-4" />
-          </button>
-        </div>
+            <button
+              type="button"
+              onClick={() => inc(-1)}
+              disabled={disabled || readOnly}
+              className={cn(
+                "mt-0.5 h-5 w-8 grid place-items-center rounded-md",
+                "text-muted hover:text-text hover:bg-surface2",
+                "disabled:opacity-50 disabled:hover:bg-transparent disabled:hover:text-muted"
+              )}
+              aria-label="Disminuir"
+              title="Disminuir"
+            >
+              ▼
+            </button>
+          </div>
+        ) : null}
       </div>
 
-      {error ? (
-        <div className="text-xs text-red-400">{error}</div>
-      ) : hint ? (
-        <div className="text-xs text-muted">{hint}</div>
-      ) : null}
+      {error ? <div className="text-xs text-red-400">{error}</div> : hint ? <div className="text-xs text-muted">{hint}</div> : null}
     </div>
   );
 }

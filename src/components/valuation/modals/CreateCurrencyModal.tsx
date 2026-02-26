@@ -4,7 +4,8 @@ import { Loader2, Save, X } from "lucide-react";
 
 import Modal from "../../ui/Modal";
 import { TPCard } from "../../ui/TPCard";
-import { TP_INPUT, TP_BTN_PRIMARY, TP_BTN_SECONDARY, cn } from "../../ui/tp";
+import TPInput from "../../ui/TPInput";
+import { TP_BTN_PRIMARY, TP_BTN_SECONDARY, cn } from "../../ui/tp";
 
 function normCode(v: string) {
   const up = String(v || "")
@@ -110,40 +111,31 @@ export default function CreateCurrencyModal({
             </div>
           ) : null}
 
-          <div>
-            <label className="text-xs font-semibold text-muted">Código</label>
-            <input
-              value={codeNorm}
-              onChange={(e) => setCode(e.target.value)}
-              placeholder="ARS"
-              autoFocus
-              disabled={busy}
-              className={TP_INPUT}
-              maxLength={6}
-            />
-          </div>
+          <TPInput
+            label="Código"
+            value={codeNorm}
+            onChange={(v) => setCode(v)}
+            placeholder="ARS"
+            autoFocus
+            disabled={busy}
+            maxLength={6}
+          />
 
-          <div>
-            <label className="text-xs font-semibold text-muted">Nombre</label>
-            <input
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="Peso Argentino"
-              disabled={busy}
-              className={TP_INPUT}
-            />
-          </div>
+          <TPInput
+            label="Nombre"
+            value={name}
+            onChange={setName}
+            placeholder="Peso Argentino"
+            disabled={busy}
+          />
 
-          <div>
-            <label className="text-xs font-semibold text-muted">Símbolo</label>
-            <input
-              value={symbol}
-              onChange={(e) => setSymbol(e.target.value)}
-              placeholder="$"
-              disabled={busy}
-              className={TP_INPUT}
-            />
-          </div>
+          <TPInput
+            label="Símbolo"
+            value={symbol}
+            onChange={setSymbol}
+            placeholder="$"
+            disabled={busy}
+          />
         </TPCard>
       </div>
     </Modal>

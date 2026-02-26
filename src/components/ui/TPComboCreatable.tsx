@@ -2,7 +2,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { ChevronDown, X, Plus } from "lucide-react";
-import { cn } from "./tp";
+import { cn, TP_INPUT } from "./tp";
 import type { CatalogItem, CatalogType } from "../../services/catalogs";
 
 /* =========================
@@ -30,6 +30,13 @@ type Props = {
 
   /** ✅ NUEVO: para tab horizontal */
   tabIndex?: number;
+
+  /**
+   * ✅ NUEVO:
+   * Si el label lo maneja un wrapper externo (TPField),
+   * evitamos reservar espacio de label adentro.
+   */
+  noLabelSpace?: boolean;
 };
 
 /* =========================
@@ -156,6 +163,8 @@ export default function TPComboCreatable({
   mode,
 
   tabIndex,
+
+  noLabelSpace = false,
 }: Props) {
   const wrapRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
@@ -211,7 +220,6 @@ export default function TPComboCreatable({
 
     const v = norm(value).toLowerCase();
     const idx = v ? activeItems.findIndex((it) => norm(it.label).toLowerCase() === v) : -1;
-
     setActiveIndex(activeItems.length ? (idx >= 0 ? idx : 0) : -1);
   }, [open, activeItems, value]);
 
@@ -234,8 +242,8 @@ export default function TPComboCreatable({
 
     const v = norm(value).toLowerCase();
     const idx = v ? activeItems.findIndex((it) => norm(it.label).toLowerCase() === v) : -1;
-
     setActiveIndex(activeItems.length ? (idx >= 0 ? idx : 0) : -1);
+
     setTimeout(() => inputRef.current?.focus(), 0);
   }
 
@@ -328,18 +336,28 @@ export default function TPComboCreatable({
   const labelText = String(label || "");
   const showRealLabel = Boolean(labelText.trim());
 
+  // ✅ Reservamos padding a la derecha para los botones (X + caret)
+  // - con clear: dejamos lugar para 2 botones
+  // - sin clear: lugar para 1 botón
+  const rightPad = canClear ? "pr-16" : "pr-10";
+
   return (
     <>
-      <div ref={wrapRef} className="tp-field w-full" onBlurCapture={onWrapBlurCapture}>
-        <label
-          className={cn("tp-field-label", !showRealLabel && "tp-field-label--empty")}
-          aria-hidden={!showRealLabel}
-        >
-          {showRealLabel ? labelText : "\u00A0"}
-        </label>
+      <div
+        ref={wrapRef}
+        className={cn(noLabelSpace ? "w-full" : "tp-field w-full")}
+        onBlurCapture={onWrapBlurCapture}
+      >
+        {!noLabelSpace ? (
+          <label
+            className={cn("tp-field-label", !showRealLabel && "tp-field-label--empty")}
+            aria-hidden={!showRealLabel}
+          >
+            {showRealLabel ? labelText : "\u00A0"}
+          </label>
+        ) : null}
 
-        {/* ✅ fijo alto del “slot” del control para evitar micro-diferencias */}
-        <div className="relative h-[42px]">
+        <div className="relative">
           <input
             ref={inputRef}
             tabIndex={tabIndex}
@@ -353,7 +371,8 @@ export default function TPComboCreatable({
               onChange(e.target.value);
               openDropdown();
             }}
-            className="tp-input w-full pr-16"
+            /* ✅ CLAVE: usar exactamente el mismo base que TPInput */
+            className={cn(TP_INPUT, "bg-white", rightPad)} // ✅ fuerza fondo blanco
           />
 
           {canClear && (
@@ -454,7 +473,7 @@ export default function TPComboCreatable({
                 if (!creating) closeCreateModalAndRefocus();
               }
             }}
-            className="tp-input w-full"
+            className={cn(TP_INPUT, "bg-white")} // ✅ fuerza fondo blanco también en el modal
             placeholder="Escribí el ítem…"
           />
         </div>

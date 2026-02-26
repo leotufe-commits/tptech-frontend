@@ -1,6 +1,6 @@
 // src/components/ui/TPInput.tsx
 import React from "react";
-import { cn, TP_INPUT } from "./tp";
+import { cn } from "./tp";
 
 type TPInputProps = Omit<
   React.InputHTMLAttributes<HTMLInputElement>,
@@ -22,6 +22,13 @@ type TPInputProps = Omit<
   wrapClassName?: string;
 
   inputRef?: React.Ref<HTMLInputElement>;
+
+  /**
+   * ✅ NUEVO:
+   * Si el label lo maneja un wrapper externo (TPField),
+   * evitamos reservar espacio de label adentro.
+   */
+  noLabelSpace?: boolean;
 };
 
 export default function TPInput({
@@ -43,6 +50,8 @@ export default function TPInput({
 
   disabled,
   inputRef,
+
+  noLabelSpace = false,
   ...rest
 }: TPInputProps) {
   const hasLeft = Boolean(leftIcon);
@@ -58,15 +67,24 @@ export default function TPInput({
   const labelText = String(label || "");
   const showRealLabel = Boolean(labelText.trim());
 
+  // ✅ Base idéntica a la que estás viendo en TPComboCreatable (DevTools)
+  const BASE_INPUT =
+    "mt-1 w-full h-[42px] rounded-xl border border-border bg-white px-3 text-sm " +
+    "text-[color:var(--ui-input-text)] placeholder:text-[color:var(--ui-placeholder)] " +
+    "placeholder:opacity-100 outline-none " +
+    "focus:border-primary/40 focus:ring-4 focus:ring-primary/20 " +
+    "disabled:opacity-60 disabled:cursor-not-allowed";
+
   return (
-    <div className={cn("w-full", wrapClassName)}>
-      {/* ✅ EXACTAMENTE igual que TPComboCreatable */}
-      <label
-        className={cn("tp-field-label", !showRealLabel && "tp-field-label--empty")}
-        aria-hidden={!showRealLabel}
-      >
-        {showRealLabel ? labelText : "\u00A0"}
-      </label>
+    <div className={cn(noLabelSpace ? "w-full" : "tp-field w-full", wrapClassName)}>
+      {!noLabelSpace ? (
+        <label
+          className={cn("tp-field-label", !showRealLabel && "tp-field-label--empty")}
+          aria-hidden={!showRealLabel}
+        >
+          {showRealLabel ? labelText : "\u00A0"}
+        </label>
+      ) : null}
 
       <div className="relative">
         {hasLeft ? (
@@ -81,7 +99,7 @@ export default function TPInput({
           value={value}
           onChange={(e) => handleChange(e.target.value)}
           className={cn(
-            TP_INPUT,
+            BASE_INPUT,
             hasLeft && "pl-10",
             hasRight && "pr-10",
             error && "border-red-500/40 focus:border-red-500/50 focus:ring-red-500/20",
@@ -97,10 +115,12 @@ export default function TPInput({
         ) : null}
       </div>
 
-      {error ? (
-        <div className="mt-1 text-xs text-red-400">{error}</div>
-      ) : hint ? (
-        <div className="mt-1 text-xs text-muted">{hint}</div>
+      {!noLabelSpace ? (
+        error ? (
+          <div className="mt-1 text-xs text-red-400">{error}</div>
+        ) : hint ? (
+          <div className="mt-1 text-xs text-muted">{hint}</div>
+        ) : null
       ) : null}
     </div>
   );

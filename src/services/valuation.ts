@@ -20,12 +20,12 @@ export type ValuationChangedDetail =
   | { kind: "metals:active-changed"; metalId: string; isActive: boolean }
   | { kind: "metals:moved"; metalId: string; dir: "UP" | "DOWN" }
   | { kind: "variants:created"; metalId: string; variantId?: string }
-  | { kind: "variants:updated"; variantId: string }
-  | { kind: "variants:deleted"; variantId: string }
-  | { kind: "variants:active-changed"; variantId: string; isActive: boolean }
+  | { kind: "variants:updated"; variantId: string; metalId?: string }
+  | { kind: "variants:deleted"; variantId: string; metalId?: string }
+  | { kind: "variants:active-changed"; variantId: string; isActive: boolean; metalId?: string }
   | { kind: "variants:favorite-changed"; variantId?: string | null; metalId?: string }
-  | { kind: "variants:pricing-updated"; variantId: string }
-  | { kind: "quotes:added"; variantId: string };
+  | { kind: "variants:pricing-updated"; variantId: string; metalId?: string }
+  | { kind: "quotes:added"; variantId: string; metalId?: string };
 
 function emitValuationChanged(detail: ValuationChangedDetail) {
   try {
@@ -34,6 +34,42 @@ function emitValuationChanged(detail: ValuationChangedDetail) {
   } catch {
     // noop
   }
+}
+
+/* =========================
+   Helpers: pick ids from responses
+========================= */
+
+function pickId(resp: any): string | undefined {
+  const id =
+    resp?.id ??
+    resp?.row?.id ??
+    resp?.data?.id ??
+    resp?.data?.row?.id ??
+    resp?.currency?.id ??
+    resp?.data?.currency?.id ??
+    resp?.metal?.id ??
+    resp?.data?.metal?.id ??
+    resp?.variant?.id ??
+    resp?.data?.variant?.id ??
+    undefined;
+
+  const s = String(id ?? "").trim();
+  return s ? s : undefined;
+}
+
+function pickMetalId(resp: any): string | undefined {
+  const mid =
+    resp?.row?.metalId ??
+    resp?.data?.row?.metalId ??
+    resp?.variant?.metalId ??
+    resp?.data?.variant?.metalId ??
+    resp?.metalId ??
+    resp?.data?.metalId ??
+    undefined;
+
+  const s = String(mid ?? "").trim();
+  return s ? s : undefined;
 }
 
 /* =========================
@@ -89,7 +125,7 @@ export type MetalVariantRow = {
   finalPurchasePrice?: number;
   finalSalePrice?: number;
 
-  // ✅ opcional (si backend lo expone para UX/debug)
+  // ✅ opcional
   referenceValue?: number;
 };
 
@@ -132,23 +168,13 @@ export async function getCurrencies() {
   return apiFetch("/valuation/currencies");
 }
 
-// alias opcional
 export async function listCurrencies() {
   return getCurrencies();
 }
 
 export async function createCurrency(data: { code: string; name: string; symbol: string }) {
   const resp = await apiFetch("/valuation/currencies", { method: "POST", body: data as any });
-
-  // Si el backend devuelve la moneda creada, intentamos sacar id
-  const createdId =
-    (resp as any)?.row?.id ??
-    (resp as any)?.data?.row?.id ??
-    (resp as any)?.currency?.id ??
-    (resp as any)?.data?.currency?.id ??
-    undefined;
-
-  emitValuationChanged({ kind: "currencies:created", currencyId: createdId });
+  emitValuationChanged({ kind: "currencies:created", currencyId: pickId(resp) });
   return resp;
 }
 
@@ -165,7 +191,6 @@ export async function deleteCurrency(currencyId: string) {
 }
 
 export async function setBaseCurrency(currencyId: string, _opts?: { effectiveAt?: string | Date }) {
-  // backend usa effectiveAt = now en controller; dejamos opts por compatibilidad
   const resp = await apiFetch(`/valuation/currencies/${currencyId}/set-base`, { method: "POST" });
   emitValuationChanged({ kind: "currencies:base-changed", newBaseId: currencyId });
   return resp;
@@ -193,17 +218,17 @@ export async function getCurrencyRates(currencyId: string, take = 50) {
   return apiFetch(`/valuation/currencies/${currencyId}/rates?take=${take}`);
 }
 
-// alias opcional
 export async function listCurrencyRates(currencyId: string, take = 50) {
   return getCurrencyRates(currencyId, take);
 }
 
 /**
- * ⚠️ OJO: esta ruta /history parece legacy (en tu backend actual usás /rates).
- * La dejo para no romper imports, pero si no existe te va a dar 404.
+ * ✅ Legacy / compat
+ * Antes era: /history
+ * Ahora backend expone: /rate-history
  */
 export async function getCurrencyRateHistory(currencyId: string, take = 80) {
-  return apiFetch(`/valuation/currencies/${currencyId}/history?take=${take}`);
+  return apiFetch(`/valuation/currencies/${currencyId}/rate-history?take=${take}`);
 }
 
 /* =========================
@@ -214,31 +239,19 @@ export async function getMetals() {
   return apiFetch("/valuation/metals");
 }
 
-// alias opcional
 export async function listMetals() {
   return getMetals();
 }
 
 export async function createMetal(data: { name: string; symbol?: string; referenceValue?: number }) {
   const resp = await apiFetch("/valuation/metals", { method: "POST", body: data as any });
-
-  const createdId =
-    (resp as any)?.row?.id ??
-    (resp as any)?.data?.row?.id ??
-    (resp as any)?.metal?.id ??
-    (resp as any)?.data?.metal?.id ??
-    undefined;
-
-  emitValuationChanged({ kind: "metals:created", metalId: createdId });
+  emitValuationChanged({ kind: "metals:created", metalId: pickId(resp) });
   return resp;
 }
 
 export async function updateMetal(metalId: string, data: { name: string; symbol?: string; referenceValue?: number }) {
   const resp = await apiFetch(`/valuation/metals/${metalId}`, { method: "PATCH", body: data as any });
   emitValuationChanged({ kind: "metals:updated", metalId });
-
-  // ✅ IMPORTANTE: si cambia referenceValue, las variantes “referidas” deberían refrescarse.
-  // Eso lo resolvemos en el listener (useValuation / panel de variantes) recargando variantes del metal seleccionado.
   return resp;
 }
 
@@ -292,28 +305,21 @@ export async function createVariant(data: {
   sku: string;
   purity: number;
 
-  // ✅ opcional: pricing
   buyFactor?: number;
   saleFactor?: number;
   purchasePriceOverride?: number | null;
   salePriceOverride?: number | null;
 }) {
   const resp = await apiFetch("/valuation/variants", { method: "POST", body: data as any });
-
-  const createdId =
-    (resp as any)?.row?.id ??
-    (resp as any)?.data?.row?.id ??
-    (resp as any)?.variant?.id ??
-    (resp as any)?.data?.variant?.id ??
-    undefined;
-
-  emitValuationChanged({ kind: "variants:created", metalId: data.metalId, variantId: createdId });
+  emitValuationChanged({ kind: "variants:created", metalId: data.metalId, variantId: pickId(resp) });
   return resp;
 }
 
 /**
- * ✅ editar variante (reutilizar CreateVariantModal en modo EDIT)
+ * ✅ editar variante
  *   PATCH /valuation/variants/:variantId
+ *
+ * 🟦 mejora: metalId opcional (si lo tenés en UI, lo pasás y listo)
  */
 export async function updateVariant(
   variantId: string,
@@ -323,28 +329,44 @@ export async function updateVariant(
     purity?: number;
     saleFactor?: number;
     salePriceOverride?: number | null;
-  }
+  },
+  metalId?: string
 ) {
   const resp = await apiFetch(`/valuation/variants/${variantId}`, {
     method: "PATCH",
     body: data as any,
   });
-  emitValuationChanged({ kind: "variants:updated", variantId });
+
+  const mid = String(metalId || pickMetalId(resp) || "").trim() || undefined;
+  emitValuationChanged({ kind: "variants:updated", variantId, metalId: mid });
+
   return resp;
 }
 
-export async function updateVariantPricing(variantId: string, patch: VariantPricingPatch) {
+/**
+ * 🟦 mejora: metalId opcional
+ */
+export async function updateVariantPricing(variantId: string, patch: VariantPricingPatch, metalId?: string) {
   const resp = await apiFetch(`/valuation/variants/${variantId}/pricing`, {
     method: "PATCH",
     body: patch as any,
   });
-  emitValuationChanged({ kind: "variants:pricing-updated", variantId });
+
+  const mid = String(metalId || pickMetalId(resp) || "").trim() || undefined;
+  emitValuationChanged({ kind: "variants:pricing-updated", variantId, metalId: mid });
+
   return resp;
 }
 
-export async function deleteVariant(variantId: string) {
+/**
+ * 🟦 mejora: metalId opcional
+ */
+export async function deleteVariant(variantId: string, metalId?: string) {
   const resp = await apiFetch(`/valuation/variants/${variantId}`, { method: "DELETE" });
-  emitValuationChanged({ kind: "variants:deleted", variantId });
+
+  const mid = String(metalId || pickMetalId(resp) || "").trim() || undefined;
+  emitValuationChanged({ kind: "variants:deleted", variantId, metalId: mid });
+
   return resp;
 }
 
@@ -375,7 +397,6 @@ export async function getVariants(
   return apiFetch(`/valuation/metals/${metalId}/variants${qs ? `?${qs}` : ""}`);
 }
 
-// alias opcional
 export async function listVariants(
   metalId: string,
   params?: {
@@ -392,29 +413,37 @@ export async function listVariants(
   return getVariants(metalId, params);
 }
 
-export async function toggleVariantActive(variantId: string, isActive: boolean) {
+/**
+ * 🟦 mejora: metalId opcional
+ */
+export async function toggleVariantActive(variantId: string, isActive: boolean, metalId?: string) {
   const resp = await apiFetch(`/valuation/variants/${variantId}/active`, {
     method: "PATCH",
     body: { isActive } as any,
   });
-  emitValuationChanged({ kind: "variants:active-changed", variantId, isActive });
+
+  const mid = String(metalId || pickMetalId(resp) || "").trim() || undefined;
+  emitValuationChanged({ kind: "variants:active-changed", variantId, isActive, metalId: mid });
+
   return resp;
 }
 
 /**
- * ✅ Favorito:
- * Backend actual: POST /valuation/variants/:variantId/set-favorite
+ * ✅ Favorito
+ *
+ * 🟦 mejora: metalId opcional (por si querés filtrar en listeners)
  */
-export async function setFavoriteVariant(variantId: string) {
+export async function setFavoriteVariant(variantId: string, metalId?: string) {
   const resp = await apiFetch(`/valuation/variants/${variantId}/set-favorite`, { method: "POST" });
-  emitValuationChanged({ kind: "variants:favorite-changed", variantId });
+
+  const mid = String(metalId || pickMetalId(resp) || "").trim() || undefined;
+  emitValuationChanged({ kind: "variants:favorite-changed", variantId, metalId: mid });
+
   return resp;
 }
 
 /**
  * ✅ limpiar favorito del metal
- * Requiere endpoint:
- *   POST /valuation/metals/:metalId/clear-favorite
  */
 export async function clearFavoriteVariant(metalId: string) {
   const resp = await apiFetch(`/valuation/metals/${metalId}/clear-favorite`, { method: "POST" });
@@ -426,15 +455,22 @@ export async function clearFavoriteVariant(metalId: string) {
    Quotes
 ========================= */
 
+/**
+ * 🟦 mejora: metalId opcional
+ */
 export async function addQuote(data: {
   variantId: string;
   currencyId: string;
   purchasePrice: number;
   salePrice: number;
   effectiveAt?: string | Date;
+  metalId?: string; // 👈 opcional por si lo tenés en UI
 }) {
   const resp = await apiFetch("/valuation/quotes", { method: "POST", body: data as any });
-  emitValuationChanged({ kind: "quotes:added", variantId: data.variantId });
+
+  const mid = String(data.metalId || pickMetalId(resp) || "").trim() || undefined;
+  emitValuationChanged({ kind: "quotes:added", variantId: data.variantId, metalId: mid });
+
   return resp;
 }
 
@@ -442,7 +478,6 @@ export async function getQuotes(variantId: string, take = 50) {
   return apiFetch(`/valuation/variants/${variantId}/quotes?take=${take}`);
 }
 
-// alias opcional
 export async function listQuotes(variantId: string, take = 50) {
   return getQuotes(variantId, take);
 }
