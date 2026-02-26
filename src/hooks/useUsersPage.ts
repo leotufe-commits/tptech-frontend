@@ -755,8 +755,10 @@ export function useUsersPage() {
     if (!userId) return;
 
     emitPinEvent(userId, {
-      hasQuickPin: typeof (patch as any)?.hasQuickPin === "boolean" ? Boolean((patch as any).hasQuickPin) : undefined,
-      pinEnabled: typeof (patch as any)?.pinEnabled === "boolean" ? Boolean((patch as any).pinEnabled) : undefined,
+      hasQuickPin:
+        typeof (patch as any)?.hasQuickPin === "boolean" ? Boolean((patch as any).hasQuickPin) : undefined,
+      pinEnabled:
+        typeof (patch as any)?.pinEnabled === "boolean" ? Boolean((patch as any).pinEnabled) : undefined,
     });
 
     setUsers((prev) =>

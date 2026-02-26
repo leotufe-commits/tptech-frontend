@@ -13,23 +13,33 @@ export default function TPFocusTrap({
   useEffect(() => {
     if (!active) return;
 
-    const container = containerRef.current;
-    if (!container) return;
-
-    const focusable = container.querySelectorAll<HTMLElement>(
-      'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
-    );
-
-    if (!focusable.length) return;
-
-    const first = focusable[0];
-    const last = focusable[focusable.length - 1];
+    function getFocusable(container: HTMLElement) {
+      return Array.from(
+        container.querySelectorAll<HTMLElement>(
+          'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+        )
+      ).filter((el) => {
+        // Evitar elementos deshabilitados / invisibles
+        const anyEl = el as any;
+        if (anyEl.disabled) return false;
+        if (el.getAttribute("aria-disabled") === "true") return false;
+        // si está oculto por display:none o similar
+        if (!(el.offsetWidth || el.offsetHeight || el.getClientRects().length)) return false;
+        return true;
+      });
+    }
 
     function handleKey(e: KeyboardEvent) {
       if (e.key !== "Tab") return;
 
-      // re-chequeo por seguridad
-      if (!containerRef.current) return;
+      const container = containerRef.current;
+      if (!container) return;
+
+      const focusable = getFocusable(container);
+      if (!focusable.length) return;
+
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
 
       if (e.shiftKey) {
         if (document.activeElement === first) {
@@ -45,14 +55,15 @@ export default function TPFocusTrap({
     }
 
     function handleFocusIn(e: FocusEvent) {
-      const c = containerRef.current;
-      if (!c) return;
+      const container = containerRef.current;
+      if (!container) return;
 
       const target = e.target as Node | null;
       if (!target) return;
 
-      if (!c.contains(target)) {
-        first.focus();
+      if (!container.contains(target)) {
+        const focusable = getFocusable(container);
+        if (focusable.length) focusable[0].focus();
       }
     }
 
@@ -60,7 +71,11 @@ export default function TPFocusTrap({
     document.addEventListener("focusin", handleFocusIn);
 
     // foco inicial
-    first.focus();
+    const container = containerRef.current;
+    if (container) {
+      const focusable = getFocusable(container);
+      if (focusable.length) focusable[0].focus();
+    }
 
     return () => {
       document.removeEventListener("keydown", handleKey);

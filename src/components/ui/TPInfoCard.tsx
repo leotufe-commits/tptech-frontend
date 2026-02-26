@@ -1,3 +1,4 @@
+// tptech-frontend/src/components/ui/TPInfoCard.tsx
 import React from "react";
 import { cn } from "./tp";
 import { TPCard } from "./TPCard";
