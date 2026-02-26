@@ -165,7 +165,8 @@ export default function UsersPage() {
         removeSavedAttachment={p.removeSavedAttachment}
         savedAttachments={p.savedAttachments}
         handleDownloadSavedAttachment={p.handleDownloadSavedAttachment}
-        handleOpenSavedAttachment={p.handleOpenSavedAttachment}
+        // ✅ FIX BUILD: UserEditModal no tipa/expone esta prop
+        // handleOpenSavedAttachment={p.handleOpenSavedAttachment}
         pinBusy={p.pinBusy}
         pinMsg={p.pinMsg}
         pinNew={p.pinNew}

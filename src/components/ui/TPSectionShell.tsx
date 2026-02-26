@@ -2,19 +2,21 @@
 import React from "react";
 import { cn } from "./tp";
 
-export default function TPSectionShell({
-  title,
-  description,
-  icon,
-  children,
-  className,
-}: {
+export type TPSectionShellProps = {
   title: string;
   description?: string;
   icon?: React.ReactNode;
   children: React.ReactNode;
   className?: string;
-}) {
+};
+
+export function TPSectionShell({
+  title,
+  description,
+  icon,
+  children,
+  className,
+}: TPSectionShellProps) {
   return (
     <div className={cn("space-y-4", className)}>
       <div className="flex items-start justify-between gap-3">
@@ -32,3 +34,5 @@ export default function TPSectionShell({
     </div>
   );
 }
+
+export default TPSectionShell;

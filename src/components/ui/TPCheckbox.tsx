@@ -1,7 +1,10 @@
 import React, { useEffect, useRef } from "react";
 import { cn } from "./tp";
 
-type TPCheckboxProps = Omit<React.InputHTMLAttributes<HTMLInputElement>, "checked" | "onChange" | "type"> & {
+type TPCheckboxProps = Omit<
+  React.InputHTMLAttributes<HTMLInputElement>,
+  "checked" | "onChange" | "type" | "children" | "dangerouslySetInnerHTML"
+> & {
   checked: boolean;
   onChange: (v: boolean) => void;
   indeterminate?: boolean;
@@ -16,8 +19,14 @@ export function TPCheckbox({
   disabled,
   label,
   className,
+  // ✅ por seguridad: nunca lo pasamos al input
+  children,
+  dangerouslySetInnerHTML,
   ...rest
-}: TPCheckboxProps) {
+}: TPCheckboxProps & {
+  children?: never;
+  dangerouslySetInnerHTML?: never;
+}) {
   const ref = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
@@ -26,11 +35,7 @@ export function TPCheckbox({
 
   return (
     <label
-      className={cn(
-        "flex items-center gap-2 text-sm",
-        disabled && "opacity-60 cursor-not-allowed",
-        className
-      )}
+      className={cn("flex items-center gap-2 text-sm", disabled && "opacity-60 cursor-not-allowed", className)}
     >
       <input
         ref={ref}

@@ -14,12 +14,7 @@ import { cn, Tabs, type TabKey, initialsFrom, absUrl, permLabelByModuleAction } 
 import type { Override, OverrideEffect, Role, UserAttachment, UserDetail } from "../../services/users";
 import type { Permission } from "../../services/permissions";
 
-import {
-  shouldHidePinMsg,
-  safeReadAutoPin,
-  safeClearAutoPin,
-  draftKeyOfFile,
-} from "./edit/helpers/userEditModal.helpers";
+import { shouldHidePinMsg, safeReadAutoPin, safeClearAutoPin, draftKeyOfFile } from "./edit/helpers/userEditModal.helpers";
 
 import { useDraftAttachmentPreviews } from "./edit/hooks/useDraftAttachmentPreviews";
 import UserAvatarCard from "./edit/partials/UserAvatarCard";
@@ -51,6 +46,10 @@ type Props = {
 
   tab: TabKey;
   setTab: (v: TabKey) => void;
+
+  // ✅ NUEVO: config del sistema + conteo de PINs (para bloquear borrar “último PIN”)
+  pinLockEnabled?: boolean;
+  usersWithPinCount?: number;
 
   // fields
   fEmail: string;
@@ -105,7 +104,11 @@ type Props = {
   addAttachments: (files: File[]) => Promise<void>;
   removeSavedAttachment: (id: string) => Promise<void>;
   savedAttachments: UserAttachment[];
+
   handleDownloadSavedAttachment: (att: UserAttachment) => Promise<void> | void;
+
+  // ✅ FIX BUILD: ahora UserEditModal acepta esta prop (para botón "Abrir" en adjuntos)
+  handleOpenSavedAttachment?: (att: UserAttachment) => Promise<void> | void;
 
   // pin (draft)
   pinBusy: boolean;
@@ -191,6 +194,10 @@ export default function UserEditModal(props: Props) {
     tab,
     setTab,
 
+    // ✅ NUEVO
+    pinLockEnabled,
+    usersWithPinCount,
+
     fEmail,
     setFEmail,
     fName,
@@ -242,6 +249,7 @@ export default function UserEditModal(props: Props) {
     removeSavedAttachment,
     savedAttachments,
     handleDownloadSavedAttachment,
+    handleOpenSavedAttachment, // ✅ NUEVO
 
     pinBusy,
     pinMsg,
@@ -533,7 +541,6 @@ export default function UserEditModal(props: Props) {
     return onSubmit(e);
   }
 
-  // --- sigue ---
   const { previewByKey: draftPreviewByKey } = useDraftAttachmentPreviews(attachmentsDraft);
 
   const [hiddenSavedAttIds, setHiddenSavedAttIds] = useState<Set<string>>(new Set());
@@ -581,16 +588,13 @@ export default function UserEditModal(props: Props) {
   }
 
   // Mostrar toggle solo si ya tiene PIN
-const canShowPinToggle = Boolean(detailHasQuickPin);
+  const canShowPinToggle = Boolean(detailHasQuickPin);
 
-// Puede editar PIN si es self o admin
-const canEditPin = Boolean(isSelf || canAdmin);
+  // Puede editar PIN si es self o admin
+  const canEditPin = Boolean(isSelf || canAdmin);
 
-// 🔥 IMPORTANTE:
-// pinPillsDisabled ahora SOLO bloquea por busy o falta de permisos.
-// NO depende de si el usuario tiene PIN.
-const pinPillsDisabled = pinBusy || pinToggling || !canEditPin;
-
+  // pinPillsDisabled bloquea por busy o falta de permisos.
+  const pinPillsDisabled = pinBusy || pinToggling || !canEditPin;
 
   const detailAvatar = !forceHideDetailAvatar && detail?.avatarUrl ? absUrl(String(detail.avatarUrl)) : "";
   const avatarSrc = avatarPreview || detailAvatar;
@@ -708,18 +712,13 @@ const pinPillsDisabled = pinBusy || pinToggling || !canEditPin;
   const specialBlocked = disableAdminDangerZone || isOwner;
   const confirmOverlay = "bg-black/70 backdrop-blur-[1px]";
 
-  // ✅ importante: el footer va DENTRO del form para que el submit funcione SIEMPRE
-  const busyClose =
-    modalBusy || avatarBusy || specialSaving || uploadingAttachments || Boolean(deletingAttId) || pinBusy;
+  const busyClose = modalBusy || avatarBusy || specialSaving || uploadingAttachments || Boolean(deletingAttId) || pinBusy;
 
   // ============================================================
   // ✅ CAMBIOS REALES DEL FORM (PIN NO CUENTA)
   // ============================================================
   const hasFormChanges = useMemo(() => {
-    if (modalMode === "CREATE") {
-      // en CREATE siempre permitimos submit (crear usuario)
-      return true;
-    }
+    if (modalMode === "CREATE") return true;
     if (!detail) return false;
 
     const d: any = detail;
@@ -727,7 +726,6 @@ const pinPillsDisabled = pinBusy || pinToggling || !canEditPin;
     const changed =
       norm(fEmail) !== norm(d.email) ||
       norm(fName) !== norm(d.name) ||
-      // password solo cuenta si escribiste algo
       norm(fPassword) !== "" ||
       norm(fPhoneCountry) !== norm(d.phoneCountry) ||
       norm(fPhoneNumber) !== norm(d.phoneNumber) ||
@@ -742,7 +740,6 @@ const pinPillsDisabled = pinBusy || pinToggling || !canEditPin;
       norm(fNotes) !== norm(d.notes) ||
       norm(fFavWarehouseId) !== norm(d.favoriteWarehouseId);
 
-    // roles
     const detailRoleIds = Array.isArray(d.roles) ? d.roles.map((r: any) => String(r?.id || r)).filter(Boolean) : [];
     const rolesChanged = !sameSet(fRoleIds || [], detailRoleIds);
 
@@ -768,64 +765,58 @@ const pinPillsDisabled = pinBusy || pinToggling || !canEditPin;
     fRoleIds,
   ]);
 
-  // submit habilitado: no en pinOnly, no si pin modal abierto, no si sin cambios
+  // submit habilitado: no en pinOnly, no si pin modal abierto
   const canSubmit = !pinOnlyMode && !pinFlowOpen;
-
-  const submitLabel =
-    modalBusy ? "Guardando…" : modalMode === "CREATE" ? "Crear" : "Guardar";
+  const submitLabel = modalBusy ? "Guardando…" : modalMode === "CREATE" ? "Crear" : "Guardar";
 
   return (
     <>
       {/* ✅ Modal: “PIN ya guardado” al cancelar */}
-{showLeavePinConfirm ? (
-  <div className="fixed inset-0 z-[1000]">
-    <div
-      className="absolute inset-0 bg-black/40"
-      onClick={() => !busyClose && setShowLeavePinConfirm(false)}
-    />
+      {showLeavePinConfirm ? (
+        <div className="fixed inset-0 z-[1000]">
+          <div className="absolute inset-0 bg-black/40" onClick={() => !busyClose && setShowLeavePinConfirm(false)} />
 
-    <div className="absolute left-1/2 top-1/2 w-[92vw] max-w-lg -translate-x-1/2 -translate-y-1/2 rounded-2xl border border-border bg-card p-5 shadow-soft">
-      <div className="flex items-start gap-3">
-        <div className="grid h-10 w-10 place-items-center rounded-2xl border border-border bg-surface2 text-primary">
-          <AlertTriangle className="h-5 w-5" />
-        </div>
+          <div className="absolute left-1/2 top-1/2 w-[92vw] max-w-lg -translate-x-1/2 -translate-y-1/2 rounded-2xl border border-border bg-card p-5 shadow-soft">
+            <div className="flex items-start gap-3">
+              <div className="grid h-10 w-10 place-items-center rounded-2xl border border-border bg-surface2 text-primary">
+                <AlertTriangle className="h-5 w-5" />
+              </div>
 
-        <div className="min-w-0">
-          <div className="text-base font-semibold text-text">El PIN ya fue guardado</div>
-          <div className="mt-1 text-sm text-muted">
-            Cancelar este formulario <b>no deshará</b> el cambio de PIN. ¿Querés salir igual?
+              <div className="min-w-0">
+                <div className="text-base font-semibold text-text">El PIN ya fue guardado</div>
+                <div className="mt-1 text-sm text-muted">
+                  Cancelar este formulario <b>no deshará</b> el cambio de PIN. ¿Querés salir igual?
+                </div>
+              </div>
+            </div>
+
+            <div className="mt-4 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+              <button
+                type="button"
+                disabled={busyClose}
+                onClick={() => setShowLeavePinConfirm(false)}
+                className="inline-flex items-center justify-center gap-2 rounded-xl border-2 border-border bg-transparent px-4 py-2 text-sm font-semibold text-text hover:bg-surface2 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-primary/20 disabled:opacity-60"
+              >
+                <X className="h-4 w-4" />
+                Seguir editando
+              </button>
+
+              <button
+                type="button"
+                disabled={busyClose}
+                onClick={() => {
+                  setShowLeavePinConfirm(false);
+                  onClose();
+                }}
+                className="inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2 text-sm font-semibold text-white bg-primary hover:opacity-95 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-primary/20 disabled:opacity-60"
+              >
+                Salir igual
+                <ArrowRight className="h-4 w-4" />
+              </button>
+            </div>
           </div>
         </div>
-      </div>
-
-      <div className="mt-4 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
-        <button
-          type="button"
-          disabled={busyClose}
-          onClick={() => setShowLeavePinConfirm(false)}
-          className="inline-flex items-center justify-center gap-2 rounded-xl border-2 border-border bg-transparent px-4 py-2 text-sm font-semibold text-text hover:bg-surface2 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-primary/20 disabled:opacity-60"
-        >
-          <X className="h-4 w-4" />
-          Seguir editando
-        </button>
-
-        <button
-          type="button"
-          disabled={busyClose}
-          onClick={() => {
-            setShowLeavePinConfirm(false);
-            onClose();
-          }}
-          className="inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2 text-sm font-semibold text-white bg-primary hover:opacity-95 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-primary/20 disabled:opacity-60"
-        >
-          Salir igual
-          <ArrowRight className="h-4 w-4" />
-        </button>
-      </div>
-    </div>
-  </div>
-) : null}
-
+      ) : null}
 
       <ConfirmModals
         confirmOverlay={confirmOverlay}
@@ -840,15 +831,7 @@ const pinPillsDisabled = pinBusy || pinToggling || !canEditPin;
         onConfirmDisableSpecialAndClear={() => void confirmDisableSpecialAndClear()}
       />
 
-      <Modal
-        open={open}
-        wide={wide}
-        title={title}
-        onClose={safeClose}
-        busy={modalBusy}
-        // ✅ NO usar footer del Modal: necesitamos que el botón submit esté dentro del form
-        footer={null as any}
-      >
+      <Modal open={open} wide={wide} title={title} onClose={safeClose} busy={modalBusy} footer={null as any}>
         {modalLoading ? (
           <div className={cn("tp-card p-4 text-sm text-muted flex items-center gap-2")}>
             <Loader2 className="h-4 w-4 animate-spin" />
@@ -932,6 +915,8 @@ const pinPillsDisabled = pinBusy || pinToggling || !canEditPin;
                 filteredSavedAttachments={filteredSavedAttachments}
                 handleRemoveSavedAttachment={handleRemoveSavedAttachment}
                 handleDownloadSavedAttachment={handleDownloadSavedAttachment}
+                // ✅ NUEVO: si SectionData lo usa, ya queda habilitado el botón "Abrir"
+                handleOpenSavedAttachment={handleOpenSavedAttachment as any}
                 draftKey={draftKeyOfFile}
                 draftPreviewByKey={draftPreviewByKey}
                 initialsFrom={(s: string) => initialsFrom(s)}
@@ -999,6 +984,9 @@ const pinPillsDisabled = pinBusy || pinToggling || !canEditPin;
                 isSelf={isSelf}
                 ownerRoleId={ownerRoleId}
                 selfOwnerChecked={selfOwnerChecked}
+                // ✅ NUEVO: para PinConfigSection (último PIN)
+                pinLockEnabled={pinLockEnabled}
+                usersWithPinCount={usersWithPinCount}
               />
             ) : null}
 
@@ -1041,8 +1029,6 @@ const pinPillsDisabled = pinBusy || pinToggling || !canEditPin;
                 />
               </div>
             </div>
-
-            {busyClose ? null : null}
           </form>
         )}
       </Modal>
