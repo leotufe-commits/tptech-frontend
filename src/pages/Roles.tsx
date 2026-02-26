@@ -32,7 +32,6 @@ import {
   TPTh,
   TPTbody,
   TPTr,
-  TPTd,
   TPEmptyRow,
 } from "../components/ui/TPTable";
 
@@ -77,13 +76,13 @@ const RoleRow = React.memo(function RoleRow({
 
   return (
     <TPTr>
-      <TPTd className="font-semibold">{roleLabel(r)}</TPTd>
+      <td className="px-3 py-2 font-semibold">{roleLabel(r)}</td>
 
-      <TPTd className="hidden sm:table-cell">
+      <td className="px-3 py-2 hidden sm:table-cell">
         <TPBadge size="sm">{r.isSystem ? "Sistema" : "Personalizado"}</TPBadge>
-      </TPTd>
+      </td>
 
-      <TPTd className="text-right">
+      <td className="px-3 py-2 text-right">
         <div className="flex items-center justify-end gap-2">
           <TPIconButton
             disabled={!canAdmin || isEditingThis}
@@ -109,7 +108,7 @@ const RoleRow = React.memo(function RoleRow({
             <Trash2 className="h-4 w-4" />
           </TPIconButton>
         </div>
-      </TPTd>
+      </td>
     </TPTr>
   );
 });
@@ -496,12 +495,13 @@ export default function RolesPage() {
             <TPTbody>
               {loading ? (
                 <TPTr>
-                  <TPTd colSpan={3}>
+                  {/* ✅ FIX: td nativo para usar colSpan */}
+                  <td colSpan={3} className="px-3 py-2">
                     <div className="flex items-center gap-2 py-2">
                       <Loader2 className="h-4 w-4 animate-spin" />
                       Cargando…
                     </div>
-                  </TPTd>
+                  </td>
                 </TPTr>
               ) : sortedRoles.length === 0 ? (
                 <TPEmptyRow colSpan={3} text="No hay roles." />
