@@ -37,7 +37,6 @@ import {
 
   // adjuntos
   uploadUserAttachmentsInstant,
-  
 
   // ✅ QUICK PIN (admin)
   setUserPinEnabled,
@@ -72,17 +71,44 @@ import * as UserAttachments from "./usersPage/usersPage.attachments";
 
 import { normalizeUserDetail, normalizeUserListItem } from "./usersPage/usersPage.normalize";
 
+/* =========================
+   ✅ FIX Render build
+   - En este hook se llamaba deleteUserAttachmentInstant pero no existía.
+   - Lo definimos localmente para que compile y funcione.
+========================= */
+async function deleteUserAttachmentInstant(
+  userId: string,
+  attachmentId: string
+): Promise<{ ok: true }> {
+  const uid = encodeURIComponent(String(userId));
+  const aid = encodeURIComponent(String(attachmentId));
+
+  // Ruta esperada:
+  // DELETE /users/:id/attachments/:attachmentId
+  return apiFetch<{ ok: true }>(`/users/${uid}/attachments/${aid}`, {
+    method: "DELETE",
+    on401: "throw",
+  });
+}
+
 // ✅ destructuring defensivo (evita romper por exports renombrados)
 const stableJson: (v: any) => string =
-  (UserHelpers as any).stableJson ?? ((v: any) => {
-    try { return JSON.stringify(v); } catch { return ""; }
+  (UserHelpers as any).stableJson ??
+  ((v: any) => {
+    try {
+      return JSON.stringify(v);
+    } catch {
+      return "";
+    }
   });
 
 const draftKey: (f: File) => string =
-  (UserHelpers as any).draftKey ?? ((f: File) => `${f.name}-${f.size}-${f.lastModified}`);
+  (UserHelpers as any).draftKey ??
+  ((f: File) => `${f.name}-${f.size}-${f.lastModified}`);
 
 const assertPin4Local: (pin: string) => string =
-  (UserHelpers as any).assertPin4Local ?? ((pin: string) => {
+  (UserHelpers as any).assertPin4Local ??
+  ((pin: string) => {
     const s = String(pin ?? "").trim();
     if (!/^\d{4}$/.test(s)) throw new Error("El PIN debe tener 4 dígitos.");
     return s;
@@ -149,8 +175,12 @@ export function useUsersPage() {
   const me = (auth.user ?? null) as { id: string } | null;
   const permissions: string[] = (auth.permissions ?? []) as string[];
 
-  const canView = permissions.includes("USERS_ROLES:VIEW") || permissions.includes("USERS_ROLES:ADMIN");
-  const canEditStatus = permissions.includes("USERS_ROLES:EDIT") || permissions.includes("USERS_ROLES:ADMIN");
+  const canView =
+    permissions.includes("USERS_ROLES:VIEW") ||
+    permissions.includes("USERS_ROLES:ADMIN");
+  const canEditStatus =
+    permissions.includes("USERS_ROLES:EDIT") ||
+    permissions.includes("USERS_ROLES:ADMIN");
   const canAdmin = permissions.includes("USERS_ROLES:ADMIN");
 
   const inv = useInventory();
