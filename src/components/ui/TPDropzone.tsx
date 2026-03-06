@@ -4,6 +4,7 @@ import { cn } from "./tp";
 import { TPButton } from "./TPButton";
 import TPIconButton from "./TPIconButton";
 import { X } from "lucide-react";
+import { absUrl } from "../../lib/url";
 
 type Props = {
   multiple?: boolean;
@@ -96,7 +97,7 @@ export default function TPDropzone({
               busy && "opacity-60 pointer-events-none"
             )}
           >
-            <img src={previewUrl!} alt="preview" className="w-full h-full object-cover" />
+            <img src={absUrl(previewUrl!)} alt="preview" className="w-full h-full object-cover" />
 
             <div className="absolute inset-0 bg-black/30 opacity-0 group-hover:opacity-100 transition flex items-center justify-center text-white text-xs">
               {loading ? "Subiendo…" : "Cambiar"}

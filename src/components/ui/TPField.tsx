@@ -79,7 +79,7 @@ export function TPField({
             {showRealLabel ? (
               <>
                 {labelText}
-                {required ? <span className="text-red-400"> *</span> : null}
+                {required ? <span> *</span> : null}
               </>
             ) : (
               "\u00A0"
