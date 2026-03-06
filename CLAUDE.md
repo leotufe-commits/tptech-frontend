@@ -2,6 +2,17 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Communication preferences
+
+- Always respond in Spanish.
+- The user is not a developer. Keep all explanations clear and simple.
+
+## Deployment
+
+- **Hosting**: [Render](https://render.com) — Static Site. La configuración de headers de seguridad (CSP, X-Frame-Options, etc.) está en `render.yaml`.
+- **Repositorio**: GitHub (`leotufe-commits/tptech-frontend`)
+- **Backend**: servicio separado en Render. En producción, configurar `VITE_API_URL` con la URL absoluta del backend (ej. `https://tptech-backend.onrender.com/api`).
+
 ## Commands
 
 ```bash
