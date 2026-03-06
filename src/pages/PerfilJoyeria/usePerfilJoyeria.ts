@@ -276,6 +276,8 @@ export function usePerfilJoyeria() {
         setCompany(d.company);
 
         notifyLogoChanged(String(updated?.logoUrl || ""));
+        // Refresca AuthContext para que sidebar y favicon lean el logo actualizado
+        refresh().catch(() => {});
         setMsg("Logo actualizado ✅");
       } catch (e: any) {
         devLog("uploadLogoInstant error", e);
@@ -287,7 +289,7 @@ export function usePerfilJoyeria() {
         setUploadingLogo(false);
       }
     },
-    [isEditMode, busyAny, logoPreview]
+    [isEditMode, busyAny, logoPreview, refresh]
   );
 
   const deleteLogoInstant = useCallback(async () => {
@@ -315,6 +317,7 @@ export function usePerfilJoyeria() {
         on401: "throw",
       });
 
+      refresh().catch(() => {});
       setMsg("Logo eliminado ✅");
     } catch (e: any) {
       devLog("deleteLogoInstant error", e);
@@ -326,7 +329,7 @@ export function usePerfilJoyeria() {
     } finally {
       setDeletingLogo(false);
     }
-  }, [isEditMode, busyAny, company?.logoUrl, serverJewelry?.logoUrl, logoPreview]);
+  }, [isEditMode, busyAny, company?.logoUrl, serverJewelry?.logoUrl, logoPreview, refresh]);
 
   const uploadAttachmentsInstant = useCallback(
     async (files: File[]) => {

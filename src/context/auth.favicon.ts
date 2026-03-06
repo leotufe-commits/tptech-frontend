@@ -75,8 +75,11 @@ function buildPublicTptFaviconSvg() {
 function setFaviconHref(href: string, type?: string) {
   try {
     const link = ensureIconLink();
-    link.setAttribute("href", href);
+    // Agrega cache-buster solo a URLs reales (no a data-uris)
+    const finalHref = href.startsWith("data:") ? href : `${href}${href.includes("?") ? "&" : "?"}v=${Date.now()}`;
+    link.setAttribute("href", finalHref);
     if (type) link.setAttribute("type", type);
+    else link.removeAttribute("type");
   } catch {
     // ignore
   }
