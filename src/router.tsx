@@ -7,6 +7,7 @@ import { useAuth } from "./context/AuthContext";
 import Login from "./pages/Login";
 import Register from "./pages/Register";
 import ForgotPassword from "./pages/ForgotPassword";
+import AcceptInvite from "./pages/AcceptInvite";
 
 import Dashboard from "./pages/Dashboard";
 import MainLayout from "./layouts/MainLayout";
@@ -94,6 +95,12 @@ const router = createBrowserRouter([
         <ForgotPassword />
       </PublicOnly>
     ),
+  },
+  {
+    // Ruta pública sin PublicOnly: el admin podría estar logueado
+    // mientras el invitado hace click en el link desde su email
+    path: "/accept-invite",
+    element: <AcceptInvite />,
   },
 
   /* =====================
