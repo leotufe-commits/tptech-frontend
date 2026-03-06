@@ -87,8 +87,8 @@ export default function WarehouseViewModal({
     async function load() {
       try {
         setLoadingMovements(true);
-        const data = await warehousesApi.getMovements(target.id);
-        setMovements(Array.isArray(data) ? data : []);
+        const data = await warehousesApi.getMovements(target!.id);
+        setMovements(Array.isArray(data?.rows) ? data.rows : []);
       } catch {
         setMovements([]);
       } finally {
@@ -195,10 +195,8 @@ export default function WarehouseViewModal({
               </div>
 
               <TPButton
-                size="sm"
                 variant="secondary"
                 onClick={() => {
-                  // futuro: navegar a /movimientos?warehouseId=...
                   console.log("Ir a movimientos del almacén", target.id);
                 }}
               >
@@ -224,9 +222,9 @@ export default function WarehouseViewModal({
                         <TPTd className="text-sm text-muted">
                           Cargando movimientos…
                         </TPTd>
-                        <TPTd />
-                        <TPTd />
-                        <TPTd />
+                        <TPTd>{""}</TPTd>
+                        <TPTd>{""}</TPTd>
+                        <TPTd>{""}</TPTd>
                       </TPTr>
                     )}
 
@@ -235,9 +233,9 @@ export default function WarehouseViewModal({
                         <TPTd className="text-sm text-muted">
                           No hay movimientos.
                         </TPTd>
-                        <TPTd />
-                        <TPTd />
-                        <TPTd />
+                        <TPTd>{""}</TPTd>
+                        <TPTd>{""}</TPTd>
+                        <TPTd>{""}</TPTd>
                       </TPTr>
                     )}
 
@@ -249,10 +247,6 @@ export default function WarehouseViewModal({
                           <TPTr
                             key={m.id}
                             className="cursor-pointer hover:bg-surface2/40"
-                            onClick={() => {
-                              // futuro: abrir modal / pantalla de documento del movimiento
-                              console.log("Abrir movimiento", m.id);
-                            }}
                           >
                             <TPTd>{fmtDate(m.effectiveAt)}</TPTd>
 

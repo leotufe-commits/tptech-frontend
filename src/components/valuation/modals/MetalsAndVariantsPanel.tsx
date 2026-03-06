@@ -1165,7 +1165,7 @@ export default function MetalsAndVariantsPanel({
 
                   <div className="flex flex-wrap items-end gap-3">
                     <div className="min-w-[260px]">
-                      <TPDateRangeInline label="Filtrar por fecha" value={refRange} onChange={setRefRange} />
+                      <TPDateRangeInline value={refRange} onChange={setRefRange} />
                     </div>
                   </div>
                 </div>

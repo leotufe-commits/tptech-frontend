@@ -28,25 +28,20 @@ import Cuenta from "./pages/Cuenta";
 import Placeholder from "./pages/Placeholder";
 
 import Usuarios from "./pages/Users";
-import Roles from "./pages/Roles";
+import Roles from "./pages/roles/Roles";
 
 // ✅ IMPORT CORRECTO SEGÚN TU ESTRUCTURA ACTUAL
 import UserView from "./components/users/UserView";
 
-import ConfiguracionSistema from "./pages/ConfiguracionSistema";
-import SystemPinSettings from "./pages/SystemPinSettings";
-import SystemThemeSettings from "./pages/SystemThemeSettings";
-
-// ✅ NUEVO: pantalla Catálogo UI
-import SystemUiCatalog from "./pages/SystemUiCatalog";
-
-// ✅ NUEVO: pantalla placeholder "Vendedor"
-import ConfiguracionSistemaVendedor from "./pages/ConfiguracionSistemaVendedor";
+import ConfiguracionSistema from "./pages/configuracion-sistema/ConfiguracionSistema";
+import SystemPinSettings from "./pages/configuracion-sistema/SystemPinSettings";
+import SystemThemeSettings from "./pages/configuracion-sistema/SystemThemeSettings";
+import SystemUiCatalog from "./pages/configuracion-sistema/SystemUiCatalog";
+import ConfiguracionSistemaVendedor from "./pages/configuracion-sistema/ConfiguracionSistemaVendedor";
+import ConfiguracionSistemaItems from "./pages/configuracion-sistema/ConfiguracionSistemaItems";
+import ConfiguracionSistemaInformes from "./pages/configuracion-sistema/ConfiguracionSistemaInformes";
 
 import ProtectedRoute from "./components/ProtectedRoute";
-
-import ConfiguracionSistemaItems from "./pages/ConfiguracionSistemaItems";
-import ConfiguracionSistemaInformes from "./pages/ConfiguracionSistemaInformes";
 
 
 function LoadingGate() {

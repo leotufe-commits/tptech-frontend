@@ -23,4 +23,9 @@ export const warehousesApi = {
       ok: true;
       favoriteWarehouseId: string;
     }>,
+
+  getMovements: (id: string) =>
+    apiFetch(`/movimientos?warehouseId=${encodeURIComponent(id)}&pageSize=5`, {
+      method: "GET",
+    }) as Promise<{ rows: any[]; total: number }>,
 };

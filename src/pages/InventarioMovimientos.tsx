@@ -235,10 +235,6 @@ export default function InventarioMovimientos() {
                     <TPTr
                       key={m.id}
                       className="cursor-pointer hover:bg-surface2/40"
-                      onClick={() => {
-                        // ✅ futuro: abrir documento del movimiento (modal o page)
-                        console.log("Abrir documento movimiento:", m.id);
-                      }}
                     >
                       <TPTd className="text-muted">{fmtDateTime(m.effectiveAt)}</TPTd>
 

@@ -78,7 +78,7 @@ export default function WarehouseEditModal({
             <TPButton
               onClick={onSave}
               disabled={busySave}
-              leftIcon={busySave ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+              iconLeft={busySave ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
             >
               Guardar
             </TPButton>
@@ -272,7 +272,7 @@ export default function WarehouseEditModal({
             </div>
 
             {!(draft as any).isActive ? (
-              <TPAlert tone="warn" title="Almacén inactivo">
+              <TPAlert tone="warning" title="Almacén inactivo">
                 No se podrá usar para movimientos hasta reactivarlo.
               </TPAlert>
             ) : null}

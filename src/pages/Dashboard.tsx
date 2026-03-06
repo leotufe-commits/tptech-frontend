@@ -340,7 +340,7 @@ export default function Dashboard() {
                       align="left"
                       content={(props) => (
                         <div className="mb-2">
-                          <LegendToggle payload={props.payload} hidden={hiddenFx} onToggle={toggleFx} />
+                          <LegendToggle payload={props.payload as any[]} hidden={hiddenFx} onToggle={toggleFx} />
                         </div>
                       )}
                     />
@@ -407,7 +407,7 @@ export default function Dashboard() {
                       content={(props) => (
                         <div className="mb-2">
                           <LegendToggle
-                            payload={props.payload}
+                            payload={props.payload as any[]}
                             hidden={hiddenMetals}
                             onToggle={toggleMetal}
                           />

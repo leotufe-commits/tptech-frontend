@@ -15,7 +15,7 @@ function uid() {
   return Math.random().toString(36).slice(2) + Date.now().toString(36);
 }
 
-export function toast(payload: Omit<ToastPayload, "id">) {
+function toastBase(payload: Omit<ToastPayload, "id">) {
   const full: ToastPayload = {
     id: uid(),
     durationMs: 3200,
@@ -24,6 +24,19 @@ export function toast(payload: Omit<ToastPayload, "id">) {
 
   window.dispatchEvent(new CustomEvent<ToastPayload>(EVENT_NAME, { detail: full }));
 }
+
+type ToastOpts = { title?: string; durationMs?: number };
+
+export const toast = Object.assign(toastBase, {
+  success: (message: string, opts?: ToastOpts) =>
+    toastBase({ variant: "success", message, ...opts }),
+  error: (message: string, opts?: ToastOpts) =>
+    toastBase({ variant: "error", message, ...opts }),
+  warning: (message: string, opts?: ToastOpts) =>
+    toastBase({ variant: "warning", message, ...opts }),
+  info: (message: string, opts?: ToastOpts) =>
+    toastBase({ variant: "info", message, ...opts }),
+});
 
 export function onToast(handler: (t: ToastPayload) => void) {
   const listener = (ev: Event) => {

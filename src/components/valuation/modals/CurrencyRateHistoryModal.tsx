@@ -322,7 +322,7 @@ export default function CurrencyRateHistoryModal({
                 {!isBase ? (
                   <div className="flex flex-wrap items-end gap-3">
                     <div className="min-w-[260px]">
-                      <TPDateRangeInline label="Filtrar por fecha" value={range} onChange={setRange} />
+                      <TPDateRangeInline value={range} onChange={setRange} />
                     </div>
                   </div>
                 ) : null}

@@ -324,7 +324,7 @@ export default function InventarioAlmacenes() {
               {loading ? "Cargando…" : `Mostrando: ${filtered.length} / ${rows.length}`}
             </div>
 
-            <TPButton onClick={openCreate} leftIcon={<Plus className="h-4 w-4" />}>
+            <TPButton onClick={openCreate} iconLeft={<Plus className="h-4 w-4" />}>
               + Nuevo almacén
             </TPButton>
           </div>
@@ -401,7 +401,6 @@ export default function InventarioAlmacenes() {
           <TPAlert
             tone="danger"
             title="Motivo"
-            icon={<AlertTriangle className="h-4 w-4" />}
           >
             {deleteErrorMsg || "No se pudo eliminar."}
           </TPAlert>

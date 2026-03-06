@@ -8,10 +8,12 @@ import type {
   CurrencyRateRow,
   MetalRow,
   MetalRefHistoryItem,
-  MetalQuoteRow as QuoteRow, // ✅ si en service se llama MetalQuoteRow
-  MetalVariantRow as VariantRow, // ✅ si en service se llama MetalVariantRow
+  MetalQuoteRow as QuoteRow,
+  MetalVariantRow as VariantRow,
   VariantPricingPatch,
 } from "../services/valuation";
+
+export type { CurrencyRow, MetalRow, VariantRow };
 
 /**
  * ✅ Si en tu services/valuation.ts NO exporta MetalVariantRow/MetalQuoteRow con esos nombres,
