@@ -12,6 +12,7 @@ import {
 } from "recharts";
 
 import { TPCard } from "../components/ui/TPCard";
+import TPAlert from "../components/ui/TPAlert";
 import { cn } from "../components/ui/tp";
 import { apiFetch } from "../lib/api";
 import { fmtNumber2 } from "../lib/format";
@@ -291,16 +292,11 @@ export default function Dashboard() {
 
       {/* Estado carga */}
       {loading ? (
-        <TPCard title="Cargando..." className="p-4">
-          <div className="text-sm text-muted">Trayendo información real del sistema…</div>
-        </TPCard>
+        <div className="text-sm text-muted">Trayendo información real del sistema…</div>
       ) : err ? (
-        <TPCard title="Error" className="p-4">
-          <div className="text-sm text-rose-600">{err}</div>
-          <div className="mt-2 text-xs text-muted">
-            Tip: verificá que el backend tenga <b>/dashboard/summary</b> y que apiFetch apunte al API.
-          </div>
-        </TPCard>
+        <TPAlert tone="danger" title="Error cargando dashboard">
+          {err}
+        </TPAlert>
       ) : null}
 
       {/* ✅ ARRIBA: GRÁFICOS */}
@@ -447,8 +443,7 @@ export default function Dashboard() {
       {/* ✅ ABAJO: CARDS CHICOS (KPIs) */}
       {!loading && !err && (
         <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
-          {/* ✅ Moneda base: sin valor "Actual", con nombre */}
-          <div className="rounded-2xl border border-border bg-card p-5 shadow-sm">
+          <TPCard className="p-5">
             <div className="text-sm text-muted">Moneda base</div>
             <div className="mt-2 text-2xl font-semibold text-text">
               {kpis?.baseCurrency?.code
@@ -456,25 +451,25 @@ export default function Dashboard() {
                 : "—"}
             </div>
             <div className="mt-1 text-xs text-muted">{baseName || "—"}</div>
-          </div>
+          </TPCard>
 
-          <div className="rounded-2xl border border-border bg-card p-5 shadow-sm">
+          <TPCard className="p-5">
             <div className="text-sm text-muted">Monedas activas</div>
             <div className="mt-2 text-2xl font-semibold text-text">
               {kpis?.currenciesActiveCount ?? "—"}
             </div>
             <div className="mt-1 text-xs text-muted">En valuación</div>
-          </div>
+          </TPCard>
 
-          <div className="rounded-2xl border border-border bg-card p-5 shadow-sm">
+          <TPCard className="p-5">
             <div className="text-sm text-muted">Metales activos</div>
             <div className="mt-2 text-2xl font-semibold text-text">
               {kpis?.metalsActiveCount ?? "—"}
             </div>
             <div className="mt-1 text-xs text-muted">Metales padres</div>
-          </div>
+          </TPCard>
 
-          <div className="rounded-2xl border border-border bg-card p-5 shadow-sm">
+          <TPCard className="p-5">
             <div className="text-sm text-muted">Usuarios</div>
             <div className="mt-2 text-2xl font-semibold text-text">
               {kpis?.users?.total ?? "—"}
@@ -483,7 +478,7 @@ export default function Dashboard() {
               Activos {kpis?.users?.ACTIVE ?? 0} · Pend {kpis?.users?.PENDING ?? 0} · Bloq{" "}
               {kpis?.users?.BLOCKED ?? 0}
             </div>
-          </div>
+          </TPCard>
         </div>
       )}
 

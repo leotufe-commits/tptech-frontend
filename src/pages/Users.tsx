@@ -3,6 +3,9 @@ import React from "react";
 
 import { Modal } from "../components/ui/Modal";
 import ConfirmUnsavedChangesDialog from "../components/ui/ConfirmUnsavedChangesDialog";
+import TPSearchInput from "../components/ui/TPSearchInput";
+import { TPButton } from "../components/ui/TPButton";
+import TPAlert from "../components/ui/TPAlert";
 
 import UsersTable from "../components/users/UsersTable";
 import UserEditModal from "../components/users/UserEditModal";
@@ -50,9 +53,8 @@ export default function UsersPage() {
           </div>
 
           {Boolean(String(p.returnToRef.current || "").trim()) && (
-            <button
-              type="button"
-              className="tp-btn-secondary"
+            <TPButton
+              variant="secondary"
               onClick={() => {
                 if (p.modalOpen && p.isDirtyNow()) {
                   p.setConfirmUnsavedOpen(true);
@@ -62,27 +64,28 @@ export default function UsersPage() {
               }}
             >
               Volver
-            </button>
+            </TPButton>
           )}
         </div>
 
         <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
-          <input
-            className="tp-input md:max-w-md"
-            placeholder="Buscar por email / nombre…"
-            value={p.qUI}
-            onChange={(e) => p.setQUI(e.target.value)}
-          />
+          <div className="md:max-w-md w-full">
+            <TPSearchInput
+              placeholder="Buscar por email / nombre…"
+              value={p.qUI}
+              onChange={p.setQUI}
+            />
+          </div>
 
           {p.canAdmin && (
-            <button className="tp-btn-primary" onClick={p.openCreate} type="button">
+            <TPButton onClick={p.openCreate}>
               Nuevo usuario
-            </button>
+            </TPButton>
           )}
         </div>
       </div>
 
-      {p.err && <div className="rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm">{p.err}</div>}
+      {p.err && <TPAlert tone="danger">{p.err}</TPAlert>}
 
       <UsersTable
         loading={p.loading}
@@ -230,9 +233,8 @@ export default function UsersPage() {
           </div>
 
           <div className="flex justify-end gap-2">
-            <button
-              className="tp-btn-secondary"
-              type="button"
+            <TPButton
+              variant="secondary"
               disabled={p.deleteBusy}
               onClick={() => {
                 p.setConfirmOpen(false);
@@ -240,16 +242,15 @@ export default function UsersPage() {
               }}
             >
               Cancelar
-            </button>
+            </TPButton>
 
-            <button
-              className={p.cn("tp-btn", p.deleteBusy && "opacity-60")}
-              type="button"
-              disabled={p.deleteBusy}
+            <TPButton
+              variant="danger"
+              loading={p.deleteBusy}
               onClick={() => void p.confirmDelete()}
             >
-              {p.deleteBusy ? "Eliminando…" : "Eliminar"}
-            </button>
+              Eliminar
+            </TPButton>
           </div>
         </div>
       </Modal>

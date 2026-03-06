@@ -177,10 +177,7 @@ export default function InventarioMovimientos() {
 
           <div className="flex w-full flex-col gap-2 md:flex-row md:items-center md:justify-end">
             <select
-              className={cn(
-                "h-10 rounded-xl border border-border bg-card px-3 text-sm text-text outline-none",
-                "focus:ring-2 focus:ring-primary/20"
-              )}
+              className="tp-select"
               value={kind}
               onChange={(e) => setKind(e.target.value as any)}
             >
@@ -192,10 +189,7 @@ export default function InventarioMovimientos() {
             </select>
 
             <input
-              className={cn(
-                "h-10 w-full rounded-xl border border-border bg-card px-3 text-sm text-text outline-none md:w-[260px]",
-                "focus:ring-2 focus:ring-primary/20"
-              )}
+              className="tp-input md:w-[260px]"
               value={warehouseId}
               onChange={(e) => setWarehouseId(e.target.value)}
               placeholder="warehouseId (por ahora)"

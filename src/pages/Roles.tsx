@@ -19,6 +19,7 @@ import { fetchPermissions, type Permission } from "../services/permissions";
 
 import ConfirmDeleteDialog from "../components/ui/ConfirmDeleteDialog";
 import { useConfirmDelete } from "../hooks/useConfirmDelete";
+import TPAlert from "../components/ui/TPAlert";
 import { SortArrows } from "../components/ui/TPSort";
 import { TPBadge } from "../components/ui/TPBadges";
 import TPIconButton from "../components/ui/TPIconButton";
@@ -27,7 +28,7 @@ import TPButton from "../components/ui/TPButton";
 import {
   TPTableWrap,
   TPTableHeader,
-  TPTableEl,
+  TPTable,
   TPThead,
   TPTh,
   TPTbody,
@@ -446,9 +447,7 @@ export default function RolesPage() {
         ) : null}
       </div>
 
-      {pageErr ? (
-        <div className="rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm">{pageErr}</div>
-      ) : null}
+      {pageErr ? <TPAlert tone="danger">{pageErr}</TPAlert> : null}
 
       <TPTableWrap>
         <TPTableHeader
@@ -460,7 +459,7 @@ export default function RolesPage() {
           }
         />
 
-        <TPTableEl>
+        <TPTable>
           <table className="w-full text-sm">
             <TPThead className="border-b border-border">
               <tr>
@@ -519,7 +518,7 @@ export default function RolesPage() {
               )}
             </TPTbody>
           </table>
-        </TPTableEl>
+        </TPTable>
       </TPTableWrap>
 
       {/* CREATE */}
