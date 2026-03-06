@@ -1,0 +1,39 @@
+# render.yaml — configuración de despliegue para Render
+# Docs: https://render.com/docs/blueprint-spec
+#
+# IMPORTANTE: verificar que "name" coincida con el nombre del servicio en el dashboard de Render.
+# Si el nombre no coincide, Render puede intentar crear un servicio nuevo en lugar de actualizar el existente.
+
+services:
+  - type: web
+    name: tptech-frontend
+    env: static
+    buildCommand: npm run build
+    staticPublishPath: ./dist
+
+    # Redirigir todas las rutas al index.html (SPA)
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
+
+    headers:
+      - path: /*
+        name: Content-Security-Policy
+        value: "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; font-src 'self' data:; connect-src 'self' https: wss:; media-src 'none'; object-src 'none'; frame-src 'none'; frame-ancestors 'none'; form-action 'self'; base-uri 'self';"
+
+      - path: /*
+        name: X-Frame-Options
+        value: DENY
+
+      - path: /*
+        name: X-Content-Type-Options
+        value: nosniff
+
+      - path: /*
+        name: Referrer-Policy
+        value: no-referrer
+
+      - path: /*
+        name: Permissions-Policy
+        value: "camera=(), microphone=(), geolocation=(), payment=()"

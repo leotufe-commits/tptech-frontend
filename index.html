@@ -5,7 +5,25 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>TPTech</title>
 
-    <!-- ✅ Aplica theme ANTES del render (sin flash) -->
+    <!-- Content Security Policy -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="
+        default-src 'self';
+        script-src 'self' 'unsafe-inline';
+        style-src 'self' 'unsafe-inline';
+        img-src 'self' data: blob: https:;
+        font-src 'self' data:;
+        connect-src 'self' https: wss:;
+        media-src 'none';
+        object-src 'none';
+        frame-src 'none';
+        form-action 'self';
+        base-uri 'self';
+      "
+    />
+
+    <!-- Aplica theme ANTES del render (sin flash) -->
     <script>
       (function () {
         try {
