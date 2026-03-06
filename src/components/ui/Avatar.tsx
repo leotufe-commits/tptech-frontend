@@ -4,9 +4,14 @@ import { useEffect, useMemo, useState } from "react";
 function absUrl(u: string) {
   const raw = String(u || "").trim();
   if (!raw) return "";
+
+  // ✅ NO tocar previews locales / data uris
+  if (/^(blob:|data:)/i.test(raw)) return raw;
+
   if (/^https?:\/\//i.test(raw)) return raw;
 
-  const base = (import.meta.env.VITE_API_URL as string) || "http://localhost:3001";
+  const base =
+    (import.meta.env.VITE_API_URL as string) || "http://localhost:3001";
   const clean = String(base).replace(/\/+$/, "");
 
   // ✅ si VITE_API_URL termina en /api, lo sacamos para construir assets (/uploads)
@@ -30,11 +35,14 @@ type Props = {
   src?: string | null;
   name?: string | null;
   email?: string | null;
-  size?: number;          // px
-  className?: string;     // wrapper
-  imgClassName?: string;  // <img>
+  size?: number; // px
+  className?: string; // wrapper
+  imgClassName?: string; // <img>
   rounded?: "full" | "xl";
   bust?: string | number; // cache bust opcional
+
+  /** ✅ NUEVO: si true, Avatar dibuja su propio borde/fondo (como antes) */
+  framed?: boolean;
 };
 
 export default function Avatar({
@@ -46,6 +54,7 @@ export default function Avatar({
   imgClassName,
   rounded = "full",
   bust,
+  framed = true,
 }: Props) {
   const [failed, setFailed] = useState(false);
 
@@ -58,17 +67,31 @@ export default function Avatar({
 
   const finalSrc = useMemo(() => {
     if (!base || failed) return "";
+
+    // ✅ no agregar cache-bust a blob/data (puede romperlos)
+    if (/^(blob:|data:)/i.test(base)) return base;
+
     const v = bust != null && String(bust).trim() ? String(bust) : "1";
     return `${base}${base.includes("?") ? "&" : "?"}v=${encodeURIComponent(v)}`;
   }, [base, bust, failed]);
 
-  const initials = useMemo(() => getInitials(name || undefined, email || undefined), [name, email]);
+  const initials = useMemo(
+    () => getInitials(name || undefined, email || undefined),
+    [name, email]
+  );
 
   const radius = rounded === "full" ? "rounded-full" : "rounded-xl";
 
   return (
     <div
-      className={`grid place-items-center overflow-hidden border border-border bg-card ${radius} ${className || ""}`}
+      className={[
+        "grid place-items-center overflow-hidden",
+        radius,
+        framed ? "border border-border bg-card" : "",
+        className || "",
+      ]
+        .filter(Boolean)
+        .join(" ")}
       style={{ width: size, height: size }}
     >
       {finalSrc ? (
@@ -79,7 +102,10 @@ export default function Avatar({
           onError={() => setFailed(true)}
         />
       ) : (
-        <span className="select-none font-bold text-primary" style={{ fontSize: size * 0.35 }}>
+        <span
+          className="select-none font-bold text-primary"
+          style={{ fontSize: size * 0.35 }}
+        >
           {initials}
         </span>
       )}

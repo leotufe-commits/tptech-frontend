@@ -28,15 +28,17 @@ type Props = {
   /** create = puede usar favorito | edit = nunca */
   mode: "create" | "edit";
 
-  /** ✅ NUEVO: para tab horizontal */
+  /** ✅ para tab horizontal */
   tabIndex?: number;
 
   /**
-   * ✅ NUEVO:
-   * Si el label lo maneja un wrapper externo (TPField),
-   * evitamos reservar espacio de label adentro.
+   * ✅ Si el label lo maneja un wrapper externo (TPField),
+   * evitamos renderizar label acá.
    */
   noLabelSpace?: boolean;
+
+  children?: never;
+  dangerouslySetInnerHTML?: never;
 };
 
 /* =========================
@@ -117,9 +119,11 @@ function Modal({
       <div className="absolute inset-0 bg-black/40" onMouseDown={onClose} />
       <div className="absolute inset-0 grid place-items-center p-4">
         <div
-          className="w-full max-w-[420px] rounded-2xl border border-border bg-card shadow-soft"
-          onMouseDown={(e) => e.stopPropagation()}
-        >
+  role="dialog"
+  aria-modal="true"
+  className="w-full max-w-[420px] rounded-2xl border border-border bg-card shadow-soft"
+  onMouseDown={(e) => e.stopPropagation()}
+>
           <div className="p-4 border-b border-border">
             <div className="text-base font-semibold text-text">{title}</div>
           </div>
@@ -127,10 +131,20 @@ function Modal({
           <div className="p-4">{children}</div>
 
           <div className="p-4 pt-2 flex justify-end gap-2 border-t border-border">
-            <button className="tp-btn-secondary" onClick={onClose} disabled={loading} type="button">
+            <button
+              className="tp-btn-secondary"
+              onClick={onClose}
+              disabled={loading}
+              type="button"
+            >
               {cancelText}
             </button>
-            <button className="tp-btn-primary" onClick={onConfirm} disabled={loading} type="button">
+            <button
+              className="tp-btn-primary"
+              onClick={onConfirm}
+              disabled={loading}
+              type="button"
+            >
               {loading ? "Guardando…" : confirmText}
             </button>
           </div>
@@ -177,7 +191,10 @@ export default function TPComboCreatable({
   const [errMsg, setErrMsg] = useState<string | null>(null);
 
   const safeItems = useMemo(() => (Array.isArray(items) ? items : []), [items]);
-  const activeItems = useMemo(() => safeItems.filter((i) => i.isActive !== false), [safeItems]);
+  const activeItems = useMemo(
+    () => safeItems.filter((i) => i.isActive !== false),
+    [safeItems]
+  );
 
   const didAutoPickRef = useRef(false);
 
@@ -219,7 +236,9 @@ export default function TPComboCreatable({
     }
 
     const v = norm(value).toLowerCase();
-    const idx = v ? activeItems.findIndex((it) => norm(it.label).toLowerCase() === v) : -1;
+    const idx = v
+      ? activeItems.findIndex((it) => norm(it.label).toLowerCase() === v)
+      : -1;
     setActiveIndex(activeItems.length ? (idx >= 0 ? idx : 0) : -1);
   }, [open, activeItems, value]);
 
@@ -241,7 +260,9 @@ export default function TPComboCreatable({
     onRefresh?.();
 
     const v = norm(value).toLowerCase();
-    const idx = v ? activeItems.findIndex((it) => norm(it.label).toLowerCase() === v) : -1;
+    const idx = v
+      ? activeItems.findIndex((it) => norm(it.label).toLowerCase() === v)
+      : -1;
     setActiveIndex(activeItems.length ? (idx >= 0 ? idx : 0) : -1);
 
     setTimeout(() => inputRef.current?.focus(), 0);
@@ -333,28 +354,21 @@ export default function TPComboCreatable({
     if (!next || !wrapRef.current?.contains(next)) closeDropdown();
   }
 
-  const labelText = String(label || "");
-  const showRealLabel = Boolean(labelText.trim());
+  const showLabel = !noLabelSpace && Boolean(String(label || "").trim());
 
-  // ✅ Reservamos padding a la derecha para los botones (X + caret)
-  // - con clear: dejamos lugar para 2 botones
-  // - sin clear: lugar para 1 botón
+  // ✅ Igual que TPInput “clásico”: padding para X + caret
   const rightPad = canClear ? "pr-16" : "pr-10";
 
   return (
     <>
+      {/* ✅ MISMO WRAPPER QUE TPInput: space-y-1 + label text-xs font-medium */}
       <div
         ref={wrapRef}
-        className={cn(noLabelSpace ? "w-full" : "tp-field w-full")}
+        className={cn("w-full", !noLabelSpace && "space-y-1")}
         onBlurCapture={onWrapBlurCapture}
       >
-        {!noLabelSpace ? (
-          <label
-            className={cn("tp-field-label", !showRealLabel && "tp-field-label--empty")}
-            aria-hidden={!showRealLabel}
-          >
-            {showRealLabel ? labelText : "\u00A0"}
-          </label>
+        {showLabel ? (
+          <div className="text-xs font-medium text-muted">{label}</div>
         ) : null}
 
         <div className="relative">
@@ -371,8 +385,7 @@ export default function TPComboCreatable({
               onChange(e.target.value);
               openDropdown();
             }}
-            /* ✅ CLAVE: usar exactamente el mismo base que TPInput */
-            className={cn(TP_INPUT, "bg-white", rightPad)} // ✅ fuerza fondo blanco
+            className={cn(TP_INPUT, "w-full", rightPad)}
           />
 
           {canClear && (
@@ -396,6 +409,8 @@ export default function TPComboCreatable({
             onClick={openDropdown}
             disabled={disabled || creating}
             tabIndex={-1}
+            aria-label="Abrir"
+            title="Abrir"
           >
             <ChevronDown size={16} />
           </button>
@@ -437,7 +452,11 @@ export default function TPComboCreatable({
                   >
                     <Plus className="h-4 w-4" />
                     <span className="underline">Agregar ítem</span>
-                    {norm(value) ? <span className="text-muted no-underline">“{norm(value)}”</span> : null}
+                    {norm(value) ? (
+                      <span className="text-muted no-underline">
+                        “{norm(value)}”
+                      </span>
+                    ) : null}
                   </button>
                 )}
               </div>
@@ -466,14 +485,14 @@ export default function TPComboCreatable({
             onKeyDown={(e) => {
               if (e.key === "Enter") {
                 e.preventDefault();
-                doCreate();
+                void doCreate();
               }
               if (e.key === "Escape") {
                 e.preventDefault();
                 if (!creating) closeCreateModalAndRefocus();
               }
             }}
-            className={cn(TP_INPUT, "bg-white")} // ✅ fuerza fondo blanco también en el modal
+            className={cn(TP_INPUT, "w-full")}
             placeholder="Escribí el ítem…"
           />
         </div>

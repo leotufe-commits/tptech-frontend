@@ -1,38 +1,48 @@
 // src/components/valuation/modals/CurrenciesPanel.tsx
 import React, { useMemo, useState } from "react";
-import {
-  Eye,
-  Loader2,
-  Pencil,
-  Plus,
-  Search,
-  ShieldBan,
-  ShieldCheck,
-  Star,
-  Trash2,
-  X, // ✅ clear icon
-} from "lucide-react";
+import { Eye, Loader2, Plus, Search, ShieldBan, ShieldCheck, Star, Trash2, X, Pencil } from "lucide-react";
 
 import type { CurrencyRow } from "../../../hooks/useValuation";
 import { cn, norm, Pill } from "../valuation.ui";
 
 import { SortArrows } from "../../ui/TPSort";
-import {
-  TPTableWrap,
-  TPTableEl,
-  TPThead,
-  TPTbody,
-  TPTr,
-  TPTh,
-  TPTd,
-  TPEmptyRow,
-} from "../../ui/TPTable";
+import { TPTableWrap, TPTable, TPThead, TPTbody, TPTr, TPTh, TPTd, TPEmptyRow } from "../../ui/TPTable";
 
 import CurrencyRateHistoryModal from "./CurrencyRateHistoryModal";
 import ConfirmDeleteDialog from "../../ui/ConfirmDeleteDialog";
 
+import { fmtRateSmart } from "../../../lib/format";
+import TPCard from "../../ui/TPCard";
+
 type SortKey = "code" | "name" | "price" | "status";
 type SortDir = "asc" | "desc";
+
+function IconBtn({
+  title,
+  onClick,
+  disabled,
+  children,
+}: {
+  title: string;
+  onClick: () => void;
+  disabled?: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      className={cn(
+        "tp-btn-secondary h-9 w-9 !p-0 grid place-items-center",
+        disabled ? "opacity-60 pointer-events-none" : ""
+      )}
+      title={title}
+      onClick={onClick}
+      disabled={disabled}
+    >
+      {children}
+    </button>
+  );
+}
 
 export default function CurrenciesPanel({
   loading,
@@ -56,10 +66,7 @@ export default function CurrenciesPanel({
   onOpenCreate: () => void;
 
   onSetBase: (currencyId: string) => Promise<{ ok: boolean; error?: string }>;
-  onToggleActive: (
-    currencyId: string,
-    isActive: boolean
-  ) => Promise<{ ok: boolean; error?: string }>;
+  onToggleActive: (currencyId: string, isActive: boolean) => Promise<{ ok: boolean; error?: string }>;
 
   onOpenRates: (currency: CurrencyRow) => void;
   onDelete?: (currency: CurrencyRow) => Promise<{ ok: boolean; error?: string }>;
@@ -68,11 +75,9 @@ export default function CurrenciesPanel({
   const [sortKey, setSortKey] = useState<SortKey>("code");
   const [sortDir, setSortDir] = useState<SortDir>("asc");
 
-  // modal view
   const [viewOpen, setViewOpen] = useState(false);
   const [viewCurrencyId, setViewCurrencyId] = useState<string | null>(null);
 
-  // ✅ delete confirm
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deleteRow, setDeleteRow] = useState<CurrencyRow | null>(null);
   const [deleteBusy, setDeleteBusy] = useState(false);
@@ -97,7 +102,7 @@ export default function CurrenciesPanel({
 
   function priceOf(r: CurrencyRow) {
     if (r.isBase) return 1;
-    const v = (r as any).latestRate; // ✅ viene del backend (en MONEDA BASE)
+    const v = (r as any).latestRate;
     const n = Number(v);
     return Number.isFinite(n) ? n : -1;
   }
@@ -122,12 +127,8 @@ export default function CurrenciesPanel({
 
       const dir = sortDir === "asc" ? 1 : -1;
 
-      if (sortKey === "code") {
-        return dir * String(a.code || "").localeCompare(String(b.code || ""));
-      }
-      if (sortKey === "price") {
-        return dir * (priceOf(a) - priceOf(b));
-      }
+      if (sortKey === "code") return dir * String(a.code || "").localeCompare(String(b.code || ""));
+      if (sortKey === "price") return dir * (priceOf(a) - priceOf(b));
       if (sortKey === "status") {
         const aa = a.isActive !== false ? 1 : 0;
         const bb = b.isActive !== false ? 1 : 0;
@@ -148,9 +149,6 @@ export default function CurrenciesPanel({
       setPanelErr(r?.error || "No se pudo cambiar la moneda base.");
       return;
     }
-
-    // ✅ NO llamamos onRefetch acá: el hook ya refresca currencies+metals
-    // onRefetch?.();
   }
 
   async function onToggle(row: CurrencyRow) {
@@ -165,16 +163,12 @@ export default function CurrenciesPanel({
       return;
     }
 
-    // ✅ opcional: si el padre no refetchea, permitimos actualizar desde afuera
     onRefetch?.();
   }
 
-  // ✅ abrimos confirm
   function onAskDelete(row: CurrencyRow) {
     if (!onDelete) return;
     if (saving || loading) return;
-
-    // UI ya deshabilita base, pero doble protección
     if (row?.isBase) return;
 
     setPanelErr(null);
@@ -214,27 +208,12 @@ export default function CurrenciesPanel({
     setDeleteRow(null);
   }
 
-  // ✅ símbolo/código base (para modal + columna Precio)
   const baseSym = String(baseCurrency?.symbol || "").trim() || "$";
   const baseCode = String(baseCurrency?.code || "").trim() || "ARS";
 
-  // ✅ NUEVO: formateo visual según regla:
-  // - < 1  => hasta 6 decimales (como hoy)
-  // - >= 1 => 2 decimales fijos (1 => 1,00)
-  function fmtRateSmart(v: number) {
-    if (v >= 1) {
-      return v.toLocaleString("es-AR", {
-        minimumFractionDigits: 2,
-        maximumFractionDigits: 2,
-      });
-    }
-    return v.toLocaleString("es-AR", { maximumFractionDigits: 6 });
-  }
-
   function fmtPrice(row: CurrencyRow) {
     const v = priceOf(row);
-    if (!Number.isFinite(v) || v < 0) return row.isBase ? "1" : "Sin tipo";
-
+    if (!Number.isFinite(v) || v < 0) return row.isBase ? fmtRateSmart(1) : "Sin tipo";
     const txt = fmtRateSmart(v);
     return baseSym ? `${baseSym} ${txt}` : txt;
   }
@@ -245,9 +224,7 @@ export default function CurrenciesPanel({
       <button
         type="button"
         onClick={() => toggleSort(k)}
-        className={cn(
-          "inline-flex items-center gap-1.5 select-none hover:text-text transition"
-        )}
+        className={cn("inline-flex items-center gap-1.5 select-none hover:text-text transition")}
         title="Ordenar"
       >
         <span>{label}</span>
@@ -256,26 +233,20 @@ export default function CurrenciesPanel({
     );
   };
 
-  const deletingName = deleteRow
-    ? `${deleteRow.code} · ${deleteRow.name}`
-    : "esta moneda";
+  const deletingName = deleteRow ? `${deleteRow.code} · ${deleteRow.name}` : "esta moneda";
 
   return (
     <section className="space-y-3">
-      <div
-        className="rounded-2xl border border-border bg-card p-4"
-        style={{ boxShadow: "var(--shadow)" }}
-      >
-        <div className="flex justify-between items-center">
+      <div className="rounded-2xl border border-border bg-card p-4" style={{ boxShadow: "var(--shadow)" }}>
+        <div className="flex flex-col gap-3 sm:flex-row sm:justify-between sm:items-center">
           <div className="min-w-0">
             <div className="text-lg font-bold text-text">Monedas</div>
-            <div className="text-sm text-muted">
-              Definí la moneda base y cargá tipos de cambio para las demás.
-            </div>
+            <div className="text-sm text-muted">Definí la moneda base y cargá tipos de cambio para las demás.</div>
           </div>
 
           <button
-            className="tp-btn-primary h-10 inline-flex items-center gap-2"
+            type="button"
+            className="tp-btn-primary h-10 inline-flex items-center justify-center gap-2 sm:w-auto w-full"
             onClick={onOpenCreate}
             disabled={saving}
             title="Nueva moneda"
@@ -286,16 +257,11 @@ export default function CurrenciesPanel({
         </div>
 
         {panelErr ? (
-          <div className="mt-3 rounded-2xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-text">
-            {panelErr}
-          </div>
+          <div className="mt-3 rounded-2xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-text">{panelErr}</div>
         ) : null}
 
         <div className="mt-4 relative">
-          <Search
-            size={16}
-            className="absolute left-3 top-1/2 -translate-y-1/2 text-muted"
-          />
+          <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted" />
           <input
             value={q}
             onChange={(e) => setQ(e.target.value)}
@@ -303,7 +269,6 @@ export default function CurrenciesPanel({
             className="w-full h-10 rounded-xl border border-border bg-bg text-text pl-9 pr-9 text-sm focus:outline-none focus:ring-4 focus:ring-primary/20"
           />
 
-          {/* ✅ NUEVO: misma X que en metales */}
           {q ? (
             <button
               type="button"
@@ -325,9 +290,12 @@ export default function CurrenciesPanel({
           </div>
         ) : null}
 
-        <div className="mt-4">
+        {/* =========================
+            ✅ DESKTOP TABLE (md+)
+        ========================= */}
+        <div className="mt-4 hidden md:block">
           <TPTableWrap>
-            <TPTableEl>
+            <TPTable>
               <table className="w-full">
                 <TPThead>
                   <tr>
@@ -352,10 +320,7 @@ export default function CurrenciesPanel({
                 <TPTbody>
                   {loading ? (
                     <tr>
-                      <td
-                        colSpan={4}
-                        className="px-5 py-10 text-center text-sm text-muted"
-                      >
+                      <td colSpan={4} className="px-5 py-10 text-center text-sm text-muted">
                         <Loader2 className="mx-auto mb-3 h-6 w-6 animate-spin" />
                         Cargando…
                       </td>
@@ -366,61 +331,39 @@ export default function CurrenciesPanel({
                     list.map((row) => {
                       const isBase = !!row.isBase;
                       const isActive = row.isActive !== false;
-
-                      const lockActions = saving || deleteBusy; // ✅ evitamos clicks mientras borra
+                      const lockActions = saving || deleteBusy;
 
                       return (
                         <TPTr key={row.id}>
                           <TPTd className="text-left">
                             <div className="font-semibold text-text">
-                              {row.code}{" "}
-                              <span className="text-muted">· {row.name}</span>
+                              {row.code} <span className="text-muted">· {row.name}</span>
                             </div>
                             <div className="text-xs text-muted">
-                              {row.symbol}{" "}
-                              {isBase ? (
-                                <span className="text-yellow-400 font-semibold">
-                                  ⭐ Base
-                                </span>
-                              ) : null}
+                              {row.symbol} {isBase ? <span className="text-yellow-400 font-semibold">⭐ Base</span> : null}
                             </div>
                           </TPTd>
 
                           <TPTd className="text-right tabular-nums">
-                            <div className="w-full text-right text-sm text-text font-medium">
-                              {fmtPrice(row)}
-                            </div>
+                            <div className="w-full text-right text-sm text-text font-medium">{fmtPrice(row)}</div>
                           </TPTd>
 
-                          <TPTd className="text-left">
-                            {isActive ? (
-                              <Pill tone="ok">Activa</Pill>
-                            ) : (
-                              <Pill tone="off">Inactiva</Pill>
-                            )}
-                          </TPTd>
+                          <TPTd className="text-left">{isActive ? <Pill tone="ok">Activa</Pill> : <Pill tone="off">Inactiva</Pill>}</TPTd>
 
                           <TPTd className="text-right">
                             <div className="flex justify-end gap-2">
                               <button
+                                type="button"
                                 className="tp-btn-secondary h-9 w-9 !p-0 grid place-items-center"
-                                title={
-                                  isBase ? "Moneda base" : "Marcar como base"
-                                }
+                                title={isBase ? "Moneda base" : "Marcar como base"}
                                 onClick={() => onSetBaseClick(row)}
                                 disabled={lockActions || isBase}
                               >
-                                <Star
-                                  size={16}
-                                  className={cn(
-                                    isBase
-                                      ? "fill-current text-yellow-400"
-                                      : "fill-transparent text-text/80"
-                                  )}
-                                />
+                                <Star size={16} className={cn(isBase ? "fill-current text-yellow-400" : "fill-transparent text-text/80")} />
                               </button>
 
                               <button
+                                type="button"
                                 className="tp-btn-secondary h-9 w-9 !p-0 grid place-items-center"
                                 title="Ver detalle / historial"
                                 onClick={() => openView(row.id)}
@@ -430,28 +373,27 @@ export default function CurrenciesPanel({
                               </button>
 
                               <button
+                                type="button"
                                 className="tp-btn-secondary h-9 w-9 !p-0 grid place-items-center"
-                                title="Tipos de cambio"
+                                title="Editar (moneda / tipo de cambio)"
                                 onClick={() => onOpenRates(row)}
-                                disabled={lockActions || isBase}
+                                disabled={lockActions}
                               >
                                 <Pencil size={16} />
                               </button>
 
                               <button
+                                type="button"
                                 className="tp-btn-secondary h-9 w-9 !p-0 grid place-items-center"
                                 title={isActive ? "Desactivar" : "Activar"}
                                 onClick={() => onToggle(row)}
                                 disabled={lockActions || isBase}
                               >
-                                {isActive ? (
-                                  <ShieldBan size={16} />
-                                ) : (
-                                  <ShieldCheck size={16} />
-                                )}
+                                {isActive ? <ShieldBan size={16} /> : <ShieldCheck size={16} />}
                               </button>
 
                               <button
+                                type="button"
                                 className="tp-btn-secondary h-9 w-9 !p-0 grid place-items-center"
                                 title={!onDelete ? "Eliminar (pendiente)" : "Eliminar"}
                                 onClick={() => onAskDelete(row)}
@@ -467,7 +409,7 @@ export default function CurrenciesPanel({
                   )}
                 </TPTbody>
               </table>
-            </TPTableEl>
+            </TPTable>
 
             <div className="flex items-center justify-between border-t border-border bg-surface2/30 px-5 py-3 text-xs text-muted">
               <div>
@@ -477,18 +419,87 @@ export default function CurrenciesPanel({
             </div>
           </TPTableWrap>
         </div>
+
+        {/* =========================
+            ✅ MOBILE CARDS (sm)
+        ========================= */}
+        <div className="mt-4 md:hidden space-y-3">
+          {loading ? (
+            <div className="p-6 text-center text-sm text-muted">
+              <Loader2 className="mx-auto mb-2 h-5 w-5 animate-spin" />
+              Cargando…
+            </div>
+          ) : list.length === 0 ? (
+            <div className="text-sm text-muted">Sin monedas.</div>
+          ) : (
+            list.map((row) => {
+              const isBase = !!row.isBase;
+              const isActive = row.isActive !== false;
+              const lockActions = saving || deleteBusy;
+
+              return (
+                <TPCard
+                  key={row.id}
+                  className={cn("rounded-2xl border border-border bg-card p-4", isBase ? "shadow-[0_0_0_1px_rgba(250,204,21,0.22)]" : "")}
+                  title={
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="font-semibold text-text truncate">
+                          {row.code} <span className="text-muted">· {row.name}</span>
+                        </div>
+                        <div className="text-xs text-muted mt-0.5">
+                          {row.symbol} {isBase ? <span className="text-yellow-400 font-semibold">⭐ Base</span> : null}
+                        </div>
+                      </div>
+
+                      <div className="shrink-0">
+                        {isActive ? <Pill tone="ok">Activa</Pill> : <Pill tone="off">Inactiva</Pill>}
+                      </div>
+                    </div>
+                  }
+                >
+                  <div className="mt-3 grid grid-cols-2 gap-3">
+                    <div className="rounded-xl border border-border bg-surface2 p-3">
+                      <div className="text-[11px] text-muted font-semibold">Precio</div>
+                      <div className="mt-1 text-sm font-semibold text-text tabular-nums">{fmtPrice(row)}</div>
+                    </div>
+
+                    <div className="rounded-xl border border-border bg-surface2 p-3">
+                      <div className="text-[11px] text-muted font-semibold">Moneda base</div>
+                      <div className="mt-1 text-sm text-text">{isBase ? "Sí" : "No"}</div>
+                    </div>
+                  </div>
+
+                  <div className="mt-3 flex flex-wrap gap-2 justify-end">
+                    <IconBtn title={isBase ? "Moneda base" : "Marcar como base"} onClick={() => onSetBaseClick(row)} disabled={lockActions || isBase}>
+                      <Star size={16} className={cn(isBase ? "fill-current text-yellow-400" : "fill-transparent text-text/80")} />
+                    </IconBtn>
+
+                    <IconBtn title="Ver detalle / historial" onClick={() => openView(row.id)} disabled={lockActions}>
+                      <Eye size={16} />
+                    </IconBtn>
+
+                    <IconBtn title="Editar (moneda / tipo de cambio)" onClick={() => onOpenRates(row)} disabled={lockActions}>
+                      <Pencil size={16} />
+                    </IconBtn>
+
+                    <IconBtn title={isActive ? "Desactivar" : "Activar"} onClick={() => onToggle(row)} disabled={lockActions || isBase}>
+                      {isActive ? <ShieldBan size={16} /> : <ShieldCheck size={16} />}
+                    </IconBtn>
+
+                    <IconBtn title={!onDelete ? "Eliminar (pendiente)" : "Eliminar"} onClick={() => onAskDelete(row)} disabled={lockActions || isBase || !onDelete}>
+                      <Trash2 size={16} />
+                    </IconBtn>
+                  </div>
+                </TPCard>
+              );
+            })
+          )}
+        </div>
       </div>
 
-      {/* ✅ Modal View: le pasamos el símbolo/código base REAL */}
-      <CurrencyRateHistoryModal
-        open={viewOpen}
-        onClose={closeView}
-        currencyId={viewCurrencyId}
-        baseCurrencySymbol={baseSym}
-        baseCurrencyCode={baseCode}
-      />
+      <CurrencyRateHistoryModal open={viewOpen} onClose={closeView} currencyId={viewCurrencyId} baseCurrencySymbol={baseSym} baseCurrencyCode={baseCode} />
 
-      {/* ✅ Confirmación de borrado */}
       <ConfirmDeleteDialog
         open={deleteOpen}
         loading={deleteBusy}

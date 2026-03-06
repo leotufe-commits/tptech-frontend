@@ -1,6 +1,7 @@
 /* =====================================================
    THEMES
    + Tokens extra para helpers / inputs
+   + ✅ Date input (calendar icon) dark-mode fix
    ===================================================== */
 
 /* =====================================================
@@ -220,4 +221,41 @@ input.tp-input::placeholder,
 textarea.tp-input::placeholder {
   color: var(--placeholder, var(--text-muted)) !important;
   opacity: 1 !important;
+}
+
+/* =====================================================
+   ✅ DATE INPUT (tp-date-input) — calendar icon visible on dark
+   - Chrome/Edge: force white-ish icon via filter
+   - Firefox: color-scheme dark
+   ===================================================== */
+
+/* Firefox / general: hint UI style */
+.tp-date-input {
+  color-scheme: light;
+}
+[data-theme="dark"] .tp-date-input {
+  color-scheme: dark;
+}
+
+/* Chrome / Edge indicator */
+.tp-date-input::-webkit-calendar-picker-indicator {
+  cursor: pointer;
+  opacity: 0.9;
+  /* el icono nativo es negro -> lo convertimos a blanco visible */
+  filter: invert(1) brightness(1.25) contrast(1.05);
+}
+
+/* en themes claros, no invertir */
+:root .tp-date-input::-webkit-calendar-picker-indicator,
+[data-theme="classic"] .tp-date-input::-webkit-calendar-picker-indicator,
+[data-theme="blue"] .tp-date-input::-webkit-calendar-picker-indicator,
+[data-theme="gray"] .tp-date-input::-webkit-calendar-picker-indicator,
+[data-theme="emerald"] .tp-date-input::-webkit-calendar-picker-indicator {
+  filter: none;
+  opacity: 0.8;
+}
+
+/* hover */
+.tp-date-input:hover::-webkit-calendar-picker-indicator {
+  opacity: 1;
 }

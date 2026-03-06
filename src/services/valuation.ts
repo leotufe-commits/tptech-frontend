@@ -37,8 +37,13 @@ function emitValuationChanged(detail: ValuationChangedDetail) {
 }
 
 /* =========================
-   Helpers: pick ids from responses
+   Helpers
 ========================= */
+
+function s(v: any) {
+  const out = String(v ?? "").trim();
+  return out ? out : "";
+}
 
 function pickId(resp: any): string | undefined {
   const id =
@@ -54,8 +59,8 @@ function pickId(resp: any): string | undefined {
     resp?.data?.variant?.id ??
     undefined;
 
-  const s = String(id ?? "").trim();
-  return s ? s : undefined;
+  const out = s(id);
+  return out ? out : undefined;
 }
 
 function pickMetalId(resp: any): string | undefined {
@@ -68,12 +73,35 @@ function pickMetalId(resp: any): string | undefined {
     resp?.data?.metalId ??
     undefined;
 
-  const s = String(mid ?? "").trim();
-  return s ? s : undefined;
+  const out = s(mid);
+  return out ? out : undefined;
+}
+
+function qs(params?: Record<string, any>) {
+  const q = new URLSearchParams();
+  if (!params) return "";
+  for (const [k, v] of Object.entries(params)) {
+    if (v === undefined || v === null || v === "") continue;
+    q.set(k, String(v));
+  }
+  const out = q.toString();
+  return out ? `?${out}` : "";
+}
+
+async function post<T = any>(url: string, body?: any) {
+  return apiFetch(url, { method: "POST", body: body as any }) as Promise<T>;
+}
+async function patch<T = any>(url: string, body?: any) {
+  return apiFetch(url, { method: "PATCH", body: body as any }) as Promise<T>;
+}
+async function del<T = any>(url: string) {
+  return apiFetch(url, { method: "DELETE" }) as Promise<T>;
 }
 
 /* =========================
    Types
+   ✅ acá agregamos ALIAS amigables: VariantRow / QuoteRow
+   (sin romper los nombres viejos)
 ========================= */
 
 export type CurrencyRow = {
@@ -113,21 +141,21 @@ export type MetalVariantRow = {
   isActive: boolean;
   isFavorite: boolean;
 
-  // ✅ persistidos
   buyFactor?: number;
   saleFactor?: number;
   purchasePriceOverride?: number | null;
   salePriceOverride?: number | null;
   pricingMode?: "AUTO" | "OVERRIDE" | string;
 
-  // ✅ calculados backend
   suggestedPrice?: number;
   finalPurchasePrice?: number;
   finalSalePrice?: number;
 
-  // ✅ opcional
   referenceValue?: number;
 };
+
+// ✅ alias “cómodo”
+export type VariantRow = MetalVariantRow;
 
 export type MetalQuoteRow = {
   id: string;
@@ -139,6 +167,9 @@ export type MetalQuoteRow = {
   createdAt?: string;
   currency?: { id: string; code: string; symbol: string };
 };
+
+// ✅ alias “cómodo”
+export type QuoteRow = MetalQuoteRow;
 
 export type MetalRefHistoryItem = {
   id: string;
@@ -155,7 +186,6 @@ export type VariantPricingPatch = {
   purchasePriceOverride?: number | null;
   salePriceOverride?: number | null;
 
-  // helpers
   clearPurchaseOverride?: boolean;
   clearSaleOverride?: boolean;
 };
@@ -168,67 +198,52 @@ export async function getCurrencies() {
   return apiFetch("/valuation/currencies");
 }
 
-export async function listCurrencies() {
-  return getCurrencies();
-}
+// alias compatible (si alguien lo usa)
+export const listCurrencies = getCurrencies;
 
-export async function createCurrency(data: { code: string; name: string; symbol: string }) {
-  const resp = await apiFetch("/valuation/currencies", { method: "POST", body: data as any });
+export async function createCurrency(data: { code: string; name: string; symbol: string; initialRate?: number | null }) {
+  const resp = await post("/valuation/currencies", data);
   emitValuationChanged({ kind: "currencies:created", currencyId: pickId(resp) });
   return resp;
 }
 
 export async function updateCurrency(currencyId: string, data: { code: string; name: string; symbol: string }) {
-  const resp = await apiFetch(`/valuation/currencies/${currencyId}`, { method: "PATCH", body: data as any });
+  const resp = await patch(`/valuation/currencies/${currencyId}`, data);
   emitValuationChanged({ kind: "currencies:updated", currencyId });
   return resp;
 }
 
 export async function deleteCurrency(currencyId: string) {
-  const resp = await apiFetch(`/valuation/currencies/${currencyId}`, { method: "DELETE" });
+  const resp = await del(`/valuation/currencies/${currencyId}`);
   emitValuationChanged({ kind: "currencies:deleted", currencyId });
   return resp;
 }
 
 export async function setBaseCurrency(currencyId: string, _opts?: { effectiveAt?: string | Date }) {
-  const resp = await apiFetch(`/valuation/currencies/${currencyId}/set-base`, { method: "POST" });
+  const resp = await post(`/valuation/currencies/${currencyId}/set-base`);
   emitValuationChanged({ kind: "currencies:base-changed", newBaseId: currencyId });
   return resp;
 }
 
 export async function toggleCurrencyActive(currencyId: string, isActive: boolean) {
-  const resp = await apiFetch(`/valuation/currencies/${currencyId}/active`, {
-    method: "PATCH",
-    body: { isActive } as any,
-  });
+  const resp = await patch(`/valuation/currencies/${currencyId}/active`, { isActive });
   emitValuationChanged({ kind: "currencies:active-changed", currencyId, isActive });
   return resp;
 }
 
 export async function addCurrencyRate(currencyId: string, data: { rate: number; effectiveAt: string | Date }) {
-  const resp = await apiFetch(`/valuation/currencies/${currencyId}/rates`, {
-    method: "POST",
-    body: data as any,
-  });
+  const resp = await post(`/valuation/currencies/${currencyId}/rates`, data);
   emitValuationChanged({ kind: "currencies:rate-added", currencyId });
   return resp;
 }
 
 export async function getCurrencyRates(currencyId: string, take = 50) {
-  return apiFetch(`/valuation/currencies/${currencyId}/rates?take=${take}`);
+  return apiFetch(`/valuation/currencies/${currencyId}/rates${qs({ take })}`);
 }
+export const listCurrencyRates = getCurrencyRates;
 
-export async function listCurrencyRates(currencyId: string, take = 50) {
-  return getCurrencyRates(currencyId, take);
-}
-
-/**
- * ✅ Legacy / compat
- * Antes era: /history
- * Ahora backend expone: /rate-history
- */
 export async function getCurrencyRateHistory(currencyId: string, take = 80) {
-  return apiFetch(`/valuation/currencies/${currencyId}/rate-history?take=${take}`);
+  return apiFetch(`/valuation/currencies/${currencyId}/rate-history${qs({ take })}`);
 }
 
 /* =========================
@@ -238,34 +253,28 @@ export async function getCurrencyRateHistory(currencyId: string, take = 80) {
 export async function getMetals() {
   return apiFetch("/valuation/metals");
 }
-
-export async function listMetals() {
-  return getMetals();
-}
+export const listMetals = getMetals;
 
 export async function createMetal(data: { name: string; symbol?: string; referenceValue?: number }) {
-  const resp = await apiFetch("/valuation/metals", { method: "POST", body: data as any });
+  const resp = await post("/valuation/metals", data);
   emitValuationChanged({ kind: "metals:created", metalId: pickId(resp) });
   return resp;
 }
 
 export async function updateMetal(metalId: string, data: { name: string; symbol?: string; referenceValue?: number }) {
-  const resp = await apiFetch(`/valuation/metals/${metalId}`, { method: "PATCH", body: data as any });
+  const resp = await patch(`/valuation/metals/${metalId}`, data);
   emitValuationChanged({ kind: "metals:updated", metalId });
   return resp;
 }
 
 export async function deleteMetal(metalId: string) {
-  const resp = await apiFetch(`/valuation/metals/${metalId}`, { method: "DELETE" });
+  const resp = await del(`/valuation/metals/${metalId}`);
   emitValuationChanged({ kind: "metals:deleted", metalId });
   return resp;
 }
 
 export async function toggleMetalActive(metalId: string, isActive: boolean) {
-  const resp = await apiFetch(`/valuation/metals/${metalId}/active`, {
-    method: "PATCH",
-    body: { isActive } as any,
-  });
+  const resp = await patch(`/valuation/metals/${metalId}/active`, { isActive });
   emitValuationChanged({ kind: "metals:active-changed", metalId, isActive });
   return resp;
 }
@@ -280,17 +289,14 @@ export async function getMetalRefHistory(
   history: MetalRefHistoryItem[];
   error?: string;
 }> {
-  return apiFetch(`/valuation/metals/${metalId}/ref-history?take=${take}`);
+  return apiFetch(`/valuation/metals/${metalId}/ref-history${qs({ take })}`);
 }
 
 export async function moveMetal(
   metalId: string,
   dir: "UP" | "DOWN"
 ): Promise<{ ok: boolean; changed: boolean; rows?: MetalRow[]; error?: string }> {
-  const resp = await apiFetch(`/valuation/metals/${metalId}/move`, {
-    method: "POST",
-    body: { dir } as any,
-  });
+  const resp = await post(`/valuation/metals/${metalId}/move`, { dir });
   emitValuationChanged({ kind: "metals:moved", metalId, dir });
   return resp as any;
 }
@@ -310,63 +316,33 @@ export async function createVariant(data: {
   purchasePriceOverride?: number | null;
   salePriceOverride?: number | null;
 }) {
-  const resp = await apiFetch("/valuation/variants", { method: "POST", body: data as any });
+  const resp = await post("/valuation/variants", data);
   emitValuationChanged({ kind: "variants:created", metalId: data.metalId, variantId: pickId(resp) });
   return resp;
 }
 
-/**
- * ✅ editar variante
- *   PATCH /valuation/variants/:variantId
- *
- * 🟦 mejora: metalId opcional (si lo tenés en UI, lo pasás y listo)
- */
 export async function updateVariant(
   variantId: string,
-  data: {
-    name?: string;
-    sku?: string;
-    purity?: number;
-    saleFactor?: number;
-    salePriceOverride?: number | null;
-  },
+  data: { name?: string; sku?: string; purity?: number; saleFactor?: number; salePriceOverride?: number | null },
   metalId?: string
 ) {
-  const resp = await apiFetch(`/valuation/variants/${variantId}`, {
-    method: "PATCH",
-    body: data as any,
-  });
-
-  const mid = String(metalId || pickMetalId(resp) || "").trim() || undefined;
+  const resp = await patch(`/valuation/variants/${variantId}`, data);
+  const mid = s(metalId) || s(pickMetalId(resp)) || undefined;
   emitValuationChanged({ kind: "variants:updated", variantId, metalId: mid });
-
   return resp;
 }
 
-/**
- * 🟦 mejora: metalId opcional
- */
-export async function updateVariantPricing(variantId: string, patch: VariantPricingPatch, metalId?: string) {
-  const resp = await apiFetch(`/valuation/variants/${variantId}/pricing`, {
-    method: "PATCH",
-    body: patch as any,
-  });
-
-  const mid = String(metalId || pickMetalId(resp) || "").trim() || undefined;
+export async function updateVariantPricing(variantId: string, patchData: VariantPricingPatch, metalId?: string) {
+  const resp = await patch(`/valuation/variants/${variantId}/pricing`, patchData);
+  const mid = s(metalId) || s(pickMetalId(resp)) || undefined;
   emitValuationChanged({ kind: "variants:pricing-updated", variantId, metalId: mid });
-
   return resp;
 }
 
-/**
- * 🟦 mejora: metalId opcional
- */
 export async function deleteVariant(variantId: string, metalId?: string) {
-  const resp = await apiFetch(`/valuation/variants/${variantId}`, { method: "DELETE" });
-
-  const mid = String(metalId || pickMetalId(resp) || "").trim() || undefined;
+  const resp = await del(`/valuation/variants/${variantId}`);
+  const mid = s(metalId) || s(pickMetalId(resp)) || undefined;
   emitValuationChanged({ kind: "variants:deleted", variantId, metalId: mid });
-
   return resp;
 }
 
@@ -383,101 +359,64 @@ export async function getVariants(
     currencyId?: string;
   }
 ) {
-  const q = new URLSearchParams();
-  if (params?.q) q.set("q", params.q);
-  if (typeof params?.isActive === "boolean") q.set("isActive", String(params.isActive));
-  if (params?.onlyFavorites) q.set("onlyFavorites", "true");
-  if (params?.minPurchase != null) q.set("minPurchase", String(params.minPurchase));
-  if (params?.maxPurchase != null) q.set("maxPurchase", String(params.maxPurchase));
-  if (params?.minSale != null) q.set("minSale", String(params.minSale));
-  if (params?.maxSale != null) q.set("maxSale", String(params.maxSale));
-  if (params?.currencyId) q.set("currencyId", params.currencyId);
-
-  const qs = q.toString();
-  return apiFetch(`/valuation/metals/${metalId}/variants${qs ? `?${qs}` : ""}`);
+  return apiFetch(`/valuation/metals/${metalId}/variants${qs(params as any)}`);
 }
+export const listVariants = getVariants;
 
-export async function listVariants(
-  metalId: string,
-  params?: {
-    q?: string;
-    isActive?: boolean;
-    onlyFavorites?: boolean;
-    minPurchase?: number;
-    maxPurchase?: number;
-    minSale?: number;
-    maxSale?: number;
-    currencyId?: string;
-  }
-) {
-  return getVariants(metalId, params);
-}
-
-/**
- * 🟦 mejora: metalId opcional
- */
 export async function toggleVariantActive(variantId: string, isActive: boolean, metalId?: string) {
-  const resp = await apiFetch(`/valuation/variants/${variantId}/active`, {
-    method: "PATCH",
-    body: { isActive } as any,
-  });
-
-  const mid = String(metalId || pickMetalId(resp) || "").trim() || undefined;
+  const resp = await patch(`/valuation/variants/${variantId}/active`, { isActive });
+  const mid = s(metalId) || s(pickMetalId(resp)) || undefined;
   emitValuationChanged({ kind: "variants:active-changed", variantId, isActive, metalId: mid });
-
   return resp;
 }
 
-/**
- * ✅ Favorito
- *
- * 🟦 mejora: metalId opcional (por si querés filtrar en listeners)
- */
 export async function setFavoriteVariant(variantId: string, metalId?: string) {
-  const resp = await apiFetch(`/valuation/variants/${variantId}/set-favorite`, { method: "POST" });
-
-  const mid = String(metalId || pickMetalId(resp) || "").trim() || undefined;
+  const resp = await post(`/valuation/variants/${variantId}/set-favorite`);
+  const mid = s(metalId) || s(pickMetalId(resp)) || undefined;
   emitValuationChanged({ kind: "variants:favorite-changed", variantId, metalId: mid });
-
   return resp;
 }
 
-/**
- * ✅ limpiar favorito del metal
- */
 export async function clearFavoriteVariant(metalId: string) {
-  const resp = await apiFetch(`/valuation/metals/${metalId}/clear-favorite`, { method: "POST" });
+  const resp = await post(`/valuation/metals/${metalId}/clear-favorite`);
   emitValuationChanged({ kind: "variants:favorite-changed", variantId: null, metalId });
   return resp;
+}
+
+export async function getVariantValueHistory(
+  variantId: string,
+  opts?: { take?: number; from?: string | Date | null; to?: string | Date | null }
+) {
+  const take = Number(opts?.take);
+  const q: any = {};
+  if (Number.isFinite(take) && take > 0) q.take = Math.min(200, Math.trunc(take));
+  if (opts?.from) q.from = String(opts.from);
+  if (opts?.to) q.to = String(opts.to);
+
+  return apiFetch(`/valuation/variants/${variantId}/value-history${qs(q)}`);
 }
 
 /* =========================
    Quotes
 ========================= */
 
-/**
- * 🟦 mejora: metalId opcional
- */
 export async function addQuote(data: {
   variantId: string;
   currencyId: string;
   purchasePrice: number;
   salePrice: number;
   effectiveAt?: string | Date;
-  metalId?: string; // 👈 opcional por si lo tenés en UI
+  metalId?: string;
 }) {
-  const resp = await apiFetch("/valuation/quotes", { method: "POST", body: data as any });
+  const resp = await post("/valuation/quotes", data);
 
-  const mid = String(data.metalId || pickMetalId(resp) || "").trim() || undefined;
+  const mid = s(data.metalId) || s(pickMetalId(resp)) || undefined;
   emitValuationChanged({ kind: "quotes:added", variantId: data.variantId, metalId: mid });
 
   return resp;
 }
 
 export async function getQuotes(variantId: string, take = 50) {
-  return apiFetch(`/valuation/variants/${variantId}/quotes?take=${take}`);
+  return apiFetch(`/valuation/variants/${variantId}/quotes${qs({ take })}`);
 }
-
-export async function listQuotes(variantId: string, take = 50) {
-  return getQuotes(variantId, take);
-}
+export const listQuotes = getQuotes;

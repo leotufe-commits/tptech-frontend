@@ -1,100 +1,50 @@
 // src/hooks/useValuation.ts
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import * as valuation from "../services/valuation";
 import { TPTECH_VALUATION_CHANGED } from "../services/valuation";
 
-export type CurrencyRow = {
-  id: string;
-  code: string;
-  name: string;
-  symbol: string;
-  isBase: boolean;
-  isActive: boolean;
+import type {
+  CurrencyRow,
+  CurrencyRateRow,
+  MetalRow,
+  MetalRefHistoryItem,
+  MetalQuoteRow as QuoteRow, // ✅ si en service se llama MetalQuoteRow
+  MetalVariantRow as VariantRow, // ✅ si en service se llama MetalVariantRow
+  VariantPricingPatch,
+} from "../services/valuation";
 
-  latestRate?: number | null;
-  latestAt?: string | null;
-  latestCreatedAt?: string | null;
-};
+/**
+ * ✅ Si en tu services/valuation.ts NO exporta MetalVariantRow/MetalQuoteRow con esos nombres,
+ * cambiá estos imports por los nombres reales (o borrá los alias y dejá VariantRow/QuoteRow).
+ *
+ * En tu services pegado aparecen:
+ *  - export type MetalVariantRow
+ *  - export type MetalQuoteRow
+ */
 
-export type CurrencyRateRow = {
+// ✅ historial “tipo metales” (tu service lo devuelve en getVariantValueHistory)
+export type VariantValueHistoryItem = {
   id: string;
-  currencyId: string;
-  rate: number;
   effectiveAt?: string;
   createdAt?: string;
-};
 
-export type MetalRow = {
-  id: string;
-  name: string;
-  symbol?: string;
-  referenceValue?: number | null;
-  isActive: boolean;
-  sortOrder?: number | null;
-};
-
-export type MetalRefHistoryItem = {
-  id: string;
-  referenceValue: number;
-  effectiveAt: string;
-  createdAt: string;
-  user: { id: string; name: string | null; email: string } | null;
-};
-
-export type VariantRow = {
-  id: string;
-  metalId: string;
-  name: string;
-  sku: string;
-  purity: number;
-  isActive: boolean;
-  isFavorite?: boolean;
-
-  // ✅ persistidos
-  buyFactor?: number;
-  saleFactor?: number;
-  purchasePriceOverride?: number | null;
-  salePriceOverride?: number | null;
-  pricingMode?: "AUTO" | "OVERRIDE" | string;
-
-  // ✅ calculados backend (por referenceValue actual del metal)
   suggestedPrice?: number;
   finalPurchasePrice?: number;
   finalSalePrice?: number;
-  referenceValue?: number;
 
-  quotes?: Array<{
-    id: string;
-    purchasePrice: number;
-    salePrice: number;
-    effectiveAt?: string;
-    createdAt?: string;
-    currency?: { id: string; code: string; symbol: string };
-  }>;
+  reason?: string;
+
+  currency?: { id: string; code: string; symbol: string; isBase?: boolean; isActive?: boolean };
+  user?: { id: string; name: string | null; email: string } | null;
 };
 
-export type QuoteRow = {
-  id: string;
-  variantId: string;
-  currencyId: string;
-  purchasePrice: number;
-  salePrice: number;
-  effectiveAt?: string;
-  createdAt?: string;
-  currency?: { id: string; code: string; symbol: string };
-};
+/* =========================
+   Helpers (simples)
+========================= */
 
-export type VariantPricingPatch = {
-  buyFactor?: number;
-  saleFactor?: number;
-
-  purchasePriceOverride?: number | null;
-  salePriceOverride?: number | null;
-
-  // helpers
-  clearPurchaseOverride?: boolean;
-  clearSaleOverride?: boolean;
-};
+type Ok<T> = { ok: true; data: T };
+type Fail = { ok: false; error: string };
+type Res<T> = Ok<T> | Fail;
 
 function getErrorMessage(e: any) {
   if (!e) return "Error";
@@ -129,22 +79,25 @@ function pickId(resp: any): string | null {
 function normKey(v: any) {
   return String(v ?? "").trim().toLowerCase();
 }
-
 function normCode(v: any) {
   return String(v ?? "").trim().toUpperCase();
 }
+function normId(v: any) {
+  const s = String(v ?? "").trim();
+  return s ? s : "";
+}
 
 export function useValuation() {
-  const [loading, setLoading] = useState(true); // solo para carga inicial / refetch “visible”
+  const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const [currencies, setCurrencies] = useState<CurrencyRow[]>([]);
   const [metals, setMetals] = useState<MetalRow[]>([]);
 
-  const baseCurrency = useMemo(() => currencies.find((c) => c.isBase) ?? null, [currencies]);
+  // ✅ no hace falta memo para esto
+  const baseCurrency = currencies.find((c) => (c as any).isBase) ?? null;
 
-  // evita setState si el componente se desmonta
   const mountedRef = useRef(true);
   useEffect(() => {
     mountedRef.current = true;
@@ -153,46 +106,72 @@ export function useValuation() {
     };
   }, []);
 
-  // para evitar “race conditions” entre refetches
   const refetchGenRef = useRef(0);
-
-  // para evitar parpadeo: loading solo en el primer fetch o cuando NO es silent
   const initialLoadedRef = useRef(false);
+
+  /* =========================
+     Wrappers: run / runSaving
+  ========================= */
+
+  const run = useCallback(async <T,>(fn: () => Promise<T>): Promise<Res<T>> => {
+    if (mountedRef.current) setError(null);
+    try {
+      const data = await fn();
+      return { ok: true, data };
+    } catch (e: any) {
+      const msg = getErrorMessage(e);
+      if (mountedRef.current) setError(msg);
+      return { ok: false, error: msg };
+    }
+  }, []);
+
+  const runSaving = useCallback(async <T,>(fn: () => Promise<T>): Promise<Res<T>> => {
+    if (mountedRef.current) {
+      setError(null);
+      setSaving(true);
+    }
+    try {
+      const data = await fn();
+      return { ok: true, data };
+    } catch (e: any) {
+      const msg = getErrorMessage(e);
+      if (mountedRef.current) setError(msg);
+      return { ok: false, error: msg };
+    } finally {
+      if (mountedRef.current) setSaving(false);
+    }
+  }, []);
+
+  /* =========================
+     Loaders
+  ========================= */
 
   const loadCurrencies = useCallback(async (gen?: number) => {
     const resp = await valuation.getCurrencies();
     if (!mountedRef.current) return;
-
-    // si vino un refetch más nuevo, ignorar
     if (typeof gen === "number" && gen !== refetchGenRef.current) return;
-
     setCurrencies(pickRows(resp));
   }, []);
 
   const loadMetals = useCallback(async (gen?: number) => {
     const resp = await valuation.getMetals();
     if (!mountedRef.current) return;
-
     if (typeof gen === "number" && gen !== refetchGenRef.current) return;
-
     setMetals(pickRows(resp));
   }, []);
 
   const refetch = useCallback(
     async (opts?: { silent?: boolean }) => {
       const silent = Boolean(opts?.silent);
-
-      setError(null);
+      if (mountedRef.current) setError(null);
 
       const gen = ++refetchGenRef.current;
 
       try {
         if (!silent || !initialLoadedRef.current) setLoading(true);
         await Promise.all([loadCurrencies(gen), loadMetals(gen)]);
-        if (mountedRef.current && gen === refetchGenRef.current) {
-          initialLoadedRef.current = true;
-        }
-      } catch (e) {
+        if (mountedRef.current && gen === refetchGenRef.current) initialLoadedRef.current = true;
+      } catch (e: any) {
         if (!mountedRef.current) return;
         if (gen !== refetchGenRef.current) return;
         setError(getErrorMessage(e));
@@ -210,44 +189,21 @@ export function useValuation() {
   }, [refetch]);
 
   /* =========================
-     ✅ Auto-refresh global (Punto 3)
-     - Si cambia algo en valuation en cualquier lado,
-       recargamos currencies/metals en silent.
+     Auto-refresh global (evento)
   ========================= */
+
   const refreshTimerRef = useRef<any>(null);
-
   useEffect(() => {
-    function scheduleSilentRefresh(kind?: string) {
-      // agrupamos múltiples eventos seguidos (ej: create + setBase)
+    function scheduleSilentRefresh() {
       if (refreshTimerRef.current) clearTimeout(refreshTimerRef.current);
-
       refreshTimerRef.current = setTimeout(() => {
         refreshTimerRef.current = null;
-
-        // silent => NO parpadea
         void refetch({ silent: true });
       }, 80);
     }
 
-    function onValuationChanged(e: any) {
-      const kind = String(e?.detail?.kind || "");
-
-      // Si el evento no tiene kind (o viene raro), igual refrescamos
-      if (!kind) {
-        scheduleSilentRefresh();
-        return;
-      }
-
-      // En todos estos casos, currencies/metals pueden cambiar:
-      // - base currency => recalcula metales
-      // - rates => latestRate
-      // - metals update => referenceValue
-      // - move metal => sortOrder
-      // - variantes/quotes NO cambian listas de currencies/metals, pero
-      //   muchas veces el panel quiere refrescar el metal seleccionado.
-      // Como tu UI de variantes usa getVariants on demand, no rompemos nada
-      // y hacemos un silent refresh global (rápido y simple).
-      scheduleSilentRefresh(kind);
+    function onValuationChanged() {
+      scheduleSilentRefresh();
     }
 
     if (typeof window !== "undefined") {
@@ -271,304 +227,238 @@ export function useValuation() {
 
   const createCurrency = useCallback(
     async (data: { code: string; name: string; symbol: string }) => {
-      setError(null);
-      try {
-        const code = normCode(data?.code);
-        if (!code) return { ok: false as const, error: "Código requerido." };
+      const code = normCode(data?.code);
+      if (!code) return { ok: false as const, error: "Código requerido." };
 
-        // ✅ no permitir duplicados por code (case-insensitive)
-        const exists = currencies.some((c) => normCode(c.code) === code);
-        if (exists) return { ok: false as const, error: `Ya existe una moneda con código "${code}".` };
+      const exists = (currencies || []).some((c: any) => normCode(c.code) === code);
+      if (exists) return { ok: false as const, error: `Ya existe una moneda con código "${code}".` };
 
-        setSaving(true);
-
-        // ✅ crear
-        const resp = await valuation.createCurrency({ ...data, code });
-
-        // ✅ Punto 2 (queda por compat): en tu backend ya lo hace, pero lo mantenemos.
-        const hasBase = currencies.some((c) => c.isBase);
-        const isFirst = currencies.length === 0 || !hasBase;
-
+      const r = await runSaving(async () => {
+        const resp = await valuation.createCurrency({ ...data, code } as any);
         const createdId = pickId(resp);
+        await loadCurrencies(refetchGenRef.current);
+        return createdId;
+      });
 
-        if (isFirst && createdId) {
-          await valuation.setBaseCurrency(createdId);
-          await Promise.all([loadCurrencies(refetchGenRef.current), loadMetals(refetchGenRef.current)]);
-        } else {
-          await loadCurrencies(refetchGenRef.current);
-        }
-
-        return { ok: true as const };
-      } catch (e) {
-        const msg = getErrorMessage(e);
-        if (mountedRef.current) setError(msg);
-        return { ok: false as const, error: msg };
-      } finally {
-        if (mountedRef.current) setSaving(false);
-      }
+      return r.ok
+        ? { ok: true as const, currencyId: r.data as string | null }
+        : { ok: false as const, error: r.error };
     },
-    [currencies, loadCurrencies, loadMetals]
+    [currencies, loadCurrencies, runSaving]
   );
 
   const updateCurrency = useCallback(
     async (currencyId: string, data: { code: string; name: string; symbol: string }) => {
-      setError(null);
-      try {
-        const id = String(currencyId || "").trim();
-        if (!id) return { ok: false as const, error: "Moneda inválida." };
+      const id = normId(currencyId);
+      if (!id) return { ok: false as const, error: "Moneda inválida." };
 
-        const code = normCode(data?.code);
-        if (!code) return { ok: false as const, error: "Código requerido." };
+      const code = normCode(data?.code);
+      if (!code) return { ok: false as const, error: "Código requerido." };
 
-        // ✅ no permitir duplicados por code, excluyendo la misma moneda
-        const exists = currencies.some((c) => c.id !== id && normCode(c.code) === code);
-        if (exists) return { ok: false as const, error: `Ya existe una moneda con código "${code}".` };
+      const exists = (currencies || []).some((c: any) => c.id !== id && normCode(c.code) === code);
+      if (exists) return { ok: false as const, error: `Ya existe una moneda con código "${code}".` };
 
-        setSaving(true);
-        await valuation.updateCurrency(id, { ...data, code });
+      const r = await runSaving(async () => {
+        await valuation.updateCurrency(id, { ...data, code } as any);
         await loadCurrencies(refetchGenRef.current);
-        return { ok: true as const };
-      } catch (e) {
-        const msg = getErrorMessage(e);
-        if (mountedRef.current) setError(msg);
-        return { ok: false as const, error: msg };
-      } finally {
-        if (mountedRef.current) setSaving(false);
-      }
+        return true;
+      });
+
+      return r.ok ? { ok: true as const } : { ok: false as const, error: r.error };
     },
-    [currencies, loadCurrencies]
+    [currencies, loadCurrencies, runSaving]
   );
 
   const setBaseCurrency = useCallback(
     async (currencyId: string, opts?: { effectiveAt?: string | Date }) => {
-      setError(null);
-      try {
-        setSaving(true);
-        await valuation.setBaseCurrency(currencyId, opts);
-        await Promise.all([loadCurrencies(refetchGenRef.current), loadMetals(refetchGenRef.current)]);
-        return { ok: true as const };
-      } catch (e) {
-        const msg = getErrorMessage(e);
-        if (mountedRef.current) setError(msg);
-        return { ok: false as const, error: msg };
-      } finally {
-        if (mountedRef.current) setSaving(false);
-      }
+      const id = normId(currencyId);
+      if (!id) return { ok: false as const, error: "Moneda inválida." };
+
+      const r = await runSaving(async () => {
+        await valuation.setBaseCurrency(id, opts as any);
+        await refetch({ silent: false });
+        return true;
+      });
+
+      return r.ok ? { ok: true as const } : { ok: false as const, error: r.error };
     },
-    [loadCurrencies, loadMetals]
+    [refetch, runSaving]
   );
 
   const toggleCurrencyActive = useCallback(
     async (currencyId: string, isActive: boolean) => {
-      setError(null);
-      try {
-        setSaving(true);
-        await valuation.toggleCurrencyActive(currencyId, isActive);
+      const id = normId(currencyId);
+      if (!id) return { ok: false as const, error: "Moneda inválida." };
+
+      const r = await runSaving(async () => {
+        await valuation.toggleCurrencyActive(id, isActive);
         await loadCurrencies(refetchGenRef.current);
-        return { ok: true as const };
-      } catch (e) {
-        const msg = getErrorMessage(e);
-        if (mountedRef.current) setError(msg);
-        return { ok: false as const, error: msg };
-      } finally {
-        if (mountedRef.current) setSaving(false);
-      }
+        return true;
+      });
+
+      return r.ok ? { ok: true as const } : { ok: false as const, error: r.error };
     },
-    [loadCurrencies]
+    [loadCurrencies, runSaving]
   );
 
   const addCurrencyRate = useCallback(
     async (currencyId: string, data: { rate: number; effectiveAt: string | Date }) => {
-      setError(null);
-      try {
-        setSaving(true);
-        await valuation.addCurrencyRate(currencyId, data);
+      const id = normId(currencyId);
+      if (!id) return { ok: false as const, error: "Moneda inválida." };
+
+      const r = await runSaving(async () => {
+        await valuation.addCurrencyRate(id, data as any);
         await loadCurrencies(refetchGenRef.current);
-        return { ok: true as const };
-      } catch (e) {
-        const msg = getErrorMessage(e);
-        if (mountedRef.current) setError(msg);
-        return { ok: false as const, error: msg };
-      } finally {
-        if (mountedRef.current) setSaving(false);
-      }
+        return true;
+      });
+
+      return r.ok ? { ok: true as const } : { ok: false as const, error: r.error };
     },
-    [loadCurrencies]
+    [loadCurrencies, runSaving]
   );
 
-  const getCurrencyRates = useCallback(async (currencyId: string, take = 50) => {
-    setError(null);
-    try {
-      const resp = await valuation.getCurrencyRates(currencyId, take);
-      const rows: CurrencyRateRow[] = pickRows(resp);
-      return { ok: true as const, rows };
-    } catch (e) {
-      const msg = getErrorMessage(e);
-      if (mountedRef.current) setError(msg);
-      return { ok: false as const, error: msg, rows: [] as CurrencyRateRow[] };
-    }
-  }, []);
+  const getCurrencyRates = useCallback(
+    async (currencyId: string, take = 50) => {
+      const id = normId(currencyId);
+      if (!id) return { ok: false as const, error: "Moneda inválida.", rows: [] as CurrencyRateRow[] };
+
+      const r = await run(async () => {
+        const resp = await valuation.getCurrencyRates(id, take);
+        return pickRows(resp) as CurrencyRateRow[];
+      });
+
+      return r.ok
+        ? { ok: true as const, rows: r.data as CurrencyRateRow[] }
+        : { ok: false as const, error: r.error, rows: [] as CurrencyRateRow[] };
+    },
+    [run]
+  );
 
   const deleteCurrency = useCallback(
     async (currencyId: string) => {
-      setError(null);
-      try {
-        const id = String(currencyId || "").trim();
-        if (!id) return { ok: false as const, error: "Moneda inválida." };
+      const id = normId(currencyId);
+      if (!id) return { ok: false as const, error: "Moneda inválida." };
 
-        setSaving(true);
+      const r = await runSaving(async () => {
         await valuation.deleteCurrency(id);
         await loadCurrencies(refetchGenRef.current);
-        return { ok: true as const };
-      } catch (e) {
-        const msg = getErrorMessage(e);
-        if (mountedRef.current) setError(msg);
-        return { ok: false as const, error: msg };
-      } finally {
-        if (mountedRef.current) setSaving(false);
-      }
+        return true;
+      });
+
+      return r.ok ? { ok: true as const } : { ok: false as const, error: r.error };
     },
-    [loadCurrencies]
+    [loadCurrencies, runSaving]
   );
 
   /* =========================
-     Metales
+     Metales / Variantes
   ========================= */
 
   const createMetal = useCallback(
     async (data: { name: string; symbol?: string; referenceValue?: number }) => {
-      setError(null);
-      try {
-        const nameKey = normKey(data?.name);
-        if (!nameKey) return { ok: false as const, error: "Nombre requerido." };
+      const nameKey = normKey(data?.name);
+      if (!nameKey) return { ok: false as const, error: "Nombre requerido." };
 
-        const symKey = normKey(data?.symbol);
+      const symKey = normKey(data?.symbol);
 
-        if (metals.some((m) => normKey(m.name) === nameKey)) {
-          return { ok: false as const, error: `Ya existe un metal con nombre "${data.name}".` };
-        }
-
-        if (symKey && metals.some((m) => normKey(m.symbol) === symKey)) {
-          return { ok: false as const, error: `Ya existe un metal con símbolo "${data.symbol}".` };
-        }
-
-        setSaving(true);
-        await valuation.createMetal(data);
-        await loadMetals(refetchGenRef.current);
-        return { ok: true as const };
-      } catch (e) {
-        const msg = getErrorMessage(e);
-        if (mountedRef.current) setError(msg);
-        return { ok: false as const, error: msg };
-      } finally {
-        if (mountedRef.current) setSaving(false);
+      if ((metals || []).some((m: any) => normKey(m.name) === nameKey)) {
+        return { ok: false as const, error: `Ya existe un metal con nombre "${data.name}".` };
       }
+      if (symKey && (metals || []).some((m: any) => normKey(m.symbol) === symKey)) {
+        return { ok: false as const, error: `Ya existe un metal con símbolo "${data.symbol}".` };
+      }
+
+      const r = await runSaving(async () => {
+        await valuation.createMetal(data as any);
+        await loadMetals(refetchGenRef.current);
+        return true;
+      });
+
+      return r.ok ? { ok: true as const } : { ok: false as const, error: r.error };
     },
-    [loadMetals, metals]
+    [loadMetals, metals, runSaving]
   );
 
   const updateMetal = useCallback(
     async (metalId: string, data: { name: string; symbol?: string; referenceValue?: number }) => {
-      setError(null);
-      try {
-        const id = String(metalId || "").trim();
-        if (!id) return { ok: false as const, error: "Metal inválido." };
+      const id = normId(metalId);
+      if (!id) return { ok: false as const, error: "Metal inválido." };
 
-        const nameKey = normKey(data?.name);
-        if (!nameKey) return { ok: false as const, error: "Nombre requerido." };
+      const nameKey = normKey(data?.name);
+      if (!nameKey) return { ok: false as const, error: "Nombre requerido." };
 
-        const symKey = normKey(data?.symbol);
+      const symKey = normKey(data?.symbol);
 
-        if (metals.some((m) => m.id !== id && normKey(m.name) === nameKey)) {
-          return { ok: false as const, error: `Ya existe otro metal con nombre "${data.name}".` };
-        }
+      if ((metals || []).some((m: any) => m.id !== id && normKey(m.name) === nameKey)) {
+        return { ok: false as const, error: `Ya existe otro metal con nombre "${data.name}".` };
+      }
+      if (symKey && (metals || []).some((m: any) => m.id !== id && normKey(m.symbol) === symKey)) {
+        return { ok: false as const, error: `Ya existe otro metal con símbolo "${data.symbol}".` };
+      }
 
-        if (symKey && metals.some((m) => m.id !== id && normKey(m.symbol) === symKey)) {
-          return { ok: false as const, error: `Ya existe otro metal con símbolo "${data.symbol}".` };
-        }
-
-        setSaving(true);
+      const r = await runSaving(async () => {
         await valuation.updateMetal(id, data as any);
         await loadMetals(refetchGenRef.current);
-        return { ok: true as const };
-      } catch (e) {
-        const msg = getErrorMessage(e);
-        if (mountedRef.current) setError(msg);
-        return { ok: false as const, error: msg };
-      } finally {
-        if (mountedRef.current) setSaving(false);
-      }
+        return true;
+      });
+
+      return r.ok ? { ok: true as const } : { ok: false as const, error: r.error };
     },
-    [loadMetals, metals]
+    [loadMetals, metals, runSaving]
   );
 
   const toggleMetalActive = useCallback(
     async (metalId: string, isActive: boolean) => {
-      setError(null);
-      try {
-        setSaving(true);
-        await valuation.toggleMetalActive(metalId, isActive);
+      const id = normId(metalId);
+      if (!id) return { ok: false as const, error: "Metal inválido." };
+
+      const r = await runSaving(async () => {
+        await valuation.toggleMetalActive(id, isActive);
         await loadMetals(refetchGenRef.current);
-        return { ok: true as const };
-      } catch (e) {
-        const msg = getErrorMessage(e);
-        if (mountedRef.current) setError(msg);
-        return { ok: false as const, error: msg };
-      } finally {
-        if (mountedRef.current) setSaving(false);
-      }
+        return true;
+      });
+
+      return r.ok ? { ok: true as const } : { ok: false as const, error: r.error };
     },
-    [loadMetals]
+    [loadMetals, runSaving]
   );
 
   const deleteMetal = useCallback(
     async (metalId: string) => {
-      setError(null);
-      try {
-        const id = String(metalId || "").trim();
-        if (!id) return { ok: false as const, error: "Metal inválido." };
+      const id = normId(metalId);
+      if (!id) return { ok: false as const, error: "Metal inválido." };
 
-        setSaving(true);
+      const r = await runSaving(async () => {
         await valuation.deleteMetal(id);
         await loadMetals(refetchGenRef.current);
-        return { ok: true as const };
-      } catch (e) {
-        const msg = getErrorMessage(e);
-        if (mountedRef.current) setError(msg);
-        return { ok: false as const, error: msg };
-      } finally {
-        if (mountedRef.current) setSaving(false);
-      }
+        return true;
+      });
+
+      return r.ok ? { ok: true as const } : { ok: false as const, error: r.error };
     },
-    [loadMetals]
+    [loadMetals, runSaving]
   );
 
   const moveMetal = useCallback(
     async (metalId: string, dir: "UP" | "DOWN") => {
-      setError(null);
-      try {
-        const id = String(metalId || "").trim();
-        if (!id) return { ok: false as const, error: "Metal inválido.", changed: false as const };
+      const id = normId(metalId);
+      if (!id) return { ok: false as const, error: "Metal inválido.", changed: false as const };
 
-        setSaving(true);
-        const r = await valuation.moveMetal(id, dir);
-        if (r?.ok) await loadMetals(refetchGenRef.current);
-        return r;
-      } catch (e) {
-        const msg = getErrorMessage(e);
-        if (mountedRef.current) setError(msg);
-        return { ok: false as const, error: msg, changed: false as const };
-      } finally {
-        if (mountedRef.current) setSaving(false);
-      }
+      const r = await runSaving(async () => {
+        const resp = await valuation.moveMetal(id, dir);
+        if ((resp as any)?.ok) await loadMetals(refetchGenRef.current);
+        return resp;
+      });
+
+      if (!r.ok) return { ok: false as const, error: r.error, changed: false as const };
+      return (r.data ?? { ok: false, changed: false }) as any;
     },
-    [loadMetals]
+    [loadMetals, runSaving]
   );
 
-  const getMetalRefHistory = useCallback(async (metalId: string, take = 80) => {
-    setError(null);
-    try {
-      const id = String(metalId || "").trim();
+  const getMetalRefHistory = useCallback(
+    async (metalId: string, take = 80) => {
+      const id = normId(metalId);
       if (!id) {
         return {
           ok: false as const,
@@ -579,220 +469,237 @@ export function useValuation() {
         };
       }
 
-      const r = await valuation.getMetalRefHistory(id, take);
-      return r;
-    } catch (e) {
-      const msg = getErrorMessage(e);
-      if (mountedRef.current) setError(msg);
-      return {
-        ok: false as const,
-        error: msg,
-        metal: null as any,
-        current: null,
-        history: [] as MetalRefHistoryItem[],
-      };
-    }
-  }, []);
-
-  /* =========================
-     Variantes / Quotes
-  ========================= */
+      const r = await run(async () => valuation.getMetalRefHistory(id, take));
+      if (!r.ok) {
+        return {
+          ok: false as const,
+          error: r.error,
+          metal: null as any,
+          current: null,
+          history: [] as MetalRefHistoryItem[],
+        };
+      }
+      return r.data as any;
+    },
+    [run]
+  );
 
   const getVariants = useCallback(
-    async (
-      metalId: string,
-      params?: {
-        q?: string;
-        isActive?: boolean;
-        onlyFavorites?: boolean;
-        minPurchase?: number;
-        maxPurchase?: number;
-        minSale?: number;
-        maxSale?: number;
-        currencyId?: string;
-      }
-    ) => {
-      setError(null);
-      try {
-        const resp = await valuation.getVariants(metalId, params);
-        const rows: VariantRow[] = pickRows(resp);
-        return { ok: true as const, rows };
-      } catch (e) {
-        const msg = getErrorMessage(e);
-        if (mountedRef.current) setError(msg);
-        return { ok: false as const, error: msg, rows: [] as VariantRow[] };
-      }
+    async (metalId: string, params?: any) => {
+      const id = normId(metalId);
+      if (!id) return { ok: false as const, error: "Metal inválido.", rows: [] as VariantRow[] };
+
+      const r = await run(async () => {
+        const resp = await valuation.getVariants(id, params);
+        return pickRows(resp) as VariantRow[];
+      });
+
+      return r.ok
+        ? { ok: true as const, rows: r.data as VariantRow[] }
+        : { ok: false as const, error: r.error, rows: [] as VariantRow[] };
     },
-    []
+    [run]
   );
 
   const createVariant = useCallback(
-    async (payload: {
-      metalId: string;
-      name: string;
-      sku: string;
-      purity: number;
-      buyFactor?: number;
-      saleFactor?: number;
-      purchasePriceOverride?: number | null;
-      salePriceOverride?: number | null;
-    }) => {
-      setError(null);
-      try {
-        setSaving(true);
+    async (payload: any) => {
+      const r = await runSaving(async () => {
         const resp = await (valuation as any).createVariant(payload);
         const row = resp?.row ?? resp?.data?.row ?? null;
-        return { ok: true as const, row: row as VariantRow | null };
-      } catch (e) {
-        const msg = getErrorMessage(e);
-        if (mountedRef.current) setError(msg);
-        return { ok: false as const, error: msg, row: null as VariantRow | null };
-      } finally {
-        if (mountedRef.current) setSaving(false);
-      }
+        return row as VariantRow | null;
+      });
+
+      return r.ok
+        ? { ok: true as const, row: r.data as VariantRow | null }
+        : { ok: false as const, error: r.error, row: null as VariantRow | null };
     },
-    []
+    [runSaving]
   );
 
   const updateVariant = useCallback(
-    async (
-      variantId: string,
-      data: { name?: string; sku?: string; purity?: number; saleFactor?: number; salePriceOverride?: number | null }
-    ) => {
-      setError(null);
-      try {
-        const id = String(variantId || "").trim();
-        if (!id) return { ok: false as const, error: "Variante inválida." };
+    async (variantId: string, data: any) => {
+      const id = normId(variantId);
+      if (!id) return { ok: false as const, error: "Variante inválida." };
 
-        setSaving(true);
+      const r = await runSaving(async () => {
         await (valuation as any).updateVariant(id, data as any);
-        return { ok: true as const };
-      } catch (e) {
-        const msg = getErrorMessage(e);
-        if (mountedRef.current) setError(msg);
-        return { ok: false as const, error: msg };
-      } finally {
-        if (mountedRef.current) setSaving(false);
-      }
+        return true;
+      });
+
+      return r.ok ? { ok: true as const } : { ok: false as const, error: r.error };
     },
-    []
+    [runSaving]
   );
 
-  const updateVariantPricing = useCallback(async (variantId: string, patch: VariantPricingPatch) => {
-    setError(null);
-    try {
-      const id = String(variantId || "").trim();
+  const updateVariantPricing = useCallback(
+    async (variantId: string, patch: VariantPricingPatch) => {
+      const id = normId(variantId);
       if (!id) return { ok: false as const, error: "Variante inválida." };
 
-      setSaving(true);
-      await valuation.updateVariantPricing(id, patch as any);
-      return { ok: true as const };
-    } catch (e) {
-      const msg = getErrorMessage(e);
-      if (mountedRef.current) setError(msg);
-      return { ok: false as const, error: msg };
-    } finally {
-      if (mountedRef.current) setSaving(false);
-    }
-  }, []);
+      const r = await runSaving(async () => {
+        await valuation.updateVariantPricing(id, patch as any);
+        return true;
+      });
 
-  const deleteVariant = useCallback(async (variantId: string) => {
-    setError(null);
-    try {
-      const id = String(variantId || "").trim();
+      return r.ok ? { ok: true as const } : { ok: false as const, error: r.error };
+    },
+    [runSaving]
+  );
+
+  const deleteVariant = useCallback(
+    async (variantId: string) => {
+      const id = normId(variantId);
       if (!id) return { ok: false as const, error: "Variante inválida." };
 
-      setSaving(true);
-      await (valuation as any).deleteVariant(id);
-      return { ok: true as const };
-    } catch (e) {
-      const msg = getErrorMessage(e);
-      if (mountedRef.current) setError(msg);
-      return { ok: false as const, error: msg };
-    } finally {
-      if (mountedRef.current) setSaving(false);
-    }
-  }, []);
+      const r = await runSaving(async () => {
+        await (valuation as any).deleteVariant(id);
+        return true;
+      });
 
-  const toggleVariantActive = useCallback(async (variantId: string, isActive: boolean) => {
-    setError(null);
-    try {
-      setSaving(true);
-      await valuation.toggleVariantActive(variantId, isActive);
-      return { ok: true as const };
-    } catch (e) {
-      const msg = getErrorMessage(e);
-      if (mountedRef.current) setError(msg);
-      return { ok: false as const, error: msg };
-    } finally {
-      if (mountedRef.current) setSaving(false);
-    }
-  }, []);
+      return r.ok ? { ok: true as const } : { ok: false as const, error: r.error };
+    },
+    [runSaving]
+  );
 
-  const setFavoriteVariant = useCallback(async (variantId: string | null, metalId?: string) => {
-    setError(null);
-    try {
-      setSaving(true);
+  const toggleVariantActive = useCallback(
+    async (variantId: string, isActive: boolean) => {
+      const id = normId(variantId);
+      if (!id) return { ok: false as const, error: "Variante inválida." };
 
-      if (variantId === null) {
-        const mid = String(metalId || "").trim();
-        if (!mid) return { ok: false as const, error: "Metal requerido para quitar favorito." };
+      const r = await runSaving(async () => {
+        await valuation.toggleVariantActive(id, isActive);
+        return true;
+      });
 
-        if (typeof (valuation as any).clearFavoriteVariant === "function") {
-          await (valuation as any).clearFavoriteVariant(mid);
-          return { ok: true as const };
+      return r.ok ? { ok: true as const } : { ok: false as const, error: r.error };
+    },
+    [runSaving]
+  );
+
+  const setFavoriteVariant = useCallback(
+    async (variantId: string | null, metalId?: string) => {
+      const r = await runSaving(async () => {
+        if (variantId === null) {
+          const mid = normId(metalId);
+          if (!mid) throw new Error("Metal requerido para quitar favorito.");
+
+          if (typeof (valuation as any).clearFavoriteVariant === "function") {
+            await (valuation as any).clearFavoriteVariant(mid);
+            return true;
+          }
+
+          throw new Error("Falta endpoint/service para limpiar favorito del metal.");
         }
 
-        return { ok: false as const, error: "Falta endpoint/service para limpiar favorito del metal." };
-      }
+        await valuation.setFavoriteVariant(variantId);
+        return true;
+      });
 
-      await valuation.setFavoriteVariant(variantId);
-      return { ok: true as const };
-    } catch (e) {
-      const msg = getErrorMessage(e);
-      if (mountedRef.current) setError(msg);
-      return { ok: false as const, error: msg };
-    } finally {
-      if (mountedRef.current) setSaving(false);
-    }
-  }, []);
-
-  const addQuote = useCallback(
-    async (data: {
-      variantId: string;
-      currencyId: string;
-      purchasePrice: number;
-      salePrice: number;
-      effectiveAt?: string | Date;
-    }) => {
-      setError(null);
-      try {
-        setSaving(true);
-        await valuation.addQuote(data);
-        return { ok: true as const };
-      } catch (e) {
-        const msg = getErrorMessage(e);
-        if (mountedRef.current) setError(msg);
-        return { ok: false as const, error: msg };
-      } finally {
-        if (mountedRef.current) setSaving(false);
-      }
+      return r.ok ? { ok: true as const } : { ok: false as const, error: r.error };
     },
-    []
+    [runSaving]
   );
 
-  const getQuotes = useCallback(async (variantId: string, take = 50) => {
-    setError(null);
-    try {
-      const resp = await valuation.getQuotes(variantId, take);
-      const rows: QuoteRow[] = pickRows(resp);
-      return { ok: true as const, rows };
-    } catch (e) {
-      const msg = getErrorMessage(e);
-      if (mountedRef.current) setError(msg);
-      return { ok: false as const, error: msg, rows: [] as QuoteRow[] };
-    }
-  }, []);
+  const addQuote = useCallback(
+    async (data: any) => {
+      const r = await runSaving(async () => {
+        await valuation.addQuote(data);
+        return true;
+      });
+
+      return r.ok ? { ok: true as const } : { ok: false as const, error: r.error };
+    },
+    [runSaving]
+  );
+
+  const getQuotes = useCallback(
+    async (variantId: string, take = 50) => {
+      const id = normId(variantId);
+      if (!id) return { ok: false as const, error: "Variante inválida.", rows: [] as QuoteRow[] };
+
+      const r = await run(async () => {
+        const resp = await valuation.getQuotes(id, take);
+        return pickRows(resp) as QuoteRow[];
+      });
+
+      return r.ok
+        ? { ok: true as const, rows: r.data as QuoteRow[] }
+        : { ok: false as const, error: r.error, rows: [] as QuoteRow[] };
+    },
+    [run]
+  );
+
+  const getVariantQuotes = useCallback(
+    async (variantId: string, take = 50) => await getQuotes(variantId, take),
+    [getQuotes]
+  );
+
+  /**
+   * ✅ Historial “tipo metales”
+   * Devuelve rows=history para que tu modal no cambie firma.
+   */
+  const getVariantValueHistory = useCallback(
+    async (variantId: string, take = 200) => {
+      const id = normId(variantId);
+      if (!id) return { ok: false as const, error: "Variante inválida.", rows: [] as VariantValueHistoryItem[] };
+
+      const r = await run(async () => {
+        const resp = await (valuation as any).getVariantValueHistory(id, { take });
+        const history: VariantValueHistoryItem[] = resp?.history ?? resp?.data?.history ?? [];
+        return {
+          variant: resp?.variant ?? resp?.data?.variant ?? null,
+          current: resp?.current ?? resp?.data?.current ?? (history[0] ?? null),
+          rows: history,
+        };
+      });
+
+      return r.ok
+        ? ({ ok: true as const, ...(r.data as any) } as any)
+        : { ok: false as const, error: r.error, rows: [] as VariantValueHistoryItem[] };
+    },
+    [run]
+  );
+
+  /**
+   * ✅ Historial de “cotizaciones / quotes” (para el modal de historial de variante)
+   * - Usa valuation.getVariantQuoteHistory si existe
+   * - Si no existe, cae a valuation.getQuotes
+   * Devuelve { ok, rows, variant, current }.
+   */
+  const getVariantQuoteHistory = useCallback(
+    async (variantId: string, take = 200) => {
+      const id = normId(variantId);
+      if (!id) return { ok: false as const, error: "Variante inválida.", rows: [] as any[] };
+
+      const r = await run(async () => {
+        // preferimos endpoint “rico”
+        if (typeof (valuation as any).getVariantQuoteHistory === "function") {
+          const resp = await (valuation as any).getVariantQuoteHistory(id, take);
+
+          const rows = resp?.rows ?? resp?.data?.rows ?? resp?.history ?? resp?.data?.history ?? pickRows(resp) ?? [];
+          const current = resp?.current ?? resp?.data?.current ?? (Array.isArray(rows) ? rows[0] : null);
+
+          return {
+            variant: resp?.variant ?? resp?.data?.variant ?? null,
+            current,
+            rows: Array.isArray(rows) ? rows : [],
+          };
+        }
+
+        // fallback: quotes simple
+        const resp = await valuation.getQuotes(id, Math.min(200, Math.max(1, take)));
+        const rows = pickRows(resp);
+        const current = Array.isArray(rows) ? rows[0] : null;
+
+        return { variant: null, current, rows: Array.isArray(rows) ? rows : [] };
+      });
+
+      return r.ok
+        ? ({ ok: true as const, ...(r.data as any) } as any)
+        : { ok: false as const, error: r.error, rows: [] as any[] };
+    },
+    [run]
+  );
 
   return {
     loading,
@@ -805,7 +712,6 @@ export function useValuation() {
 
     refetch,
 
-    // monedas
     createCurrency,
     updateCurrency,
     setBaseCurrency,
@@ -814,17 +720,14 @@ export function useValuation() {
     getCurrencyRates,
     deleteCurrency,
 
-    // metales
     createMetal,
     updateMetal,
     toggleMetalActive,
     deleteMetal,
 
-    // orden / history
     moveMetal,
     getMetalRefHistory,
 
-    // variantes/quotes
     getVariants,
     createVariant,
     updateVariant,
@@ -833,6 +736,14 @@ export function useValuation() {
     toggleVariantActive,
     setFavoriteVariant,
     addQuote,
+
     getQuotes,
+    getVariantQuotes,
+
+    // ✅ historial de variante (value-history)
+    getVariantValueHistory,
+
+    // ✅ historial de variante (quote-history / fallback quotes)
+    getVariantQuoteHistory,
   };
 }

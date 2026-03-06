@@ -13,17 +13,20 @@ export default function TPFocusTrap({
   useEffect(() => {
     if (!active) return;
 
+    function isInsideAriaModalDialog(el: HTMLElement | null) {
+      if (!el) return false;
+      return Boolean(el.closest?.('[role="dialog"][aria-modal="true"]'));
+    }
+
     function getFocusable(container: HTMLElement) {
       return Array.from(
         container.querySelectorAll<HTMLElement>(
           'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
         )
       ).filter((el) => {
-        // Evitar elementos deshabilitados / invisibles
         const anyEl = el as any;
         if (anyEl.disabled) return false;
         if (el.getAttribute("aria-disabled") === "true") return false;
-        // si está oculto por display:none o similar
         if (!(el.offsetWidth || el.offsetHeight || el.getClientRects().length)) return false;
         return true;
       });
@@ -34,6 +37,13 @@ export default function TPFocusTrap({
 
       const container = containerRef.current;
       if (!container) return;
+
+      const activeEl = document.activeElement as HTMLElement | null;
+
+      // ✅ si el foco está en un modal aria-modal (y NO es hijo del container), no tocar
+      if (activeEl && isInsideAriaModalDialog(activeEl) && !container.contains(activeEl)) {
+        return;
+      }
 
       const focusable = getFocusable(container);
       if (!focusable.length) return;
@@ -58,10 +68,15 @@ export default function TPFocusTrap({
       const container = containerRef.current;
       if (!container) return;
 
-      const target = e.target as Node | null;
-      if (!target) return;
+      const targetEl = e.target as HTMLElement | null;
+      if (!targetEl) return;
 
-      if (!container.contains(target)) {
+      // ✅ si el foco va a un modal aria-modal (por ej “Agregar nuevo ítem”), no lo devuelvas al fondo
+      if (isInsideAriaModalDialog(targetEl) && !container.contains(targetEl)) {
+        return;
+      }
+
+      if (!container.contains(targetEl)) {
         const focusable = getFocusable(container);
         if (focusable.length) focusable[0].focus();
       }
@@ -70,9 +85,10 @@ export default function TPFocusTrap({
     document.addEventListener("keydown", handleKey);
     document.addEventListener("focusin", handleFocusIn);
 
-    // foco inicial
+    // foco inicial solo si NO hay un aria-modal encima
     const container = containerRef.current;
-    if (container) {
+    const activeEl = document.activeElement as HTMLElement | null;
+    if (container && !(activeEl && isInsideAriaModalDialog(activeEl) && !container.contains(activeEl))) {
       const focusable = getFocusable(container);
       if (focusable.length) focusable[0].focus();
     }

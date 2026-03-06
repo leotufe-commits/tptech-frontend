@@ -1,276 +1,421 @@
-import { useMemo, useState, type ReactNode } from "react";
-import { useInventory } from "../context/InventoryContext";
-import { TP_INPUT, TP_BTN_LINK_PRIMARY, cn } from "../components/ui/tp";
-import { TPTableWrap, TPTableHeader } from "../components/ui/TPTable";
-import { TPStockBadge } from "../components/ui/TPBadges";
+// src/pages/InventarioAlmacenes.tsx
+import React, { useEffect, useMemo, useState } from "react";
+import { Plus, AlertTriangle } from "lucide-react";
 
-/* ---------------- utils ---------------- */
-function sumByAlmacen(articulos: any[], almacenId: string) {
-  return (articulos || []).reduce((acc, a) => {
-    const by1 = a?.stockByAlmacen?.[almacenId];
-    const by2 = a?.stockByAlacen?.[almacenId]; // tolerancia typo viejo
-    return acc + (by1 ?? by2 ?? 0);
-  }, 0);
-}
+import TPSectionShell from "../components/ui/TPSectionShell";
+import { TPCard } from "../components/ui/TPCard";
+import { TPButton } from "../components/ui/TPButton";
+import TPSearchInput from "../components/ui/TPSearchInput";
+import ConfirmDeleteDialog from "../components/ui/ConfirmDeleteDialog";
+import Modal from "../components/ui/Modal";
+import TPAlert from "../components/ui/TPAlert";
 
-function Modal({
-  open,
-  title,
-  onClose,
-  children,
-}: {
-  open: boolean;
-  title: string;
-  onClose: () => void;
-  children: ReactNode;
-}) {
-  if (!open) return null;
+import { toast } from "../lib/toast";
 
-  return (
-    <div className="fixed inset-0 z-50">
-      <div className="absolute inset-0 bg-black/50" onClick={onClose} aria-hidden="true" />
-      <div className="absolute inset-0 flex items-center justify-center p-4">
-        <div className="w-full max-w-5xl overflow-hidden rounded-2xl border border-border bg-card shadow-xl">
-          <div className="flex items-start justify-between gap-4 border-b border-border bg-surface2/30 px-5 py-4">
-            <div className="min-w-0">
-              <div className="text-sm font-semibold text-text">{title}</div>
-            </div>
-            <button
-              onClick={onClose}
-              className="rounded-lg px-2 py-1 text-sm font-semibold text-muted hover:bg-surface2 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-primary/20"
-            >
-              ✕
-            </button>
-          </div>
-          <div className="p-5">{children}</div>
-        </div>
-      </div>
-    </div>
-  );
-}
+import type { SortDir, SortKey, WarehouseDraft, WarehouseRow } from "./InventarioAlmacenes/types";
+import { warehousesApi } from "./InventarioAlmacenes/warehouses.api";
 
-function EmptyRow({ colSpan, text }: { colSpan: number; text: string }) {
-  return (
-    <tr>
-      <td colSpan={colSpan} className="px-4 py-10 text-center text-sm text-muted">
-        {text}
-      </td>
-    </tr>
-  );
+import {
+  TPTECH_WAREHOUSES_CHANGED,
+  EMPTY_DRAFT,
+  cmpStr,
+  draftPayload,
+  emitWarehousesChanged,
+  isRowActive,
+  rowToDraft,
+  s,
+  toNum,
+} from "./InventarioAlmacenes/warehouses.utils";
+
+import WarehousesKpis from "./InventarioAlmacenes/WarehousesKpis";
+import WarehousesTable from "./InventarioAlmacenes/WarehousesTable";
+import WarehouseViewModal from "./InventarioAlmacenes/WarehouseViewModal";
+import WarehouseEditModal from "./InventarioAlmacenes/WarehouseEditModal";
+
+function cleanErrMsg(msg: any) {
+  const m = String(msg ?? "").trim();
+  if (!m) return "No se pudo eliminar.";
+
+  // si se filtró algo "técnico"
+  if (m === "HTTP 500" || m.toLowerCase() === "internal server error") return "No se pudo eliminar.";
+
+  return m;
 }
 
 export default function InventarioAlmacenes() {
-  const { almacenes, articulos, getStockTotal } = useInventory();
-
+  const [loading, setLoading] = useState(false);
+  const [rows, setRows] = useState<WarehouseRow[]>([]);
   const [q, setQ] = useState("");
-  const [openDetail, setOpenDetail] = useState(false);
-  const [detailId, setDetailId] = useState<string | null>(null);
-  const [dq, setDq] = useState("");
 
-  const filteredAlmacenes = useMemo(() => {
-    const qq = q.trim().toLowerCase();
-    if (!qq) return almacenes;
-    return almacenes.filter(
-      (x) =>
-        x.nombre.toLowerCase().includes(qq) ||
-        x.codigo.toLowerCase().includes(qq) ||
-        x.ubicacion.toLowerCase().includes(qq)
-    );
-  }, [almacenes, q]);
+  const [sortKey, setSortKey] = useState<SortKey>("name");
+  const [sortDir, setSortDir] = useState<SortDir>("asc");
 
-  const detailAlmacen = useMemo(() => {
-    if (!detailId) return null;
-    return almacenes.find((a) => a.id === detailId) ?? null;
-  }, [almacenes, detailId]);
+  const [editOpen, setEditOpen] = useState(false);
+  const [draft, setDraft] = useState<WarehouseDraft>({ ...EMPTY_DRAFT });
+  const [busySave, setBusySave] = useState(false);
 
-  const detailRows = useMemo(() => {
-    if (!detailId) return [];
-    const qq = dq.trim().toLowerCase();
+  const [viewOpen, setViewOpen] = useState(false);
+  const [viewTarget, setViewTarget] = useState<WarehouseRow | null>(null);
 
-    const rows = (articulos || []).map((a: any) => {
-      const stockHere = a.stockByAlmacen?.[detailId] ?? a.stockByAlacen?.[detailId] ?? 0;
-      return {
-        id: a.id,
-        sku: a.sku ?? "",
-        nombre: a.nombre ?? "",
-        metal: a.metal ?? "",
-        categoria: a.categoria ?? "",
-        stockHere,
-        stockTotal: getStockTotal(a),
-      };
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<WarehouseRow | null>(null);
+  const [busyDelete, setBusyDelete] = useState(false);
+
+  const [deleteErrorOpen, setDeleteErrorOpen] = useState(false);
+  const [deleteErrorMsg, setDeleteErrorMsg] = useState("");
+
+  // ✅ busy states para íconos
+  const [busyFavoriteId, setBusyFavoriteId] = useState<string | null>(null);
+  const [busyRowId, setBusyRowId] = useState<string | null>(null);
+
+  const editKey = draft.id ? `edit:${draft.id}` : "new";
+
+  async function refresh() {
+    setLoading(true);
+    try {
+      const data = await warehousesApi.list();
+      setRows(Array.isArray(data) ? data : []);
+    } catch (e: any) {
+      toast.error(e?.message || "No se pudo cargar almacenes.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    refresh();
+
+    let t: any = null;
+    const onChanged = () => {
+      if (t) clearTimeout(t);
+      t = setTimeout(() => void refresh(), 180);
+    };
+
+    window.addEventListener(TPTECH_WAREHOUSES_CHANGED, onChanged as any);
+
+    return () => {
+      if (t) clearTimeout(t);
+      window.removeEventListener(TPTECH_WAREHOUSES_CHANGED, onChanged as any);
+    };
+  }, []);
+
+  function toggleSort(k: SortKey) {
+    setSortKey((prev) => {
+      if (prev !== k) {
+        setSortDir("asc");
+        return k;
+      }
+      setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+      return prev;
     });
+  }
 
-    if (!qq) return rows;
+  const filtered = useMemo(() => {
+    const needle = s(q).toLowerCase();
 
-    return rows.filter(
-      (r) =>
-        String(r.sku).toLowerCase().includes(qq) ||
-        String(r.nombre).toLowerCase().includes(qq) ||
-        String(r.metal).toLowerCase().includes(qq) ||
-        String(r.categoria).toLowerCase().includes(qq)
-    );
-  }, [articulos, detailId, dq, getStockTotal]);
+    const base = !needle
+      ? rows
+      : rows.filter((r) => {
+          const name = s(r.name).toLowerCase();
+          const code = s(r.code).toLowerCase();
+          const loc = s(r.location).toLowerCase();
+          const city = s(r.city).toLowerCase();
+          return name.includes(needle) || code.includes(needle) || loc.includes(needle) || city.includes(needle);
+        });
 
-  function openAlmacen(id: string) {
-    setDetailId(id);
-    setDq("");
-    setOpenDetail(true);
+    const dir = sortDir === "asc" ? 1 : -1;
+
+    return [...base].sort((a, b) => {
+      switch (sortKey) {
+        case "name":
+          return cmpStr(a.name, b.name) * dir;
+
+        case "code":
+          return cmpStr(a.code, b.code) * dir;
+
+        case "location":
+          return cmpStr(a.location, b.location) * dir;
+
+        case "isActive": {
+          const A = a.deletedAt ? 0 : a.isActive ? 2 : 1;
+          const B = b.deletedAt ? 0 : b.isActive ? 2 : 1;
+          return (A - B) * dir;
+        }
+
+        case "stockGrams":
+          return (toNum(a.stockGrams, 0) - toNum(b.stockGrams, 0)) * dir;
+
+        case "stockPieces":
+          return (toNum(a.stockPieces, 0) - toNum(b.stockPieces, 0)) * dir;
+
+        default:
+          return 0;
+      }
+    });
+  }, [rows, q, sortKey, sortDir]);
+
+  const kpis = useMemo(() => {
+    const total = rows.length;
+    const active = rows.filter((r) => isRowActive(r)).length;
+    const inactive = rows.filter((r) => !isRowActive(r) && !r.deletedAt).length;
+
+    const totalGrams = rows.reduce((acc, r) => acc + toNum(r.stockGrams, 0), 0);
+    const totalPieces = rows.reduce((acc, r) => acc + toNum(r.stockPieces, 0), 0);
+
+    return { total, active, inactive, totalGrams, totalPieces };
+  }, [rows]);
+
+  function openCreate() {
+    setDraft({ ...EMPTY_DRAFT });
+    setEditOpen(true);
+  }
+
+  function openEdit(r: WarehouseRow) {
+    setDraft(rowToDraft(r));
+    setEditOpen(true);
+  }
+
+  function openView(r: WarehouseRow) {
+    const latest = rows.find((x) => x.id === r.id) || r;
+    setViewTarget(latest);
+    setViewOpen(true);
+  }
+
+  async function save() {
+    const name = s(draft.name);
+    if (!name) return toast.error("Ingresá el nombre del almacén.");
+
+    setBusySave(true);
+    try {
+      const payload = draftPayload(draft);
+
+      if (draft.id) {
+        const updated = await warehousesApi.update(draft.id, payload);
+        setRows((prev) => prev.map((x) => (x.id === updated.id ? { ...x, ...updated } : x)));
+        toast.success("Almacén actualizado.");
+      } else {
+        const created = await warehousesApi.create(payload);
+        setRows((prev) => [...prev, created]);
+        toast.success("Almacén creado.");
+      }
+
+      setEditOpen(false);
+      emitWarehousesChanged();
+    } catch (e: any) {
+      toast.error(e?.message || "No se pudo guardar.");
+    } finally {
+      setBusySave(false);
+    }
+  }
+
+  // ✅ FAVORITO
+  async function favorite(r: WarehouseRow) {
+    const active = isRowActive(r);
+    if (!active) return;
+    if (busyFavoriteId || busyRowId) return;
+
+    try {
+      setBusyFavoriteId(r.id);
+
+      const out = await warehousesApi.favorite(r.id);
+
+      setRows((prev) =>
+        prev.map((x) => ({
+          ...x,
+          isFavorite: x.id === out.favoriteWarehouseId,
+        }))
+      );
+
+      emitWarehousesChanged();
+    } catch (e: any) {
+      toast.error(e?.message || "No se pudo marcar favorito.");
+    } finally {
+      setBusyFavoriteId(null);
+    }
+  }
+
+  // ✅ ACTIVAR / DESACTIVAR
+  async function toggleActive(r: WarehouseRow) {
+    if (busyRowId || busyFavoriteId) return;
+
+    try {
+      setBusyRowId(r.id);
+
+      const updated = await warehousesApi.toggle(r.id);
+
+      setRows((prev) =>
+        prev.map((x) => (x.id === updated.id ? { ...x, ...updated, isFavorite: x.isFavorite } : x))
+      );
+
+      if (r.isFavorite && updated.isActive === false) {
+        await refresh();
+      }
+
+      emitWarehousesChanged();
+    } catch (e: any) {
+      toast.error(e?.message || "No se pudo cambiar el estado.");
+    } finally {
+      setBusyRowId(null);
+    }
+  }
+
+  function askDelete(r: WarehouseRow) {
+    setDeleteTarget(r);
+    setDeleteOpen(true);
+  }
+
+  async function confirmDelete() {
+    if (!deleteTarget) return;
+
+    try {
+      setBusyDelete(true);
+      setBusyRowId(deleteTarget.id);
+
+      await warehousesApi.remove(deleteTarget.id);
+
+      // ✅ actualiza UI sin F5
+      setRows((prev) => prev.filter((x) => x.id !== deleteTarget.id));
+
+      toast.success("Almacén eliminado.");
+      setDeleteOpen(false);
+      setDeleteTarget(null);
+
+      emitWarehousesChanged();
+    } catch (e: any) {
+      const msg = cleanErrMsg(e?.message || e?.error || e);
+      setDeleteOpen(false);
+      setDeleteErrorMsg(msg);
+      setDeleteErrorOpen(true);
+    } finally {
+      setBusyDelete(false);
+      setBusyRowId(null);
+    }
+  }
+
+  function onFormKeyDown(e: React.KeyboardEvent) {
+    if (e.key !== "Enter") return;
+
+    const tag = ((e.target as HTMLElement | null)?.tagName || "").toLowerCase();
+    if (tag === "textarea") return;
+    if ((e as any).shiftKey) return;
+
+    e.preventDefault();
+    if (!busySave) void save();
   }
 
   return (
-    <div className="space-y-6">
-      <div>
-        <div className="text-xs font-medium text-muted">Inventario</div>
-        <div className="text-lg font-semibold text-text">Almacenes</div>
-        <div className="mt-1 text-sm text-muted">
-          Stock por depósito / local (✅ conectado a Movimientos).
+    <TPSectionShell title="Almacenes" subtitle="Depósitos / locales. Stock por almacén (gramos y piezas).">
+      <WarehousesKpis
+        total={kpis.total}
+        active={kpis.active}
+        inactive={kpis.inactive}
+        totalGrams={kpis.totalGrams}
+        totalPieces={kpis.totalPieces}
+      />
+
+      <TPCard className="mt-4">
+        <div className="flex flex-col gap-3 md:flex-row md:items-center">
+          <div className="w-full md:max-w-xl">
+            <TPSearchInput value={q} onChange={setQ} placeholder="Buscar por nombre, código, ubicación, ciudad…" />
+          </div>
+
+          <div className="flex w-full items-center gap-3 md:justify-end">
+            <div className="ml-auto text-xs text-muted">
+              {loading ? "Cargando…" : `Mostrando: ${filtered.length} / ${rows.length}`}
+            </div>
+
+            <TPButton onClick={openCreate} leftIcon={<Plus className="h-4 w-4" />}>
+              + Nuevo almacén
+            </TPButton>
+          </div>
         </div>
-      </div>
 
-      <div className="rounded-2xl border border-border bg-card p-4">
-        <label className="text-xs font-medium text-muted">Buscar almacén</label>
-        <input
-          value={q}
-          onChange={(e) => setQ(e.target.value)}
-          placeholder="Nombre, código, ubicación…"
-          className={TP_INPUT}
-        />
-      </div>
-
-      {/* ✅ TABLA REAL (evita warning <tbody> dentro de <div>) */}
-      <TPTableWrap>
-        <TPTableHeader left={`Almacenes: ${filteredAlmacenes.length}`} />
-
-        <div className="overflow-x-auto">
-          <table className="w-full border-collapse">
-            <thead>
-              <tr className="bg-surface2/30">
-                <th className="whitespace-nowrap px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-muted">
-                  Nombre
-                </th>
-                <th className="whitespace-nowrap px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-muted">
-                  Código
-                </th>
-                <th className="whitespace-nowrap px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-muted">
-                  Ubicación
-                </th>
-                <th className="whitespace-nowrap px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-muted">
-                  Stock total
-                </th>
-                <th className="whitespace-nowrap px-4 py-3 text-right text-xs font-semibold uppercase tracking-wide text-muted">
-                  Acciones
-                </th>
-              </tr>
-            </thead>
-
-            <tbody className="divide-y divide-border">
-              {filteredAlmacenes.map((x) => {
-                const stock = sumByAlmacen(articulos as any[], x.id);
-                return (
-                  <tr key={x.id} className="hover:bg-surface2/25">
-                    <td className="px-4 py-3 font-semibold text-text">{x.nombre}</td>
-                    <td className="px-4 py-3 text-muted">{x.codigo}</td>
-                    <td className="px-4 py-3 text-muted">{x.ubicacion}</td>
-                    <td className="px-4 py-3">
-                      <TPStockBadge n={stock} />
-                    </td>
-                    <td className="px-4 py-3 text-right">
-                      <button className={TP_BTN_LINK_PRIMARY} onClick={() => openAlmacen(x.id)}>
-                        Ver detalle
-                      </button>
-                    </td>
-                  </tr>
-                );
-              })}
-
-              {filteredAlmacenes.length === 0 && <EmptyRow colSpan={5} text="No hay almacenes." />}
-            </tbody>
-          </table>
+        <div className="mt-3">
+          <WarehousesTable
+            loading={loading}
+            rows={filtered}
+            sortKey={sortKey}
+            sortDir={sortDir}
+            onToggleSort={toggleSort}
+            busyFavoriteId={busyFavoriteId}
+            busyRowId={busyRowId}
+            onFavorite={favorite}
+            onView={openView}
+            onEdit={openEdit}
+            onToggleActive={toggleActive}
+            onAskDelete={askDelete}
+          />
         </div>
-      </TPTableWrap>
+      </TPCard>
+
+      <WarehouseViewModal open={viewOpen} onClose={() => setViewOpen(false)} target={viewTarget} />
+
+      <WarehouseEditModal
+        open={editOpen}
+        onClose={() => setEditOpen(false)}
+        draft={draft}
+        setDraft={setDraft}
+        busySave={busySave}
+        onSave={save}
+        editKey={editKey}
+        onFormKeyDown={onFormKeyDown}
+      />
+
+      <ConfirmDeleteDialog
+        open={deleteOpen}
+        title="Eliminar almacén"
+        description={
+          deleteTarget
+            ? `Vas a eliminar "${deleteTarget.name}". Esta acción no se puede deshacer.`
+            : "Vas a eliminar este almacén. Esta acción no se puede deshacer."
+        }
+        dangerHint="Para confirmar, debés escribir ELIMINAR."
+        requireTypeToConfirm
+        typeToConfirmText="ELIMINAR"
+        confirmText={busyDelete ? "Eliminando…" : "Eliminar"}
+        cancelText="Cancelar"
+        busy={busyDelete}
+        onConfirm={confirmDelete}
+        onClose={() => {
+          if (busyDelete) return;
+          setDeleteOpen(false);
+          setDeleteTarget(null);
+        }}
+      />
 
       <Modal
-        open={openDetail && !!detailAlmacen}
-        title={
-          detailAlmacen
-            ? `Detalle de almacén — ${detailAlmacen.nombre} (${detailAlmacen.codigo})`
-            : "Detalle de almacén"
-        }
-        onClose={() => setOpenDetail(false)}
-      >
-        {!detailAlmacen ? (
-          <div className="text-sm text-muted">Almacén no encontrado.</div>
-        ) : (
-          <div className="space-y-4">
-            <div className="text-sm text-muted">{detailAlmacen.ubicacion}</div>
-
-            <div className="rounded-2xl border border-border bg-card p-4">
-              <label className="text-xs font-medium text-muted">Buscar artículo</label>
-              <input
-                value={dq}
-                onChange={(e) => setDq(e.target.value)}
-                placeholder="SKU, nombre, metal, categoría…"
-                className={TP_INPUT}
-              />
-            </div>
-
-            {/* ✅ TABLA REAL (evita warning <tbody> dentro de <div>) */}
-            <TPTableWrap>
-              <TPTableHeader left={`Artículos en este almacén: ${detailRows.length}`} />
-
-              <div className="overflow-x-auto">
-                <table className="w-full border-collapse">
-                  <thead>
-                    <tr className="bg-surface2/30">
-                      <th className="whitespace-nowrap px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-muted">
-                        SKU
-                      </th>
-                      <th className="whitespace-nowrap px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-muted">
-                        Nombre
-                      </th>
-                      <th className="whitespace-nowrap px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-muted">
-                        Categoría
-                      </th>
-                      <th className="whitespace-nowrap px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-muted">
-                        Metal
-                      </th>
-                      <th className="whitespace-nowrap px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-muted">
-                        Stock aquí
-                      </th>
-                      <th className="whitespace-nowrap px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-muted">
-                        Stock total
-                      </th>
-                    </tr>
-                  </thead>
-
-                  <tbody className="divide-y divide-border">
-                    {detailRows.map((r) => (
-                      <tr key={r.id} className="hover:bg-surface2/25">
-                        <td className="px-4 py-3 font-semibold text-text">{r.sku}</td>
-                        <td className="px-4 py-3 text-muted">{r.nombre}</td>
-                        <td className="px-4 py-3 text-muted">{r.categoria}</td>
-                        <td className="px-4 py-3 text-muted">{r.metal}</td>
-                        <td className="px-4 py-3">
-                          <TPStockBadge n={r.stockHere} />
-                        </td>
-                        <td className="px-4 py-3">
-                          <TPStockBadge n={r.stockTotal} />
-                        </td>
-                      </tr>
-                    ))}
-
-                    {detailRows.length === 0 && <EmptyRow colSpan={6} text="No hay resultados." />}
-                  </tbody>
-                </table>
-              </div>
-            </TPTableWrap>
-
-            <div className={cn("text-xs text-muted")}>
-              Tip: si registrás un movimiento en este almacén, acá lo vas a ver reflejado al instante.
-            </div>
+        open={deleteErrorOpen}
+        onClose={() => setDeleteErrorOpen(false)}
+        title="No se puede eliminar"
+        subtitle="Revisá el motivo y volvé a intentar."
+        maxWidth="md"
+        footer={
+          <div className="flex w-full items-center justify-end">
+            <TPButton variant="secondary" onClick={() => setDeleteErrorOpen(false)}>
+              Entendido
+            </TPButton>
           </div>
-        )}
+        }
+      >
+        <div className="space-y-3">
+          <TPAlert
+            tone="danger"
+            title="Motivo"
+            icon={<AlertTriangle className="h-4 w-4" />}
+          >
+            {deleteErrorMsg || "No se pudo eliminar."}
+          </TPAlert>
+
+          <TPCard className="p-4">
+            <div className="text-xs text-muted">
+              Reglas:
+              <br />• No se puede eliminar el último almacén activo.
+              <br />• No se puede eliminar si tiene movimientos.
+              <br />• No se puede eliminar si el stock neto (gramos) es distinto de 0.
+            </div>
+          </TPCard>
+        </div>
       </Modal>
-    </div>
+    </TPSectionShell>
   );
 }

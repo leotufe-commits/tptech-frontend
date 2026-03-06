@@ -1,71 +1,57 @@
-import React, { useEffect, useMemo, useRef } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
+import { ChevronDown, ChevronUp } from "lucide-react";
 import { cn } from "./tp";
 
 type Props = {
   label?: string;
-  hint?: string;
+  hint?: React.ReactNode;
   error?: string | null;
 
-  /** Controlled value (number or null for empty) */
   value: number | null;
   onChange: (v: number | null) => void;
 
-  /** behavior */
-  step?: number; // ej 1, 0.01, 0.001
+  step?: number;
   min?: number;
   max?: number;
 
-  /** formatting/typing */
   decimals?: number;
   placeholder?: string;
 
   disabled?: boolean;
   readOnly?: boolean;
 
-  /** optional adornments */
   leftIcon?: React.ReactNode;
 
-  /** layout */
   className?: string;
   wrapClassName?: string;
 
-  /** optional: evitar cambiar con rueda del mouse */
   disableWheel?: boolean;
-
-  /** Si value es null y el user incrementa, base inicial */
   emptyBaseValue?: number;
 
-  /** ✅ NUEVO: ref externo (para focus/select desde modales) */
+  /** ✅ compat: pasar ref desde afuera */
   inputRef?: React.Ref<HTMLInputElement>;
 
-  /** ✅ NUEVO: selecciona todo al enfocar */
+  /** ✅ compat: seleccionar todo al enfocar */
+  selectAllOnFocus?: boolean;
+
+  /** ✅ compat: alias */
   autoSelect?: boolean;
 
-  /** ✅ NUEVO: permitir capturar Enter (y otras teclas) */
-  onKeyDown?: React.KeyboardEventHandler<HTMLInputElement>;
-
-  /** ✅ NUEVO: onBlur externo */
-  onBlur?: React.FocusEventHandler<HTMLInputElement>;
-
-  /** ✅ NUEVO: mostrar/ocultar flechas (custom). Default: false */
+  /** ✅ compat: permitir ocultar flechas */
   showArrows?: boolean;
+
+  /** ✅ compat: onKeyDown externo */
+  onKeyDown?: React.KeyboardEventHandler<HTMLInputElement>;
 };
 
-function clamp(n: number, min?: number, max?: number) {
-  if (!Number.isFinite(n)) return typeof min === "number" ? min : 0;
-  if (typeof min === "number" && n < min) n = min;
-  if (typeof max === "number" && n > max) n = max;
-  return n;
+function isIntermediate(raw: string) {
+  const s = String(raw ?? "");
+  if (s.trim() === "") return true;
+  if (s === "-") return true;
+  if (s.endsWith(",") || s.endsWith(".")) return true;
+  return false;
 }
 
-function roundTo(n: number, decimals?: number) {
-  if (!Number.isFinite(n)) return n;
-  if (typeof decimals !== "number") return n;
-  const p = 10 ** decimals;
-  return Math.round(n * p) / p;
-}
-
-/** Convierte "0,750" -> 0.75 */
 function parseSmartNumber(raw: string) {
   const s = String(raw ?? "").trim();
   if (!s) return NaN;
@@ -77,76 +63,154 @@ function parseSmartNumber(raw: string) {
   return Number.isFinite(n) ? n : NaN;
 }
 
-function setRef<T>(ref: React.Ref<T> | undefined, value: T) {
-  if (!ref) return;
-  if (typeof ref === "function") ref(value);
-  else (ref as any).current = value;
+function formatFixed(n: number, decimals?: number) {
+  if (!Number.isFinite(n)) return "";
+  if (typeof decimals !== "number") return String(n).replace(".", ",");
+  return n.toFixed(decimals).replace(".", ",");
 }
 
-export function TPNumberInput({
+function pow10(decimals?: number) {
+  if (typeof decimals !== "number") return null;
+  const d = Math.max(0, Math.min(12, Math.floor(decimals)));
+  return 10 ** d;
+}
+
+function toScaled(n: number, p: number) {
+  return Math.round((n + Number.EPSILON) * p);
+}
+
+function fromScaled(s: number, p: number) {
+  return s / p;
+}
+
+function clampScaled(s: number, minS?: number, maxS?: number) {
+  if (!Number.isFinite(s)) return s;
+  if (typeof minS === "number" && s < minS) s = minS;
+  if (typeof maxS === "number" && s > maxS) s = maxS;
+  return s;
+}
+
+function setRef<T>(ref: React.Ref<T> | undefined, value: T) {
+  if (!ref) return;
+  if (typeof ref === "function") {
+    ref(value);
+    return;
+  }
+  try {
+    (ref as any).current = value;
+  } catch {
+    // noop
+  }
+}
+
+export default function TPNumberInput({
   label,
   hint,
   error,
-
   value,
   onChange,
-
   step = 1,
   min,
   max,
-
   decimals,
   placeholder,
-
   disabled,
   readOnly,
-
   leftIcon,
-
   className,
   wrapClassName,
-
   disableWheel = true,
-
   emptyBaseValue,
 
   inputRef,
-  autoSelect = true,
+  selectAllOnFocus,
+  autoSelect,
+  showArrows = true,
   onKeyDown,
-  onBlur,
-
-  showArrows = false,
 }: Props) {
   const innerRef = useRef<HTMLInputElement | null>(null);
+
+  const [isEditing, setIsEditing] = useState(false);
+  const [draft, setDraft] = useState<string>("");
 
   const stepSafe = useMemo(() => {
     const s = Number(step);
     return Number.isFinite(s) && s > 0 ? s : 1;
   }, [step]);
 
+  const p = useMemo(() => pow10(decimals), [decimals]);
+
+  useEffect(() => {
+    if (isEditing) return;
+
+    if (typeof value === "number" && Number.isFinite(value)) {
+      setDraft(formatFixed(value, decimals));
+    } else {
+      setDraft("");
+    }
+  }, [value, decimals, isEditing]);
+
   function apply(next: number) {
-    const v = roundTo(clamp(next, min, max), decimals);
+    if (!Number.isFinite(next)) return;
+
+    if (p) {
+      let s = toScaled(next, p);
+
+      const minS = typeof min === "number" && Number.isFinite(min) ? toScaled(min, p) : undefined;
+      const maxS = typeof max === "number" && Number.isFinite(max) ? toScaled(max, p) : undefined;
+
+      s = clampScaled(s, minS, maxS);
+      onChange(fromScaled(s, p));
+      return;
+    }
+
+    let v = next;
+    if (typeof min === "number" && Number.isFinite(min) && v < min) v = min;
+    if (typeof max === "number" && Number.isFinite(max) && v > max) v = max;
     onChange(v);
+  }
+
+  function getBaseNumberForSpinner() {
+    if (!isIntermediate(draft)) {
+      const n = parseSmartNumber(draft);
+      if (Number.isFinite(n)) return n;
+    }
+
+    if (typeof value === "number" && Number.isFinite(value)) return value;
+
+    if (typeof emptyBaseValue === "number" && Number.isFinite(emptyBaseValue)) return emptyBaseValue;
+    if (typeof min === "number" && Number.isFinite(min)) return min;
+    return 0;
   }
 
   function inc(dir: 1 | -1) {
     if (disabled || readOnly) return;
 
-    const base =
-      typeof value === "number" && Number.isFinite(value)
-        ? value
-        : typeof emptyBaseValue === "number" && Number.isFinite(emptyBaseValue)
-        ? emptyBaseValue
-        : typeof min === "number"
-        ? min
-        : 0;
+    const base = getBaseNumberForSpinner();
+    let nextNum = base;
 
-    apply(base + dir * stepSafe);
+    if (p) {
+      const baseS = toScaled(base, p);
+      const stepS = Math.max(1, toScaled(stepSafe, p));
+      const nextS = baseS + dir * stepS;
 
-    requestAnimationFrame(() => {
-      innerRef.current?.focus();
-      if (autoSelect) innerRef.current?.select();
-    });
+      const minS = typeof min === "number" && Number.isFinite(min) ? toScaled(min, p) : undefined;
+      const maxS = typeof max === "number" && Number.isFinite(max) ? toScaled(max, p) : undefined;
+
+      const clampedS = clampScaled(nextS, minS, maxS);
+      nextNum = fromScaled(clampedS, p);
+    } else {
+      nextNum = base + dir * stepSafe;
+      if (typeof min === "number" && Number.isFinite(min) && nextNum < min) nextNum = min;
+      if (typeof max === "number" && Number.isFinite(max) && nextNum > max) nextNum = max;
+    }
+
+    apply(nextNum);
+
+    setIsEditing(true);
+    setDraft(formatFixed(nextNum, decimals));
+
+    innerRef.current?.focus();
   }
 
   useEffect(() => {
@@ -163,6 +227,7 @@ export function TPNumberInput({
   }, [disableWheel]);
 
   const hasLeft = Boolean(leftIcon);
+  const wantSelectAll = Boolean(selectAllOnFocus || autoSelect);
 
   return (
     <div className={cn("w-full space-y-1", wrapClassName)}>
@@ -170,7 +235,7 @@ export function TPNumberInput({
 
       <div className="relative">
         {hasLeft ? (
-          <div className="absolute left-3 top-1/2 -translate-y-1/2 text-muted select-none">
+          <div className="absolute left-3 top-1/2 -translate-y-1/2 w-14 flex items-center justify-start font-semibold text-muted pointer-events-none">
             {leftIcon}
           </div>
         ) : null}
@@ -180,35 +245,85 @@ export function TPNumberInput({
             innerRef.current = el;
             setRef(inputRef, el as any);
           }}
-          // ✅ CLAVE: evitamos spinners nativos usando text
           type="text"
-          inputMode="decimal"
-          pattern="^-?\\d*[.,]?\\d*$"
-          value={typeof value === "number" && Number.isFinite(value) ? String(value) : ""}
+          value={draft}
           placeholder={placeholder}
           disabled={disabled}
           readOnly={readOnly}
+          inputMode="decimal"
           className={cn(
             "tp-input",
             "tp-number-no-spin",
-            // si no hay flechas, no reservamos espacio
-            showArrows ? "pr-12" : "pr-3",
-            hasLeft && "pl-10",
+            "text-center",
+            showArrows ? "pr-12" : "pr-4",
+            hasLeft && "pl-16",
             error && "border-red-500/60 focus-visible:ring-red-500/20",
             className
           )}
           onFocus={(e) => {
-            if (autoSelect) requestAnimationFrame(() => e.currentTarget.select());
+            setIsEditing(true);
+
+            if (draft === "" && typeof value === "number" && Number.isFinite(value)) {
+              setDraft(formatFixed(value, decimals));
+            }
+
+            if (wantSelectAll) {
+              window.setTimeout(() => {
+                try {
+                  (e.target as HTMLInputElement)?.select?.();
+                } catch {}
+              }, 0);
+            }
           }}
-          onKeyDown={onKeyDown}
-          onBlur={onBlur}
+          onBlur={() => {
+            setIsEditing(false);
+
+            const raw = String(draft ?? "");
+            if (raw.trim() === "" || raw === "-") {
+              onChange(null);
+              setDraft("");
+              return;
+            }
+
+            const n = parseSmartNumber(raw);
+            if (Number.isFinite(n)) {
+              apply(n);
+              setDraft(formatFixed(n, decimals));
+            } else {
+              if (typeof value === "number" && Number.isFinite(value)) {
+                setDraft(formatFixed(value, decimals));
+              } else {
+                setDraft("");
+              }
+            }
+          }}
+          onKeyDown={(e) => {
+            onKeyDown?.(e);
+            if (e.defaultPrevented) return;
+            if (disabled || readOnly) return;
+
+            if (e.key === "ArrowUp") {
+              e.preventDefault();
+              inc(1);
+            }
+            if (e.key === "ArrowDown") {
+              e.preventDefault();
+              inc(-1);
+            }
+            if (e.key === "Enter") {
+              (e.currentTarget as HTMLInputElement).blur();
+            }
+          }}
           onChange={(e) => {
             const raw = e.target.value;
+            setDraft(raw);
 
-            if (String(raw ?? "").trim() === "") {
+            if (raw.trim() === "") {
               onChange(null);
               return;
             }
+
+            if (isIntermediate(raw)) return;
 
             const n = parseSmartNumber(raw);
             if (!Number.isFinite(n)) return;
@@ -217,37 +332,28 @@ export function TPNumberInput({
           }}
         />
 
-        {/* ✅ Flechas custom: opcionales (por defecto apagadas) */}
         {showArrows ? (
           <div className="absolute right-2 top-1/2 -translate-y-1/2 flex flex-col">
             <button
               type="button"
               onClick={() => inc(1)}
               disabled={disabled || readOnly}
-              className={cn(
-                "h-5 w-8 grid place-items-center rounded-md",
-                "text-muted hover:text-text hover:bg-surface2",
-                "disabled:opacity-50 disabled:hover:bg-transparent disabled:hover:text-muted"
-              )}
+              className="h-5 w-8 grid place-items-center text-muted hover:text-text disabled:opacity-50"
               aria-label="Incrementar"
               title="Incrementar"
             >
-              ▲
+              <ChevronUp className="h-4 w-4" />
             </button>
 
             <button
               type="button"
               onClick={() => inc(-1)}
               disabled={disabled || readOnly}
-              className={cn(
-                "mt-0.5 h-5 w-8 grid place-items-center rounded-md",
-                "text-muted hover:text-text hover:bg-surface2",
-                "disabled:opacity-50 disabled:hover:bg-transparent disabled:hover:text-muted"
-              )}
+              className="mt-0.5 h-5 w-8 grid place-items-center text-muted hover:text-text disabled:opacity-50"
               aria-label="Disminuir"
               title="Disminuir"
             >
-              ▼
+              <ChevronDown className="h-4 w-4" />
             </button>
           </div>
         ) : null}
@@ -257,5 +363,3 @@ export function TPNumberInput({
     </div>
   );
 }
-
-export default TPNumberInput;

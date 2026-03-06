@@ -10,6 +10,10 @@ type TPCheckboxProps = Omit<
   indeterminate?: boolean;
   label?: React.ReactNode;
   className?: string;
+
+  // blindaje extra (por si alguien intenta pasarlos)
+  children?: never;
+  dangerouslySetInnerHTML?: never;
 };
 
 export function TPCheckbox({
@@ -19,14 +23,13 @@ export function TPCheckbox({
   disabled,
   label,
   className,
-  // ✅ por seguridad: nunca lo pasamos al input
+
+  // ✅ tragamos estos props para que JAMÁS lleguen al <input />
   children,
   dangerouslySetInnerHTML,
+
   ...rest
-}: TPCheckboxProps & {
-  children?: never;
-  dangerouslySetInnerHTML?: never;
-}) {
+}: TPCheckboxProps) {
   const ref = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {

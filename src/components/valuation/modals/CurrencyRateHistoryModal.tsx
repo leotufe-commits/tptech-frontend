@@ -5,8 +5,22 @@ import { Loader2, X } from "lucide-react";
 import { ModalShell, cn } from "../valuation.ui";
 import * as valuation from "../../../services/valuation";
 
-import { TPTableWrap, TPTableEl, TPThead, TPTbody, TPTr, TPTh, TPTd } from "../../ui/TPTable";
+// ✅ formateadores unificados
+import { fmtRateSmart } from "../../../lib/format";
+
+import {
+  TPTableWrap,
+  TPTable,
+  TPTableXScroll,
+  TPTableElBase,
+  TPThead,
+  TPTbody,
+  TPTh,
+  TPTd,
+  TPEmptyRow,
+} from "../../ui/TPTable";
 import { SortArrows } from "../../ui/TPSort";
+import TPDateRangeInline from "../../ui/TPDateRangeInline";
 
 type Props = {
   open: boolean;
@@ -23,12 +37,6 @@ function fmtDateTime(v?: string) {
   return d.toLocaleString("es-AR");
 }
 
-function fmtRate(n: any) {
-  const v = Number(n);
-  if (!Number.isFinite(v)) return "—";
-  return v.toLocaleString("es-AR", { maximumFractionDigits: 6 });
-}
-
 function userLabel(u: any) {
   if (!u) return "—";
   const name = String(u?.name || "").trim();
@@ -38,6 +46,20 @@ function userLabel(u: any) {
 
 type SortKey = "edited" | "user" | "value" | "created";
 type SortDir = "asc" | "desc";
+
+// ✅ filtro por fechas
+type DateRange = { from: Date | null; to: Date | null };
+
+function startOfDay(d: Date) {
+  const x = new Date(d);
+  x.setHours(0, 0, 0, 0);
+  return x;
+}
+function endOfDay(d: Date) {
+  const x = new Date(d);
+  x.setHours(23, 59, 59, 999);
+  return x;
+}
 
 export default function CurrencyRateHistoryModal({
   open,
@@ -59,6 +81,9 @@ export default function CurrencyRateHistoryModal({
 
   const [sortKey, setSortKey] = useState<SortKey>("edited");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
+
+  // ✅ TPDateRangeInline
+  const [range, setRange] = useState<DateRange>({ from: null, to: null });
 
   const baseSym = String(baseCurrencySymbol || "").trim();
   const baseCode = String(baseCurrencyCode || "").trim();
@@ -84,6 +109,12 @@ export default function CurrencyRateHistoryModal({
     if (!open) return;
     setErr(null);
   }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    // ✅ cuando abrimos, arrancamos con rango limpio (evita que quede de otra moneda)
+    setRange({ from: null, to: null });
+  }, [open, currencyId]);
 
   useEffect(() => {
     if (!open || !currencyId) return;
@@ -129,13 +160,7 @@ export default function CurrencyRateHistoryModal({
   const current = useMemo(() => {
     if (!isBase) return currentRaw;
     const ts = currency?.updatedAt || currency?.createdAt || new Date().toISOString();
-    return {
-      id: "base",
-      rate: 1,
-      effectiveAt: ts,
-      createdAt: ts,
-      user: null,
-    };
+    return { id: "base", rate: 1, effectiveAt: ts, createdAt: ts, user: null };
   }, [isBase, currentRaw, currency]);
 
   const currentUserLabel = current?.user ? userLabel(current.user) : "—";
@@ -150,7 +175,7 @@ export default function CurrencyRateHistoryModal({
     else setSortDir("asc");
   }
 
-  const history = useMemo(() => {
+  const historySorted = useMemo(() => {
     // ✅ si es base, no mostramos historial aunque venga algo viejo
     if (isBase) return [];
 
@@ -181,17 +206,26 @@ export default function CurrencyRateHistoryModal({
     return rows;
   }, [historyRaw, sortKey, sortDir, isBase]);
 
-  const ThBtn = ({
-    k,
-    label,
-    align,
-  }: {
-    k: SortKey;
-    label: string;
-    align?: "left" | "right";
-  }) => {
-    const active = sortKey === k;
+  // ✅ aplica filtro por rango (sobre lo ya ordenado)
+  const history = useMemo(() => {
+    if (isBase) return [];
 
+    const from = range.from ? startOfDay(range.from).getTime() : null;
+    const to = range.to ? endOfDay(range.to).getTime() : null;
+
+    if (from == null && to == null) return historySorted;
+
+    return historySorted.filter((r: any) => {
+      const t = new Date(r?.effectiveAt ?? r?.createdAt).getTime();
+      if (!Number.isFinite(t)) return false;
+      if (from != null && t < from) return false;
+      if (to != null && t > to) return false;
+      return true;
+    });
+  }, [historySorted, range.from, range.to, isBase]);
+
+  const ThBtn = ({ k, label, align }: { k: SortKey; label: string; align?: "left" | "right" }) => {
+    const active = sortKey === k;
     return (
       <button
         type="button"
@@ -215,6 +249,8 @@ export default function CurrencyRateHistoryModal({
     ? `Valor actual de 1 ${currency.code}`
     : "Valor actual";
 
+  const hasRange = Boolean(range.from || range.to);
+
   return (
     <ModalShell
       open={open}
@@ -224,22 +260,15 @@ export default function CurrencyRateHistoryModal({
       busy={false}
       maxWidth="4xl"
       footer={
-        <button
-          type="button"
-          className="tp-btn-secondary h-10 inline-flex items-center gap-2"
-          onClick={onClose}
-          disabled={showLoading}
-        >
+        <button type="button" className="tp-btn-secondary h-10 inline-flex items-center gap-2" onClick={onClose} disabled={showLoading}>
           <X size={16} />
           Cerrar
         </button>
       }
     >
-      <div className="w-full">
+      <div className="w-full min-w-0">
         {err && (
-          <div className="mb-4 rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-text">
-            {err}
-          </div>
+          <div className="mb-4 rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-text">{err}</div>
         )}
 
         {showLoading ? (
@@ -249,7 +278,7 @@ export default function CurrencyRateHistoryModal({
           </div>
         ) : (
           <>
-            <div className="rounded-2xl border border-border bg-card p-6">
+            <div className="rounded-2xl border border-border bg-card p-6 overflow-hidden">
               <div className="text-xs text-muted text-center">{currentLabel}</div>
 
               <div className="mt-2 flex items-center justify-center">
@@ -258,7 +287,7 @@ export default function CurrencyRateHistoryModal({
                     {current?.rate != null ? (
                       <>
                         {baseSym ? <span className="mr-2">{baseSym}</span> : null}
-                        {fmtRate(current.rate)}
+                        {fmtRateSmart(current.rate)}
                       </>
                     ) : (
                       "—"
@@ -268,19 +297,13 @@ export default function CurrencyRateHistoryModal({
               </div>
 
               <div className="mt-3 text-xs text-muted text-center">
-                {isBase ? (
-                  <span className="text-text font-semibold">
-                    Moneda base del sistema: por definición siempre vale 1.
-                  </span>
-                ) : null}
+                {isBase ? <span className="text-text font-semibold">Moneda base del sistema: por definición siempre vale 1.</span> : null}
               </div>
 
               <div className="mt-5 grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
                 <div className="rounded-xl border border-border bg-surface2 p-3">
                   <div className="text-xs text-muted font-semibold">Última edición</div>
-                  <div className="mt-1 text-text tabular-nums whitespace-nowrap">
-                    {fmtDateTime(current?.effectiveAt || current?.createdAt)}
-                  </div>
+                  <div className="mt-1 text-text tabular-nums whitespace-nowrap">{fmtDateTime(current?.effectiveAt || current?.createdAt)}</div>
                 </div>
 
                 <div className="rounded-xl border border-border bg-surface2 p-3">
@@ -292,69 +315,93 @@ export default function CurrencyRateHistoryModal({
               </div>
             </div>
 
-            <div className="mt-6">
-              <div className="mb-2 text-xs font-semibold text-muted">Historial</div>
+            <div className="mt-6 min-w-0">
+              <div className="mb-2 flex flex-wrap items-end justify-between gap-3">
+                <div className="text-xs font-semibold text-muted">Historial</div>
+
+                {!isBase ? (
+                  <div className="flex flex-wrap items-end gap-3">
+                    <div className="min-w-[260px]">
+                      <TPDateRangeInline label="Filtrar por fecha" value={range} onChange={setRange} />
+                    </div>
+                  </div>
+                ) : null}
+              </div>
 
               {history.length === 0 ? (
                 <div className="text-sm text-muted">
-                  {isBase ? "Sin historial (moneda base)." : "Sin historial."}
+                  {isBase ? "Sin historial (moneda base)." : hasRange ? "Sin resultados para ese rango." : "Sin historial."}
                 </div>
               ) : (
-                <TPTableWrap>
-                  <TPTableEl className="max-h-[420px] overflow-auto">
-                    <table className="w-full table-auto text-sm">
-                      <TPThead className="sticky top-0 z-20">
-                        <tr>
-                          <TPTh className="text-left">
-                            <ThBtn k="edited" label="Editado" />
-                          </TPTh>
+                <div className="max-w-full">
+                  {/* ✅ scroll vertical cómodo dentro del modal */}
+                  <div className="max-h-[42vh] overflow-y-auto overscroll-contain touch-pan-y rounded-2xl" style={{ WebkitOverflowScrolling: "touch" as any }}>
+                    <TPTableWrap>
+                      <TPTable>
+                        <TPTableXScroll>
+                          {/* ✅ stack en mobile, tabla normal en md+ */}
+                          <TPTableElBase responsive="stack">
+                            <TPThead className="sticky top-0 z-20">
+                              <tr>
+                                <TPTh className="text-left">
+                                  <ThBtn k="edited" label="Editado" />
+                                </TPTh>
 
-                          <TPTh className="text-left">
-                            <ThBtn k="user" label="Usuario" />
-                          </TPTh>
+                                <TPTh className="text-left">
+                                  <ThBtn k="user" label="Usuario" />
+                                </TPTh>
 
-                          <TPTh className="text-right">
-                            <ThBtn k="value" label="Valor" align="right" />
-                          </TPTh>
+                                <TPTh className="text-right">
+                                  <ThBtn k="value" label="Valor" align="right" />
+                                </TPTh>
 
-                          <TPTh className="text-left">
-                            <ThBtn k="created" label="Creado" />
-                          </TPTh>
-                        </tr>
-                      </TPThead>
+                                <TPTh className="text-left">
+                                  <ThBtn k="created" label="Creado" />
+                                </TPTh>
+                              </tr>
+                            </TPThead>
 
-                      <TPTbody>
-                        {history.map((r: any) => {
-                          const uLabel = userLabel(r?.user);
-                          return (
-                            <TPTr key={r.id}>
-                              <TPTd className="tabular-nums whitespace-nowrap">{fmtDateTime(r.effectiveAt)}</TPTd>
+                            <TPTbody>
+                              {history.length === 0 ? (
+                                <TPEmptyRow colSpan={4} text="Sin historial." />
+                              ) : (
+                                history.map((r: any) => {
+                                  const uLabel = userLabel(r?.user);
+                                  return (
+                                    <tr key={r.id}>
+                                      <TPTd label="Editado" className="tabular-nums whitespace-nowrap">
+                                        {fmtDateTime(r.effectiveAt)}
+                                      </TPTd>
 
-                              <TPTd>
-                                <div className="max-w-[420px] truncate" title={uLabel}>
-                                  {uLabel}
-                                </div>
-                              </TPTd>
+                                      <TPTd label="Usuario">
+                                        <div className="max-w-[420px] truncate" title={uLabel}>
+                                          {uLabel}
+                                        </div>
+                                      </TPTd>
 
-                              <TPTd className="text-right font-semibold tabular-nums whitespace-nowrap">
-                                {baseSym ? <span className="mr-1">{baseSym}</span> : null}
-                                {fmtRate(r.rate)}
-                              </TPTd>
+                                      <TPTd label="Valor" className="text-right font-semibold tabular-nums whitespace-nowrap">
+                                        {baseSym ? <span className="mr-1">{baseSym}</span> : null}
+                                        {fmtRateSmart(r.rate)}
+                                      </TPTd>
 
-                              <TPTd className="tabular-nums whitespace-nowrap">{fmtDateTime(r.createdAt)}</TPTd>
-                            </TPTr>
-                          );
-                        })}
-                      </TPTbody>
-                    </table>
-                  </TPTableEl>
-                </TPTableWrap>
+                                      <TPTd label="Creado" className="tabular-nums whitespace-nowrap">
+                                        {fmtDateTime(r.createdAt)}
+                                      </TPTd>
+                                    </tr>
+                                  );
+                                })
+                              )}
+                            </TPTbody>
+                          </TPTableElBase>
+                        </TPTableXScroll>
+                      </TPTable>
+                    </TPTableWrap>
+                  </div>
+                </div>
               )}
 
               {currency && baseCode ? (
-                <div className="mt-3 text-[11px] text-muted">
-                  Los valores están expresados en {baseCode}.
-                </div>
+                <div className="mt-3 text-[11px] text-muted">Los valores están expresados en {baseCode}.</div>
               ) : null}
             </div>
           </>

@@ -64,16 +64,16 @@ export function TPSearchInput({
 
   return (
     <div className={cn("relative w-full", wrapClassName)}>
-      {/* ✅ lupa centrada y sin bloquear clicks */}
-      <Search size={16} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted" />
+      <Search
+        size={16}
+        className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted"
+      />
 
       <input
         ref={inputRef}
-        type="search"
+        type="text"   // ✅ cambiado de "search" a "text"
         className={cn(
-          // ✅ IMPORTANTE: forzamos padding para que la lupa NO pise el texto aunque tp-input tenga padding con !important
           "tp-input !pl-10 !pr-10",
-          // ✅ altura default (se puede pisar desde className con h-11, etc.)
           "h-10",
           className
         )}
@@ -88,7 +88,7 @@ export function TPSearchInput({
         spellCheck={false}
       />
 
-      {showClear ? (
+      {showClear && (
         <button
           type="button"
           onClick={clearNow}
@@ -100,7 +100,7 @@ export function TPSearchInput({
         >
           <X className="h-4 w-4" />
         </button>
-      ) : null}
+      )}
     </div>
   );
 }

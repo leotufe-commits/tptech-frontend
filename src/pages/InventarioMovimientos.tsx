@@ -1,10 +1,15 @@
-import { useEffect, useMemo, useState } from "react";
-import { useInventory, type TipoMov } from "../context/InventoryContext";
-import { TP_INPUT, TP_SELECT, TP_BTN_PRIMARY, cn } from "../components/ui/tp";
+// src/pages/InventarioMovimientos.tsx
+import React, { useEffect, useMemo, useState } from "react";
+
+import TPSectionShell from "../components/ui/TPSectionShell";
+import { TPCard } from "../components/ui/TPCard";
+import TPSearchInput from "../components/ui/TPSearchInput";
+import { TPButton } from "../components/ui/TPButton";
+import { TPBadge } from "../components/ui/TPBadges";
 import {
   TPTableWrap,
   TPTableHeader,
-  TPTableEl,
+  TPTable,
   TPThead,
   TPTbody,
   TPTr,
@@ -12,244 +17,284 @@ import {
   TPTd,
   TPEmptyRow,
 } from "../components/ui/TPTable";
-import { TPTipoMovBadge } from "../components/ui/TPBadges";
 
-function fmtFecha(iso: string) {
-  try {
-    return new Date(iso).toLocaleString("es-AR", {
-      day: "2-digit",
-      month: "short",
-      year: "numeric",
-      hour: "2-digit",
-      minute: "2-digit",
-    });
-  } catch {
-    return iso;
+import { cn } from "../components/ui/tp";
+import { apiFetch } from "../lib/api";
+import { toast } from "../lib/toast";
+import { fmtNumberSmart } from "../lib/format";
+
+type MovementKind = "IN" | "OUT" | "TRANSFER" | "ADJUST";
+
+type MovementRow = {
+  id: string;
+  kind: MovementKind;
+  code?: string;
+  note?: string;
+  effectiveAt: string;
+
+  warehouse?: { id: string; name: string; code?: string } | null;
+  fromWarehouse?: { id: string; name: string; code?: string } | null;
+  toWarehouse?: { id: string; name: string; code?: string } | null;
+
+  createdBy?: { id: string; email: string; name?: string | null } | null;
+
+  lines?: Array<{ grams: any }> | null;
+
+  voidedAt?: string | null;
+  deletedAt?: string | null;
+};
+
+function s(v: any) {
+  return String(v ?? "").trim();
+}
+
+function toNum(v: any, fallback = 0) {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : fallback;
+}
+
+function fmtDateTime(v?: string) {
+  if (!v) return "—";
+  const d = new Date(v);
+  if (Number.isNaN(d.getTime())) return "—";
+  return d.toLocaleString("es-AR");
+}
+
+function movementTone(kind: string) {
+  switch (kind) {
+    case "IN":
+      return "success";
+    case "OUT":
+      return "danger";
+    case "TRANSFER":
+      return "info";
+    case "ADJUST":
+      return "warning";
+    default:
+      return "neutral";
   }
 }
 
-function onlyDigits(v: string) {
-  return v.replace(/[^\d]/g, "");
+function gramsForMovement(m: MovementRow) {
+  const total =
+    (m.lines ?? []).reduce((acc, l) => acc + toNum((l as any)?.grams, 0), 0) || 0;
+  return total;
+}
+
+function readQueryParam(name: string) {
+  try {
+    const u = new URL(window.location.href);
+    return u.searchParams.get(name) || "";
+  } catch {
+    return "";
+  }
+}
+
+async function fetchMovements(body: any) {
+  return apiFetch("/movimientos/list", { method: "POST", body }) as Promise<{
+    rows: MovementRow[];
+    total: number;
+    page: number;
+    pageSize: number;
+  }>;
 }
 
 export default function InventarioMovimientos() {
-  const { articulos, almacenes, movimientos, addMovimiento } = useInventory();
+  // ✅ si venimos desde un almacén (WarehouseViewModal)
+  const initialWarehouseId = useMemo(() => readQueryParam("warehouseId"), []);
 
-  const [tipo, setTipo] = useState<TipoMov>("Entrada");
-  const [articuloId, setArticuloId] = useState<string>("");
-  const [almacenId, setAlmacenId] = useState<string>("");
-  const [cantidad, setCantidad] = useState<string>("1");
-  const [observacion, setObservacion] = useState<string>("");
+  const [loading, setLoading] = useState(false);
+  const [rows, setRows] = useState<MovementRow[]>([]);
+  const [total, setTotal] = useState(0);
+
   const [q, setQ] = useState("");
-  const [errorTop, setErrorTop] = useState<string>("");
+  const [kind, setKind] = useState<MovementKind | "">("");
+  const [warehouseId, setWarehouseId] = useState<string>(initialWarehouseId);
 
-  useEffect(() => {
-    if (!articuloId && articulos.length > 0) {
-      setArticuloId(articulos[0].id);
-      return;
+  // pagination simple
+  const [page, setPage] = useState(1);
+  const pageSize = 30;
+
+  async function refresh() {
+    setLoading(true);
+    try {
+      const data = await fetchMovements({
+        page,
+        pageSize,
+        q: s(q),
+        kind: kind || null,
+        warehouseId: s(warehouseId) || null,
+        // from/to quedan listos para futuro (filtros por fecha)
+        from: null,
+        to: null,
+      });
+
+      setRows(Array.isArray(data?.rows) ? data.rows : []);
+      setTotal(Number(data?.total || 0));
+    } catch (e: any) {
+      toast.error(e?.message || "No se pudieron cargar movimientos.");
+      setRows([]);
+      setTotal(0);
+    } finally {
+      setLoading(false);
     }
-    if (articuloId && articulos.length > 0 && !articulos.some((a) => a.id === articuloId)) {
-      setArticuloId(articulos[0].id);
-    }
-  }, [articulos, articuloId]);
-
-  useEffect(() => {
-    if (!almacenId && almacenes.length > 0) {
-      setAlmacenId(almacenes[0].id);
-      return;
-    }
-    if (almacenId && almacenes.length > 0 && !almacenes.some((a) => a.id === almacenId)) {
-      setAlmacenId(almacenes[0].id);
-    }
-  }, [almacenes, almacenId]);
-
-  const filtered = useMemo(() => {
-    const qq = q.trim().toLowerCase();
-    if (!qq) return movimientos;
-
-    return movimientos.filter((m) => {
-      const a = articulos.find((x) => x.id === m.articuloId);
-      const al = almacenes.find((x) => x.id === m.almacenId);
-      return (
-        m.tipo.toLowerCase().includes(qq) ||
-        (a?.sku ?? "").toLowerCase().includes(qq) ||
-        (a?.nombre ?? "").toLowerCase().includes(qq) ||
-        (al?.codigo ?? "").toLowerCase().includes(qq) ||
-        (al?.nombre ?? "").toLowerCase().includes(qq) ||
-        (m.observacion ?? "").toLowerCase().includes(qq)
-      );
-    });
-  }, [movimientos, q, articulos, almacenes]);
-
-  function registrar() {
-    setErrorTop("");
-
-    if (!articuloId) return setErrorTop("Seleccioná un artículo.");
-    if (!almacenId) return setErrorTop("Seleccioná un almacén.");
-
-    const qty = Number(onlyDigits(cantidad));
-    if (!Number.isFinite(qty) || qty <= 0) return setErrorTop("Cantidad inválida.");
-
-    const res = addMovimiento({
-      tipo,
-      articuloId,
-      almacenId,
-      cantidad: qty,
-      observacion,
-    });
-
-    if (!res.ok) return setErrorTop(res.error || "No se pudo registrar.");
-
-    setCantidad("1");
-    setObservacion("");
   }
 
+  useEffect(() => {
+    refresh();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [page]);
+
+  // cuando cambian filtros → volvemos a page 1 y recargamos
+  useEffect(() => {
+    setPage(1);
+    const t = setTimeout(() => void refresh(), 160);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [q, kind, warehouseId]);
+
+  const pageInfo = useMemo(() => {
+    const from = (page - 1) * pageSize + 1;
+    const to = Math.min(page * pageSize, total);
+    if (total <= 0) return "—";
+    return `${from}-${to} de ${total}`;
+  }, [page, pageSize, total]);
+
   return (
-    <div className="space-y-6">
-      <div>
-        <div className="text-xs font-medium text-muted">Inventario</div>
-        <div className="text-lg font-semibold text-text">Movimientos</div>
-        <div className="mt-1 text-sm text-muted">
-          Entradas / salidas / ajustes (✅ impactan el stock real).
-        </div>
-      </div>
-
-      <div className="rounded-2xl border border-border bg-card p-5">
-        {errorTop && (
-          <div className="mb-4 rounded-xl border border-red-500/20 bg-red-500/10 px-4 py-3 text-sm font-medium text-red-400">
-            {errorTop}
-          </div>
-        )}
-
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-12">
-          <div className="md:col-span-3">
-            <label className="text-xs font-medium text-muted">Tipo</label>
-            <select value={tipo} onChange={(e) => setTipo(e.target.value as TipoMov)} className={TP_SELECT}>
-              <option value="Entrada">Entrada</option>
-              <option value="Salida">Salida</option>
-              <option value="Ajuste">Ajuste</option>
-            </select>
-          </div>
-
-          <div className="md:col-span-4">
-            <label className="text-xs font-medium text-muted">Artículo</label>
-            <select value={articuloId} onChange={(e) => setArticuloId(e.target.value)} className={TP_SELECT}>
-              {articulos.length === 0 ? (
-                <option value="">(Sin artículos)</option>
-              ) : (
-                articulos.map((a) => (
-                  <option key={a.id} value={a.id}>
-                    {a.sku} — {a.nombre}
-                  </option>
-                ))
-              )}
-            </select>
-          </div>
-
-          <div className="md:col-span-3">
-            <label className="text-xs font-medium text-muted">Almacén</label>
-            <select value={almacenId} onChange={(e) => setAlmacenId(e.target.value)} className={TP_SELECT}>
-              {almacenes.length === 0 ? (
-                <option value="">(Sin almacenes)</option>
-              ) : (
-                almacenes.map((a) => (
-                  <option key={a.id} value={a.id}>
-                    {a.codigo} — {a.nombre}
-                  </option>
-                ))
-              )}
-            </select>
-          </div>
-
-          <div className="md:col-span-2">
-            <label className="text-xs font-medium text-muted">Cantidad</label>
-            <input
-              value={cantidad}
-              onChange={(e) => setCantidad(onlyDigits(e.target.value))}
-              inputMode="numeric"
-              className={TP_INPUT}
+    <TPSectionShell
+      title="Movimientos"
+      subtitle="Entradas / salidas / transferencias / ajustes. (Historial + documento futuro)"
+    >
+      <TPCard className="mt-4">
+        <div className="flex flex-col gap-3 md:flex-row md:items-center">
+          <div className="w-full md:max-w-xl">
+            <TPSearchInput
+              value={q}
+              onChange={setQ}
+              placeholder="Buscar por nota, comprobante, usuario…"
             />
           </div>
 
-          <div className="md:col-span-10">
-            <label className="text-xs font-medium text-muted">Observación</label>
-            <input
-              value={observacion}
-              onChange={(e) => setObservacion(e.target.value)}
-              placeholder="Ej: ingreso por compra / salida a cliente / ajuste..."
-              className={TP_INPUT}
-            />
-          </div>
-
-          <div className="md:col-span-2 flex items-end">
-            <button
-              onClick={registrar}
-              className={cn("w-full", TP_BTN_PRIMARY)}
-              disabled={articulos.length === 0 || almacenes.length === 0}
+          <div className="flex w-full flex-col gap-2 md:flex-row md:items-center md:justify-end">
+            <select
+              className={cn(
+                "h-10 rounded-xl border border-border bg-card px-3 text-sm text-text outline-none",
+                "focus:ring-2 focus:ring-primary/20"
+              )}
+              value={kind}
+              onChange={(e) => setKind(e.target.value as any)}
             >
-              Registrar
-            </button>
+              <option value="">Todos</option>
+              <option value="IN">Entrada</option>
+              <option value="OUT">Salida</option>
+              <option value="TRANSFER">Transferencia</option>
+              <option value="ADJUST">Ajuste</option>
+            </select>
+
+            <input
+              className={cn(
+                "h-10 w-full rounded-xl border border-border bg-card px-3 text-sm text-text outline-none md:w-[260px]",
+                "focus:ring-2 focus:ring-primary/20"
+              )}
+              value={warehouseId}
+              onChange={(e) => setWarehouseId(e.target.value)}
+              placeholder="warehouseId (por ahora)"
+            />
+
+            <div className="text-xs text-muted md:ml-2">
+              {loading ? "Cargando…" : pageInfo}
+            </div>
           </div>
         </div>
-      </div>
 
-      <div className="rounded-2xl border border-border bg-card p-4">
-        <label className="text-xs font-medium text-muted">Buscar</label>
-        <input
-          value={q}
-          onChange={(e) => setQ(e.target.value)}
-          placeholder="Tipo, SKU, artículo, almacén, observación…"
-          className={TP_INPUT}
-        />
-      </div>
+        <div className="mt-3">
+          <TPTableWrap>
+            <TPTableHeader left={`Movimientos: ${rows.length}`} />
 
-      <TPTableWrap>
-        <TPTableHeader left={`Movimientos: ${filtered.length}`} />
-
-        <TPTableEl>
-          <TPThead>
-            <TPTr>
-              <TPTh>Fecha</TPTh>
-              <TPTh>Tipo</TPTh>
-              <TPTh>Artículo</TPTh>
-              <TPTh>Almacén</TPTh>
-              <TPTh>Cantidad</TPTh>
-              <TPTh>Observación</TPTh>
-            </TPTr>
-          </TPThead>
-
-          <TPTbody>
-            {filtered.map((m) => {
-              const a = articulos.find((x) => x.id === m.articuloId);
-              const al = almacenes.find((x) => x.id === m.almacenId);
-
-              return (
-                <TPTr key={m.id}>
-                  <TPTd className="text-muted">{fmtFecha(m.fechaISO)}</TPTd>
-                  <TPTd>
-                    <TPTipoMovBadge tipo={m.tipo} />
-                  </TPTd>
-
-                  <TPTd>
-                    <div className="font-semibold text-text">{a?.sku ?? "—"}</div>
-                    <div className="text-xs text-muted">{a?.nombre ?? ""}</div>
-                  </TPTd>
-
-                  <TPTd>
-                    <div className="font-semibold text-text">{al?.codigo ?? "—"}</div>
-                    <div className="text-xs text-muted">{al?.nombre ?? ""}</div>
-                  </TPTd>
-
-                  <TPTd className="font-semibold text-text">{m.cantidad}</TPTd>
-                  <TPTd className="text-muted">{m.observacion || "—"}</TPTd>
+            <TPTable>
+              <TPThead>
+                <TPTr>
+                  <TPTh>Fecha</TPTh>
+                  <TPTh>Tipo</TPTh>
+                  <TPTh>Comprobante</TPTh>
+                  <TPTh>Usuario</TPTh>
+                  <TPTh>Origen / Destino</TPTh>
+                  <TPTh className="text-right">Gramos</TPTh>
+                  <TPTh>Nota</TPTh>
                 </TPTr>
-              );
-            })}
+              </TPThead>
 
-            {filtered.length === 0 && <TPEmptyRow colSpan={6} text="No hay movimientos." />}
-          </TPTbody>
-        </TPTableEl>
-      </TPTableWrap>
-    </div>
+              <TPTbody>
+                {rows.map((m) => {
+                  const who = s(m.createdBy?.name || m.createdBy?.email) || "—";
+
+                  const wh =
+                    m.kind === "TRANSFER"
+                      ? `${s(m.fromWarehouse?.code || m.fromWarehouse?.name) || "—"} → ${
+                          s(m.toWarehouse?.code || m.toWarehouse?.name) || "—"
+                        }`
+                      : s(m.warehouse?.code || m.warehouse?.name) || "—";
+
+                  const grams = gramsForMovement(m);
+
+                  return (
+                    <TPTr
+                      key={m.id}
+                      className="cursor-pointer hover:bg-surface2/40"
+                      onClick={() => {
+                        // ✅ futuro: abrir documento del movimiento (modal o page)
+                        console.log("Abrir documento movimiento:", m.id);
+                      }}
+                    >
+                      <TPTd className="text-muted">{fmtDateTime(m.effectiveAt)}</TPTd>
+
+                      <TPTd>
+                        <TPBadge tone={movementTone(m.kind)}>{m.kind}</TPBadge>
+                      </TPTd>
+
+                      <TPTd className="text-muted">{s(m.code) || "—"}</TPTd>
+
+                      <TPTd>{who}</TPTd>
+
+                      <TPTd className="text-muted">{wh}</TPTd>
+
+                      <TPTd className="text-right font-semibold text-text">
+                        {fmtNumberSmart(grams)}
+                      </TPTd>
+
+                      <TPTd className="text-muted">{s(m.note) || "—"}</TPTd>
+                    </TPTr>
+                  );
+                })}
+
+                {!loading && rows.length === 0 && (
+                  <TPEmptyRow colSpan={7} text="No hay movimientos." />
+                )}
+              </TPTbody>
+            </TPTable>
+          </TPTableWrap>
+        </div>
+
+        <div className="mt-3 flex items-center justify-between">
+          <TPButton
+            variant="secondary"
+            disabled={loading || page <= 1}
+            onClick={() => setPage((p) => Math.max(1, p - 1))}
+          >
+            ← Anterior
+          </TPButton>
+
+          <div className="text-xs text-muted">Página {page}</div>
+
+          <TPButton
+            variant="secondary"
+            disabled={loading || page * pageSize >= total}
+            onClick={() => setPage((p) => p + 1)}
+          >
+            Siguiente →
+          </TPButton>
+        </div>
+      </TPCard>
+    </TPSectionShell>
   );
 }

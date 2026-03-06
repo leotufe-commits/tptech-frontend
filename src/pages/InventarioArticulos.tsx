@@ -14,7 +14,7 @@ import {
 import {
   TPTableWrap,
   TPTableHeader,
-  TPTableEl,
+  TPTable,
   TPThead,
   TPTbody,
   TPTr,
@@ -516,7 +516,7 @@ ${table}
           }
         />
 
-        <TPTableEl>
+        <TPTable>
           <table className="min-w-full text-left text-sm">
             <TPThead>
               <TPTr>
@@ -577,7 +577,7 @@ ${table}
               {pageItems.length === 0 && <TPEmptyRow colSpan={8} text="No hay resultados con esos filtros." />}
             </TPTbody>
           </table>
-        </TPTableEl>
+        </TPTable>
 
         <div className="flex items-center justify-between border-t border-border bg-surface2/30 px-5 py-4">
           <div className="text-xs text-muted">

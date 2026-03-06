@@ -1,5 +1,17 @@
-import { createContext, useContext, useMemo, useState, type ReactNode } from "react";
+// src/context/InventoryContext.tsx
+import React, { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
+import { apiFetch } from "../lib/api";
 
+/* =========================
+   Events (auto refresh)
+========================= */
+export const TPTECH_WAREHOUSES_CHANGED = "tptech:warehouses-changed";
+export const TPTECH_MOVEMENTS_CHANGED = "tptech:movements-changed";
+export const TPTECH_INVENTORY_CHANGED = "tptech:inventory-changed"; // fallback
+
+/* =========================
+   Types (legacy demo)
+========================= */
 export type Categoria = "Anillos" | "Cadenas" | "Aros" | "Pulseras" | "Dijes" | "Otros";
 export type Metal = "Oro amarillo" | "Oro blanco" | "Oro rosa" | "Plata";
 export type TipoMov = "Entrada" | "Salida" | "Ajuste";
@@ -35,6 +47,74 @@ export type Movimiento = {
   observacion: string;
 };
 
+/* =========================
+   Types (real backend)
+========================= */
+export type WarehouseRow = {
+  id: string;
+  jewelryId?: string;
+
+  name: string;
+  code: string;
+  notes?: string;
+
+  isActive: boolean;
+  deletedAt?: string | null;
+
+  createdAt?: string;
+  updatedAt?: string;
+
+  // compat UI (para pantallas viejas / mixto)
+  nombre?: string;
+  codigo?: string;
+  ubicacion?: string;
+  activo?: boolean;
+};
+
+type InventoryState = {
+  // ✅ real
+  almacenes: WarehouseRow[];
+
+  // (legacy demo)
+  articulos: Articulo[];
+  movimientos: Movimiento[];
+
+  // UX helpers
+  loadingWarehouses: boolean;
+  refetch: () => Promise<void>;
+
+  // favorites
+  favoriteWarehouseId: string | null;
+  setFavoriteWarehouse: (warehouseId: string) => Promise<void>;
+
+  // Warehouses CRUD (real)
+  createWarehouse: (data: { name: string; code?: string; notes?: string }) => Promise<WarehouseRow>;
+  updateWarehouse: (id: string, data: { name: string; code?: string; notes?: string }) => Promise<WarehouseRow>;
+  toggleWarehouseActive: (id: string) => Promise<WarehouseRow>;
+  deleteWarehouse: (id: string) => Promise<WarehouseRow>;
+
+  // helpers (legacy demo)
+  getStockTotal: (articulo: Articulo) => number;
+
+  // CRUD almacenes (legacy demo, mantenemos para no romper otras pantallas)
+  addAlmacen: (a: Omit<Almacen, "id">) => void;
+  updateAlmacen: (id: string, patch: Partial<Omit<Almacen, "id">>) => void;
+  deleteAlmacen: (id: string) => void;
+
+  // CRUD artículos (legacy demo)
+  addArticulo: (a: Omit<Articulo, "id" | "stockByAlmacen"> & { stockTotal?: number }) => void;
+  updateArticulo: (id: string, patch: Partial<Omit<Articulo, "id" | "stockByAlmacen">>) => void;
+  deleteArticulo: (id: string) => void;
+
+  // Movimientos (legacy demo)
+  addMovimiento: (m: Omit<Movimiento, "id" | "fechaISO">) => { ok: boolean; error?: string };
+};
+
+const Ctx = createContext<InventoryState | null>(null);
+
+/* =========================
+   Seed (legacy demo)
+========================= */
 const seedAlmacenes: Almacen[] = [
   { id: "a1", nombre: "Depósito Central", codigo: "DEP-CEN", ubicacion: "Casa Central", activo: true },
   { id: "a2", nombre: "Showroom", codigo: "SHW-01", ubicacion: "Local", activo: true },
@@ -73,53 +153,206 @@ const seedArticulos: Articulo[] = [
   },
 ];
 
-type InventoryState = {
-  almacenes: Almacen[];
-  articulos: Articulo[];
-  movimientos: Movimiento[];
-
-  getStockTotal: (articulo: Articulo) => number;
-
-  // CRUD almacenes
-  addAlmacen: (a: Omit<Almacen, "id">) => void;
-  updateAlmacen: (id: string, patch: Partial<Omit<Almacen, "id">>) => void;
-  deleteAlmacen: (id: string) => void;
-
-  // CRUD artículos
-  addArticulo: (a: Omit<Articulo, "id" | "stockByAlmacen"> & { stockTotal?: number }) => void;
-  updateArticulo: (id: string, patch: Partial<Omit<Articulo, "id" | "stockByAlmacen">>) => void;
-  deleteArticulo: (id: string) => void;
-
-  // Movimientos
-  addMovimiento: (m: Omit<Movimiento, "id" | "fechaISO">) => { ok: boolean; error?: string };
-};
-
-const Ctx = createContext<InventoryState | null>(null);
-
 function sumStock(stockByAlmacen: Record<string, number>) {
-  return Object.values(stockByAlmacen || {}).reduce(
-    (acc, n) => acc + (Number.isFinite(n) ? n : 0),
-    0
-  );
+  return Object.values(stockByAlmacen || {}).reduce((acc, n) => acc + (Number.isFinite(n) ? n : 0), 0);
 }
 
+function normWarehouseRow(x: any): WarehouseRow {
+  const name = String(x?.name ?? x?.nombre ?? "").trim();
+  const code = String(x?.code ?? x?.codigo ?? "").trim();
+  const notes = String(x?.notes ?? x?.ubicacion ?? x?.location ?? "").trim();
+
+  const isActive =
+    typeof x?.isActive === "boolean" ? x.isActive : typeof x?.activo === "boolean" ? x.activo : true;
+
+  const row: WarehouseRow = {
+    id: String(x?.id ?? ""),
+    jewelryId: x?.jewelryId ? String(x.jewelryId) : undefined,
+
+    name,
+    code,
+    notes,
+
+    isActive,
+    deletedAt: x?.deletedAt ?? null,
+
+    createdAt: x?.createdAt,
+    updatedAt: x?.updatedAt,
+
+    // compat
+    nombre: name,
+    codigo: code,
+    ubicacion: notes,
+    activo: isActive,
+  };
+
+  return row;
+}
+
+/* =========================
+   Provider
+========================= */
 export function InventoryProvider({ children }: { children: ReactNode }) {
-  const [almacenes, setAlmacenes] = useState<Almacen[]>(seedAlmacenes);
+  // ✅ real
+  const [warehouses, setWarehouses] = useState<WarehouseRow[]>([]);
+  const [favoriteWarehouseId, setFavoriteWarehouseId] = useState<string | null>(null);
+  const [loadingWarehouses, setLoadingWarehouses] = useState(false);
+
+  // (legacy demo)
+  const [almacenesDemo, setAlmacenesDemo] = useState<Almacen[]>(seedAlmacenes);
   const [articulos, setArticulos] = useState<Articulo[]>(seedArticulos);
   const [movimientos, setMovimientos] = useState<Movimiento[]>([]);
 
   const getStockTotal = (articulo: Articulo) => sumStock(articulo.stockByAlmacen);
 
+  async function refetch() {
+    setLoadingWarehouses(true);
+    try {
+      // ✅ Warehouses
+      // Preferimos /warehouses/list (POST) porque en TPTech solemos usar POST list
+      let rows: any[] = [];
+      try {
+        const r = await apiFetch("/warehouses/list", { method: "POST", body: {} });
+        rows = Array.isArray((r as any)?.rows) ? (r as any).rows : Array.isArray(r) ? (r as any) : [];
+      } catch {
+        // fallback si tu backend está usando GET
+        const r = await apiFetch("/warehouses", { method: "GET" as any });
+        rows = Array.isArray((r as any)?.rows) ? (r as any).rows : Array.isArray(r) ? (r as any) : [];
+      }
+
+      const normalized = (rows || []).map(normWarehouseRow);
+
+      // si todavía no hay backend o está vacío, mantenemos el demo como fallback visual (mixto)
+      if (normalized.length > 0) {
+        setWarehouses(normalized);
+      } else if (warehouses.length === 0) {
+        setWarehouses(
+          almacenesDemo.map((a) =>
+            normWarehouseRow({
+              id: a.id,
+              name: a.nombre,
+              code: a.codigo,
+              notes: a.ubicacion,
+              isActive: a.activo,
+              deletedAt: null,
+            })
+          )
+        );
+      }
+
+      // ✅ Favorite (si existe endpoint)
+      try {
+        const me = await apiFetch("/auth/me", { method: "GET" as any });
+        const fav = (me as any)?.user?.favoriteWarehouseId ?? (me as any)?.favoriteWarehouseId ?? null;
+        setFavoriteWarehouseId(fav ? String(fav) : null);
+      } catch {
+        // noop
+      }
+    } finally {
+      setLoadingWarehouses(false);
+    }
+  }
+
+  useEffect(() => {
+    void refetch();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    const onChange = () => void refetch();
+    window.addEventListener(TPTECH_WAREHOUSES_CHANGED, onChange);
+    window.addEventListener(TPTECH_MOVEMENTS_CHANGED, onChange);
+    window.addEventListener(TPTECH_INVENTORY_CHANGED, onChange);
+    return () => {
+      window.removeEventListener(TPTECH_WAREHOUSES_CHANGED, onChange);
+      window.removeEventListener(TPTECH_MOVEMENTS_CHANGED, onChange);
+      window.removeEventListener(TPTECH_INVENTORY_CHANGED, onChange);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // -------------------------
-  // CRUD ALMACENES
+  // REAL: Warehouses API
+  // -------------------------
+  async function createWarehouse(data: { name: string; code?: string; notes?: string }) {
+    // backend típico: POST /warehouses/create
+    const r = await apiFetch("/warehouses/create", { method: "POST", body: data });
+    const row = normWarehouseRow(r);
+    await refetch();
+    window.dispatchEvent(new CustomEvent(TPTECH_WAREHOUSES_CHANGED, { detail: { kind: "created", id: row.id } }));
+    return row;
+  }
+
+  async function updateWarehouse(id: string, data: { name: string; code?: string; notes?: string }) {
+    // backend típico: POST /warehouses/:id/update  (o PUT)
+    let r: any;
+    try {
+      r = await apiFetch(`/warehouses/${encodeURIComponent(id)}/update`, { method: "POST", body: data });
+    } catch {
+      r = await apiFetch(`/warehouses/${encodeURIComponent(id)}`, { method: "PUT" as any, body: data });
+    }
+    const row = normWarehouseRow(r);
+    await refetch();
+    window.dispatchEvent(new CustomEvent(TPTECH_WAREHOUSES_CHANGED, { detail: { kind: "updated", id } }));
+    return row;
+  }
+
+  async function toggleWarehouseActive(id: string) {
+    // backend típico: POST /warehouses/:id/toggle
+    let r: any;
+    try {
+      r = await apiFetch(`/warehouses/${encodeURIComponent(id)}/toggle`, { method: "POST", body: {} });
+    } catch {
+      r = await apiFetch(`/warehouses/${encodeURIComponent(id)}/toggle`, { method: "PATCH" as any, body: {} });
+    }
+    const row = normWarehouseRow(r);
+    await refetch();
+    window.dispatchEvent(
+      new CustomEvent(TPTECH_WAREHOUSES_CHANGED, { detail: { kind: "active-changed", id, isActive: row.isActive } })
+    );
+    return row;
+  }
+
+  async function deleteWarehouse(id: string) {
+    // backend típico: POST /warehouses/:id/delete  (soft delete)
+    let r: any;
+    try {
+      r = await apiFetch(`/warehouses/${encodeURIComponent(id)}/delete`, { method: "POST", body: {} });
+    } catch {
+      r = await apiFetch(`/warehouses/${encodeURIComponent(id)}`, { method: "DELETE" as any });
+    }
+    const row = normWarehouseRow(r);
+    await refetch();
+    window.dispatchEvent(new CustomEvent(TPTECH_WAREHOUSES_CHANGED, { detail: { kind: "deleted", id } }));
+    return row;
+  }
+
+  async function setFavoriteWarehouse(warehouseId: string) {
+    const id = String(warehouseId || "").trim();
+    if (!id) return;
+
+    // intentamos endpoint estándar
+    try {
+      await apiFetch("/users/me/favorite-warehouse", { method: "POST", body: { warehouseId: id } });
+      setFavoriteWarehouseId(id);
+      window.dispatchEvent(new CustomEvent(TPTECH_WAREHOUSES_CHANGED, { detail: { kind: "favorite", id } }));
+      return;
+    } catch {
+      // fallback: solo UI
+      setFavoriteWarehouseId(id);
+      window.dispatchEvent(new CustomEvent(TPTECH_WAREHOUSES_CHANGED, { detail: { kind: "favorite", id } }));
+    }
+  }
+
+  // -------------------------
+  // LEGACY DEMO CRUD (kept)
   // -------------------------
   function addAlmacen(a: Omit<Almacen, "id">) {
     const id = `al_${Date.now()}`;
     const nuevo: Almacen = { id, ...a };
 
-    setAlmacenes((prev) => [nuevo, ...prev]);
+    setAlmacenesDemo((prev) => [nuevo, ...prev]);
 
-    // asegurar la key en todos los artículos
     setArticulos((prev) =>
       prev.map((art) => ({
         ...art,
@@ -132,11 +365,11 @@ export function InventoryProvider({ children }: { children: ReactNode }) {
   }
 
   function updateAlmacen(id: string, patch: Partial<Omit<Almacen, "id">>) {
-    setAlmacenes((prev) => prev.map((a) => (a.id === id ? { ...a, ...patch } : a)));
+    setAlmacenesDemo((prev) => prev.map((a) => (a.id === id ? { ...a, ...patch } : a)));
   }
 
   function deleteAlmacen(id: string) {
-    setAlmacenes((prev) => prev.filter((a) => a.id !== id));
+    setAlmacenesDemo((prev) => prev.filter((a) => a.id !== id));
 
     setArticulos((prev) =>
       prev.map((art) => {
@@ -149,19 +382,16 @@ export function InventoryProvider({ children }: { children: ReactNode }) {
     setMovimientos((prev) => prev.filter((m) => m.almacenId !== id));
   }
 
-  // -------------------------
-  // CRUD ARTICULOS
-  // -------------------------
   function addArticulo(a: Omit<Articulo, "id" | "stockByAlmacen"> & { stockTotal?: number }) {
     const id = `p_${Date.now()}`;
-    const firstAlmacenId = almacenes[0]?.id;
+    const firstAlmacenId = almacenesDemo[0]?.id;
 
     const stockTotal = Math.max(0, a.stockTotal ?? 0);
     const stockByAlmacen: Record<string, number> = {};
 
     if (firstAlmacenId) stockByAlmacen[firstAlmacenId] = stockTotal;
 
-    for (const al of almacenes) {
+    for (const al of almacenesDemo) {
       if (stockByAlmacen[al.id] == null) stockByAlmacen[al.id] = 0;
     }
 
@@ -189,12 +419,9 @@ export function InventoryProvider({ children }: { children: ReactNode }) {
     setMovimientos((prev) => prev.filter((m) => m.articuloId !== id));
   }
 
-  // -------------------------
-  // MOVIMIENTOS
-  // -------------------------
   function addMovimiento(m: Omit<Movimiento, "id" | "fechaISO">) {
     const art = articulos.find((a) => a.id === m.articuloId);
-    const al = almacenes.find((a) => a.id === m.almacenId);
+    const al = almacenesDemo.find((a) => a.id === m.almacenId);
     if (!art) return { ok: false, error: "Artículo no encontrado." };
     if (!al) return { ok: false, error: "Almacén no encontrado." };
 
@@ -239,11 +466,28 @@ export function InventoryProvider({ children }: { children: ReactNode }) {
     return { ok: true as const };
   }
 
+  // ✅ Lo que exportamos como "almacenes" para la app es el modelo REAL normalizado
+  const almacenes = warehouses.length > 0 ? warehouses : [];
+
   const value = useMemo<InventoryState>(
     () => ({
       almacenes,
+
       articulos,
       movimientos,
+
+      loadingWarehouses,
+      refetch,
+
+      favoriteWarehouseId,
+      setFavoriteWarehouse,
+
+      createWarehouse,
+      updateWarehouse,
+      toggleWarehouseActive,
+      deleteWarehouse,
+
+      // legacy
       getStockTotal,
       addAlmacen,
       updateAlmacen,
@@ -253,7 +497,8 @@ export function InventoryProvider({ children }: { children: ReactNode }) {
       deleteArticulo,
       addMovimiento,
     }),
-    [almacenes, articulos, movimientos]
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [almacenes, articulos, movimientos, loadingWarehouses, favoriteWarehouseId]
   );
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;

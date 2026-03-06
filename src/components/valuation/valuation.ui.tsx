@@ -46,12 +46,19 @@ export function Pill({
 /* =========================
    UI: Input (wrapper)
    ✅ usa TP_INPUT del sistema
+   ✅ BLINDAJE: no permitir children ni dangerouslySetInnerHTML
+   ✅ MISMO COLOR que TPComboCreatable (bg-white)
 ========================= */
-export function Input({
-  className,
-  ...props
-}: React.InputHTMLAttributes<HTMLInputElement>) {
-  return <input {...props} className={cn(TP_INPUT, className)} />;
+type SafeInputProps = Omit<
+  React.InputHTMLAttributes<HTMLInputElement>,
+  "children" | "dangerouslySetInnerHTML"
+> & {
+  children?: never;
+  dangerouslySetInnerHTML?: never;
+};
+
+export function Input({ className, ...props }: SafeInputProps) {
+  return <input {...props} className={cn(TP_INPUT, "bg-white", className)} />;
 }
 
 /* =========================
@@ -112,11 +119,7 @@ export function ModalShell({
       footer={
         footer ? (
           <>
-            {subtitle ? (
-              <div className={cnBase("mr-auto text-xs text-muted")}>{subtitle}</div>
-            ) : (
-              <div className="mr-auto" />
-            )}
+            {subtitle ? <div className={cnBase("mr-auto text-xs text-muted")}>{subtitle}</div> : <div className="mr-auto" />}
             {footer}
           </>
         ) : subtitle ? (

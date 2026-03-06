@@ -13,25 +13,27 @@ import {
   Shield,
   ChevronLeft,
   ChevronRight,
-  Eye, // ✅ view icon
-  Mail, // ✅ invite
+  Eye,
+  Mail,
 } from "lucide-react";
 
 import { cn, initialsFrom, absUrl } from "./users.ui";
 import { SortArrows } from "../ui/TPSort";
 import { TPBadge } from "../ui/TPBadges";
 
-import { TPTableWrap, TPTableEl, TPThead, TPTbody, TPTh, TPEmptyRow } from "../ui/TPTable";
+import {
+  TPTableWrap,
+  TPTableEl,
+  TPThead,
+  TPTbody,
+  TPTh,
+  TPEmptyRow,
+  TPTableFooter,
+} from "../ui/TPTable";
 
 import type { UserListItem } from "../../services/users";
-
-// ✅ Prefetch real (evita depender del prop undefined)
 import { prefetchUserDetail as prefetchUserDetailInternal } from "./users.data";
-
-// ✅ Descarga con cookie httpOnly (NO <a href> sin credenciales)
 import { downloadUserAttachmentFile } from "../../lib/users.api";
-
-// ✅ API (cookie httpOnly)
 import { apiFetch } from "../../lib/api";
 
 /* ======================================================
@@ -176,7 +178,6 @@ type Props = {
   openEdit: (u: UserListItem) => Promise<void> | void;
   askDelete: (u: UserListItem) => void;
 
-  // ✅ lo dejamos opcional para compatibilidad
   prefetchUserDetail?: (id: string) => Promise<any>;
 };
 
@@ -221,7 +222,7 @@ export default function UsersTable(props: Props) {
     setSortDir((d) => (d === "asc" ? "desc" : "asc"));
   }
 
-  // ✅ Override local para que el listado se sincronice aunque no hayas refetch del GET /users
+  // ✅ Override local para que el listado se sincronice aunque no hayas refetch
   const pinOverridesRef = useRef<Map<string, PinOverride>>(new Map());
   const [pinTick, setPinTick] = useState(0);
 
@@ -342,12 +343,10 @@ export default function UsersTable(props: Props) {
     "focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-primary/20";
 
   const disabledCls = "opacity-40 cursor-not-allowed hover:bg-transparent";
-
   const specialPillCls = "border-violet-500/30 bg-violet-500/10 text-violet-300 dark:text-violet-200";
 
   /* ======================================================
-     INVITE (ADMIN)  POST /users/:id/invite
-     ✅ FIX: busy en state (re-render garantizado)
+     INVITE
   ====================================================== */
   const [inviteBusyIds, setInviteBusyIds] = useState<Set<string>>(() => new Set());
   const [inviteFlash, setInviteFlash] = useState<{ type: "ok" | "err"; msg: string } | null>(null);
@@ -398,7 +397,6 @@ export default function UsersTable(props: Props) {
     const id = String(u?.id || "").trim();
     if (!id) return;
 
-    // anti doble click
     if (isInviteBusy(id)) return;
 
     setInviteBusy(id, true);
@@ -413,7 +411,6 @@ export default function UsersTable(props: Props) {
     } catch (e: any) {
       flashInvite(e?.message || "No se pudo enviar la invitación.", "err", 3500);
     } finally {
-      // cooldown breve para evitar spam
       const prevT = inviteCooldownRef.current.get(id);
       if (prevT) {
         try {
@@ -431,7 +428,7 @@ export default function UsersTable(props: Props) {
   }
 
   /* ======================================================
-     Attachments panel (clic en 📎)
+     Attachments panel
   ====================================================== */
   type AttInfo = { has: boolean; count: number; items?: AttachmentItem[] };
 
@@ -544,6 +541,11 @@ export default function UsersTable(props: Props) {
     }
   }
 
+  const usersLegend = useMemo(() => {
+    const n = sortedUsers.length;
+    return `${n} ${n === 1 ? "Usuario" : "Usuarios"}`;
+  }, [sortedUsers.length]);
+
   return (
     <TPTableWrap className="w-full">
       {/* Flash msg */}
@@ -582,7 +584,6 @@ export default function UsersTable(props: Props) {
             const canEditThis = (canAdmin || isMe) && true;
             const canDeleteThis = canAdmin && !isMe;
 
-            // ✅ INVITE: solo admin + PENDING + no vos
             const canInviteThis = canAdmin && !isMe && isPending;
             const inviteBusy = isInviteBusy(String(u.id)) || false;
 
@@ -633,11 +634,7 @@ export default function UsersTable(props: Props) {
 
                         {pinHas ? (
                           <TPBadge tone={pinEnabled ? "success" : "danger"} className="gap-1">
-                            {pinEnabled ? (
-                              <KeyRound className="h-3.5 w-3.5" />
-                            ) : (
-                              <Shield className="h-3.5 w-3.5" />
-                            )}
+                            {pinEnabled ? <KeyRound className="h-3.5 w-3.5" /> : <Shield className="h-3.5 w-3.5" />}
                             {pinEnabled ? "PIN habilitado" : "PIN deshabilitado"}
                           </TPBadge>
                         ) : (
@@ -678,7 +675,6 @@ export default function UsersTable(props: Props) {
                       <Eye className="h-4 w-4" />
                     </button>
 
-                    {/* ✅ INVITAR */}
                     <button
                       type="button"
                       className={cn(iconBtnBase, (!canInviteThis || inviteBusy) && disabledCls)}
@@ -763,8 +759,12 @@ export default function UsersTable(props: Props) {
           })
         )}
 
-        <div className="border-t border-border px-2 py-3 flex items-center justify-between">
-          <div className="text-xs text-muted">{totalLabel}</div>
+        {/* ✅ Footer MOBILE (Usuarios + paginado) */}
+        <TPTableFooter className="flex items-center justify-between gap-3 px-4 py-3">
+          <div className="text-xs text-muted">
+            <span className="text-text font-medium">{usersLegend}</span>
+            {totalLabel ? <span className="ml-2">• {totalLabel}</span> : null}
+          </div>
 
           <div className="flex items-center gap-2">
             <button
@@ -791,7 +791,7 @@ export default function UsersTable(props: Props) {
               <ChevronRight className="h-4 w-4" />
             </button>
           </div>
-        </div>
+        </TPTableFooter>
       </div>
 
       {/* =========================
@@ -887,7 +887,6 @@ export default function UsersTable(props: Props) {
                   const canEditThis = (canAdmin || isMe) && true;
                   const canDeleteThis = canAdmin && !isMe;
 
-                  // ✅ INVITE: solo admin + PENDING + no vos
                   const canInviteThis = canAdmin && !isMe && isPending;
                   const inviteBusy = isInviteBusy(String(u.id)) || false;
 
@@ -905,7 +904,11 @@ export default function UsersTable(props: Props) {
                       <td className="px-5 py-3 align-top">
                         <button
                           type="button"
-                          className={cn("w-full text-left", "rounded-xl", "hover:opacity-95 active:scale-[0.995] transition")}
+                          className={cn(
+                            "w-full text-left",
+                            "rounded-xl",
+                            "hover:opacity-95 active:scale-[0.995] transition"
+                          )}
                           onClick={() => openView(u)}
                           title="Ver usuario"
                         >
@@ -992,7 +995,9 @@ export default function UsersTable(props: Props) {
 
                       <td className="px-5 py-3 align-top">
                         {u.favoriteWarehouseId ? (
-                          <TPBadge tone="neutral">⭐ {warehouseLabelById(u.favoriteWarehouseId) ?? u.favoriteWarehouseId}</TPBadge>
+                          <TPBadge tone="neutral">
+                            ⭐ {warehouseLabelById(u.favoriteWarehouseId) ?? u.favoriteWarehouseId}
+                          </TPBadge>
                         ) : (
                           <span className="text-muted">—</span>
                         )}
@@ -1004,7 +1009,6 @@ export default function UsersTable(props: Props) {
                             <Eye className="h-4 w-4" />
                           </button>
 
-                          {/* ✅ INVITAR */}
                           <button
                             type="button"
                             className={cn(iconBtnBase, (!canInviteThis || inviteBusy) && disabledCls)}
@@ -1079,11 +1083,7 @@ export default function UsersTable(props: Props) {
                               if (canDeleteThis) askDelete(u);
                             }}
                             title={
-                              !canAdmin
-                                ? "Sin permisos de administrador"
-                                : isMe
-                                ? "No podés eliminar tu propio usuario"
-                                : "Eliminar usuario"
+                              !canAdmin ? "Sin permisos de administrador" : isMe ? "No podés eliminar tu propio usuario" : "Eliminar usuario"
                             }
                           >
                             <Trash2 className="h-4 w-4" />
@@ -1099,11 +1099,21 @@ export default function UsersTable(props: Props) {
         </TPTableEl>
       </div>
 
-      <div className="hidden sm:flex border-t border-border px-4 py-3 items-center justify-between">
-        <div className="text-xs text-muted">{totalLabel}</div>
+      {/* ✅ Footer DESKTOP (Usuarios + paginado) */}
+      <TPTableFooter className="hidden sm:flex items-center justify-between gap-3 px-4 py-3">
+        <div className="text-xs text-muted">
+          <span className="text-text font-medium">{usersLegend}</span>
+          {totalLabel ? <span className="ml-2">• {totalLabel}</span> : null}
+        </div>
 
         <div className="flex items-center gap-2">
-          <button className={cn(iconBtnBase, page <= 1 && disabledCls)} type="button" disabled={page <= 1} onClick={onPrev} title="Anterior">
+          <button
+            className={cn(iconBtnBase, page <= 1 && disabledCls)}
+            type="button"
+            disabled={page <= 1}
+            onClick={onPrev}
+            title="Anterior"
+          >
             <ChevronLeft className="h-4 w-4" />
           </button>
 
@@ -1111,11 +1121,17 @@ export default function UsersTable(props: Props) {
             <b className="text-text">{page}</b> / {totalPages}
           </div>
 
-          <button className={cn(iconBtnBase, page >= totalPages && disabledCls)} type="button" disabled={page >= totalPages} onClick={onNext} title="Siguiente">
+          <button
+            className={cn(iconBtnBase, page >= totalPages && disabledCls)}
+            type="button"
+            disabled={page >= totalPages}
+            onClick={onNext}
+            title="Siguiente"
+          >
             <ChevronRight className="h-4 w-4" />
           </button>
         </div>
-      </div>
+      </TPTableFooter>
 
       {attPanelUserId && (
         <div className="fixed inset-0 z-[85] flex items-center justify-center px-4" onClick={closeAttPanel}>

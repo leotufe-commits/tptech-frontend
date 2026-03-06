@@ -1,5 +1,5 @@
 // src/pages/PerfilJoyeria/PerfilJoyeriaEdit.tsx
-import React, { useEffect, useRef } from "react";
+import React, { useCallback, useEffect, useMemo, useRef } from "react";
 
 import TPComboCreatable from "../../components/ui/TPComboCreatable";
 import TPInput from "../../components/ui/TPInput";
@@ -50,59 +50,110 @@ function HelpText(props: { className?: string; children: React.ReactNode }) {
   );
 }
 
+function hasAnyOpenAriaModal() {
+  try {
+    return Boolean(document.querySelector('[role="dialog"][aria-modal="true"]'));
+  } catch {
+    return false;
+  }
+}
+
+const cardStyle: React.CSSProperties = {
+  border: "1px solid var(--border)",
+  background: "var(--card)",
+  boxShadow: "var(--shadow)",
+};
+
+const boxStyle: React.CSSProperties = {
+  border: "1px solid var(--border)",
+};
+
 export default function PerfilJoyeriaEdit(p: Props) {
-  // ✅ evita crash si algo viene undefined en primer render
   const catLoading = p.catLoading ?? {};
 
   const busyAttachments = p.readonly || p.uploadingAttachments || Boolean(p.deletingAttId);
   const hasSaved = (p.savedAttachments || []).length > 0;
 
-  function openInNewTab(url: string) {
+  const openInNewTab = useCallback((url: string) => {
     try {
       window.open(url, "_blank", "noreferrer");
     } catch {}
-  }
+  }, []);
 
-  async function downloadFile(url: string, filename?: string) {
-    const safeName = String(filename || "archivo").trim() || "archivo";
-    try {
-      const res = await fetch(url, { credentials: "include" });
-      const blob = await res.blob();
-      const blobUrl = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = blobUrl;
-      a.download = safeName;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      setTimeout(() => URL.revokeObjectURL(blobUrl), 10_000);
-    } catch {
-      openInNewTab(url);
-    }
-  }
+  const downloadFile = useCallback(
+    async (url: string, filename?: string) => {
+      const safeName = String(filename || "archivo").trim() || "archivo";
+      try {
+        const res = await fetch(url, { credentials: "include" });
+        const blob = await res.blob();
+        const blobUrl = URL.createObjectURL(blob);
 
-  const attachmentItems: TPAttachmentItem[] = (p.savedAttachments || []).map((a: any) => ({
-    id: String(a?.id ?? ""),
-    name: String(a?.filename ?? a?.name ?? "Archivo"),
-    size: typeof a?.size === "number" ? a.size : undefined,
-    url: absUrl(String(a?.url ?? "")) || undefined,
-    mimeType: String(a?.mimeType ?? a?.mimetype ?? a?.type ?? "") || undefined,
-  }));
+        const a = document.createElement("a");
+        a.href = blobUrl;
+        a.download = safeName;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
 
-  // ✅ TAB horizontal: primero izquierda, luego derecha, luego domicilio, luego notas, luego adjuntos
+        window.setTimeout(() => URL.revokeObjectURL(blobUrl), 10_000);
+      } catch {
+        openInNewTab(url);
+      }
+    },
+    [openInNewTab]
+  );
+
+  const attachmentItems: TPAttachmentItem[] = useMemo(() => {
+    return (p.savedAttachments || []).map((a: any) => ({
+      id: String(a?.id ?? ""),
+      name: String(a?.filename ?? a?.name ?? "Archivo"),
+      size: typeof a?.size === "number" ? a.size : undefined,
+      url: absUrl(String(a?.url ?? "")) || undefined,
+      mimeType: String(a?.mimeType ?? a?.mimetype ?? a?.type ?? "") || undefined,
+    }));
+  }, [p.savedAttachments]);
+
+  // ✅ TAB horizontal
   let t = 1;
 
-  // ✅ Auto-focus al primer campo (Razón social = tabIndex 1)
+  const disabledProps = useMemo(
+    () => ({
+      readOnly: p.readonly,
+      disabled: p.readonly,
+    }),
+    [p.readonly]
+  );
+
+  const comboProps = useCallback(
+    (type: CatalogType, items: CatalogItem[]) => {
+      return {
+        mode: "edit" as const,
+        type,
+        items,
+        loading: !!catLoading?.[String(type)],
+        onRefresh: () => p.ensureCatalog(type),
+        allowCreate: p.allowCreate,
+        onCreate: (label: string) => p.createAndRefresh(type, label),
+        disabled: p.readonly,
+      };
+    },
+    [catLoading, p.ensureCatalog, p.allowCreate, p.createAndRefresh, p.readonly]
+  );
+
+  // ✅ Autofocus al primer campo (tabIndex 1) sin robar foco si hay modal arriba
   const rootRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (p.readonly) return;
-    const el = rootRef.current;
-    if (!el) return;
-
-    const target = el.querySelector('[tabindex="1"]') as HTMLElement | null;
-    if (!target) return;
 
     const id = window.setTimeout(() => {
+      if (hasAnyOpenAriaModal()) return;
+
+      const el = rootRef.current;
+      if (!el) return;
+
+      const target = el.querySelector('[tabindex="1"]') as HTMLElement | null;
+      if (!target) return;
+
       try {
         target.focus();
       } catch {}
@@ -112,18 +163,10 @@ export default function PerfilJoyeriaEdit(p: Props) {
   }, [p.readonly]);
 
   return (
-    <div
-      ref={rootRef}
-      className="rounded-2xl p-4 sm:p-6"
-      style={{
-        border: "1px solid var(--border)",
-        background: "var(--card)",
-        boxShadow: "var(--shadow)",
-      }}
-    >
+    <div ref={rootRef} className="rounded-2xl p-4 sm:p-6" style={cardStyle}>
       <div className="grid grid-cols-1 gap-8 lg:grid-cols-2">
         {/* =========================
-            IZQUIERDA (primero TAB)
+            IZQUIERDA
         ========================= */}
         <div className="space-y-4">
           <TPField label="Razón social">
@@ -131,8 +174,7 @@ export default function PerfilJoyeriaEdit(p: Props) {
               tabIndex={t++}
               value={p.company.legalName}
               onChange={(v) => p.setCompanyField("legalName", v)}
-              readOnly={p.readonly}
-              disabled={p.readonly}
+              {...disabledProps}
             />
           </TPField>
 
@@ -141,16 +183,9 @@ export default function PerfilJoyeriaEdit(p: Props) {
               <TPField label="Condición de IVA">
                 <TPComboCreatable
                   tabIndex={t++}
-                  mode="edit"
-                  type="IVA_CONDITION"
-                  items={p.catIva}
-                  loading={!!catLoading?.["IVA_CONDITION"]}
-                  onRefresh={() => p.ensureCatalog("IVA_CONDITION")}
+                  {...comboProps("IVA_CONDITION", p.catIva)}
                   value={p.company.ivaCondition}
                   onChange={(v) => p.setCompanyField("ivaCondition", v)}
-                  allowCreate={p.allowCreate}
-                  onCreate={(label) => p.createAndRefresh("IVA_CONDITION", label)}
-                  disabled={p.readonly}
                 />
               </TPField>
             </div>
@@ -162,8 +197,7 @@ export default function PerfilJoyeriaEdit(p: Props) {
                   value={p.company.cuit}
                   onChange={(v) => p.setCompanyField("cuit", v)}
                   onlyDigits
-                  readOnly={p.readonly}
-                  disabled={p.readonly}
+                  {...disabledProps}
                 />
               </TPField>
             </div>
@@ -174,14 +208,13 @@ export default function PerfilJoyeriaEdit(p: Props) {
               tabIndex={t++}
               value={p.company.website}
               onChange={(v) => p.setCompanyField("website", v)}
-              readOnly={p.readonly}
-              disabled={p.readonly}
+              {...disabledProps}
             />
           </TPField>
         </div>
 
         {/* =========================
-            DERECHA (después TAB)
+            DERECHA
         ========================= */}
         <div className="space-y-4">
           <TPField label="Nombre de Fantasía">
@@ -189,8 +222,7 @@ export default function PerfilJoyeriaEdit(p: Props) {
               tabIndex={t++}
               value={p.existing.name}
               onChange={(v) => p.setExistingField("name", v)}
-              readOnly={p.readonly}
-              disabled={p.readonly}
+              {...disabledProps}
             />
           </TPField>
 
@@ -199,16 +231,9 @@ export default function PerfilJoyeriaEdit(p: Props) {
               <TPField label="Prefijo">
                 <TPComboCreatable
                   tabIndex={t++}
-                  mode="edit"
-                  type="PHONE_PREFIX"
-                  items={p.catPrefix}
-                  loading={!!catLoading?.["PHONE_PREFIX"]}
-                  onRefresh={() => p.ensureCatalog("PHONE_PREFIX")}
+                  {...comboProps("PHONE_PREFIX", p.catPrefix)}
                   value={p.existing.phoneCountry}
                   onChange={(v) => p.setExistingField("phoneCountry", v)}
-                  allowCreate={p.allowCreate}
-                  onCreate={(label) => p.createAndRefresh("PHONE_PREFIX", label)}
-                  disabled={p.readonly}
                 />
               </TPField>
             </div>
@@ -219,8 +244,7 @@ export default function PerfilJoyeriaEdit(p: Props) {
                   tabIndex={t++}
                   value={p.existing.phoneNumber}
                   onChange={(v) => p.setExistingField("phoneNumber", v)}
-                  readOnly={p.readonly}
-                  disabled={p.readonly}
+                  {...disabledProps}
                 />
               </TPField>
             </div>
@@ -231,17 +255,16 @@ export default function PerfilJoyeriaEdit(p: Props) {
               tabIndex={t++}
               value={p.company.email}
               onChange={(v) => p.setCompanyField("email", v)}
-              readOnly={p.readonly}
-              disabled={p.readonly}
+              {...disabledProps}
             />
           </TPField>
         </div>
       </div>
 
       {/* =========================
-          DOMICILIO (sigue TAB)
+          DOMICILIO
       ========================= */}
-      <div className="mt-6 rounded-2xl p-4 sm:p-5" style={{ border: "1px solid var(--border)" }}>
+      <div className="mt-6 rounded-2xl p-4 sm:p-5" style={boxStyle}>
         <div className="font-semibold text-sm mb-4">Domicilio</div>
 
         <div className="grid grid-cols-1 md:grid-cols-12 gap-4">
@@ -251,8 +274,7 @@ export default function PerfilJoyeriaEdit(p: Props) {
                 tabIndex={t++}
                 value={p.existing.street}
                 onChange={(v) => p.setExistingField("street", v)}
-                readOnly={p.readonly}
-                disabled={p.readonly}
+                {...disabledProps}
               />
             </TPField>
           </div>
@@ -263,8 +285,7 @@ export default function PerfilJoyeriaEdit(p: Props) {
                 tabIndex={t++}
                 value={p.existing.number}
                 onChange={(v) => p.setExistingField("number", v)}
-                readOnly={p.readonly}
-                disabled={p.readonly}
+                {...disabledProps}
               />
             </TPField>
           </div>
@@ -273,16 +294,9 @@ export default function PerfilJoyeriaEdit(p: Props) {
             <TPField label="Ciudad">
               <TPComboCreatable
                 tabIndex={t++}
-                mode="edit"
-                type="CITY"
-                items={p.catCity}
-                loading={!!catLoading?.["CITY"]}
-                onRefresh={() => p.ensureCatalog("CITY")}
+                {...comboProps("CITY", p.catCity)}
                 value={p.existing.city}
                 onChange={(v) => p.setExistingField("city", v)}
-                allowCreate={p.allowCreate}
-                onCreate={(label) => p.createAndRefresh("CITY", label)}
-                disabled={p.readonly}
               />
             </TPField>
           </div>
@@ -291,16 +305,9 @@ export default function PerfilJoyeriaEdit(p: Props) {
             <TPField label="Provincia">
               <TPComboCreatable
                 tabIndex={t++}
-                mode="edit"
-                type="PROVINCE"
-                items={p.catProvince}
-                loading={!!catLoading?.["PROVINCE"]}
-                onRefresh={() => p.ensureCatalog("PROVINCE")}
+                {...comboProps("PROVINCE", p.catProvince)}
                 value={p.existing.province}
                 onChange={(v) => p.setExistingField("province", v)}
-                allowCreate={p.allowCreate}
-                onCreate={(label) => p.createAndRefresh("PROVINCE", label)}
-                disabled={p.readonly}
               />
             </TPField>
           </div>
@@ -311,8 +318,7 @@ export default function PerfilJoyeriaEdit(p: Props) {
                 tabIndex={t++}
                 value={p.existing.postalCode}
                 onChange={(v) => p.setExistingField("postalCode", v)}
-                readOnly={p.readonly}
-                disabled={p.readonly}
+                {...disabledProps}
               />
             </TPField>
           </div>
@@ -321,16 +327,9 @@ export default function PerfilJoyeriaEdit(p: Props) {
             <TPField label="País">
               <TPComboCreatable
                 tabIndex={t++}
-                mode="edit"
-                type="COUNTRY"
-                items={p.catCountry}
-                loading={!!catLoading?.["COUNTRY"]}
-                onRefresh={() => p.ensureCatalog("COUNTRY")}
+                {...comboProps("COUNTRY", p.catCountry)}
                 value={p.existing.country}
                 onChange={(v) => p.setExistingField("country", v)}
-                allowCreate={p.allowCreate}
-                onCreate={(label) => p.createAndRefresh("COUNTRY", label)}
-                disabled={p.readonly}
               />
             </TPField>
           </div>
@@ -338,10 +337,10 @@ export default function PerfilJoyeriaEdit(p: Props) {
       </div>
 
       {/* =========================
-          NOTAS + ADJUNTOS (final TAB)
+          NOTAS + ADJUNTOS
       ========================= */}
       <div className="mt-6 grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <div className="rounded-2xl p-4 sm:p-5" style={{ border: "1px solid var(--border)" }}>
+        <div className="rounded-2xl p-4 sm:p-5" style={boxStyle}>
           <div className="font-semibold text-sm mb-3">Notas</div>
 
           <TPTextarea
@@ -356,7 +355,7 @@ export default function PerfilJoyeriaEdit(p: Props) {
           <HelpText className="mt-2">Podés dejar aclaraciones internas sobre la empresa.</HelpText>
         </div>
 
-        <div className="rounded-2xl p-4 sm:p-5" style={{ border: "1px solid var(--border)" }}>
+        <div className="rounded-2xl p-4 sm:p-5" style={boxStyle}>
           <div className="font-semibold text-sm mb-3">Adjuntos</div>
 
           <div className="space-y-3">

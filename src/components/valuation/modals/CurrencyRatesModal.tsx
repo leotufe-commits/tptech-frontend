@@ -5,6 +5,7 @@ import { Loader2, Save, X } from "lucide-react";
 import Modal from "../../ui/Modal";
 import { TPCard } from "../../ui/TPCard";
 import { TPButton } from "../../ui/TPButton";
+import TPInput from "../../ui/TPInput";
 import TPNumberInput from "../../ui/TPNumberInput";
 import { cn } from "../../ui/tp";
 
@@ -77,7 +78,7 @@ export default function CurrencyRatesModal({
   // ✅ para focus/select cuando ya está listo el valor
   const [rateHydrated, setRateHydrated] = useState(false);
 
-  // currency fields (se mantienen por compatibilidad con submit actual)
+  // ✅ campos editables de moneda
   const [code, setCode] = useState("");
   const [name, setName] = useState("");
   const [symbol, setSymbol] = useState("");
@@ -89,8 +90,8 @@ export default function CurrencyRatesModal({
   const reqSeqRef = useRef(0);
 
   const title = useMemo(() => {
-    if (!currency) return "Tipo de cambio";
-    return `Tipo de cambio · ${currency.code}`;
+    if (!currency) return "Editar moneda";
+    return `Editar moneda · ${currency.code}`;
   }, [currency]);
 
   const baseSym = String(baseCurrencySymbol || "").trim() || "$";
@@ -99,7 +100,8 @@ export default function CurrencyRatesModal({
   function normCode(v: string) {
     return String(v || "")
       .toUpperCase()
-      .replace(/[^A-Z]/g, "")
+      .replace(/\s+/g, "")
+      .replace(/[^A-Z0-9]/g, "")
       .slice(0, 6);
   }
   function normSymbol(v: string) {
@@ -207,7 +209,7 @@ export default function CurrencyRatesModal({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, currencyId]);
 
-  // ✅ al abrir y cuando ya está hidratado: focus + select
+  // ✅ al abrir y cuando ya está hidratado: focus + select del rate
   useEffect(() => {
     if (!open || !currency || isBase || busy) return;
     if (!rateHydrated) return;
@@ -216,6 +218,7 @@ export default function CurrencyRatesModal({
       rateRef.current?.focus();
       rateRef.current?.select();
     }, 60);
+
     return () => window.clearTimeout(t);
   }, [open, currency, isBase, busy, rateHydrated]);
 
@@ -247,7 +250,11 @@ export default function CurrencyRatesModal({
 
     if (wantUpdateCurrency) {
       try {
-        const r1 = await onUpdateCurrency(currencyId, { code: nextCode, name: nextName, symbol: nextSymbol });
+        const r1 = await onUpdateCurrency(currencyId, {
+          code: nextCode,
+          name: nextName,
+          symbol: nextSymbol,
+        });
         if (!r1.ok) return setErr(r1.error || "No se pudo guardar la moneda.");
       } catch (e: any) {
         return setErr(safeErrMsg(e) || "No se pudo guardar la moneda.");
@@ -256,7 +263,10 @@ export default function CurrencyRatesModal({
 
     if (!isBase) {
       try {
-        const r2 = await onAddRate(currencyId, { rate: rate as number, effectiveAt: new Date().toISOString() });
+        const r2 = await onAddRate(currencyId, {
+          rate: rate as number,
+          effectiveAt: new Date().toISOString(),
+        });
         if (!r2.ok) return setErr(r2.error || "No se pudo guardar el tipo de cambio.");
       } catch (e: any) {
         return setErr(safeErrMsg(e) || "No se pudo guardar el tipo de cambio.");
@@ -285,6 +295,7 @@ export default function CurrencyRatesModal({
       onClose={() => !busy && onClose()}
       busy={busy}
       closeLabel="" // ✅ elimina el texto "Cerrar"
+      bodyClassName="overscroll-contain touch-pan-y"
       footer={
         <>
           <TPButton variant="secondary" onClick={onClose} disabled={lockUI}>
@@ -308,58 +319,116 @@ export default function CurrencyRatesModal({
 
         {!currency ? (
           <div className="text-sm text-muted">Sin moneda seleccionada.</div>
-        ) : isBase ? (
-          <TPCard className="p-5">
-            <div className="text-sm font-semibold text-text">Moneda base</div>
-            <div className="mt-1 text-xs text-muted">
-              No necesita tipo de cambio. Siempre vale <span className="text-text font-semibold">1</span>.
-            </div>
-          </TPCard>
         ) : (
-          <TPCard className={cn("p-5", lockUI ? "opacity-70 pointer-events-none" : "")}>
-            <div className="mb-3">
-              <div className="text-sm font-semibold text-text">Tipo de cambio</div>
-              <div className="text-xs text-muted">
-                Ingresá cuánto vale <span className="text-text font-semibold">1 {shownCurrencyCode}</span> en{" "}
-                <span className="text-text font-semibold">{baseCode}</span>.
+          <TPCard className={cn("p-5 space-y-4", lockUI ? "opacity-70 pointer-events-none" : "")}>
+            {/* ✅ Campos moneda (editar) */}
+            <div className="grid grid-cols-12 gap-3">
+              <div className="col-span-4">
+                <TPInput
+                  label="Código"
+                  value={code}
+                  onChange={setCode}
+                  placeholder="USD"
+                  disabled={busy}
+                  maxLength={6}
+                  onKeyDown={onKeyDownEnter as any}
+                  onFocus={(e) => {
+                    try {
+                      (e.target as HTMLInputElement)?.select?.();
+                    } catch {}
+                  }}
+                />
+              </div>
+
+              <div className="col-span-5">
+                <TPInput
+                  label="Nombre"
+                  value={name}
+                  onChange={setName}
+                  placeholder="Dólar"
+                  disabled={busy}
+                  maxLength={40}
+                  onKeyDown={onKeyDownEnter as any}
+                  onFocus={(e) => {
+                    try {
+                      (e.target as HTMLInputElement)?.select?.();
+                    } catch {}
+                  }}
+                />
+              </div>
+
+              <div className="col-span-3">
+                <TPInput
+                  label="Símbolo"
+                  value={symbol}
+                  onChange={setSymbol}
+                  placeholder="US$"
+                  disabled={busy}
+                  maxLength={6}
+                  onKeyDown={onKeyDownEnter as any}
+                  onFocus={(e) => {
+                    try {
+                      (e.target as HTMLInputElement)?.select?.();
+                    } catch {}
+                  }}
+                />
               </div>
             </div>
 
-            <div className="relative">
-              <TPNumberInput
-                inputRef={rateRef}
-                autoSelect
-                showArrows={false}
-                leftIcon={<span className="text-sm font-semibold text-muted">{baseSym}</span>}
-                value={rate}
-                onChange={(v) => {
-                  setRate(v);
-                  setRateHydrated(true);
-                }}
-                onKeyDown={onKeyDownEnter}
-                placeholder={loading ? "…" : "0,00"}
-                disabled={busy}
-                decimals={2}
-                wrapClassName="w-full"
-                className={cn(
-                  "h-16 rounded-2xl text-3xl font-semibold tabular-nums tracking-tight",
-                  "text-center"
-                )}
-              />
-            </div>
-
-            <div className="mt-3 flex items-center justify-between gap-3">
-              <div className="text-[11px] text-muted">
-                Tip: podés usar <span className="text-text font-semibold">Enter</span> para guardar.
-              </div>
-
-              {loading ? (
-                <div className="text-[11px] text-muted inline-flex items-center gap-2">
-                  <Loader2 size={14} className="animate-spin" />
-                  Cargando…
+            {/* ✅ Tipo de cambio */}
+            {isBase ? (
+              <div className="rounded-2xl border border-border bg-surface2/30 px-4 py-3">
+                <div className="text-sm font-semibold text-text">Moneda base</div>
+                <div className="mt-1 text-xs text-muted">
+                  No necesita tipo de cambio. Siempre vale <span className="text-text font-semibold">1</span>.
                 </div>
-              ) : null}
-            </div>
+              </div>
+            ) : (
+              <>
+                <div className="pt-1">
+                  <div className="text-sm font-semibold text-text">Tipo de cambio</div>
+                  <div className="text-xs text-muted">
+                    Ingresá cuánto vale <span className="text-text font-semibold">1 {shownCurrencyCode}</span> en{" "}
+                    <span className="text-text font-semibold">{baseCode}</span>.
+                  </div>
+                </div>
+
+                <div className="relative">
+                  <TPNumberInput
+                    inputRef={rateRef as any}
+                    leftIcon={<span className="text-sm font-semibold text-muted">{baseSym}</span>}
+                    value={rate}
+                    onChange={(v) => {
+                      setRate(v);
+                      setRateHydrated(true);
+                    }}
+                    placeholder={loading ? "…" : "15000,00"}
+                    disabled={busy}
+                    decimals={2}
+                    step={0.01}
+                    wrapClassName="w-full"
+                    className={cn(
+                      "h-16 rounded-2xl text-3xl font-semibold tabular-nums tracking-tight",
+                      "text-center"
+                    )}
+                    onKeyDown={onKeyDownEnter as any}
+                  />
+                </div>
+
+                <div className="flex items-center justify-between gap-3">
+                  <div className="text-[11px] text-muted">
+                    Tip: podés usar <span className="text-text font-semibold">Enter</span> para guardar.
+                  </div>
+
+                  {loading ? (
+                    <div className="text-[11px] text-muted inline-flex items-center gap-2">
+                      <Loader2 size={14} className="animate-spin" />
+                      Cargando…
+                    </div>
+                  ) : null}
+                </div>
+              </>
+            )}
           </TPCard>
         )}
       </div>

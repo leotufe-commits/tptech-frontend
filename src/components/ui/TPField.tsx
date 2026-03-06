@@ -66,9 +66,14 @@ export function TPField({
   return (
     <div className={cn("tp-field w-full", className)}>
       {(showRealLabel || labelRight) ? (
-        <div className="flex items-baseline justify-between gap-3">
+        // ✅ aire global arriba del bloque de label (impacta todos los formularios)
+        <div className="mt-1 flex items-baseline justify-between gap-3">
           <label
-            className={cn("tp-field-label", !showRealLabel && "tp-field-label--empty")}
+            className={cn(
+              "tp-field-label",
+              "leading-none",
+              !showRealLabel && "tp-field-label--empty"
+            )}
             aria-hidden={!showRealLabel}
           >
             {showRealLabel ? (

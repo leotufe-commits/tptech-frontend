@@ -22,6 +22,9 @@
    OJO: usamos --primary-rgb para que coincida con Tailwind alpha utilities. */
 :root {
   accent-color: rgb(var(--primary-rgb) / 1);
+
+  /* ✅ micro-ajuste global del gap label↔control */
+  --tp-field-gap: 5px;
 }
 
 /* ✅ ring/outline global (fallback) */
@@ -70,7 +73,7 @@ body,
 .tp-field {
   display: flex;
   flex-direction: column;
-  gap: 6px; /* ✅ espacio fijo entre label y control */
+  gap: var(--tp-field-gap); /* ✅ espacio fijo entre label y control */
 }
 
 /* Label unificado (SIN margin-bottom) */
@@ -84,6 +87,7 @@ body,
 
   min-height: 16px; /* reserva siempre el mismo “hueco” */
   margin: 0;        /* ✅ clave: NO usar margin */
+  padding: 0;       /* ✅ evita diferencias por defaults */
 }
 
 /* Si un label no existe, igual reservamos el espacio */
@@ -111,7 +115,7 @@ select.tp-input {
 
   outline: none;
 
-  /* ✅ CLAVE: evitar que algo lo pise y lo deje blanco */
+  /* ✅ fondo unificado */
   background-color: var(--card) !important;
   color: var(--text);
 
@@ -123,7 +127,6 @@ select.tp-input {
 input.tp-input::placeholder,
 textarea.tp-input::placeholder {
   color: var(--muted);
-  opacity: 0.45;   /* 🔥 placeholder más gris y más liviano */
 }
 
 input.tp-input:focus,
@@ -416,4 +419,50 @@ textarea.tp-input:hover {
 .tp-input,
 .tp-select {
   box-sizing: border-box;
+}
+
+/* =====================================
+   ✅ FIX 1: SELECT igual a INPUT (FUERZA)
+   - Para que los <select> no queden blancos / distintos
+   - Gana a estilos nativos del navegador
+===================================== */
+select.tp-select,
+select.tp-input {
+  width: 100% !important;
+  border-radius: 0.75rem !important;
+  border: 1px solid var(--border) !important;
+
+  height: 42px !important;
+  padding: 0 2.25rem 0 1rem !important; /* espacio para caret */
+  line-height: 42px !important;
+
+  background-color: var(--card) !important;
+  color: var(--text) !important;
+
+  font-size: 0.95rem !important;
+  box-sizing: border-box !important;
+
+  -webkit-appearance: none !important;
+  -moz-appearance: none !important;
+  appearance: none !important;
+}
+
+select.tp-select:hover,
+select.tp-input:hover {
+  border-color: color-mix(in oklab, var(--border) 65%, var(--primary)) !important;
+  box-shadow: 0 6px 18px color-mix(in oklab, var(--primary) 10%, transparent) !important;
+}
+
+select.tp-select:focus,
+select.tp-input:focus {
+  border-color: color-mix(in oklab, var(--primary) 55%, var(--border)) !important;
+  box-shadow: 0 0 0 4px color-mix(in oklab, var(--primary) 28%, transparent) !important;
+}
+
+select.tp-select:disabled,
+select.tp-input:disabled {
+  opacity: 0.65 !important;
+  cursor: not-allowed !important;
+  background-color: var(--card) !important;
+  color: var(--muted) !important;
 }

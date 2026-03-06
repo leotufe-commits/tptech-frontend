@@ -1,27 +1,15 @@
-// src/pages/perfilJoyeria/usePerfilJoyeria.ts
-import { useEffect, useMemo, useRef, useState } from "react";
+// src/pages/PerfilJoyeria/usePerfilJoyeria.ts
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 
 import { apiFetch } from "../../lib/api";
 import { useMe } from "../../hooks/useMe";
 
-import {
-  listCatalog,
-  createCatalogItem,
-  type CatalogItem,
-  type CatalogType,
-} from "../../services/catalogs";
+import { listCatalog, createCatalogItem, type CatalogItem, type CatalogType } from "../../services/catalogs";
 
-import type { CompanyBody, ExistingBody, JewelryAttachment } from "./perfilJoyeria.types";
-import {
-  absUrl,
-  buildPayload,
-  devLog,
-  getInitials,
-  jewelryToDraft,
-  normalizeJewelryResponse,
-  pickJewelryFromMe,
-} from "./perfilJoyeria.utils";
+import type { CompanyBody, ExistingBody, JewelryAttachment, JewelryProfile } from "./perfilJoyeria.types";
+
+import { absUrl, buildPayload, devLog, getInitials, jewelryToDraft, normalizeJewelryResponse, pickJewelryFromMe } from "./perfilJoyeria.utils";
 
 const JEWELRY_LOGO_EVENT = "tptech:jewelry_logo_changed";
 
@@ -37,6 +25,8 @@ function notifyLogoChanged(logoUrl: string) {
   }
 }
 
+type CatsState = Partial<Record<CatalogType, CatalogItem[]>>;
+
 export function usePerfilJoyeria() {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -44,9 +34,9 @@ export function usePerfilJoyeria() {
   const isEditMode = searchParams.get("edit") === "1";
 
   const { me, loading, error, refresh } = useMe();
-  const jewelryFromContext = pickJewelryFromMe(me);
+  const jewelryFromContext = pickJewelryFromMe(me) as JewelryProfile | null;
 
-  const [serverJewelry, setServerJewelry] = useState<any>(null);
+  const [serverJewelry, setServerJewelry] = useState<JewelryProfile | null>(null);
 
   const [existing, setExisting] = useState<ExistingBody | null>(null);
   const [company, setCompany] = useState<CompanyBody | null>(null);
@@ -70,15 +60,23 @@ export function usePerfilJoyeria() {
   const [confirmUnsavedOpen, setConfirmUnsavedOpen] = useState(false);
 
   // ================== CATALOGS ==================
-  const [catIva, setCatIva] = useState<CatalogItem[]>([]);
-  const [catPrefix, setCatPrefix] = useState<CatalogItem[]>([]);
-  const [catCity, setCatCity] = useState<CatalogItem[]>([]);
-  const [catProvince, setCatProvince] = useState<CatalogItem[]>([]);
-  const [catCountry, setCatCountry] = useState<CatalogItem[]>([]);
-
+  const [cats, setCats] = useState<CatsState>({});
   const [catLoading, setCatLoading] = useState<Record<string, boolean>>({});
 
-  async function ensureCatalog(type: CatalogType, force = false) {
+  const busyAny = useMemo(() => {
+    return saving || uploadingLogo || deletingLogo || uploadingAttachments || Boolean(deletingAttId);
+  }, [saving, uploadingLogo, deletingLogo, uploadingAttachments, deletingAttId]);
+
+  const savedAttachments: JewelryAttachment[] = useMemo(() => {
+    const arr = (serverJewelry?.attachments ?? []) as JewelryAttachment[];
+    return Array.isArray(arr) ? arr : [];
+  }, [serverJewelry?.attachments]);
+
+  const canSave = useMemo(() => {
+    return !!existing && !!company && existing.name.trim().length > 0;
+  }, [existing, company]);
+
+  const ensureCatalog = useCallback(async (type: CatalogType, force = false) => {
     const k = String(type);
 
     let shouldFetch = true;
@@ -93,28 +91,26 @@ export function usePerfilJoyeria() {
 
     try {
       const items = await listCatalog(type, { force });
-
-      if (type === "IVA_CONDITION") setCatIva(items);
-      else if (type === "PHONE_PREFIX") setCatPrefix(items);
-      else if (type === "CITY") setCatCity(items);
-      else if (type === "PROVINCE") setCatProvince(items);
-      else if (type === "COUNTRY") setCatCountry(items);
+      setCats((p) => ({ ...p, [type]: items }));
     } catch (e: any) {
       setMsg(e?.message || "No se pudo cargar un catálogo.");
     } finally {
       setCatLoading((p) => ({ ...p, [k]: false }));
     }
-  }
+  }, []);
 
-  async function createAndRefresh(type: CatalogType, label: string) {
-    try {
-      await createCatalogItem(type, label);
-      await ensureCatalog(type, true);
-      setMsg(`Agregado “${label}” ✅`);
-    } catch (e: any) {
-      setMsg(e?.message || "No se pudo agregar el ítem al catálogo.");
-    }
-  }
+  const createAndRefresh = useCallback(
+    async (type: CatalogType, label: string) => {
+      try {
+        await createCatalogItem(type, label);
+        await ensureCatalog(type, true);
+        setMsg(`Agregado “${label}” ✅`);
+      } catch (e: any) {
+        setMsg(e?.message || "No se pudo agregar el ítem al catálogo.");
+      }
+    },
+    [ensureCatalog]
+  );
 
   // ================== HIDRATACIÓN ==================
   useEffect(() => {
@@ -147,43 +143,41 @@ export function usePerfilJoyeria() {
     };
   }, [logoPreview]);
 
-  const savedAttachments: JewelryAttachment[] = useMemo(() => {
-    const arr = (serverJewelry?.attachments ?? []) as JewelryAttachment[];
-    return Array.isArray(arr) ? arr : [];
-  }, [serverJewelry?.attachments]);
-
-  const canSave = useMemo(() => {
-    return !!existing && !!company && existing.name.trim().length > 0;
-  }, [existing, company]);
-
-  function goToViewMode() {
+  const goToViewMode = useCallback(() => {
     const next = new URLSearchParams(searchParams);
     next.delete("edit");
     setSearchParams(next, { replace: true });
-  }
+  }, [searchParams, setSearchParams]);
 
-  function goToEditMode() {
+  const goToEditMode = useCallback(() => {
     const next = new URLSearchParams(searchParams);
     next.set("edit", "1");
     setSearchParams(next, { replace: true });
     setMsg(null);
-  }
+  }, [searchParams, setSearchParams]);
 
-  function setExistingField<K extends keyof ExistingBody>(key: K, value: ExistingBody[K]) {
-    if (!isEditMode) return;
-    setDirty(true);
-    setExisting((p) => (p ? { ...p, [key]: value } : p));
-  }
+  const setExistingField = useCallback(
+    <K extends keyof ExistingBody>(key: K, value: ExistingBody[K]) => {
+      if (!isEditMode) return;
+      setDirty(true);
+      setExisting((p) => (p ? { ...p, [key]: value } : p));
+    },
+    [isEditMode]
+  );
 
-  function setCompanyField<K extends keyof CompanyBody>(key: K, value: CompanyBody[K]) {
-    if (!isEditMode) return;
-    if (key !== "logoUrl") setDirty(true);
-    setCompany((p) => (p ? { ...p, [key]: value } : p));
-  }
+  const setCompanyField = useCallback(
+    <K extends keyof CompanyBody>(key: K, value: CompanyBody[K]) => {
+      if (!isEditMode) return;
+      if (key !== "logoUrl") setDirty(true);
+      setCompany((p) => (p ? { ...p, [key]: value } : p));
+    },
+    [isEditMode]
+  );
 
-  function resetToServerValues() {
+  const resetToServerValues = useCallback(() => {
     if (!serverJewelry) return;
     const d = jewelryToDraft(serverJewelry);
+
     setExisting(d.existing);
     setCompany(d.company);
     setDirty(false);
@@ -191,11 +185,9 @@ export function usePerfilJoyeria() {
 
     if (logoPreview?.startsWith("blob:")) URL.revokeObjectURL(logoPreview);
     setLogoPreview("");
-  }
+  }, [serverJewelry, logoPreview]);
 
-  function onBackOrCancel() {
-    const busyAny =
-      saving || uploadingLogo || deletingLogo || uploadingAttachments || Boolean(deletingAttId);
+  const onBackOrCancel = useCallback(() => {
     if (busyAny) return;
 
     if (isEditMode) {
@@ -209,10 +201,9 @@ export function usePerfilJoyeria() {
     }
 
     navigate(-1);
-  }
+  }, [busyAny, isEditMode, dirty, resetToServerValues, goToViewMode, navigate]);
 
-  // ✅ FIX: guardar contra /company/me (PATCH)
-  async function onSave() {
+  const onSave = useCallback(async () => {
     if (!existing || !company || !isEditMode) return;
 
     try {
@@ -221,14 +212,13 @@ export function usePerfilJoyeria() {
 
       const payload = buildPayload(existing, company);
 
-      // ✅ ESTE es tu endpoint real del backend company.routes.ts
       const resp = await apiFetch<any>("/company/me", {
         method: "PATCH",
         body: payload,
         on401: "throw",
       });
 
-      const updated = normalizeJewelryResponse(resp);
+      const updated = normalizeJewelryResponse(resp) as JewelryProfile;
       setServerJewelry(updated);
 
       const d = jewelryToDraft(updated);
@@ -245,69 +235,64 @@ export function usePerfilJoyeria() {
     } finally {
       setSaving(false);
     }
-  }
+  }, [existing, company, isEditMode, refresh, goToViewMode]);
 
-  async function uploadLogoInstant(file: File) {
+  const uploadLogoInstant = useCallback(
+    async (file: File) => {
+      if (!isEditMode) return;
+      if (!file) return;
+
+      const isImg = String(file.type || "").startsWith("image/");
+      if (!isImg) {
+        setMsg("El logo debe ser una imagen.");
+        return;
+      }
+
+      if (busyAny) return;
+
+      try {
+        setMsg(null);
+        setUploadingLogo(true);
+
+        if (logoPreview?.startsWith("blob:")) URL.revokeObjectURL(logoPreview);
+        const blobUrl = URL.createObjectURL(file);
+        setLogoPreview(blobUrl);
+
+        const fd = new FormData();
+        fd.append("logo", file);
+
+        const resp = await apiFetch<any>("/company/me/logo", {
+          method: "POST",
+          body: fd as any,
+          timeoutMs: 60_000,
+          on401: "throw",
+        });
+
+        const updated = normalizeJewelryResponse(resp) as JewelryProfile;
+        setServerJewelry(updated);
+
+        const d = jewelryToDraft(updated);
+        setExisting(d.existing);
+        setCompany(d.company);
+
+        notifyLogoChanged(String(updated?.logoUrl || ""));
+        setMsg("Logo actualizado ✅");
+      } catch (e: any) {
+        devLog("uploadLogoInstant error", e);
+        setMsg(e?.message || "No se pudo subir el logo.");
+
+        if (logoPreview?.startsWith("blob:")) URL.revokeObjectURL(logoPreview);
+        setLogoPreview("");
+      } finally {
+        setUploadingLogo(false);
+      }
+    },
+    [isEditMode, busyAny, logoPreview]
+  );
+
+  const deleteLogoInstant = useCallback(async () => {
     if (!isEditMode) return;
-    if (!file) return;
-
-    const isImg = String(file.type || "").startsWith("image/");
-    if (!isImg) {
-      setMsg("El logo debe ser una imagen.");
-      return;
-    }
-
-    const busy =
-      saving || uploadingLogo || deletingLogo || uploadingAttachments || Boolean(deletingAttId);
-    if (busy) return;
-
-    try {
-      setMsg(null);
-      setUploadingLogo(true);
-
-      if (logoPreview?.startsWith("blob:")) URL.revokeObjectURL(logoPreview);
-      const blobUrl = URL.createObjectURL(file);
-      setLogoPreview(blobUrl);
-
-      const fd = new FormData();
-      fd.append("logo", file);
-
-      // ✅ backend: POST /company/me/logo
-      const resp = await apiFetch<any>("/company/me/logo", {
-        method: "POST",
-        body: fd as any,
-        timeoutMs: 60_000,
-        on401: "throw",
-      });
-
-      const updated = normalizeJewelryResponse(resp);
-      setServerJewelry(updated);
-
-      const d = jewelryToDraft(updated);
-      setExisting(d.existing);
-      setCompany(d.company);
-
-      // ✅ notificar header/favicon
-      notifyLogoChanged(String(updated?.logoUrl || ""));
-
-      setMsg("Logo actualizado ✅");
-    } catch (e: any) {
-      devLog("uploadLogoInstant error", e);
-      setMsg(e?.message || "No se pudo subir el logo.");
-
-      if (logoPreview?.startsWith("blob:")) URL.revokeObjectURL(logoPreview);
-      setLogoPreview("");
-    } finally {
-      setUploadingLogo(false);
-    }
-  }
-
-  async function deleteLogoInstant() {
-    if (!isEditMode) return;
-
-    const busy =
-      saving || uploadingLogo || deletingLogo || uploadingAttachments || Boolean(deletingAttId);
-    if (busy) return;
+    if (busyAny) return;
 
     const prevCompanyLogo = String(company?.logoUrl || "");
     const prevServerLogo = String(serverJewelry?.logoUrl || "");
@@ -316,16 +301,14 @@ export function usePerfilJoyeria() {
       setMsg(null);
       setDeletingLogo(true);
 
-      // optimistic UI
       setCompany((p) => (p ? { ...p, logoUrl: "" } : p));
-      setServerJewelry((p: any) => (p ? { ...p, logoUrl: "" } : p));
+      setServerJewelry((p) => (p ? { ...p, logoUrl: "" } : p));
 
       if (logoPreview?.startsWith("blob:")) URL.revokeObjectURL(logoPreview);
       setLogoPreview("");
 
       notifyLogoChanged("");
 
-      // ✅ backend: DELETE /company/me/logo
       await apiFetch<{ ok: boolean }>("/company/me/logo", {
         method: "DELETE",
         timeoutMs: 30_000,
@@ -337,132 +320,123 @@ export function usePerfilJoyeria() {
       devLog("deleteLogoInstant error", e);
       setMsg(e?.message || "No se pudo eliminar el logo.");
 
-      // rollback
       setCompany((p) => (p ? { ...p, logoUrl: prevCompanyLogo } : p));
-      setServerJewelry((p: any) => (p ? { ...p, logoUrl: prevServerLogo } : p));
+      setServerJewelry((p) => (p ? { ...p, logoUrl: prevServerLogo } : p));
       notifyLogoChanged(prevCompanyLogo);
     } finally {
       setDeletingLogo(false);
     }
-  }
+  }, [isEditMode, busyAny, company?.logoUrl, serverJewelry?.logoUrl, logoPreview]);
 
-  async function uploadAttachmentsInstant(files: File[]) {
-    if (!isEditMode) return;
+  const uploadAttachmentsInstant = useCallback(
+    async (files: File[]) => {
+      if (!isEditMode) return;
 
-    const list = Array.from(files || []);
-    if (!list.length) return;
+      const list = Array.from(files || []);
+      if (!list.length) return;
 
-    const busy =
-      saving || uploadingLogo || deletingLogo || uploadingAttachments || Boolean(deletingAttId);
-    if (busy) return;
+      if (busyAny) return;
 
-    const MAX = 20 * 1024 * 1024;
-    const okFiles = list.filter((f) => f.size <= MAX);
-    const rejected = list.filter((f) => f.size > MAX);
+      const MAX = 20 * 1024 * 1024;
+      const okFiles = list.filter((f) => f.size <= MAX);
+      const rejected = list.filter((f) => f.size > MAX);
 
-    if (!okFiles.length) {
-      const detail = rejected
-        .map((f) => `${f.name} (${(f.size / 1024 / 1024).toFixed(2)} MB)`)
-        .join(", ");
-      setMsg(
-        rejected.length
-          ? `No se pudieron adjuntar: ${detail}. Máximo: 20 MB por archivo.`
-          : "No se recibió ningún archivo."
-      );
-      return;
-    }
-
-    try {
-      setMsg(null);
-      setUploadingAttachments(true);
-
-      const fd = new FormData();
-      okFiles.forEach((f) => fd.append("attachments", f));
-
-      // ✅ backend: POST /company/me/attachments
-      const resp = await apiFetch<any>("/company/me/attachments", {
-        method: "POST",
-        body: fd as any,
-        timeoutMs: 120_000,
-        on401: "throw",
-      });
-
-      const updated = normalizeJewelryResponse(resp);
-      setServerJewelry(updated);
-
-      if (rejected.length) {
-        setMsg(`Adjuntados ${okFiles.length} archivo(s). Se omitieron ${rejected.length} por tamaño.`);
-      } else {
-        setMsg("Adjuntos cargados ✅");
+      if (!okFiles.length) {
+        const detail = rejected.map((f) => `${f.name} (${(f.size / 1024 / 1024).toFixed(2)} MB)`).join(", ");
+        setMsg(rejected.length ? `No se pudieron adjuntar: ${detail}. Máximo: 20 MB por archivo.` : "No se recibió ningún archivo.");
+        return;
       }
-    } catch (e: any) {
-      devLog("uploadAttachmentsInstant error", e);
-      setMsg(e?.message || "No se pudieron subir los adjuntos.");
-    } finally {
-      setUploadingAttachments(false);
-    }
-  }
 
-  async function deleteSavedAttachment(id: string) {
-    if (!isEditMode) return;
-    const attId = String(id || "").trim();
-    if (!attId) return;
+      try {
+        setMsg(null);
+        setUploadingAttachments(true);
 
-    const busy =
-      saving || uploadingLogo || deletingLogo || uploadingAttachments || Boolean(deletingAttId);
-    if (busy) return;
+        const fd = new FormData();
+        okFiles.forEach((f) => fd.append("attachments", f));
 
-    const prev = savedAttachments;
+        const resp = await apiFetch<any>("/company/me/attachments", {
+          method: "POST",
+          body: fd as any,
+          timeoutMs: 120_000,
+          on401: "throw",
+        });
 
-    setServerJewelry((p: any) => ({
-      ...(p || {}),
-      attachments: (Array.isArray(p?.attachments) ? p.attachments : []).filter(
-        (a: any) => String(a?.id) !== attId
-      ),
-    }));
+        const updated = normalizeJewelryResponse(resp) as JewelryProfile;
+        setServerJewelry(updated);
 
-    try {
-      setDeletingAttId(attId);
+        setMsg(
+          rejected.length
+            ? `Adjuntados ${okFiles.length} archivo(s). Se omitieron ${rejected.length} por tamaño.`
+            : "Adjuntos cargados ✅"
+        );
+      } catch (e: any) {
+        devLog("uploadAttachmentsInstant error", e);
+        setMsg(e?.message || "No se pudieron subir los adjuntos.");
+      } finally {
+        setUploadingAttachments(false);
+      }
+    },
+    [isEditMode, busyAny]
+  );
 
-      // ✅ backend: DELETE /company/me/attachments/:id
-      await apiFetch("/company/me/attachments/" + encodeURIComponent(attId), {
-        method: "DELETE",
-        timeoutMs: 30_000,
-        on401: "throw",
-      });
+  const deleteSavedAttachment = useCallback(
+    async (id: string) => {
+      if (!isEditMode) return;
+      const attId = String(id || "").trim();
+      if (!attId) return;
 
-      setMsg("Adjunto eliminado ✅");
-    } catch (e: any) {
-      devLog("deleteSavedAttachment error", e);
-      setMsg(e?.message || "No se pudo eliminar el adjunto.");
-      setServerJewelry((p: any) => ({ ...(p || {}), attachments: prev }));
-    } finally {
-      setDeletingAttId(null);
-    }
-  }
+      if (busyAny) return;
 
-  // ✅ misma corrección del logo para que no “quede pegado”
-  const headerLogoSrc = (logoPreview ||
-    (String(company?.logoUrl || "").trim() ? absUrl(String(company?.logoUrl || "").trim()) : "")) as string;
+      const prev = savedAttachments;
+
+      setServerJewelry((p) => ({
+        ...(p || ({} as JewelryProfile)),
+        attachments: (Array.isArray(p?.attachments) ? p.attachments : []).filter((a) => String((a as any)?.id) !== attId),
+      }));
+
+      try {
+        setDeletingAttId(attId);
+
+        await apiFetch("/company/me/attachments/" + encodeURIComponent(attId), {
+          method: "DELETE",
+          timeoutMs: 30_000,
+          on401: "throw",
+        });
+
+        setMsg("Adjunto eliminado ✅");
+      } catch (e: any) {
+        devLog("deleteSavedAttachment error", e);
+        setMsg(e?.message || "No se pudo eliminar el adjunto.");
+        setServerJewelry((p) => ({ ...(p || ({} as JewelryProfile)), attachments: prev }));
+      } finally {
+        setDeletingAttId(null);
+      }
+    },
+    [isEditMode, busyAny, savedAttachments]
+  );
+
+  // ✅ para el header (logo preview + server)
+  const headerLogoSrc = useMemo(() => {
+    const server = String(company?.logoUrl || "").trim();
+    return (logoPreview || (server ? absUrl(server) : "")) as string;
+  }, [logoPreview, company?.logoUrl]);
 
   const hasLogo = Boolean(headerLogoSrc);
 
-  const busyAny =
-    saving || uploadingLogo || deletingLogo || uploadingAttachments || Boolean(deletingAttId);
-
   const initials = getInitials(existing?.name || company?.legalName || "TPTech");
   const readonly = !isEditMode;
-
   const allowCreate = isEditMode;
 
-  const phone = `${String(existing?.phoneCountry || "").trim()} ${String(
-    existing?.phoneNumber || ""
-  ).trim()}`.trim();
+  const phone = `${String(existing?.phoneCountry || "").trim()} ${String(existing?.phoneNumber || "").trim()}`.trim();
 
   const addressLine = [existing?.street, existing?.number].filter(Boolean).join(" ");
-  const addressMeta = [existing?.city, existing?.province, existing?.postalCode, existing?.country]
-    .filter(Boolean)
-    .join(" • ");
+  const addressMeta = [existing?.city, existing?.province, existing?.postalCode, existing?.country].filter(Boolean).join(" • ");
+
+  const catIva = cats["IVA_CONDITION"] ?? [];
+  const catPrefix = cats["PHONE_PREFIX"] ?? [];
+  const catCity = cats["CITY"] ?? [];
+  const catProvince = cats["PROVINCE"] ?? [];
+  const catCountry = cats["COUNTRY"] ?? [];
 
   return {
     isEditMode,

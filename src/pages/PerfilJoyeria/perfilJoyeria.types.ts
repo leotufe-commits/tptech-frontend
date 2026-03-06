@@ -1,4 +1,4 @@
-// src/pages/perfilJoyeria/perfilJoyeria.types.ts
+// src/pages/PerfilJoyeria/perfilJoyeria.types.ts
 
 export type ExistingBody = {
   name: string;
@@ -43,3 +43,12 @@ export type UpdatePayload = ExistingBody & {
   website?: string;
   notes?: string;
 };
+
+// ✅ Tipo mínimo del “Jewelry” que esta pantalla usa.
+// No dependemos del Prisma completo; solo lo necesario.
+export type JewelryProfile = ExistingBody &
+  CompanyBody & {
+    id: string;
+    updatedAt?: string;
+    attachments?: JewelryAttachment[];
+  };

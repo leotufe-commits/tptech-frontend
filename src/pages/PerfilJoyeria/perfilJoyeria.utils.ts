@@ -2,8 +2,14 @@
 import type { CatalogItem } from "../../services/catalogs";
 import type { CompanyBody, ExistingBody, UpdatePayload } from "./perfilJoyeria.types";
 
+/* =========================
+   Small helpers
+========================= */
+
+const s = (v: any) => String(v ?? "").trim();
+
 export function onlyDigits(v: string) {
-  return v.replace(/[^\d]/g, "");
+  return String(v ?? "").replace(/[^\d]/g, "");
 }
 
 export function cn(...classes: Array<string | false | null | undefined>) {
@@ -14,11 +20,21 @@ export function cardBase(extra?: string) {
   return cn("tp-card rounded-2xl border border-border bg-card", extra);
 }
 
+export function valueOrDash(v: any) {
+  const out = s(v);
+  return out ? out : "—";
+}
+
+export function safeFileLabel(name: string) {
+  return s(name) || "Archivo";
+}
+
 export function formatBytes(bytes: number) {
-  if (!Number.isFinite(bytes)) return "";
+  const n0 = Number(bytes);
+  if (!Number.isFinite(n0) || n0 < 0) return "";
   const units = ["B", "KB", "MB", "GB"];
   let i = 0;
-  let n = bytes;
+  let n = n0;
   while (n >= 1024 && i < units.length - 1) {
     n /= 1024;
     i++;
@@ -26,19 +42,10 @@ export function formatBytes(bytes: number) {
   return `${n.toFixed(i === 0 ? 0 : 1)} ${units[i]}`;
 }
 
-export function safeFileLabel(name: string) {
-  return String(name || "").trim() || "Archivo";
-}
-
-export function valueOrDash(v: any) {
-  const s = String(v ?? "").trim();
-  return s ? s : "—";
-}
-
 export function formatDateTime(v?: string | Date | null) {
   if (!v) return "";
   const d = typeof v === "string" ? new Date(v) : v;
-  if (isNaN(d.getTime())) return "";
+  if (Number.isNaN(d.getTime())) return "";
   return d.toLocaleDateString("es-AR", {
     day: "2-digit",
     month: "2-digit",
@@ -48,38 +55,47 @@ export function formatDateTime(v?: string | Date | null) {
   });
 }
 
+/* =========================
+   URLs
+========================= */
+
+function apiBase() {
+  const base = (import.meta.env.VITE_API_URL as string) || "http://localhost:3001";
+  return base.replace(/\/+$/, "");
+}
+
 export function absUrl(u: string) {
-  const raw = String(u || "").trim();
+  const raw = s(u);
   if (!raw) return "";
   if (/^https?:\/\//i.test(raw)) return raw;
-
-  const base = (import.meta.env.VITE_API_URL as string) || "http://localhost:3001";
-  const API = base.replace(/\/+$/, "");
-  const p = raw.startsWith("/") ? raw : `/${raw}`;
-  return `${API}${p}`;
+  return `${apiBase()}${raw.startsWith("/") ? raw : `/${raw}`}`;
 }
+
+/* =========================
+   Draft + payload
+========================= */
 
 export function jewelryToDraft(j: any): { existing: ExistingBody; company: CompanyBody } {
   return {
     existing: {
-      name: j?.name || "",
-      phoneCountry: j?.phoneCountry || "",
-      phoneNumber: j?.phoneNumber || "",
-      street: j?.street || "",
-      number: j?.number || "",
-      city: j?.city || "",
-      province: j?.province || "",
-      postalCode: j?.postalCode || "",
-      country: j?.country || "",
+      name: s(j?.name),
+      phoneCountry: s(j?.phoneCountry),
+      phoneNumber: s(j?.phoneNumber),
+      street: s(j?.street),
+      number: s(j?.number),
+      city: s(j?.city),
+      province: s(j?.province),
+      postalCode: s(j?.postalCode),
+      country: s(j?.country),
     },
     company: {
-      logoUrl: j?.logoUrl || "",
-      legalName: j?.legalName || "",
-      cuit: j?.cuit || "",
-      ivaCondition: j?.ivaCondition || "",
-      email: j?.email || "",
-      website: j?.website || "",
-      notes: j?.notes || "",
+      logoUrl: s(j?.logoUrl),
+      legalName: s(j?.legalName),
+      cuit: s(j?.cuit),
+      ivaCondition: s(j?.ivaCondition),
+      email: s(j?.email),
+      website: s(j?.website),
+      notes: String(j?.notes ?? ""),
     },
   };
 }
@@ -87,24 +103,24 @@ export function jewelryToDraft(j: any): { existing: ExistingBody; company: Compa
 export function buildPayload(existing: ExistingBody, company: CompanyBody): UpdatePayload {
   return {
     ...existing,
-    logoUrl: company.logoUrl?.trim() || "",
-    legalName: company.legalName?.trim() || "",
-    cuit: company.cuit?.trim() || "",
-    ivaCondition: company.ivaCondition?.trim() || "",
-    email: company.email?.trim() || "",
-    website: company.website?.trim() || "",
-    notes: company.notes ?? "",
+    logoUrl: s(company.logoUrl),
+    legalName: s(company.legalName),
+    cuit: s(company.cuit),
+    ivaCondition: s(company.ivaCondition),
+    email: s(company.email),
+    website: s(company.website),
+    notes: String(company.notes ?? ""),
   };
 }
 
 export function pickFavoriteLabel(items: CatalogItem[]) {
-  const fav = (items || []).find((x: any) => Boolean((x as any)?.isFavorite));
-  return String((fav as any)?.label || "").trim();
+  const fav = (items || []).find((x) => Boolean(x?.isFavorite));
+  return s(fav?.label);
 }
 
-/* =====================================================
-   Helpers que el hook espera
-===================================================== */
+/* =========================
+   Hook expects
+========================= */
 
 export function devLog(...args: any[]) {
   if (import.meta.env.DEV) {
@@ -114,18 +130,25 @@ export function devLog(...args: any[]) {
 }
 
 export function getInitials(name: string) {
-  const s = String(name || "").trim();
-  if (!s) return "TP";
-  const parts = s.split(/\s+/).filter(Boolean);
+  const t = s(name);
+  if (!t) return "TP";
+  const parts = t.split(/\s+/).filter(Boolean);
   const a = (parts[0]?.[0] || "").toUpperCase();
   const b = (parts[1]?.[0] || parts[0]?.[1] || "").toUpperCase();
-  const out = (a + b).trim();
-  return out || "TP";
+  return (a + b).trim() || "TP";
 }
 
 export function pickJewelryFromMe(me: any) {
-  if (!me) return null;
-  return me.jewelry ?? me.Jewelry ?? me.company ?? me.Company ?? me?.data?.jewelry ?? me?.data?.company ?? null;
+  if (!me || typeof me !== "object") return null;
+  return (
+    (me as any).jewelry ??
+    (me as any).Jewelry ??
+    (me as any).company ??
+    (me as any).Company ??
+    (me as any)?.data?.jewelry ??
+    (me as any)?.data?.company ??
+    null
+  );
 }
 
 export function normalizeJewelryResponse(resp: any) {
@@ -133,12 +156,12 @@ export function normalizeJewelryResponse(resp: any) {
   if (!j || typeof j !== "object") return j;
 
   const attachments = Array.isArray((j as any).attachments) ? (j as any).attachments : [];
-  return { ...j, attachments };
+  return { ...(j as any), attachments };
 }
 
-/* =====================================================
-   ✅ FAVICON (blindado + fallback iniciales)
-===================================================== */
+/* =========================
+   Favicon helpers
+========================= */
 
 function applyFavicon(href: string, type?: string) {
   try {
@@ -149,14 +172,15 @@ function applyFavicon(href: string, type?: string) {
       document.querySelectorAll('link[rel="icon"], link[rel="shortcut icon"]')
     ) as HTMLLinkElement[];
 
-    const ensureOne = () => {
-      const l = document.createElement("link");
-      l.rel = "icon";
-      head.appendChild(l);
-      return [l];
-    };
-
-    const targets = links.length ? links : ensureOne();
+    const targets =
+      links.length > 0
+        ? links
+        : (() => {
+            const l = document.createElement("link");
+            l.rel = "icon";
+            head.appendChild(l);
+            return [l];
+          })();
 
     const bust = `v=${Date.now()}`;
     const nextHref = href.includes("?") ? `${href}&${bust}` : `${href}?${bust}`;
@@ -171,7 +195,7 @@ function applyFavicon(href: string, type?: string) {
 }
 
 export function setFaviconPersisted(url: string) {
-  const u = String(url || "").trim();
+  const u = s(url);
   if (!u) return;
 
   try {
@@ -186,10 +210,9 @@ export function setFaviconPersisted(url: string) {
  * - limpia TPTECH_FAVICON_URL para que no reaparezca el logo viejo
  */
 export function setFaviconInitials(nameOrInitials: string) {
-  const raw = String(nameOrInitials || "").trim();
+  const raw = s(nameOrInitials);
   const initials = raw.length <= 3 ? raw.toUpperCase() : getInitials(raw);
 
-  // SVG simple: iniciales negras en fondo blanco (se ve perfecto en tabs)
   const svg = `
 <svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
   <rect width="64" height="64" rx="14" fill="#ffffff"/>
