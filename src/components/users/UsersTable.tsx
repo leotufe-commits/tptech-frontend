@@ -7,7 +7,6 @@ import {
   Trash2,
   ShieldBan,
   ShieldCheck,
-  X,
   Paperclip,
   KeyRound,
   Shield,
@@ -17,13 +16,14 @@ import {
   Mail,
 } from "lucide-react";
 
+
 import { cn, initialsFrom, absUrl } from "./users.ui";
 import { SortArrows } from "../ui/TPSort";
 import { TPBadge } from "../ui/TPBadges";
 
 import {
   TPTableWrap,
-  TPTableEl,
+  TPTable,
   TPThead,
   TPTbody,
   TPTh,
@@ -36,123 +36,20 @@ import { prefetchUserDetail as prefetchUserDetailInternal } from "./users.data";
 import { downloadUserAttachmentFile } from "../../lib/users.api";
 import { apiFetch } from "../../lib/api";
 
-/* ======================================================
-   Utils fecha
-====================================================== */
-function formatDateTime(v?: string | Date | null) {
-  if (!v) return "";
-  const d = typeof v === "string" ? new Date(v) : v;
-  if (isNaN(d.getTime())) return "";
-  return d.toLocaleDateString("es-AR", {
-    day: "2-digit",
-    month: "2-digit",
-    year: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-}
-
-/* ======================================================
-   Sort helpers
-====================================================== */
-type SortCol = "USER" | "STATUS" | "PIN" | "ROLES" | "FAV";
-type SortDir = "asc" | "desc";
-
-function norm(s: any) {
-  return String(s ?? "").trim().toLowerCase();
-}
-
-function userLabel(u: any) {
-  return String(u?.name || u?.email || "").trim();
-}
-
-function statusLabel(u: any) {
-  const s = String(u?.status || "").toUpperCase();
-  if (s === "ACTIVE") return "activo";
-  if (s === "PENDING") return "pendiente";
-  if (s === "BLOCKED") return "inactivo";
-  return s ? s.toLowerCase() : "";
-}
-
-function specialCount(u: any): number {
-  const c = Number(u?.overridesCount ?? u?.permissionOverridesCount ?? NaN);
-  if (Number.isFinite(c)) return c;
-
-  if (typeof u?.hasSpecialPermissions === "boolean") return u.hasSpecialPermissions ? 1 : 0;
-  if (Array.isArray(u?.permissionOverrides)) return u.permissionOverrides.length;
-
-  return 0;
-}
-
-function hasSpecial(u: any) {
-  return specialCount(u) > 0;
-}
-
-type AttachmentItem = {
-  id: string;
-  url?: string;
-  filename: string;
-  mimeType?: string;
-  size?: number;
-  createdAt?: string | Date;
-};
-
-function attachmentsCount(u: any): number {
-  const c = Number(u?.attachmentsCount ?? u?.attachmentCount ?? NaN);
-  if (Number.isFinite(c)) return c;
-
-  if (typeof u?.hasAttachments === "boolean") return u.hasAttachments ? 1 : 0;
-  if (Array.isArray(u?.attachments)) return u.attachments.length;
-
-  return 0;
-}
-
-function formatBytes(n?: number) {
-  const v = Number(n ?? 0);
-  if (!Number.isFinite(v) || v <= 0) return "";
-  const units = ["B", "KB", "MB", "GB"];
-  let x = v;
-  let i = 0;
-  while (x >= 1024 && i < units.length - 1) {
-    x /= 1024;
-    i++;
-  }
-  const digits = i === 0 ? 0 : x >= 100 ? 0 : x >= 10 ? 1 : 2;
-  return `${x.toFixed(digits)} ${units[i]}`;
-}
-
-/* ======================================================
-   OWNER / ADMIN helpers (columna Roles)
-====================================================== */
-function isOwnerRole(r: any, roleLabelFn?: (r: any) => string) {
-  const code = String(r?.code ?? "").trim().toUpperCase();
-  const name = String(r?.name ?? "").trim().toUpperCase();
-  if (code === "OWNER" || name === "OWNER") return true;
-
-  const label = roleLabelFn ? String(roleLabelFn(r) || "") : "";
-  const l = label.trim().toLowerCase();
-  if (l.includes("propietario") || l.includes("owner")) return true;
-
-  return false;
-}
-
-function isAdminRole(r: any, roleLabelFn?: (r: any) => string) {
-  const code = String(r?.code ?? "").trim().toUpperCase();
-  const name = String(r?.name ?? "").trim().toUpperCase();
-  if (code === "ADMIN" || name === "ADMIN") return true;
-
-  const label = roleLabelFn ? String(roleLabelFn(r) || "") : "";
-  const l = label.trim().toLowerCase();
-  if (l.includes("admin")) return true;
-
-  return false;
-}
-
-function roleTone(r: any, roleLabelFn?: (r: any) => string) {
-  if (isOwnerRole(r, roleLabelFn)) return "warning";
-  if (isAdminRole(r, roleLabelFn)) return "info";
-  return "neutral";
-}
+import {
+  type SortCol,
+  type SortDir,
+  type AttachmentItem,
+  type AttInfo,
+  formatDateTime,
+  norm,
+  userLabel,
+  statusLabel,
+  hasSpecial,
+  attachmentsCount,
+  roleTone,
+} from "./users.utils";
+import UsersAttachmentPanel from "./UsersAttachmentPanel";
 
 /* ======================================================
    Component
@@ -430,8 +327,6 @@ export default function UsersTable(props: Props) {
   /* ======================================================
      Attachments panel
   ====================================================== */
-  type AttInfo = { has: boolean; count: number; items?: AttachmentItem[] };
-
   const attCacheRef = useRef<Map<string, AttInfo>>(new Map());
   const attInFlightRef = useRef<Set<string>>(new Set());
 
@@ -798,7 +693,7 @@ export default function UsersTable(props: Props) {
           DESKTOP
          ========================= */}
       <div className="hidden sm:block w-full overflow-x-auto">
-        <TPTableEl>
+        <TPTable>
           <table className="min-w-[1060px] w-full text-sm">
             <TPThead>
               <tr className="border-b border-border">
@@ -1096,7 +991,7 @@ export default function UsersTable(props: Props) {
               )}
             </TPTbody>
           </table>
-        </TPTableEl>
+        </TPTable>
       </div>
 
       {/* ✅ Footer DESKTOP (Usuarios + paginado) */}
@@ -1133,86 +1028,17 @@ export default function UsersTable(props: Props) {
         </div>
       </TPTableFooter>
 
-      {attPanelUserId && (
-        <div className="fixed inset-0 z-[85] flex items-center justify-center px-4" onClick={closeAttPanel}>
-          <div className="absolute inset-0 bg-black/40" />
-
-          <div
-            className="relative w-full max-w-xl rounded-2xl border border-border bg-card shadow-soft overflow-hidden"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="px-4 py-3 border-b border-border flex items-center justify-between gap-2">
-              <div className="min-w-0">
-                <div className="text-sm font-semibold truncate">
-                  Adjuntos — {attPanelUser ? userLabel(attPanelUser as any) : "Usuario"}
-                </div>
-                <div className="text-xs text-muted truncate">
-                  {attPanelUser ? String((attPanelUser as any).email || "") : ""}
-                </div>
-              </div>
-
-              <button type="button" className={cn(iconBtnBase)} onClick={closeAttPanel} title="Cerrar">
-                <X className="h-4 w-4" />
-              </button>
-            </div>
-
-            <div className="p-4">
-              {attPanelLoading ? (
-                <div className="flex items-center gap-2 text-sm text-muted">
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                  Cargando adjuntos…
-                </div>
-              ) : !attPanelInfo?.has ? (
-                <div className="text-sm text-muted">Este usuario no tiene adjuntos.</div>
-              ) : (
-                <div className="space-y-2">
-                  <div className="text-xs text-muted">
-                    {attPanelInfo?.count != null ? `${attPanelInfo.count} archivo(s)` : "Archivos"}
-                  </div>
-
-                  {attDownloadErr ? (
-                    <div className="rounded-xl border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs">
-                      {attDownloadErr}
-                    </div>
-                  ) : null}
-
-                  <div className="divide-y divide-border rounded-xl border border-border overflow-hidden">
-                    {(attPanelInfo?.items ?? []).map((a) => {
-                      const fname = String(a.filename || "archivo");
-                      const sz = formatBytes(a.size);
-                      const meta = [sz || "", a.mimeType ? String(a.mimeType) : ""].filter(Boolean).join(" • ");
-                      const busy = attDownloadBusyId === String(a.id);
-
-                      return (
-                        <div key={a.id} className="p-3 flex items-center justify-between gap-3 bg-card">
-                          <div className="min-w-0">
-                            <div className="text-sm font-semibold truncate">{fname}</div>
-                            <div className="text-xs text-muted truncate">{meta || "Archivo"}</div>
-                          </div>
-
-                          <button
-                            type="button"
-                            className={cn("tp-btn", "shrink-0", busy && "opacity-60")}
-                            disabled={busy}
-                            onClick={() => void downloadAttachment(a)}
-                            title="Descargar"
-                          >
-                            {busy ? "Descargando…" : "Descargar"}
-                          </button>
-                        </div>
-                      );
-                    })}
-                  </div>
-
-                  <div className="text-[11px] text-muted">
-                    Tip: usa cookie httpOnly (no Bearer), así que esto descarga sin romper auth.
-                  </div>
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
+      <UsersAttachmentPanel
+        attPanelUserId={attPanelUserId}
+        attPanelUser={attPanelUser}
+        attPanelInfo={attPanelInfo}
+        attPanelLoading={attPanelLoading}
+        attDownloadBusyId={attDownloadBusyId}
+        attDownloadErr={attDownloadErr}
+        iconBtnBase={iconBtnBase}
+        closeAttPanel={closeAttPanel}
+        downloadAttachment={downloadAttachment}
+      />
     </TPTableWrap>
   );
 }

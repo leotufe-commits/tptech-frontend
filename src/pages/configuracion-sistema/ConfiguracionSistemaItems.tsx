@@ -1,6 +1,5 @@
-// tptech-frontend/src/pages/ConfiguracionSistemaItems.tsx
+// tptech-frontend/src/pages/configuracion-sistema/ConfiguracionSistemaItems.tsx
 import React, { useEffect, useMemo, useState } from "react";
-import { createPortal } from "react-dom";
 import {
   ChevronRight,
   Plus,
@@ -26,203 +25,25 @@ import {
   createCatalogItem,
   updateCatalogItem,
   setCatalogItemFavorite,
-  type CatalogItem,
   type CatalogType,
 } from "../../services/catalogs";
 
+import {
+  type CatalogGroup,
+  type Catalog,
+  type Row,
+  type RowStatus,
+  type SortCol,
+  type SortDir,
+  catalogHints,
+  norm,
+  statusRank,
+  itemToRow,
+} from "./catalogs.config";
+import { Pill, ModalShell } from "./catalogs.ui";
+
 function cn(...classes: Array<string | false | null | undefined>) {
   return classes.filter(Boolean).join(" ");
-}
-
-type CatalogGroup = "Ubicaciones" | "Fiscal";
-
-type Catalog = {
-  key: CatalogType;
-  title: string;
-  desc: string;
-  group: CatalogGroup;
-  icon: React.ReactNode;
-};
-
-type RowStatus = "Activo" | "Inactivo";
-
-type Row = {
-  id: string;
-  label: string;
-  status: RowStatus;
-  sortOrder: number;
-  updatedAt?: string;
-  favorite?: boolean;
-};
-
-/* =========================
-   Helpers: hints dinámicos por catálogo
-========================= */
-function catalogHints(key: CatalogType) {
-  switch (key) {
-    case "IVA_CONDITION":
-      return {
-        modalSubtitle: "Definí una condición impositiva para usar en facturación y perfiles.",
-        nameLabel: "Condición",
-        namePlaceholder: "Ej: Responsable Inscripto",
-        nameHint: "Se verá en el sistema como opción del combo.",
-        statusHint: "Desactivá para ocultar la opción sin borrar historial.",
-      };
-
-    case "PHONE_PREFIX":
-      return {
-        modalSubtitle: "Definí un prefijo para teléfonos.",
-        nameLabel: "Prefijo",
-        namePlaceholder: "Ej: +54",
-        nameHint: "Recomendado: incluye el “+”.",
-        statusHint: "Desactivá para ocultarlo del selector.",
-      };
-
-    case "COUNTRY":
-      return {
-        modalSubtitle: "Definí un país para direcciones y datos fiscales.",
-        nameLabel: "País",
-        namePlaceholder: "Ej: Argentina",
-        nameHint: "Nombre visible en el combo de país.",
-        statusHint: "Desactivá para ocultarlo del selector.",
-      };
-
-    case "PROVINCE":
-      return {
-        modalSubtitle: "Definí una provincia/estado para direcciones.",
-        nameLabel: "Provincia / Estado",
-        namePlaceholder: "Ej: Buenos Aires",
-        nameHint: "Nombre visible en el combo de provincia/estado.",
-        statusHint: "Desactivá para ocultarla del selector.",
-      };
-
-    case "CITY":
-      return {
-        modalSubtitle: "Definí una ciudad/localidad para direcciones y contacto.",
-        nameLabel: "Ciudad / Localidad",
-        namePlaceholder: "Ej: La Plata",
-        nameHint: "Nombre visible en el combo de ciudad.",
-        statusHint: "Desactivá para ocultarla del selector.",
-      };
-
-    case "DOCUMENT_TYPE":
-      return {
-        modalSubtitle: "Definí tipos de documento para usuarios/clientes.",
-        nameLabel: "Tipo de documento",
-        namePlaceholder: "Ej: DNI",
-        nameHint: "Nombre visible en el combo.",
-        statusHint: "Desactivá para ocultarlo del selector.",
-      };
-
-    default:
-      return {
-        modalSubtitle: "Completá los campos y guardá.",
-        nameLabel: "Nombre",
-        namePlaceholder: "Ej: Nombre",
-        nameHint: "Nombre visible en el sistema.",
-        statusHint: "Podés desactivar sin borrar.",
-      };
-  }
-}
-
-/* =========================
-   UI: Pill / Badge
-========================= */
-function Pill({ children, tone }: { children: React.ReactNode; tone?: "neutral" | "ok" | "off" }) {
-  const cls =
-    tone === "ok"
-      ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300"
-      : tone === "off"
-      ? "border-red-500/30 bg-red-500/10 text-red-300"
-      : "border-border bg-surface2 text-muted";
-
-  return (
-    <span className={cn("inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-semibold", cls)}>
-      {children}
-    </span>
-  );
-}
-
-/* =========================
-   UI: Modal (local)
-========================= */
-function ModalShell({
-  open,
-  title,
-  subtitle,
-  children,
-  onClose,
-  footer,
-}: {
-  open: boolean;
-  title: string;
-  subtitle?: string;
-  children: React.ReactNode;
-  onClose: () => void;
-  footer?: React.ReactNode;
-}) {
-  if (!open) return null;
-
-  return createPortal(
-    <>
-      <div className="fixed inset-0 z-[9998] bg-black/40" onMouseDown={onClose} aria-hidden="true" />
-      <div className="fixed inset-0 z-[9999] grid place-items-center p-4">
-        <div
-          className="w-full max-w-[520px] rounded-2xl border border-border bg-card shadow-[0_18px_50px_rgba(0,0,0,0.22)]"
-          onMouseDown={(e) => e.stopPropagation()}
-          role="dialog"
-          aria-modal="true"
-        >
-          <div className="flex items-center justify-between gap-3 border-b border-border px-4 py-3">
-            <div className="min-w-0">
-              <div className="truncate text-sm font-semibold text-text">{title}</div>
-              <div className="mt-0.5 text-xs text-muted">{subtitle || "Completá los campos y guardá."}</div>
-            </div>
-
-            <button
-              type="button"
-              className="tp-btn-secondary h-10 w-10 !p-0 grid place-items-center"
-              onClick={onClose}
-              aria-label="Cerrar"
-              title="Cerrar"
-            >
-              <X size={16} />
-            </button>
-          </div>
-
-          <div className="p-4">{children}</div>
-
-          <div className="flex items-center justify-end gap-2 border-t border-border px-4 py-3">{footer}</div>
-        </div>
-      </div>
-    </>,
-    document.body
-  );
-}
-
-/* =========================
-   Sort helpers
-========================= */
-type SortCol = "LABEL" | "STATUS";
-type SortDir = "asc" | "desc";
-
-function norm(s: any) {
-  return String(s ?? "").trim().toLowerCase();
-}
-
-function statusRank(s: RowStatus) {
-  return s === "Activo" ? 0 : 1;
-}
-
-function itemToRow(it: CatalogItem): Row {
-  return {
-    id: it.id,
-    label: it.label,
-    status: it.isActive ? "Activo" : "Inactivo",
-    sortOrder: it.sortOrder ?? 0,
-    updatedAt: it.updatedAt,
-    favorite: Boolean((it as any).isFavorite),
-  };
 }
 
 /* =========================

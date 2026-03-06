@@ -37,18 +37,20 @@ export default function TPImageUploader({
 
   return (
     <div className={cn("flex flex-col items-center gap-3", className)}>
+      {/* Preview (Avatar ya maneja fallback a iniciales) */}
       <Avatar
         src={imageUrl}
-        name={name}
-        email={email}
+        name={name ?? undefined}
+        email={email ?? undefined}
         size={size}
         rounded={rounded}
       />
 
+      {/* Upload / Replace */}
       <TPDropzone
         multiple={false}
         accept="image/*"
-        previewUrl={imageUrl}
+        previewUrl={imageUrl ?? null}
         loading={loading}
         disabled={disabled}
         onDelete={onDelete}

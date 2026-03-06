@@ -28,6 +28,10 @@ export function TPCollapse({
         type="button"
         disabled={disabled}
         onClick={onToggle}
+        // ✅ IMPORTANTE:
+        // - evita que el "Enter global" del Modal dispare Guardar cuando estás parado acá
+        // - en Modal, ignoramos eventos si el target (o un parent) tiene data-tp-enter="ignore"
+        data-tp-enter="ignore"
         className={cn(
           "w-full rounded-xl border border-border bg-card px-3 py-2 text-left transition",
           "hover:bg-surface disabled:opacity-50"
@@ -46,9 +50,7 @@ export function TPCollapse({
           )}
         </div>
 
-        {description ? (
-          <div className="mt-1 text-xs text-muted">{description}</div>
-        ) : null}
+        {description ? <div className="mt-1 text-xs text-muted">{description}</div> : null}
       </button>
 
       {open ? <div className="mt-4">{children}</div> : null}

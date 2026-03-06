@@ -319,7 +319,7 @@ export default function Register() {
                       value={form.phoneNumber}
                       onChange={(e) => update("phoneNumber", e.target.value)}
                       className="tp-input !flex-1 min-w-0"
-                      placeholder="11 1234 5678"
+                      placeholder="9 11 1234 5678"
                       disabled={loading}
                     />
                   </div>

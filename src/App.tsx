@@ -12,7 +12,7 @@ export default function App() {
       <LockScreen />
       <Toaster />
 
-      {/* App routes */}
+      {/* Routes */}
       <RouterProvider router={router} />
     </>
   );
