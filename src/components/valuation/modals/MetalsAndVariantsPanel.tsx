@@ -39,49 +39,20 @@ import { TPTECH_VALUATION_CHANGED, type ValuationChangedDetail } from "../../../
 
 import { fmtMoneySmart, fmtNumber2, fmtNumberSmart, fmtPurity2, purityKey2 } from "../../../lib/format";
 
-/* =========================
-   Helpers
-========================= */
+import {
+  type VarSortKey,
+  type VarSortDir,
+  type RefSortKey,
+  type RefSortDir,
+  type DateRange,
+  toNum,
+  fmtDateTime,
+  userLabel,
+  startOfDay,
+  endOfDay,
+  useLatest,
+} from './metalsPanel.utils';
 
-function toNum(v: any, fallback = NaN) {
-  const n = Number(v);
-  return Number.isFinite(n) ? n : fallback;
-}
-
-function fmtDateTime(v?: string) {
-  if (!v) return "—";
-  const d = new Date(v);
-  if (Number.isNaN(d.getTime())) return String(v);
-  return d.toLocaleString("es-AR");
-}
-
-function userLabel(u: any) {
-  if (!u) return "—";
-  const name = String(u?.name || "").trim();
-  const email = String(u?.email || "").trim();
-  return name || email || "—";
-}
-
-type DateRange = { from: Date | null; to: Date | null };
-
-function startOfDay(d: Date) {
-  const x = new Date(d);
-  x.setHours(0, 0, 0, 0);
-  return x;
-}
-function endOfDay(d: Date) {
-  const x = new Date(d);
-  x.setHours(23, 59, 59, 999);
-  return x;
-}
-
-function useLatest<T>(value: T) {
-  const r = useRef(value);
-  useEffect(() => {
-    r.current = value;
-  }, [value]);
-  return r;
-}
 
 function IconBtn({
   title,
@@ -106,17 +77,6 @@ function IconBtn({
     </TPButton>
   );
 }
-
-/* =========================
-   Sort types
-========================= */
-
-type VarSortKey = "name" | "purity" | "suggested" | "sell" | "status";
-type VarSortDir = "asc" | "desc";
-
-type RefSortKey = "edited" | "user" | "value" | "created";
-type RefSortDir = "asc" | "desc";
-
 export default function MetalsAndVariantsPanel({
   loading,
   saving,
