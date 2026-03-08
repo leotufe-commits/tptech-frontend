@@ -122,7 +122,6 @@ export function usePerfilJoyeria() {
     setExisting(d.existing);
     setCompany(d.company);
     setDirty(false);
-    setMsg(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [jewelryFromContext?.id, jewelryFromContext?.updatedAt]);
 
@@ -275,9 +274,13 @@ export function usePerfilJoyeria() {
         setExisting(d.existing);
         setCompany(d.company);
 
+        devLog("[DBG LOGO] 1/upload resp logoUrl:", updated?.logoUrl);
         notifyLogoChanged(String(updated?.logoUrl || ""));
+        devLog("[DBG LOGO] 2/event dispatched, calling refresh()");
         // Refresca AuthContext para que sidebar y favicon lean el logo actualizado
-        refresh().catch(() => {});
+        refresh().then(() => {
+          devLog("[DBG LOGO] 5/refresh() done");
+        }).catch(() => {});
         setMsg("Logo actualizado ✅");
       } catch (e: any) {
         devLog("uploadLogoInstant error", e);
@@ -333,8 +336,6 @@ export function usePerfilJoyeria() {
 
   const uploadAttachmentsInstant = useCallback(
     async (files: File[]) => {
-      if (!isEditMode) return;
-
       const list = Array.from(files || []);
       if (!list.length) return;
 
@@ -372,6 +373,7 @@ export function usePerfilJoyeria() {
             ? `Adjuntados ${okFiles.length} archivo(s). Se omitieron ${rejected.length} por tamaño.`
             : "Adjuntos cargados ✅"
         );
+        refresh().catch(() => {});
       } catch (e: any) {
         devLog("uploadAttachmentsInstant error", e);
         setMsg(e?.message || "No se pudieron subir los adjuntos.");
@@ -379,7 +381,7 @@ export function usePerfilJoyeria() {
         setUploadingAttachments(false);
       }
     },
-    [isEditMode, busyAny]
+    [busyAny, refresh]
   );
 
   const deleteSavedAttachment = useCallback(
@@ -407,6 +409,7 @@ export function usePerfilJoyeria() {
         });
 
         setMsg("Adjunto eliminado ✅");
+        refresh().catch(() => {});
       } catch (e: any) {
         devLog("deleteSavedAttachment error", e);
         setMsg(e?.message || "No se pudo eliminar el adjunto.");
@@ -415,7 +418,7 @@ export function usePerfilJoyeria() {
         setDeletingAttId(null);
       }
     },
-    [isEditMode, busyAny, savedAttachments]
+    [isEditMode, busyAny, savedAttachments, refresh]
   );
 
   // ✅ para el header (logo preview + server)

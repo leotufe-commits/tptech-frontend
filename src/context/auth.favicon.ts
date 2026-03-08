@@ -75,8 +75,9 @@ function buildPublicTptFaviconSvg() {
 function setFaviconHref(href: string, type?: string) {
   try {
     const link = ensureIconLink();
-    // Agrega cache-buster solo a URLs reales (no a data-uris)
-    const finalHref = href.startsWith("data:") ? href : `${href}${href.includes("?") ? "&" : "?"}v=${Date.now()}`;
+    const finalHref = href.startsWith("data:")
+      ? href
+      : `${href}${href.includes("?") ? "&" : "?"}v=${Date.now()}`;
     link.setAttribute("href", finalHref);
     if (type) link.setAttribute("type", type);
     else link.removeAttribute("type");
@@ -85,17 +86,32 @@ function setFaviconHref(href: string, type?: string) {
   }
 }
 
+function apiBase() {
+  const base = (import.meta.env.VITE_API_URL as string) || "http://localhost:3001";
+  return String(base).replace(/\/+$/, "");
+}
+
 function normalizeLogoUrl(u: any): string {
   const raw = String(u || "").trim();
   if (!raw) return "";
+
+  // URL absoluta (R2/CDN o backend explícito)
   if (/^https?:\/\//i.test(raw)) return raw;
 
-  const base = (import.meta.env.VITE_API_URL as string) || "http://localhost:3001";
-  const clean = String(base).replace(/\/+$/, "");
-  const origin = clean.replace(/\/api$/i, "");
+  const base = apiBase();
 
-  if (raw.startsWith("/")) return origin + raw;
-  return origin + "/" + raw;
+  // caso local ya guardado como /uploads/...
+  if (raw.startsWith("/uploads/")) {
+    return `${base}${raw}`;
+  }
+
+  // caso local ya guardado como uploads/...
+  if (raw.startsWith("uploads/")) {
+    return `${base}/${raw}`;
+  }
+
+  // caso path interno persistido en DB: tptech/tenants/...
+  return `${base}/uploads/${raw.replace(/^\/+/, "")}`;
 }
 
 function initialsFromName(name: string): string {
@@ -159,6 +175,7 @@ export function applyAuthFaviconOverrideLogo(args: { user: any; jewelry: any; lo
   const j = args.jewelry;
   const raw = String(args.logoUrl || "").trim();
   const normalized = normalizeLogoUrl(raw);
+  if (import.meta.env.DEV) console.log("[DBG LOGO] 3c/applyAuthFaviconOverrideLogo raw:", raw, "→ normalized:", normalized);
 
   if (normalized) {
     try {

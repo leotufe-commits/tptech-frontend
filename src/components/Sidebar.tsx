@@ -428,6 +428,7 @@ export default function Sidebar({
   useEffect(() => {
     function onLogoChanged(e: any) {
       const next = String(e?.detail?.logoUrl ?? "");
+      console.log("[DBG LOGO] 3b/Sidebar onLogoChanged next:", next);
       setLocalLogoUrlRaw(next);
       setLogoTick((t) => t + 1);
     }

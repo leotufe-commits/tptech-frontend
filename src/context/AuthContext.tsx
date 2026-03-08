@@ -559,8 +559,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             method: "GET",
             cache: "no-store",
             on401: "throw",
-            // ✅ aunque sea force, podemos dedupear GET si StrictMode dispara doble
-            dedupe: true,
+            // force=true omite el dedupeado para que refresh() post-upload
+            // no reciba una respuesta en-vuelo con datos previos al cambio
+            dedupe: !force,
           });
 
           const backendToken = data.accessToken || data.token || null;
@@ -569,6 +570,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             setToken(backendToken);
           }
 
+          if (DEV) console.log("[DBG LOGO] 4/refreshMe /auth/me logoUrl:", (data as any)?.jewelry?.logoUrl);
           setUser(data.user);
           setJewelry(data.jewelry ?? null);
           setRoles(data.roles ?? []);
@@ -658,6 +660,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         if (!user) return;
         const nextLogo = readLogoFromEvent(ev);
 
+        if (DEV) console.log("[DBG LOGO] 3a/AuthContext onLogoChanged nextLogo:", nextLogo);
         setJewelry((prev) => ({ ...(prev || {}), logoUrl: nextLogo }));
 
         applyAuthFaviconOverrideLogo({
