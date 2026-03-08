@@ -422,7 +422,7 @@ export default function Sidebar({
 
   const [localLogoUrlRaw, setLocalLogoUrlRaw] = useState<string | null>(null);
   const [logoTick, setLogoTick] = useState(0);
-  const [localAvatarUrlRaw, setLocalAvatarUrlRaw] = useState("");
+  const [localAvatarUrlRaw, setLocalAvatarUrlRaw] = useState<string | null>(null);
   const [avatarTick, setAvatarTick] = useState(0);
 
   useEffect(() => {
@@ -442,7 +442,7 @@ export default function Sidebar({
       const myId = String((auth.user as any)?.id || "");
       if (!nextUserId || !myId || nextUserId !== myId) return;
 
-      const nextUrl = String(detail?.avatarUrl || "");
+      const nextUrl = String(detail?.avatarUrl ?? "");
       setLocalAvatarUrlRaw(nextUrl);
       setAvatarTick((t) => t + 1);
     }
@@ -559,7 +559,7 @@ export default function Sidebar({
 
   const initials = getInitials(auth.jewelry?.name || jewelryName || "TPTech");
 
-  const avatarUrlFinalRaw = String(localAvatarUrlRaw || (user as any)?.avatarUrl || "").trim();
+  const avatarUrlFinalRaw = (localAvatarUrlRaw !== null ? localAvatarUrlRaw : ((user as any)?.avatarUrl ?? "")).trim();
   const avatarBustFinal = String(
     (user as any)?.avatarUpdatedAt ?? (user as any)?.updatedAt ?? (user as any)?.quickPinUpdatedAt ?? avatarTick ?? 1
   ).trim();
