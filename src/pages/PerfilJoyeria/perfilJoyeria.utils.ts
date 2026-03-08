@@ -67,8 +67,24 @@ function apiBase() {
 export function absUrl(u: string) {
   const raw = s(u);
   if (!raw) return "";
+
+  // absoluta (R2/CDN o backend explícito)
   if (/^https?:\/\//i.test(raw)) return raw;
-  return `${apiBase()}${raw.startsWith("/") ? raw : `/${raw}`}`;
+
+  const base = apiBase();
+
+  // local guardado ya con /uploads/...
+  if (raw.startsWith("/uploads/")) {
+    return `${base}${raw}`;
+  }
+
+  // local guardado con uploads/... (sin slash inicial)
+  if (raw.startsWith("uploads/")) {
+    return `${base}/${raw}`;
+  }
+
+  // path interno de storage local/R2 persistido en DB
+  return `${base}/uploads/${raw.replace(/^\/+/, "")}`;
 }
 
 /* =========================
@@ -152,7 +168,7 @@ export function pickJewelryFromMe(me: any) {
 }
 
 export function normalizeJewelryResponse(resp: any) {
-  const j = resp?.jewelry ?? resp?.data?.jewelry ?? resp;
+  const j = resp?.jewelry ?? resp?.company ?? resp?.data?.jewelry ?? resp?.data?.company ?? resp;
   if (!j || typeof j !== "object") return j;
 
   const attachments = Array.isArray((j as any).attachments) ? (j as any).attachments : [];
@@ -202,7 +218,7 @@ export function setFaviconPersisted(url: string) {
     localStorage.setItem("TPTECH_FAVICON_URL", u);
   } catch {}
 
-  applyFavicon(u, "image/png");
+  applyFavicon(absUrl(u), "image/png");
 }
 
 /**

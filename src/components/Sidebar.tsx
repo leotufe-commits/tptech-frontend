@@ -420,14 +420,14 @@ export default function Sidebar({
   const collapsed = !mini && actualWidth <= COLLAPSED_W;
   const headerTextHidden = mini || collapsed;
 
-  const [localLogoUrlRaw, setLocalLogoUrlRaw] = useState("");
+  const [localLogoUrlRaw, setLocalLogoUrlRaw] = useState<string | null>(null);
   const [logoTick, setLogoTick] = useState(0);
   const [localAvatarUrlRaw, setLocalAvatarUrlRaw] = useState("");
   const [avatarTick, setAvatarTick] = useState(0);
 
   useEffect(() => {
     function onLogoChanged(e: any) {
-      const next = String(e?.detail?.logoUrl || "");
+      const next = String(e?.detail?.logoUrl ?? "");
       setLocalLogoUrlRaw(next);
       setLogoTick((t) => t + 1);
     }
@@ -551,7 +551,7 @@ export default function Sidebar({
     return "Usuario";
   }, [auth]);
 
-  const logoUrlRaw = (localLogoUrlRaw || (auth.jewelry as any)?.logoUrl || "").trim();
+  const logoUrlRaw = (localLogoUrlRaw !== null ? localLogoUrlRaw : ((auth.jewelry as any)?.logoUrl ?? "")).trim();
   const logoBase = absUrl(logoUrlRaw);
   const jewelryBust = String((auth.jewelry as any)?.updatedAt ?? "").trim();
   const logoBust = jewelryBust || String(logoTick || 1);
