@@ -1,6 +1,6 @@
 // src/pages/PerfilJoyeria/PerfilJoyeriaView.tsx
-import React, { useCallback, useMemo } from "react";
-import { Building2, Globe, Mail, MapPin, Paperclip, Phone, Receipt, StickyNote, Tag } from "lucide-react";
+import React, { useCallback, useMemo, useRef } from "react";
+import { Building2, Globe, Loader2, Mail, MapPin, Paperclip, Phone, Plus, Receipt, StickyNote, Tag } from "lucide-react";
 
 import { TPSectionShell } from "../../components/ui/TPSectionShell";
 import { TPInfoCard } from "../../components/ui/TPInfoCard";
@@ -23,10 +23,15 @@ type Props = {
   addressLine: string;
   addressMeta: string;
   savedAttachments: JewelryAttachment[];
+  onUploadAttachments?: (files: File[]) => Promise<void>;
+  uploadingAttachments?: boolean;
+  onDeleteAttachment?: (id: string) => Promise<void>;
+  deletingAttId?: string | null;
 };
 
 export default function PerfilJoyeriaView(props: Props) {
-  const { existingName, company, phone, addressLine, addressMeta, savedAttachments } = props;
+  const { existingName, company, phone, addressLine, addressMeta, savedAttachments, onUploadAttachments, uploadingAttachments, onDeleteAttachment, deletingAttId } = props;
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const items: TPAttachmentItem[] = useMemo(() => {
     return (savedAttachments || []).map((a: any) => ({
@@ -84,9 +89,44 @@ export default function PerfilJoyeriaView(props: Props) {
         <TPInfoCard icon={<StickyNote className="h-3.5 w-3.5" />} label="Notas" value={company.notes} />
       </TPSectionShell>
 
-      <TPSectionShell title="Adjuntos" icon={<Paperclip className="h-4 w-4" />}>
+      <TPSectionShell
+        title="Adjuntos"
+        icon={<Paperclip className="h-4 w-4" />}
+        right={
+          onUploadAttachments ? (
+            <>
+              <input
+                ref={fileInputRef}
+                type="file"
+                multiple
+                className="hidden"
+                onChange={(e) => {
+                  const files = Array.from(e.target.files || []);
+                  if (files.length) onUploadAttachments(files);
+                  e.target.value = "";
+                }}
+              />
+              <button
+                type="button"
+                disabled={uploadingAttachments}
+                onClick={() => fileInputRef.current?.click()}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-card px-3 py-1.5 text-xs font-medium text-text hover:bg-surface2 disabled:opacity-50 transition-colors"
+              >
+                {uploadingAttachments ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <Plus className="h-3.5 w-3.5" />
+                )}
+                {uploadingAttachments ? "Subiendo..." : "Agregar"}
+              </button>
+            </>
+          ) : undefined
+        }
+      >
         <TPAttachmentList
           items={items}
+          loading={uploadingAttachments}
+          deletingId={deletingAttId}
           emptyText="Todavía no hay adjuntos."
           onDownload={(it) => {
             if (!it.url) return;
@@ -96,11 +136,8 @@ export default function PerfilJoyeriaView(props: Props) {
             if (!it.url) return;
             openInNewTab(it.url);
           }}
+          onDelete={onDeleteAttachment ? (it) => onDeleteAttachment(it.id) : undefined}
         />
-
-        <div className="mt-3 text-[11px] text-muted">
-          * Esta vista es <b>solo lectura</b>. Para subir/eliminar adjuntos, usá <b>Editar</b>.
-        </div>
       </TPSectionShell>
     </div>
   );

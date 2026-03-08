@@ -217,7 +217,7 @@ export default function PerfilJoyeriaEdit(p: Props) {
             DERECHA
         ========================= */}
         <div className="space-y-4">
-          <TPField label="Nombre de Fantasía">
+          <TPField label="Nombre de Fantasía" required>
             <TPInput
               tabIndex={t++}
               value={p.existing.name}

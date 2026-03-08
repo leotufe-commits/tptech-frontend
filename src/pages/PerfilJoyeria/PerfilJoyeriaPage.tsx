@@ -1,9 +1,10 @@
 // src/pages/PerfilJoyeria/PerfilJoyeriaPage.tsx
-import React from "react";
+import React, { useState } from "react";
 import { Pencil, Save, Loader2, X, ChevronLeft } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 
 import ConfirmUnsavedChangesDialog from "../../components/ui/ConfirmUnsavedChangesDialog";
+import ConfirmDeleteDialog from "../../components/ui/ConfirmDeleteDialog";
 import { TPButton } from "../../components/ui/TPButton";
 import TPFocusTrap from "../../components/ui/TPFocusTrap";
 import TPAvatarUploader from "../../components/ui/TPAvatarUploader";
@@ -47,6 +48,7 @@ function StatusLine({
 export default function PerfilJoyeriaPage() {
   const p = usePerfilJoyeria();
   const nav = useNavigate();
+  const [confirmDeleteAttId, setConfirmDeleteAttId] = useState<string | null>(null);
 
   if (p.loading) {
     return (
@@ -92,6 +94,19 @@ export default function PerfilJoyeriaPage() {
         }}
       />
 
+      <ConfirmDeleteDialog
+        open={Boolean(confirmDeleteAttId)}
+        title="Eliminar adjunto"
+        message="¿Seguro que querés eliminar este archivo? Esta acción no se puede deshacer."
+        busy={Boolean(p.deletingAttId)}
+        onClose={() => setConfirmDeleteAttId(null)}
+        onConfirm={async () => {
+          if (!confirmDeleteAttId) return;
+          await p.deleteSavedAttachment(confirmDeleteAttId);
+          setConfirmDeleteAttId(null);
+        }}
+      />
+
       {/* Header */}
       <div className="flex items-center justify-between gap-3">
         <div className="min-w-0">
@@ -131,51 +146,36 @@ export default function PerfilJoyeriaPage() {
       {/* Summary */}
       <div className={cn(cardBase("p-4"))}>
         <div className="flex items-start gap-4">
-
           {/* Logo */}
           <div className="shrink-0">
             <TPAvatarUploader
-              src={p.company.logoUrl}
+              src={p.headerLogoSrc}
               name={p.existing.name}
               email={undefined}
               size={80}
               rounded="xl"
               disabled={p.busyAny}
               loading={logoBusy}
-
-              /* ✅ SOLO muestra acciones cuando se está editando */
               showActions={p.isEditMode}
-
               onError={(msg) => p.setMsg(msg)}
-
               addLabel="Agregar"
               editLabel="Editar"
               deleteLabel="Eliminar logo"
-
               onUpload={async (file) => {
                 if (!p.isEditMode) return;
                 await p.uploadLogoInstant(file);
               }}
-
               onDelete={async () => {
                 if (!p.isEditMode) return;
                 await p.deleteLogoInstant();
               }}
-
-              frameClassName={cn(
-                "border border-border",
-                "bg-card",
-                "hover:border-border/80"
-              )}
-
-              imgClassName="object-contain p-1"
+              frameClassName="bg-surface2"
+              imgClassName="object-cover"
             />
           </div>
 
           <div className="min-w-0 flex-1">
-            <div className="font-semibold text-xl truncate">
-              {titleMain}
-            </div>
+            <div className="font-semibold text-xl truncate">{titleMain}</div>
 
             <div className="text-sm text-muted truncate">
               {valueOrDash(subtitle)}
@@ -193,11 +193,14 @@ export default function PerfilJoyeriaPage() {
           addressLine={p.addressLine}
           addressMeta={p.addressMeta}
           savedAttachments={p.savedAttachments}
+          onUploadAttachments={p.uploadAttachmentsInstant}
+          uploadingAttachments={p.uploadingAttachments}
+          onDeleteAttachment={async (id) => setConfirmDeleteAttId(id)}
+          deletingAttId={p.deletingAttId}
         />
       ) : (
         <TPFocusTrap active={p.isEditMode}>
           <div>
-
             <PerfilJoyeriaEdit
               existing={p.existing}
               company={p.company}
@@ -223,7 +226,6 @@ export default function PerfilJoyeriaPage() {
 
             <div className="pt-2">
               <div className="flex items-center justify-end gap-3">
-
                 <TPButton
                   tabIndex={9998}
                   variant="secondary"
@@ -243,10 +245,8 @@ export default function PerfilJoyeriaPage() {
                 >
                   {p.saving ? "Guardando…" : "Guardar cambios"}
                 </TPButton>
-
               </div>
             </div>
-
           </div>
         </TPFocusTrap>
       )}

@@ -95,6 +95,11 @@ body,
   visibility: hidden;
 }
 
+/* Asterisco de campo obligatorio */
+.tp-field-label span {
+  color: inherit;
+}
+
 /* =====================================
    Inputs (FUERZA UNIFICACIÓN)
    - Esta clase la usan:

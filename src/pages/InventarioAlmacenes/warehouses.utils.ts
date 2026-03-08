@@ -23,6 +23,7 @@ export const EMPTY_DRAFT: WarehouseDraft = {
 
   phoneCountry: "",
   phoneNumber: "",
+  email: "",
 
   attn: "",
   street: "",
@@ -45,6 +46,7 @@ export function rowToDraft(r: WarehouseRow): WarehouseDraft {
 
     phoneCountry: s((r as any).phoneCountry),
     phoneNumber: s((r as any).phoneNumber),
+    email: s((r as any).email),
 
     attn: s(r.attn),
     street: s(r.street),
@@ -60,13 +62,13 @@ export function rowToDraft(r: WarehouseRow): WarehouseDraft {
   };
 }
 
-export function draftPayload(d: WarehouseDraft): WarehouseDraft {
+export function draftPayload(d: WarehouseDraft): Omit<WarehouseDraft, "code"> {
   return {
     name: s(d.name),
-    code: s(d.code),
 
     phoneCountry: s((d as any).phoneCountry),
     phoneNumber: s((d as any).phoneNumber),
+    email: s((d as any).email),
 
     attn: s(d.attn),
     street: s(d.street),

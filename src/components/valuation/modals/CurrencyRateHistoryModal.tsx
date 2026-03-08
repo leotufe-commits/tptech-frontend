@@ -149,7 +149,7 @@ export default function CurrencyRateHistoryModal({
     return () => {
       alive = false;
     };
-  }, [open, currencyId]);
+  }, [open, currencyId, baseCurrencySymbol]);
 
   const isBase = Boolean(currency?.isBase);
 

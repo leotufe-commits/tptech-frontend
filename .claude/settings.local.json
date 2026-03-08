@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python3:*)",
+      "Bash(xargs wc:*)",
+      "Bash(mv:*)",
+      "Bash(npm run:*)",
+      "Bash(node:*)"
+    ]
+  }
+}

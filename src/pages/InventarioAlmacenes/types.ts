@@ -7,6 +7,7 @@ export type WarehouseRow = {
 
   phoneCountry?: string;
   phoneNumber?: string;
+  email?: string;
 
   attn?: string;
   street?: string;
@@ -35,6 +36,7 @@ export type WarehouseDraft = {
 
   phoneCountry: string;
   phoneNumber: string;
+  email: string;
 
   attn: string;
   street: string;

@@ -292,7 +292,6 @@ export default function Divisas() {
       sku: String(vv.sku || ""),
       purity: typeof vv.purity === "number" ? vv.purity : Number(vv.purity || 0.75),
       saleFactor: typeof vv.saleFactor === "number" ? vv.saleFactor : 1.0,
-      salePriceOverride: vv.salePriceOverride ?? null,
     });
 
     await preloadVariantSkus(String(vv.metalId));
@@ -324,7 +323,6 @@ export default function Divisas() {
       sku: p.sku,
       purity: p.purity,
       saleFactor: p.saleFactor,
-      salePriceOverride: p.salePriceOverride ?? null,
     });
 
     return await refetchIfOk(r);
@@ -426,6 +424,7 @@ export default function Divisas() {
           onClose={() => setOpenCurrency(false)}
           onSave={onSaveCurrencyModal as any}
           currency={null}
+          isFirstCurrency={v.currencies.length === 0}
         />
 
         {/* EDIT CURRENCY + RATES */}
@@ -481,7 +480,6 @@ export default function Divisas() {
                   sku: variantEditing.sku,
                   purity: variantEditing.purity,
                   saleFactor: variantEditing.saleFactor,
-                  salePriceOverride: variantEditing.salePriceOverride ?? null,
                 } as any)
               : null
           }

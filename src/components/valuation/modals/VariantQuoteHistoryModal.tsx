@@ -77,8 +77,7 @@ function HistoryCard({ r }: { r: any }) {
 
   const reason = String(r?.reason || "").trim() || "—";
 
-  const buy = r?.finalPurchasePrice ?? r?.purchasePrice ?? r?.suggestedPrice;
-  const sell = r?.finalSalePrice ?? r?.salePrice;
+  const sell = r?.finalSalePrice ?? r?.price;
 
   return (
     <div className="rounded-2xl border border-border bg-card p-4">
@@ -91,7 +90,7 @@ function HistoryCard({ r }: { r: any }) {
         </div>
 
         <div className="shrink-0 text-right">
-          <div className="text-xs text-muted font-semibold">Venta</div>
+          <div className="text-xs text-muted font-semibold">Precio</div>
           <div className="mt-0.5 text-sm font-semibold text-text tabular-nums whitespace-nowrap">
             {money(sym, sell, 6)}
           </div>
@@ -99,13 +98,6 @@ function HistoryCard({ r }: { r: any }) {
       </div>
 
       <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-3">
-        <div className="rounded-xl border border-border bg-surface2 p-3">
-          <CardRow
-            label="Compra"
-            value={<span className="font-semibold tabular-nums whitespace-nowrap">{money(sym, buy, 6)}</span>}
-          />
-        </div>
-
         <div className="rounded-xl border border-border bg-surface2 p-3">
           <CardRow label="Moneda" value={curLabel} title={curLabel} />
         </div>
@@ -317,29 +309,18 @@ export default function VariantQuoteHistoryModal({
           </div>
         ) : (
           <>
-            {/* Card “valor actual” */}
+            {/* Card "valor actual" */}
             <div className="rounded-2xl border border-border bg-card p-6">
-              <div className="text-xs text-muted text-center">Venta actual</div>
+              <div className="text-xs text-muted text-center">Precio actual</div>
 
               <div className="mt-2 flex items-center justify-center">
                 <div className="rounded-2xl border border-border bg-surface2 px-6 py-5 text-center">
                   <div className="text-4xl font-semibold text-text tabular-nums whitespace-nowrap">
                     {current?.finalSalePrice != null
                       ? money(curSym, current.finalSalePrice, 6)
-                      : current?.salePrice != null
-                      ? money(curSym, current.salePrice, 6)
+                      : current?.price != null
+                      ? money(curSym, current.price, 6)
                       : "—"}
-                  </div>
-
-                  <div className="mt-2 text-xs text-muted tabular-nums whitespace-nowrap">
-                    Compra:{" "}
-                    <span className="text-text font-semibold">
-                      {current?.finalPurchasePrice != null
-                        ? money(curSym, current.finalPurchasePrice, 6)
-                        : current?.purchasePrice != null
-                        ? money(curSym, current.purchasePrice, 6)
-                        : "—"}
-                    </span>
                   </div>
                 </div>
               </div>
@@ -425,7 +406,7 @@ export default function VariantQuoteHistoryModal({
                       <div className="min-w-0 text-right">
                         Actual:{" "}
                         <span className="text-text font-semibold tabular-nums whitespace-nowrap">
-                          {current ? `${curLabel} · ${money(curSym, current?.finalSalePrice ?? current?.salePrice, 6)}` : "—"}
+                          {current ? `${curLabel} · ${money(curSym, current?.finalSalePrice ?? current?.price, 6)}` : "—"}
                         </span>
                       </div>
                     </div>

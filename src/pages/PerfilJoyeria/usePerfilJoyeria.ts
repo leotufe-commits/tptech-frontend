@@ -386,7 +386,6 @@ export function usePerfilJoyeria() {
 
   const deleteSavedAttachment = useCallback(
     async (id: string) => {
-      if (!isEditMode) return;
       const attId = String(id || "").trim();
       if (!attId) return;
 

@@ -38,9 +38,7 @@ export default function UserAvatarCard(props: Props) {
 
   const busy = modalBusy || avatarBusy;
 
-  // ✅ La lógica de preview real se maneja fuera (avatarPreview / avatarSrc ya vienen “resueltos”).
-  // TPAvatarUploader trae preview propio, pero en Users ya existe un flujo externo (avatarPreview).
-  // Para no duplicar, le damos como src el preview si existe, si no el server src.
+  // preview primero, si no imagen del servidor
   const effectiveSrc = avatarPreview || avatarSrc;
 
   return (
@@ -50,8 +48,6 @@ export default function UserAvatarCard(props: Props) {
           <div className="relative">
             <TPAvatarUploader
               src={effectiveSrc}
-              // Para iniciales, si no tenemos name/email acá, usamos fallback fijo "U".
-              // Si querés iniciales reales del usuario, pasame los props y lo conectamos.
               name={initialsFrom("U")}
               email={undefined}
               size={64}
@@ -61,20 +57,33 @@ export default function UserAvatarCard(props: Props) {
               addLabel="Agregar"
               editLabel="Editar"
               deleteLabel={avatarPreview ? "Descartar" : "Eliminar avatar"}
-              // En Users ya tenés tu input y tu flujo (onPick/onRemove) afuera.
-              // Entonces usamos onUpload -> onPick y onDelete -> onRemove.
+
               onUpload={(file) => onPick(file)}
-              onDelete={detailHasAvatar || avatarPreview ? () => onRemove() : undefined}
+              onDelete={
+                detailHasAvatar || avatarPreview
+                  ? () => onRemove()
+                  : undefined
+              }
+
               onError={() => {
-                /* opcional: si querés, conectamos a toast */
+                /* opcional: conectar a toast */
               }}
+
+              /* 🎨 mejora visual del avatar */
+              frameClassName={cn(
+                "border border-border/30",
+                "bg-transparent",
+                "shadow-none"
+              )}
+              imgClassName="object-contain p-0.5"
+
               className=""
-              imgClassName=""
             />
           </div>
 
           <div className="min-w-0">
             <div className="text-sm font-semibold">Imagen de Perfil</div>
+
             <div className="text-xs text-muted">
               {modalMode === "CREATE"
                 ? "Podés elegirlo ahora (se sube al crear)."

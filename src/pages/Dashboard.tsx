@@ -51,21 +51,28 @@ function Segmented({
   ];
 
   return (
-    <div className="inline-flex rounded-xl border border-border bg-surface p-1">
-      {items.map((it) => (
-        <button
-          key={it.k}
-          type="button"
-          onClick={() => onChange(it.k)}
-          className={cn(
-            "rounded-lg px-3 py-1.5 text-xs font-semibold transition",
-            "focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-primary/20",
-            value === it.k ? "bg-white text-text shadow-sm" : "text-muted hover:text-text"
-          )}
-        >
-          {it.label}
-        </button>
-      ))}
+    <div className="inline-flex items-center rounded-xl border border-border bg-surface p-1 shadow-sm">
+      {items.map((it) => {
+        const active = value === it.k;
+
+        return (
+          <button
+            key={it.k}
+            type="button"
+            onClick={() => onChange(it.k)}
+            aria-pressed={active}
+            className={cn(
+              "inline-flex min-w-[46px] items-center justify-center rounded-lg px-3 py-1.5 text-xs font-semibold leading-none transition-all duration-150",
+              "focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-primary/20",
+              active
+                ? "bg-primary text-white shadow-sm"
+                : "text-muted hover:bg-white/5 hover:text-text"
+            )}
+          >
+            {it.label}
+          </button>
+        );
+      })}
     </div>
   );
 }

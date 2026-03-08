@@ -38,8 +38,7 @@ export default function AddQuoteModal({
   onSave: (payload: {
     variantId: string;
     currencyId: string;
-    purchasePrice: number;
-    salePrice: number;
+    price: number;
     effectiveAt: string;
   }) => Promise<{ ok: boolean; error?: string }>;
 
@@ -47,8 +46,7 @@ export default function AddQuoteModal({
   currencies: CurrencyRow[];
 }) {
   const [currencyId, setCurrencyId] = useState("");
-  const [purchasePrice, setPurchasePrice] = useState("");
-  const [salePrice, setSalePrice] = useState("");
+  const [price, setPrice] = useState("");
   const [effectiveAt, setEffectiveAt] = useState("");
   const [err, setErr] = useState<string | null>(null);
 
@@ -84,8 +82,7 @@ export default function AddQuoteModal({
   useEffect(() => {
     if (!open) return;
     setErr(null);
-    setPurchasePrice("");
-    setSalePrice("");
+    setPrice("");
     setEffectiveAt(makeNowLocal());
 
     // preselect: primera moneda activa (idealmente base si existe)
@@ -104,11 +101,8 @@ export default function AddQuoteModal({
     const cid = String(currencyId || "").trim();
     if (!cid) return setErr("Moneda requerida.");
 
-    const p = Number(purchasePrice);
-    const s = Number(salePrice);
-    if (!Number.isFinite(p) || p <= 0) return setErr("Precio de compra inválido.");
-    if (!Number.isFinite(s) || s <= 0) return setErr("Precio de venta inválido.");
-    if (s < p) return setErr("La venta no puede ser menor que la compra.");
+    const p = Number(price);
+    if (!Number.isFinite(p) || p <= 0) return setErr("Precio inválido.");
 
     const eff = String(effectiveAt || "").trim();
     if (!eff) return setErr("Fecha/hora requerida.");
@@ -118,8 +112,7 @@ export default function AddQuoteModal({
     const r = await onSave({
       variantId,
       currencyId: cid,
-      purchasePrice: p,
-      salePrice: s,
+      price: p,
       effectiveAt: eff,
     });
 
@@ -199,28 +192,15 @@ export default function AddQuoteModal({
               </div>
             </div>
 
-            <div className="grid gap-3 md:grid-cols-2">
-              <div>
-                <label className="text-xs font-semibold text-muted">Precio compra</label>
-                <input
-                  value={purchasePrice}
-                  onChange={(e) => setPurchasePrice(e.target.value)}
-                  placeholder="Ej: 100000"
-                  className={TP_INPUT}
-                  disabled={busy}
-                />
-              </div>
-
-              <div>
-                <label className="text-xs font-semibold text-muted">Precio venta</label>
-                <input
-                  value={salePrice}
-                  onChange={(e) => setSalePrice(e.target.value)}
-                  placeholder="Ej: 120000"
-                  className={TP_INPUT}
-                  disabled={busy}
-                />
-              </div>
+            <div>
+              <label className="text-xs font-semibold text-muted">Precio</label>
+              <input
+                value={price}
+                onChange={(e) => setPrice(e.target.value)}
+                placeholder="Ej: 120000"
+                className={TP_INPUT}
+                disabled={busy}
+              />
             </div>
 
             <div className="text-xs text-muted">

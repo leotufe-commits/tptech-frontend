@@ -124,11 +124,13 @@ export function TPTbody({ children }: { children: ReactNode }) {
 export function TPTh({
   children,
   className,
+  style,
 }: {
   children: ReactNode;
   className?: string;
+  style?: React.CSSProperties;
 }) {
-  return <th className={cn("px-3 py-3 text-left font-semibold whitespace-nowrap md:px-5", className)}>{children}</th>;
+  return <th style={style} className={cn("px-3 py-3 text-left font-semibold whitespace-nowrap md:px-5", className)}>{children}</th>;
 }
 
 /* =========================================================

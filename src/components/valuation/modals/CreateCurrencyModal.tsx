@@ -254,7 +254,7 @@ export default function CreateCurrencyModal({
             ) : null}
 
             <TPInput
-              label="Código"
+              label="Código *"
               value={codeNorm}
               onChange={(v) => setCode(v)}
               placeholder="ARS"
@@ -270,7 +270,7 @@ export default function CreateCurrencyModal({
             />
 
             <TPInput
-              label="Nombre"
+              label="Nombre *"
               value={name}
               onChange={setName}
               placeholder="Peso Argentino"
@@ -284,7 +284,7 @@ export default function CreateCurrencyModal({
             />
 
             <TPInput
-              label="Símbolo"
+              label="Símbolo *"
               value={symbol}
               onChange={setSymbol}
               placeholder="$"

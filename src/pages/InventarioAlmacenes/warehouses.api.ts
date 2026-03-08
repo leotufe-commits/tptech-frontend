@@ -6,10 +6,10 @@ export const warehousesApi = {
   list: () =>
     apiFetch("/warehouses", { method: "GET" }) as Promise<WarehouseRow[]>,
 
-  create: (d: WarehouseDraft) =>
+  create: (d: Omit<WarehouseDraft, "code">) =>
     apiFetch("/warehouses", { method: "POST", body: d }) as Promise<WarehouseRow>,
 
-  update: (id: string, d: WarehouseDraft) =>
+  update: (id: string, d: Omit<WarehouseDraft, "code">) =>
     apiFetch(`/warehouses/${id}`, { method: "PUT", body: d }) as Promise<WarehouseRow>,
 
   toggle: (id: string) =>

@@ -1,24 +1,48 @@
+// tptech-frontend/src/components/ui/Avatar.tsx
 import { useEffect, useMemo, useState } from "react";
 
-/* utils locales (no dependemos de Sidebar) */
+/* utils locales */
+function browserOrigin() {
+  if (typeof window !== "undefined" && window.location?.origin) {
+    return window.location.origin.replace(/\/+$/, "");
+  }
+  return "";
+}
+
 function absUrl(u: string) {
   const raw = String(u || "").trim();
   if (!raw) return "";
 
-  // ✅ NO tocar previews locales / data uris
+  // previews locales / data uris
   if (/^(blob:|data:)/i.test(raw)) return raw;
 
+  const origin = browserOrigin();
+
+  // absoluta backend local => la pasamos por /api/uploads para usar proxy de Vite
+  if (/^https?:\/\/localhost:3001\/uploads\//i.test(raw)) {
+    const rel = raw.replace(/^https?:\/\/localhost:3001\/uploads\//i, "");
+    return `${origin}/api/uploads/${rel}`;
+  }
+
+  // absoluta R2 / CDN / otro host
   if (/^https?:\/\//i.test(raw)) return raw;
 
-  const base =
-    (import.meta.env.VITE_API_URL as string) || "http://localhost:3001";
-  const clean = String(base).replace(/\/+$/, "");
+  // ya viene proxied
+  if (raw.startsWith("/api/uploads/")) return `${origin}${raw}`;
+  if (raw.startsWith("api/uploads/")) return `${origin}/${raw}`;
 
-  // ✅ si VITE_API_URL termina en /api, lo sacamos para construir assets (/uploads)
-  const origin = clean.replace(/\/api$/i, "");
+  // local guardado como /uploads/...
+  if (raw.startsWith("/uploads/")) {
+    return `${origin}/api${raw}`;
+  }
 
-  const p = raw.startsWith("/") ? raw : `/${raw}`;
-  return `${origin}${p}`;
+  // local guardado como uploads/...
+  if (raw.startsWith("uploads/")) {
+    return `${origin}/api/${raw}`;
+  }
+
+  // path interno persistido en DB
+  return `${origin}/api/uploads/${raw.replace(/^\/+/, "")}`;
 }
 
 function getInitials(name?: string, email?: string) {
@@ -35,13 +59,11 @@ type Props = {
   src?: string | null;
   name?: string | null;
   email?: string | null;
-  size?: number; // px
-  className?: string; // wrapper
-  imgClassName?: string; // <img>
+  size?: number;
+  className?: string;
+  imgClassName?: string;
   rounded?: "full" | "xl";
-  bust?: string | number; // cache bust opcional
-
-  /** ✅ NUEVO: si true, Avatar dibuja su propio borde/fondo (como antes) */
+  bust?: string | number;
   framed?: boolean;
 };
 
@@ -58,17 +80,14 @@ export default function Avatar({
 }: Props) {
   const [failed, setFailed] = useState(false);
 
-  // ✅ si cambia el src, reintentamos cargar (evita "failed pegado")
   useEffect(() => {
     setFailed(false);
-  }, [src]);
+  }, [src, bust]);
 
   const base = useMemo(() => absUrl(src || ""), [src]);
 
   const finalSrc = useMemo(() => {
     if (!base || failed) return "";
-
-    // ✅ no agregar cache-bust a blob/data (puede romperlos)
     if (/^(blob:|data:)/i.test(base)) return base;
 
     const v = bust != null && String(bust).trim() ? String(bust) : "1";
@@ -96,9 +115,11 @@ export default function Avatar({
     >
       {finalSrc ? (
         <img
+          key={finalSrc}
           src={finalSrc}
           alt="Avatar"
           className={`h-full w-full object-cover ${imgClassName || ""}`}
+          onLoad={() => setFailed(false)}
           onError={() => setFailed(true)}
         />
       ) : (

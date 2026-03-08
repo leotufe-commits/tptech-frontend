@@ -10,7 +10,6 @@ import type {
   MetalRefHistoryItem,
   MetalQuoteRow as QuoteRow,
   MetalVariantRow as VariantRow,
-  VariantPricingPatch,
 } from "../services/valuation";
 
 export type { CurrencyRow, MetalRow, VariantRow };
@@ -533,21 +532,6 @@ export function useValuation() {
     [runSaving]
   );
 
-  const updateVariantPricing = useCallback(
-    async (variantId: string, patch: VariantPricingPatch) => {
-      const id = normId(variantId);
-      if (!id) return { ok: false as const, error: "Variante inválida." };
-
-      const r = await runSaving(async () => {
-        await valuation.updateVariantPricing(id, patch as any);
-        return true;
-      });
-
-      return r.ok ? { ok: true as const } : { ok: false as const, error: r.error };
-    },
-    [runSaving]
-  );
-
   const deleteVariant = useCallback(
     async (variantId: string) => {
       const id = normId(variantId);
@@ -733,7 +717,6 @@ export function useValuation() {
     getVariants,
     createVariant,
     updateVariant,
-    updateVariantPricing,
     deleteVariant,
     toggleVariantActive,
     setFavoriteVariant,

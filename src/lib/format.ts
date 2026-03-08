@@ -1,11 +1,43 @@
 // src/lib/format.ts
 
 function toFiniteNumber(n: any): number | null {
-  // soporta "15.000,25" y "15000.25"
+  if (n === null || n === undefined) return null;
+
+  if (typeof n === "number") {
+    return Number.isFinite(n) ? n : null;
+  }
+
   if (typeof n === "string") {
     const s = n.trim();
     if (!s) return null;
-    const normalized = s.replace(/\s/g, "").replace(/\./g, "").replace(",", ".");
+
+    const compact = s.replace(/\s/g, "");
+
+    const hasComma = compact.includes(",");
+    const hasDot = compact.includes(".");
+
+    let normalized = compact;
+
+    if (hasComma && hasDot) {
+      // usar el último separador como decimal
+      const lastComma = compact.lastIndexOf(",");
+      const lastDot = compact.lastIndexOf(".");
+
+      if (lastComma > lastDot) {
+        // 15.000,25 -> 15000.25
+        normalized = compact.replace(/\./g, "").replace(",", ".");
+      } else {
+        // 15,000.25 -> 15000.25
+        normalized = compact.replace(/,/g, "");
+      }
+    } else if (hasComma) {
+      // 15000,25 -> 15000.25
+      normalized = compact.replace(",", ".");
+    } else {
+      // 15000.25 o 253.333435 => dejar como está
+      normalized = compact;
+    }
+
     const v = Number(normalized);
     return Number.isFinite(v) ? v : null;
   }
@@ -69,8 +101,14 @@ export function fmtMoneySmart(symbol: string, n: any): string {
 
   const num =
     v >= 1
-      ? v.toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-      : v.toLocaleString("es-AR", { minimumFractionDigits: 0, maximumFractionDigits: 10 });
+      ? v.toLocaleString("es-AR", {
+          minimumFractionDigits: 2,
+          maximumFractionDigits: 2,
+        })
+      : v.toLocaleString("es-AR", {
+          minimumFractionDigits: 0,
+          maximumFractionDigits: 10,
+        });
 
   return s ? `${s} ${num}` : num;
 }
@@ -83,8 +121,14 @@ export function fmtNumberSmart(n: any): string {
   if (v === null) return "—";
 
   return v >= 1
-    ? v.toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-    : v.toLocaleString("es-AR", { minimumFractionDigits: 0, maximumFractionDigits: 10 });
+    ? v.toLocaleString("es-AR", {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2,
+      })
+    : v.toLocaleString("es-AR", {
+        minimumFractionDigits: 0,
+        maximumFractionDigits: 10,
+      });
 }
 
 // ✅ Pureza / Ley: SIEMPRE 0,000 (3 decimales fijos)

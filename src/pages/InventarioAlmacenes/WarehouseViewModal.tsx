@@ -23,17 +23,18 @@ import { warehousesApi } from "./warehouses.api";
 function StatusPill({ active }: { active: boolean }) {
   return (
     <TPBadge tone={active ? "success" : "danger"}>
-      {active ? "Activa" : "Inactiva"}
+      {active ? "Activo" : "Inactivo"}
     </TPBadge>
   );
 }
 
-function FieldCard({ label, value }: { label: string; value?: any }) {
+function Field({ label, value }: { label: string; value?: any }) {
+  const text = s(value);
   return (
-    <TPCard className="p-4">
-      <div className="text-xs text-muted">{label}</div>
-      <div className="mt-1 text-sm text-text">{s(value) || "—"}</div>
-    </TPCard>
+    <div>
+      <div className="text-xs text-muted mb-0.5">{label}</div>
+      <div className="text-sm text-text">{text || "—"}</div>
+    </div>
   );
 }
 
@@ -60,13 +61,9 @@ function movementTone(kind: string) {
 }
 
 function gramsForMovement(m: any) {
-  const total =
-    m?.lines?.reduce((acc: number, l: any) => acc + Number(l?.grams || 0), 0) ||
-    0;
-
-  // OUT / TRANSFER (desde este almacén) lo mostramos negativo (más claro visual)
-  // ojo: acá no sabemos el almacén origen/destino sin comparar, así que lo dejamos absoluto por ahora
-  return total;
+  return (
+    m?.lines?.reduce((acc: number, l: any) => acc + Number(l?.grams || 0), 0) || 0
+  );
 }
 
 export default function WarehouseViewModal({
@@ -104,20 +101,6 @@ export default function WarehouseViewModal({
       ? `${s(target?.street)} ${s(target?.number)}`.trim()
       : "";
 
-  const cityLine =
-    s(target?.city) || s(target?.province)
-      ? `${s(target?.city)}${
-          s(target?.province) ? `, ${s(target?.province)}` : ""
-        }`
-      : "";
-
-  const postalLine =
-    s(target?.postalCode) || s(target?.country)
-      ? `${s(target?.postalCode)}${
-          s(target?.country) ? `, ${s(target?.country)}` : ""
-        }`
-      : "";
-
   const phoneLine =
     s(target?.phoneCountry) || s(target?.phoneNumber)
       ? `${s(target?.phoneCountry)} ${s(target?.phoneNumber)}`.trim()
@@ -127,9 +110,9 @@ export default function WarehouseViewModal({
     <Modal
       open={open}
       onClose={onClose}
-      title="Ver almacén"
+      title={s(target?.name) || "Ver almacén"}
       subtitle="Información del almacén (solo lectura)."
-      maxWidth="lg"
+      maxWidth="2xl"
       footer={
         <div className="flex w-full items-center justify-end">
           <TPButton variant="ghost" onClick={onClose}>
@@ -139,137 +122,128 @@ export default function WarehouseViewModal({
       }
     >
       {target ? (
-        <div className="space-y-3">
+        <div className="space-y-4">
+          {/* Estado + Stock */}
           <TPCard className="p-4">
-            <div className="text-xs text-muted">Nombre</div>
-            <div className="mt-1 text-base font-semibold text-text">
-              {target.name}
+            <div className="grid grid-cols-3 gap-4">
+              <div>
+                <div className="text-xs text-muted mb-1">Estado</div>
+                <StatusPill active={isRowActive(target)} />
+              </div>
+              <div>
+                <div className="text-xs text-muted mb-0.5">Stock (gramos)</div>
+                <div className="text-sm font-semibold text-text">
+                  {fmtNumberSmart(target.stockGrams ?? 0)} g
+                </div>
+              </div>
+              <div>
+                <div className="text-xs text-muted mb-0.5">Stock (piezas)</div>
+                <div className="text-sm font-semibold text-text">
+                  {fmtNumberSmart(target.stockPieces ?? 0)}
+                </div>
+              </div>
             </div>
           </TPCard>
 
+          {/* Contacto */}
           <TPCard className="p-4">
-            <div className="text-xs text-muted">Estado</div>
-            <div className="mt-2">
-              <StatusPill active={isRowActive(target)} />
+            <div className="text-xs font-semibold text-muted uppercase tracking-wide mb-3">
+              Contacto
+            </div>
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+              <Field label="Teléfono" value={phoneLine} />
+              <Field label="Mail" value={target.email} />
             </div>
           </TPCard>
 
-          <FieldCard label="Código" value={target.code} />
-          <FieldCard label="A la Atención de" value={target.attn} />
-          <FieldCard label="Ubicación (etiqueta)" value={target.location} />
-
+          {/* Dirección */}
           <TPCard className="p-4">
-            <div className="text-xs text-muted">Dirección / Contacto</div>
-
-            <div className="mt-2 space-y-1 text-sm text-text">
-              <div>{addressLine || "—"}</div>
-              <div>{cityLine || "—"}</div>
-              <div>{postalLine || "—"}</div>
-              <div>{phoneLine || "—"}</div>
+            <div className="text-xs font-semibold text-muted uppercase tracking-wide mb-3">
+              Dirección
+            </div>
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+              <Field label="Dirección" value={addressLine} />
+              <Field label="Ciudad" value={target.city} />
+              <Field label="Provincia" value={target.province} />
+              <Field label="País" value={target.country} />
             </div>
           </TPCard>
 
-          <FieldCard
-            label="Stock (g)"
-            value={fmtNumberSmart(target.stockGrams ?? 0)}
-          />
+          {/* Notas */}
+          {s(target.notes) ? (
+            <TPCard className="p-4">
+              <div className="text-xs text-muted mb-0.5">Notas</div>
+              <div className="mt-1 whitespace-pre-wrap text-sm text-text">
+                {s(target.notes)}
+              </div>
+            </TPCard>
+          ) : null}
 
-          <FieldCard
-            label="Stock (piezas)"
-            value={fmtNumberSmart(target.stockPieces ?? 0)}
-          />
-
+          {/* Movimientos */}
           <TPCard className="p-4">
-            <div className="text-xs text-muted">Notas</div>
-            <div className="mt-1 whitespace-pre-wrap text-sm text-text">
-              {s(target.notes) || "—"}
-            </div>
-          </TPCard>
-
-          {/* ================= MOVIMIENTOS ================= */}
-
-          <TPCard className="p-4">
-            <div className="flex items-center justify-between">
+            <div className="flex items-center justify-between mb-3">
               <div className="text-sm font-semibold text-text">
                 Últimos movimientos
               </div>
-
-              <TPButton
-                variant="secondary"
-                onClick={() => {
-                  console.log("Ir a movimientos del almacén", target.id);
-                }}
-              >
-                Ver todos
-              </TPButton>
             </div>
 
-            <div className="mt-3">
-              <TPTableWrap>
-                <TPTable>
-                  <TPThead>
+            <TPTableWrap>
+              <TPTable>
+                <TPThead>
+                  <TPTr>
+                    <TPTh>Fecha</TPTh>
+                    <TPTh>Tipo</TPTh>
+                    <TPTh>Usuario</TPTh>
+                    <TPTh className="text-right">Gramos</TPTh>
+                  </TPTr>
+                </TPThead>
+
+                <TPTbody>
+                  {loadingMovements && (
                     <TPTr>
-                      <TPTh>Fecha</TPTh>
-                      <TPTh>Tipo</TPTh>
-                      <TPTh>Usuario</TPTh>
-                      <TPTh className="text-right">Gramos</TPTh>
+                      <TPTd className="text-sm text-muted">Cargando movimientos…</TPTd>
+                      <TPTd>{""}</TPTd>
+                      <TPTd>{""}</TPTd>
+                      <TPTd>{""}</TPTd>
                     </TPTr>
-                  </TPThead>
+                  )}
 
-                  <TPTbody>
-                    {loadingMovements && (
-                      <TPTr>
-                        <TPTd className="text-sm text-muted">
-                          Cargando movimientos…
-                        </TPTd>
-                        <TPTd>{""}</TPTd>
-                        <TPTd>{""}</TPTd>
-                        <TPTd>{""}</TPTd>
-                      </TPTr>
-                    )}
+                  {!loadingMovements && movements.length === 0 && (
+                    <TPTr>
+                      <TPTd className="text-sm text-muted">No hay movimientos.</TPTd>
+                      <TPTd>{""}</TPTd>
+                      <TPTd>{""}</TPTd>
+                      <TPTd>{""}</TPTd>
+                    </TPTr>
+                  )}
 
-                    {!loadingMovements && movements.length === 0 && (
-                      <TPTr>
-                        <TPTd className="text-sm text-muted">
-                          No hay movimientos.
-                        </TPTd>
-                        <TPTd>{""}</TPTd>
-                        <TPTd>{""}</TPTd>
-                        <TPTd>{""}</TPTd>
-                      </TPTr>
-                    )}
+                  {!loadingMovements &&
+                    movements.map((m: any) => {
+                      const grams = gramsForMovement(m);
 
-                    {!loadingMovements &&
-                      movements.map((m: any) => {
-                        const grams = gramsForMovement(m);
+                      return (
+                        <TPTr key={m.id} className="cursor-pointer hover:bg-surface2/40">
+                          <TPTd>{fmtDate(m.effectiveAt)}</TPTd>
 
-                        return (
-                          <TPTr
-                            key={m.id}
-                            className="cursor-pointer hover:bg-surface2/40"
-                          >
-                            <TPTd>{fmtDate(m.effectiveAt)}</TPTd>
+                          <TPTd>
+                            <TPBadge tone={movementTone(String(m.kind || ""))}>
+                              {s(m.kind) || "—"}
+                            </TPBadge>
+                          </TPTd>
 
-                            <TPTd>
-                              <TPBadge tone={movementTone(String(m.kind || ""))}>
-                                {s(m.kind) || "—"}
-                              </TPBadge>
-                            </TPTd>
+                          <TPTd>
+                            {s(m.createdBy?.name || m.createdBy?.email) || "—"}
+                          </TPTd>
 
-                            <TPTd>
-                              {s(m.createdBy?.name || m.createdBy?.email) || "—"}
-                            </TPTd>
-
-                            <TPTd className="text-right">
-                              {fmtNumberSmart(grams)}
-                            </TPTd>
-                          </TPTr>
-                        );
-                      })}
-                  </TPTbody>
-                </TPTable>
-              </TPTableWrap>
-            </div>
+                          <TPTd className="text-right">
+                            {fmtNumberSmart(grams)}
+                          </TPTd>
+                        </TPTr>
+                      );
+                    })}
+                </TPTbody>
+              </TPTable>
+            </TPTableWrap>
           </TPCard>
         </div>
       ) : (

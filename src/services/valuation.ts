@@ -24,7 +24,6 @@ export type ValuationChangedDetail =
   | { kind: "variants:deleted"; variantId: string; metalId?: string }
   | { kind: "variants:active-changed"; variantId: string; isActive: boolean; metalId?: string }
   | { kind: "variants:favorite-changed"; variantId?: string | null; metalId?: string }
-  | { kind: "variants:pricing-updated"; variantId: string; metalId?: string }
   | { kind: "quotes:added"; variantId: string; metalId?: string };
 
 function emitValuationChanged(detail: ValuationChangedDetail) {
@@ -141,14 +140,9 @@ export type MetalVariantRow = {
   isActive: boolean;
   isFavorite: boolean;
 
-  buyFactor?: number;
   saleFactor?: number;
-  purchasePriceOverride?: number | null;
-  salePriceOverride?: number | null;
-  pricingMode?: "AUTO" | "OVERRIDE" | string;
 
   suggestedPrice?: number;
-  finalPurchasePrice?: number;
   finalSalePrice?: number;
 
   referenceValue?: number;
@@ -161,8 +155,7 @@ export type MetalQuoteRow = {
   id: string;
   variantId: string;
   currencyId: string;
-  purchasePrice: number;
-  salePrice: number;
+  price: number;
   effectiveAt?: string;
   createdAt?: string;
   currency?: { id: string; code: string; symbol: string };
@@ -179,16 +172,6 @@ export type MetalRefHistoryItem = {
   user: { id: string; name: string | null; email: string } | null;
 };
 
-export type VariantPricingPatch = {
-  buyFactor?: number;
-  saleFactor?: number;
-
-  purchasePriceOverride?: number | null;
-  salePriceOverride?: number | null;
-
-  clearPurchaseOverride?: boolean;
-  clearSaleOverride?: boolean;
-};
 
 /* =========================
    Monedas
@@ -310,11 +293,7 @@ export async function createVariant(data: {
   name: string;
   sku: string;
   purity: number;
-
-  buyFactor?: number;
   saleFactor?: number;
-  purchasePriceOverride?: number | null;
-  salePriceOverride?: number | null;
 }) {
   const resp = await post("/valuation/variants", data);
   emitValuationChanged({ kind: "variants:created", metalId: data.metalId, variantId: pickId(resp) });
@@ -323,7 +302,7 @@ export async function createVariant(data: {
 
 export async function updateVariant(
   variantId: string,
-  data: { name?: string; sku?: string; purity?: number; saleFactor?: number; salePriceOverride?: number | null },
+  data: { name?: string; sku?: string; purity?: number; saleFactor?: number },
   metalId?: string
 ) {
   const resp = await patch(`/valuation/variants/${variantId}`, data);
@@ -332,12 +311,6 @@ export async function updateVariant(
   return resp;
 }
 
-export async function updateVariantPricing(variantId: string, patchData: VariantPricingPatch, metalId?: string) {
-  const resp = await patch(`/valuation/variants/${variantId}/pricing`, patchData);
-  const mid = s(metalId) || s(pickMetalId(resp)) || undefined;
-  emitValuationChanged({ kind: "variants:pricing-updated", variantId, metalId: mid });
-  return resp;
-}
 
 export async function deleteVariant(variantId: string, metalId?: string) {
   const resp = await del(`/valuation/variants/${variantId}`);
@@ -352,8 +325,6 @@ export async function getVariants(
     q?: string;
     isActive?: boolean;
     onlyFavorites?: boolean;
-    minPurchase?: number;
-    maxPurchase?: number;
     minSale?: number;
     maxSale?: number;
     currencyId?: string;
@@ -403,8 +374,7 @@ export async function getVariantValueHistory(
 export async function addQuote(data: {
   variantId: string;
   currencyId: string;
-  purchasePrice: number;
-  salePrice: number;
+  price: number;
   effectiveAt?: string | Date;
   metalId?: string;
 }) {

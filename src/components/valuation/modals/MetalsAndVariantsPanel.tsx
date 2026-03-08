@@ -19,6 +19,7 @@ import type { MetalRow, VariantRow } from "../../../hooks/useValuation";
 import { cn, norm, Pill, ModalShell } from "../valuation.ui";
 
 import { SortArrows } from "../../ui/TPSort";
+import { TPColumnPicker } from "../../ui/TPColumnPicker";
 import { TPButton } from "../../ui/TPButton";
 import { TPSearchInput } from "../../ui/TPSearchInput";
 import TPDateRangeInline from "../../ui/TPDateRangeInline";
@@ -53,6 +54,33 @@ import {
   useLatest,
 } from './metalsPanel.utils';
 
+/* ── Definición de columnas ─────────────────────────────────── */
+type ColDef<SK extends string = string> = {
+  key: string;
+  label: string;
+  width?: string;
+  visible: boolean;
+  canHide?: boolean;
+  align?: "left" | "right";
+  sortKey?: SK;
+};
+
+const VAR_COLUMNS: ColDef<VarSortKey>[] = [
+  { key: "name",    label: "Variante",     visible: true,  canHide: false, sortKey: "name" },
+  { key: "purity",  label: "Pureza / Ley", visible: true,  width: "150px", align: "right", sortKey: "purity" },
+  { key: "values",  label: "Valores",      visible: true,  width: "260px", sortKey: "suggested" },
+  { key: "status",  label: "Estado",       visible: true,  width: "110px" },
+  { key: "actions", label: "Acciones",     visible: true,  canHide: false, width: "260px", align: "right" },
+];
+
+const REF_COLUMNS: ColDef<RefSortKey>[] = [
+  { key: "edited",  label: "Editado",  visible: true, sortKey: "edited" },
+  { key: "user",    label: "Usuario",  visible: true, sortKey: "user" },
+  { key: "value",   label: "Valor",    visible: true, align: "right", sortKey: "value" },
+  { key: "created", label: "Creado",   visible: true, sortKey: "created" },
+];
+
+const VAR_COL_LS_KEY = "tptech_col_variants";
 
 function IconBtn({
   title,
@@ -176,6 +204,25 @@ export default function MetalsAndVariantsPanel({
 
   const [varSortKey, setVarSortKey] = useState<VarSortKey>("name");
   const [varSortDir, setVarSortDir] = useState<VarSortDir>("asc");
+
+  // ── Visibilidad de columnas de variantes ──
+  const [varColVis, setVarColVis] = useState<Record<string, boolean>>(() => {
+    try {
+      const saved = localStorage.getItem(VAR_COL_LS_KEY);
+      if (saved) return JSON.parse(saved);
+    } catch {}
+    return Object.fromEntries(VAR_COLUMNS.map((c) => [c.key, c.visible]));
+  });
+  function toggleVarCol(key: string, visible: boolean) {
+    setVarColVis((prev) => {
+      const next = { ...prev, [key]: visible };
+      try { localStorage.setItem(VAR_COL_LS_KEY, JSON.stringify(next)); } catch {}
+      return next;
+    });
+  }
+  const visibleVarCols = VAR_COLUMNS.filter((c) => varColVis[c.key] !== false);
+  const varColSpan = visibleVarCols.length;
+  const visibleRefCols = REF_COLUMNS.filter((c) => c.visible);
 
   const [variantsCountByMetal, setVariantsCountByMetal] = useState<Record<string, number>>({});
 
@@ -410,11 +457,6 @@ export default function MetalsAndVariantsPanel({
     const sf = toNum((v as any)?.saleFactor, 1);
     if (!Number.isFinite(sug) || !Number.isFinite(sf)) return NaN;
     return sug * sf;
-  }
-
-  function pricingModeOf(v: any) {
-    const mode = String((v as any)?.pricingMode || "").toUpperCase();
-    return mode === "OVERRIDE" ? "Manual" : "Auto";
   }
 
   function leyOf(purity: any) {
@@ -829,14 +871,21 @@ export default function MetalsAndVariantsPanel({
             </div>
 
             <div className="mt-4 flex flex-col sm:flex-row sm:items-center gap-3">
-              <div className="flex-1 min-w-0">
-                <TPSearchInput
-                  value={qVar}
-                  onChange={setQVar}
-                  placeholder="Buscar (SKU / nombre)…"
-                  disabled={saving || !selectedMetalId}
-                  className="h-11"
+              <div className="flex-1 min-w-0 flex items-center gap-2">
+                <TPColumnPicker
+                  columns={VAR_COLUMNS.map((c) => ({ key: c.key, label: c.label, canHide: c.canHide }))}
+                  visibility={varColVis}
+                  onChange={toggleVarCol}
                 />
+                <div className="flex-1 min-w-0">
+                  <TPSearchInput
+                    value={qVar}
+                    onChange={setQVar}
+                    placeholder="Buscar (SKU / nombre)…"
+                    disabled={saving || !selectedMetalId}
+                    className="h-11"
+                  />
+                </div>
               </div>
 
               <div className="sm:ml-auto flex items-center gap-2 shrink-0">
@@ -861,34 +910,28 @@ export default function MetalsAndVariantsPanel({
                     <TPTableElBase responsive="stack">
                       <TPThead>
                         <tr>
-                          <TPTh className="text-left">
-                            <VarSortBtn k="name" label="Variante" />
-                          </TPTh>
-
-                          <TPTh className="text-right tabular-nums w-[150px]">
-                            <span className="inline-flex justify-end w-full">
-                              <VarSortBtn k="purity" label="Pureza / Ley" />
-                            </span>
-                          </TPTh>
-
-                          <TPTh className="text-left w-[260px]">
-                            <span className="inline-flex items-center gap-1.5">
-                              <VarSortBtn k="suggested" label="Valores" />
-                            </span>
-                          </TPTh>
-
-                          <TPTh className="text-left w-[110px]">
-                            <VarSortBtn k="status" label="Estado" />
-                          </TPTh>
-
-                          <TPTh className="text-right w-[260px]">Acciones</TPTh>
+                          {visibleVarCols.map((col) => (
+                            <TPTh
+                              key={col.key}
+                              style={col.width ? { width: col.width } : undefined}
+                              className={col.align === "right" ? "text-right tabular-nums" : "text-left"}
+                            >
+                              {col.sortKey ? (
+                                <span className={cn("inline-flex items-center gap-1.5", col.align === "right" ? "justify-end w-full" : "")}>
+                                  <VarSortBtn k={col.sortKey as VarSortKey} label={col.label} />
+                                </span>
+                              ) : (
+                                col.label
+                              )}
+                            </TPTh>
+                          ))}
                         </tr>
                       </TPThead>
 
                       <TPTbody>
                         {variantsLoading ? (
                           <TPTr>
-                            <TPTd colSpan={5}>
+                            <TPTd colSpan={varColSpan}>
                               <div className="px-0 md:px-5 py-10 text-center text-sm text-muted">
                                 <Loader2 className="mx-auto mb-3 h-6 w-6 animate-spin" />
                                 Cargando variantes…
@@ -896,7 +939,7 @@ export default function MetalsAndVariantsPanel({
                             </TPTd>
                           </TPTr>
                         ) : variantsList.length === 0 ? (
-                          <TPEmptyRow colSpan={5} text="No hay variantes para este metal." />
+                          <TPEmptyRow colSpan={varColSpan} text="No hay variantes para este metal." />
                         ) : (
                           variantsList.map((v: any) => {
                             const isActive = v.isActive !== false;
@@ -910,8 +953,6 @@ export default function MetalsAndVariantsPanel({
                             const sellR = roundMoney2(sell);
                             const showTwoValues = Number.isFinite(sugR) && Number.isFinite(sellR) && sugR !== sellR;
 
-                            const modeTxt = pricingModeOf(v);
-                            const isManual = modeTxt === "Manual";
                             const sf = toNum(v.saleFactor, 1);
 
                             const leyTxt = leyOf(v.purity);
@@ -921,35 +962,41 @@ export default function MetalsAndVariantsPanel({
                                 <TPTd label="Variante" className="text-left">
                                   <div className="font-semibold text-text">{v.name}</div>
                                   <div className="text-xs text-muted">SKU: {v.sku}</div>
-                                  <div className="mt-1 text-xs text-muted">
-                                    Modo:{" "}
-                                    <span className={cn("font-semibold", isManual ? "text-yellow-400" : "text-text")}>{modeTxt}</span>{" "}
-                                    · Ajuste factor:{" "}
-                                    <span className="tabular-nums text-text">{Number.isFinite(sf) ? fmtNumber2(sf) : "—"}</span>
-                                  </div>
-                                </TPTd>
-
-                                <TPTd label="Pureza / Ley" className="text-right tabular-nums">
-                                  <div className="text-text">{fmtPurity2(v.purity)}</div>
-                                  <div className="text-xs text-muted">{leyTxt === "—" ? "—" : `${leyTxt}/1000`}</div>
-                                </TPTd>
-
-                                <TPTd label="Valores" className="text-left">
-                                  {showTwoValues ? (
-                                    <>
-                                      <div className="text-sm font-semibold text-text tabular-nums">{fmtMoneySmart(baseSym, sell)}</div>
-                                      <div className="text-xs text-muted tabular-nums line-through">{fmtMoneySmart(baseSym, sug)}</div>
-                                    </>
-                                  ) : (
-                                    <div className="text-sm text-text tabular-nums">
-                                      {Number.isFinite(sell) ? fmtMoneySmart(baseSym, sell) : fmtMoneySmart(baseSym, sug)}
+                                  {Number.isFinite(sf) && Math.abs(sf - 1) > 0.000001 && (
+                                    <div className="mt-1 text-xs text-muted">
+                                      Factor:{" "}
+                                      <span className="tabular-nums text-text">{fmtNumber2(sf)}</span>
                                     </div>
                                   )}
                                 </TPTd>
 
-                                <TPTd label="Estado" className="text-left">
-                                  {isActive ? <Pill tone="ok">Activa</Pill> : <Pill tone="off">Inactiva</Pill>}
-                                </TPTd>
+                                {varColVis["purity"] !== false && (
+                                  <TPTd label="Pureza / Ley" className="text-right tabular-nums">
+                                    <div className="text-text">{fmtPurity2(v.purity)}</div>
+                                    <div className="text-xs text-muted">{leyTxt === "—" ? "—" : `${leyTxt}/1000`}</div>
+                                  </TPTd>
+                                )}
+
+                                {varColVis["values"] !== false && (
+                                  <TPTd label="Valores" className="text-left">
+                                    {showTwoValues ? (
+                                      <>
+                                        <div className="text-sm font-semibold text-text tabular-nums">{fmtMoneySmart(baseSym, sell)}</div>
+                                        <div className="text-xs text-muted tabular-nums line-through">{fmtMoneySmart(baseSym, sug)}</div>
+                                      </>
+                                    ) : (
+                                      <div className="text-sm text-text tabular-nums">
+                                        {Number.isFinite(sell) ? fmtMoneySmart(baseSym, sell) : fmtMoneySmart(baseSym, sug)}
+                                      </div>
+                                    )}
+                                  </TPTd>
+                                )}
+
+                                {varColVis["status"] !== false && (
+                                  <TPTd label="Estado" className="text-left">
+                                    {isActive ? <Pill tone="ok">Activa</Pill> : <Pill tone="off">Inactiva</Pill>}
+                                  </TPTd>
+                                )}
 
                                 <TPTd label="Acciones" className="text-right">
                                   <div className="flex justify-end gap-2">
@@ -1145,21 +1192,21 @@ export default function MetalsAndVariantsPanel({
                             <TPTableElBase responsive="stack" className="w-full">
                               <TPThead className="sticky top-0 z-20">
                                 <tr>
-                                  <TPTh className="text-left">
-                                    <ThRefBtn k="edited" label="Editado" />
-                                  </TPTh>
-
-                                  <TPTh className="text-left">
-                                    <ThRefBtn k="user" label="Usuario" />
-                                  </TPTh>
-
-                                  <TPTh className="text-right">
-                                    <ThRefBtn k="value" label="Valor" align="right" />
-                                  </TPTh>
-
-                                  <TPTh className="text-left">
-                                    <ThRefBtn k="created" label="Creado" />
-                                  </TPTh>
+                                  {visibleRefCols.map((col) => (
+                                    <TPTh
+                                      key={col.key}
+                                      style={col.width ? { width: col.width } : undefined}
+                                      className={col.align === "right" ? "text-right" : "text-left"}
+                                    >
+                                      {col.sortKey ? (
+                                        <span className={cn("inline-flex items-center gap-1.5", col.align === "right" ? "justify-end w-full" : "")}>
+                                          <ThRefBtn k={col.sortKey as RefSortKey} label={col.label} align={col.align} />
+                                        </span>
+                                      ) : (
+                                        col.label
+                                      )}
+                                    </TPTh>
+                                  ))}
                                 </tr>
                               </TPThead>
 
@@ -1167,7 +1214,7 @@ export default function MetalsAndVariantsPanel({
                                 {refHistory.map((r: any) => {
                                   const uLabel = userLabel(r?.user);
 
-                                  // ✅ IMPORTANTE: NO usar TPTr acá (evita “doble card” en mobile)
+                                  // ✅ IMPORTANTE: NO usar TPTr acá (evita "doble card" en mobile)
                                   return (
                                     <tr key={r.id}>
                                       <TPTd label="Editado" className="tabular-nums whitespace-nowrap">

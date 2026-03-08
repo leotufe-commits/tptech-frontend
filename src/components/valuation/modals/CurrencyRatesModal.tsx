@@ -325,7 +325,7 @@ export default function CurrencyRatesModal({
             <div className="grid grid-cols-12 gap-3">
               <div className="col-span-4">
                 <TPInput
-                  label="Código"
+                  label="Código *"
                   value={code}
                   onChange={setCode}
                   placeholder="USD"
@@ -342,7 +342,7 @@ export default function CurrencyRatesModal({
 
               <div className="col-span-5">
                 <TPInput
-                  label="Nombre"
+                  label="Nombre *"
                   value={name}
                   onChange={setName}
                   placeholder="Dólar"
@@ -359,7 +359,7 @@ export default function CurrencyRatesModal({
 
               <div className="col-span-3">
                 <TPInput
-                  label="Símbolo"
+                  label="Símbolo *"
                   value={symbol}
                   onChange={setSymbol}
                   placeholder="US$"

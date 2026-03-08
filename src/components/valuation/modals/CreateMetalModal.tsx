@@ -177,7 +177,7 @@ export default function CreateMetalModal({
           ) : null}
 
           <TPInput
-            label="Nombre"
+            label="Nombre *"
             value={name}
             onChange={setName}
             placeholder="Ej: Oro"

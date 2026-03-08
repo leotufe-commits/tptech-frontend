@@ -1,5 +1,6 @@
 // src/components/valuation/modals/CurrenciesPanel.tsx
 import React, { useMemo, useState } from "react";
+import { TPColumnPicker } from "../../ui/TPColumnPicker";
 import { Eye, Loader2, Plus, Search, ShieldBan, ShieldCheck, Star, Trash2, X, Pencil } from "lucide-react";
 
 import type { CurrencyRow } from "../../../hooks/useValuation";
@@ -16,6 +17,26 @@ import TPCard from "../../ui/TPCard";
 
 type SortKey = "code" | "name" | "price" | "status";
 type SortDir = "asc" | "desc";
+
+/* ── Definición de columnas ─────────────────────────────────── */
+type CurrColDef = {
+  key: string;
+  label: string;
+  width?: string;
+  visible: boolean;
+  canHide?: boolean;
+  align?: "left" | "right";
+  sortKey?: SortKey;
+};
+
+const CURR_COLUMNS: CurrColDef[] = [
+  { key: "currency", label: "Moneda",   visible: true, canHide: false, sortKey: "code" },
+  { key: "price",    label: "Precio",   visible: true, align: "right", sortKey: "price" },
+  { key: "status",   label: "Estado",   visible: true, sortKey: "status" },
+  { key: "actions",  label: "Acciones", visible: true, canHide: false, align: "right", width: "220px" },
+];
+
+const LS_KEY_CURR = "tptech_col_currencies";
 
 function IconBtn({
   title,
@@ -74,6 +95,26 @@ export default function CurrenciesPanel({
   const [q, setQ] = useState("");
   const [sortKey, setSortKey] = useState<SortKey>("code");
   const [sortDir, setSortDir] = useState<SortDir>("asc");
+
+  // ── Visibilidad de columnas ──
+  const [colVis, setColVis] = useState<Record<string, boolean>>(() => {
+    try {
+      const saved = localStorage.getItem(LS_KEY_CURR);
+      if (saved) return JSON.parse(saved);
+    } catch {}
+    return Object.fromEntries(CURR_COLUMNS.map((c) => [c.key, c.visible]));
+  });
+
+  const visibleCurrCols = CURR_COLUMNS.filter((c) => colVis[c.key] !== false);
+  const currColSpan = visibleCurrCols.length;
+
+  function toggleCol(key: string, visible: boolean) {
+    setColVis((prev) => {
+      const next = { ...prev, [key]: visible };
+      try { localStorage.setItem(LS_KEY_CURR, JSON.stringify(next)); } catch {}
+      return next;
+    });
+  }
 
   const [viewOpen, setViewOpen] = useState(false);
   const [viewCurrencyId, setViewCurrencyId] = useState<string | null>(null);
@@ -244,16 +285,23 @@ export default function CurrenciesPanel({
             <div className="text-sm text-muted">Definí la moneda base y cargá tipos de cambio para las demás.</div>
           </div>
 
-          <button
-            type="button"
-            className="tp-btn-primary h-10 inline-flex items-center justify-center gap-2 sm:w-auto w-full"
-            onClick={onOpenCreate}
-            disabled={saving}
-            title="Nueva moneda"
-          >
-            <Plus size={16} />
-            Nueva
-          </button>
+          <div className="flex gap-2 sm:w-auto w-full">
+            <TPColumnPicker
+              columns={CURR_COLUMNS.map((c) => ({ key: c.key, label: c.label, canHide: c.canHide }))}
+              visibility={colVis}
+              onChange={toggleCol}
+            />
+            <button
+              type="button"
+              className="tp-btn-primary h-10 inline-flex items-center justify-center gap-2 flex-1 sm:flex-none"
+              onClick={onOpenCreate}
+              disabled={saving}
+              title="Nueva moneda"
+            >
+              <Plus size={16} />
+              Nueva
+            </button>
+          </div>
         </div>
 
         {panelErr ? (
@@ -299,34 +347,34 @@ export default function CurrenciesPanel({
               <table className="w-full">
                 <TPThead>
                   <tr>
-                    <TPTh className="text-left">
-                      <SortBtn k="code" label="Moneda" />
-                    </TPTh>
-
-                    <TPTh className="text-right tabular-nums">
-                      <span className="inline-flex justify-end w-full">
-                        <SortBtn k="price" label="Precio" />
-                      </span>
-                    </TPTh>
-
-                    <TPTh className="text-left">
-                      <SortBtn k="status" label="Estado" />
-                    </TPTh>
-
-                    <TPTh className="text-right">Acciones</TPTh>
+                    {visibleCurrCols.map((col) => (
+                      <TPTh
+                        key={col.key}
+                        style={col.width ? { width: col.width } : undefined}
+                        className={col.align === "right" ? "text-right" : undefined}
+                      >
+                        {col.sortKey ? (
+                          <span className={cn("inline-flex items-center gap-1.5", col.align === "right" ? "justify-end w-full" : "")}>
+                            <SortBtn k={col.sortKey} label={col.label} />
+                          </span>
+                        ) : (
+                          col.label
+                        )}
+                      </TPTh>
+                    ))}
                   </tr>
                 </TPThead>
 
                 <TPTbody>
                   {loading ? (
                     <tr>
-                      <td colSpan={4} className="px-5 py-10 text-center text-sm text-muted">
+                      <td colSpan={currColSpan} className="px-5 py-10 text-center text-sm text-muted">
                         <Loader2 className="mx-auto mb-3 h-6 w-6 animate-spin" />
                         Cargando…
                       </td>
                     </tr>
                   ) : list.length === 0 ? (
-                    <TPEmptyRow colSpan={4} text="Sin monedas." />
+                    <TPEmptyRow colSpan={currColSpan} text="Sin monedas." />
                   ) : (
                     list.map((row) => {
                       const isBase = !!row.isBase;
@@ -335,74 +383,95 @@ export default function CurrenciesPanel({
 
                       return (
                         <TPTr key={row.id}>
-                          <TPTd className="text-left">
-                            <div className="font-semibold text-text">
-                              {row.code} <span className="text-muted">· {row.name}</span>
-                            </div>
-                            <div className="text-xs text-muted">
-                              {row.symbol} {isBase ? <span className="text-yellow-400 font-semibold">⭐ Base</span> : null}
-                            </div>
-                          </TPTd>
+                          {visibleCurrCols.map((col) => {
+                            switch (col.key) {
+                              case "currency":
+                                return (
+                                  <TPTd key="currency" className="text-left">
+                                    <div className="font-semibold text-text">
+                                      {row.code} <span className="text-muted">· {row.name}</span>
+                                    </div>
+                                    <div className="text-xs text-muted">
+                                      {row.symbol} {isBase ? <span className="text-yellow-400 font-semibold">⭐ Base</span> : null}
+                                    </div>
+                                  </TPTd>
+                                );
 
-                          <TPTd className="text-right tabular-nums">
-                            <div className="w-full text-right text-sm text-text font-medium">{fmtPrice(row)}</div>
-                          </TPTd>
+                              case "price":
+                                return (
+                                  <TPTd key="price" className="text-right tabular-nums">
+                                    <div className="w-full text-right text-sm text-text font-medium">{fmtPrice(row)}</div>
+                                  </TPTd>
+                                );
 
-                          <TPTd className="text-left">{isActive ? <Pill tone="ok">Activa</Pill> : <Pill tone="off">Inactiva</Pill>}</TPTd>
+                              case "status":
+                                return (
+                                  <TPTd key="status" className="text-left">
+                                    {isActive ? <Pill tone="ok">Activa</Pill> : <Pill tone="off">Inactiva</Pill>}
+                                  </TPTd>
+                                );
 
-                          <TPTd className="text-right">
-                            <div className="flex justify-end gap-2">
-                              <button
-                                type="button"
-                                className="tp-btn-secondary h-9 w-9 !p-0 grid place-items-center"
-                                title={isBase ? "Moneda base" : "Marcar como base"}
-                                onClick={() => onSetBaseClick(row)}
-                                disabled={lockActions || isBase}
-                              >
-                                <Star size={16} className={cn(isBase ? "fill-current text-yellow-400" : "fill-transparent text-text/80")} />
-                              </button>
+                              case "actions":
+                                return (
+                                  <TPTd key="actions" className="text-right">
+                                    <div className="flex justify-end gap-2">
+                                      <button
+                                        type="button"
+                                        className="tp-btn-secondary h-9 w-9 !p-0 grid place-items-center"
+                                        title={isBase ? "Moneda base" : "Marcar como base"}
+                                        onClick={() => onSetBaseClick(row)}
+                                        disabled={lockActions || isBase}
+                                      >
+                                        <Star size={16} className={cn(isBase ? "fill-current text-yellow-400" : "fill-transparent text-text/80")} />
+                                      </button>
 
-                              <button
-                                type="button"
-                                className="tp-btn-secondary h-9 w-9 !p-0 grid place-items-center"
-                                title="Ver detalle / historial"
-                                onClick={() => openView(row.id)}
-                                disabled={lockActions}
-                              >
-                                <Eye size={16} />
-                              </button>
+                                      <button
+                                        type="button"
+                                        className="tp-btn-secondary h-9 w-9 !p-0 grid place-items-center"
+                                        title="Ver detalle / historial"
+                                        onClick={() => openView(row.id)}
+                                        disabled={lockActions}
+                                      >
+                                        <Eye size={16} />
+                                      </button>
 
-                              <button
-                                type="button"
-                                className="tp-btn-secondary h-9 w-9 !p-0 grid place-items-center"
-                                title="Editar (moneda / tipo de cambio)"
-                                onClick={() => onOpenRates(row)}
-                                disabled={lockActions}
-                              >
-                                <Pencil size={16} />
-                              </button>
+                                      <button
+                                        type="button"
+                                        className="tp-btn-secondary h-9 w-9 !p-0 grid place-items-center"
+                                        title="Editar (moneda / tipo de cambio)"
+                                        onClick={() => onOpenRates(row)}
+                                        disabled={lockActions}
+                                      >
+                                        <Pencil size={16} />
+                                      </button>
 
-                              <button
-                                type="button"
-                                className="tp-btn-secondary h-9 w-9 !p-0 grid place-items-center"
-                                title={isActive ? "Desactivar" : "Activar"}
-                                onClick={() => onToggle(row)}
-                                disabled={lockActions || isBase}
-                              >
-                                {isActive ? <ShieldBan size={16} /> : <ShieldCheck size={16} />}
-                              </button>
+                                      <button
+                                        type="button"
+                                        className="tp-btn-secondary h-9 w-9 !p-0 grid place-items-center"
+                                        title={isActive ? "Desactivar" : "Activar"}
+                                        onClick={() => onToggle(row)}
+                                        disabled={lockActions || isBase}
+                                      >
+                                        {isActive ? <ShieldBan size={16} /> : <ShieldCheck size={16} />}
+                                      </button>
 
-                              <button
-                                type="button"
-                                className="tp-btn-secondary h-9 w-9 !p-0 grid place-items-center"
-                                title={!onDelete ? "Eliminar (pendiente)" : "Eliminar"}
-                                onClick={() => onAskDelete(row)}
-                                disabled={lockActions || isBase || !onDelete}
-                              >
-                                <Trash2 size={16} />
-                              </button>
-                            </div>
-                          </TPTd>
+                                      <button
+                                        type="button"
+                                        className="tp-btn-secondary h-9 w-9 !p-0 grid place-items-center"
+                                        title={!onDelete ? "Eliminar (pendiente)" : "Eliminar"}
+                                        onClick={() => onAskDelete(row)}
+                                        disabled={lockActions || isBase || !onDelete}
+                                      >
+                                        <Trash2 size={16} />
+                                      </button>
+                                    </div>
+                                  </TPTd>
+                                );
+
+                              default:
+                                return null;
+                            }
+                          })}
                         </TPTr>
                       );
                     })

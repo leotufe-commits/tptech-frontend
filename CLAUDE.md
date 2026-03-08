@@ -136,7 +136,7 @@ No aplicar esta regla en formularios grandes con múltiples secciones (como regi
 
 ### Campos obligatorios en formularios (OBLIGATORIO)
 
-- Todo campo obligatorio debe usar `<TPField required label="...">` — esto muestra un asterisco rojo al lado del label.
+- Todo campo obligatorio debe usar `<TPField required label="...">` — esto muestra un asterisco al lado del label, del mismo color que el label (hereda el color).
 - Cuando el usuario toca **Guardar / Aceptar** sin completar un campo requerido, se le debe pasar el prop `error="Campo requerido."` a `TPField`. Esto muestra el campo resaltado en rojo debajo del input.
 - Patrón estándar: el componente mantiene un estado `submitted: boolean`. Cuando `submitted=true`, se evalúa si el campo está vacío y se pasa el `error` condicionalmente.
 
@@ -161,3 +161,140 @@ Instant cross-component sync without refetch is done via `window.dispatchEvent`:
 - `tptech:user_avatar_changed` — updates sidebar avatar immediately
 - `tptech:user-pin-updated` — syncs PIN state in AuthContext
 - `tptech:open_quick_switch` — opens the quick-user-switch UI
+
+### Tailwind color opacity modifiers
+
+**Crítico**: no todos los colores del tema soportan modificadores de opacidad (`/50`, `/20`).
+
+| Color | Soporte `primary/20` |
+|---|---|
+| `primary`, `secondary`, `border` | ✅ usan `rgb(var(--*-rgb) / <alpha-value>)` |
+| `text`, `bg`, `card`, `muted`, `surface`, `surface2` | ❌ usan `var(--*)` plano |
+
+Para `text`, `muted`, etc. usar `opacity-*` de Tailwind en vez de `/`:
+```tsx
+// ❌ no funciona
+<span className="text-text/50">...</span>
+
+// ✅ correcto
+<span className="text-text opacity-50">...</span>
+```
+
+### Comillas tipográficas (bug frecuente)
+
+Nunca usar comillas curvas/tipográficas (`"` U+201C, `"` U+201D) como delimitadores en JSX o TypeScript. El parser de Babel falla con un error críptico de tokenización. Usar siempre comillas ASCII rectas (`"` U+0022). Este problema ocurre cuando se copia código desde editores de texto con "smart quotes" activado.
+
+### Módulo de valuación (`src/components/valuation/`, `src/hooks/useValuation.ts`)
+
+Fórmula de precio (única): `finalSalePrice = referenceValue × purity × saleFactor`.
+
+- `MetalQuote` tiene un campo único `price` (antes había `purchasePrice` + `salePrice`, ya eliminados).
+- El endpoint `/valuation/variants/:id/quotes` devuelve `price` (en la moneda de la cotización) y `basePrice` (convertido a moneda base).
+- El hook `useValuation` expone todo el estado y acciones; las páginas no llaman `apiFetch` directamente.
+- Cambios en valuación disparan el evento `tptech:valuation-changed` para sincronizar componentes.
+
+### Campos obligatorios — asterisco en label (OBLIGATORIO)
+
+Todo campo obligatorio debe mostrar un `*` al **final del label**, con el **mismo color del label** (nunca rojo ni color especial).
+
+```tsx
+<TPInput label="Nombre *" ... />
+```
+
+- Nunca usar `<span style="color:red">*</span>` ni clases especiales para el asterisco.
+- Aplica a: `TPInput`, `TPTextarea`, `TPSelect`, `TPCombo`, `TPDate` y cualquier campo requerido.
+
+### Tablas — ancho completo (OBLIGATORIO)
+
+Todas las tablas deben ocupar el **100% del ancho disponible** de su contenedor. Siempre usar el wrapper estándar:
+
+```tsx
+<TPTableWrap>
+  <TPTable>...</TPTable>
+</TPTableWrap>
+```
+
+- Nunca usar `max-w-sm`, `max-w-md` ni widths fijos en tablas.
+- Si el contenido supera el ancho, el wrapper activa scroll horizontal automáticamente.
+
+### Tablas — sistema de columnas configurables (OBLIGATORIO)
+
+Todas las tablas administrativas deben definir sus columnas como un array exportado, con estado de visibilidad manejado en el componente padre (no en la tabla):
+
+```tsx
+type ColDef = {
+  key: string;
+  label: string;
+  width?: string;
+  visible: boolean;
+  canHide?: boolean;      // false = la columna no se puede ocultar (ej: nombre, acciones)
+  align?: "left" | "right";
+  sortKey?: SortKey;
+};
+
+export const MY_COLUMNS: ColDef[] = [
+  { key: "name",    label: "Nombre",   visible: true,  canHide: false },
+  { key: "city",    label: "Ciudad",   width: "160px", visible: true },
+  { key: "notes",   label: "Notas",    visible: false },
+  { key: "actions", label: "Acciones", width: "200px", visible: true, canHide: false, align: "right" },
+];
+export const MY_COL_LS_KEY = "tptech_col_myentity";
+```
+
+Reglas:
+- Las columnas con `canHide: false` no aparecen en el picker (siempre visibles).
+- El estado `colVis` se maneja en el **padre** (page/panel), no dentro de la tabla.
+- El picker `<TPColumnPicker>` se ubica a la **derecha del buscador** en la toolbar.
+- El dropdown usa `createPortal` + `position: fixed` para no quedar tapado por la tabla.
+- Persistir visibilidad en `localStorage` con la clave `MY_COL_LS_KEY`.
+- Columnas de acciones siempre al final, `align: "right"`.
+
+## Diseño de pantallas nuevas — reglas base (OBLIGATORIO)
+
+Antes de implementar cualquier pantalla nueva, verificar que cumple estas reglas:
+
+### Estructura CRUD estándar
+
+| Elemento | Cuándo aplicar |
+|---|---|
+| Listado con tabla + buscador | Siempre que haya más de un registro |
+| Filtro por fechas | Cuando aplique por negocio o auditoría |
+| Modal **View** (solo lectura) | Toda entidad con detalles que mostrar |
+| Modal **Edit** | Toda entidad editable |
+| Estado **Activo / Inactivo** | Cuando tenga sentido funcional |
+| **Soft delete** con confirmación | Siempre que aplique; nunca hard delete sin justificación |
+| **Favorito** | Cuando el usuario necesite destacar un registro por defecto |
+| **Clonar** | Entidades complejas o con mucha información cargada |
+
+### Soft delete y confirmación (OBLIGATORIO)
+
+- Eliminar = soft delete (marcar como eliminado en DB), salvo justificación explícita.
+- Siempre confirmar con `<ConfirmDeleteDialog>` o `<Modal>` con descripción del impacto.
+- El botón de confirmar debe ser `variant="danger"`.
+
+### Actualización automática de listas (OBLIGATORIO)
+
+Toda alta, edición, activación, inactivación o eliminación debe reflejarse inmediatamente en la tabla sin que el usuario haga refresh manual:
+- Llamar `refetch()` o actualizar el estado local directamente tras la operación exitosa.
+- Para sincronización cruzada entre componentes usar `window.dispatchEvent(new CustomEvent("tptech:..."))`.
+
+### Focus automático (OBLIGATORIO)
+
+- Al abrir un modal o pantalla de alta/edición: foco automático en el primer campo útil.
+- En modales simples (editar un valor), usar `useEffect` + `setTimeout(..., 50)` + `.focus()` + `.select()`.
+- En formularios de creación, foco en el primer campo vacío.
+
+### Orden de campos en formularios
+
+1. Identificadores: nombre, código, SKU
+2. Clasificación: tipo, categoría
+3. Contacto: teléfono, email, dirección
+4. Valores numéricos
+5. Notas y campos opcionales al final
+
+### Código limpio y modular
+
+- No hacer refactors no solicitados.
+- Reutilizar hooks, helpers y componentes existentes antes de crear nuevos.
+- Mantener el estilo visual actual de TPTech.
+- Para nuevas entidades con tabla + formulario + view + confirmación, seguir la estructura de **Users**, **Warehouses**, **Divisas** o **Valuation** como referencia.

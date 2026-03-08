@@ -1,5 +1,5 @@
 // src/components/ui/TPAttachmentList.tsx
-import React from "react";
+import React, { useState } from "react";
 import { Eye, Download, Trash2, FileText } from "lucide-react";
 import { TPCard } from "./TPCard";
 import TPIconButton from "./TPIconButton";
@@ -55,6 +55,8 @@ export function TPAttachmentList({
   emptyText = "Todavía no hay adjuntos.",
   className,
 }: Props) {
+  const [failedUrls, setFailedUrls] = useState<Set<string>>(new Set());
+
   if (!items || items.length === 0) {
     return <div className="text-sm text-muted">{emptyText}</div>;
   }
@@ -64,18 +66,21 @@ export function TPAttachmentList({
       {items.map((item) => {
         const busy = Boolean(loading || (deletingId && deletingId === item.id));
         const img = isImage(item.mimeType, item.name);
+        const imgFailed = item.url ? failedUrls.has(item.url) : false;
 
         return (
           <TPCard key={item.id} className="p-3 bg-card">
             <div className="flex items-center gap-3">
               {/* Preview */}
               <div className="h-10 w-10 shrink-0 overflow-hidden rounded-lg grid place-items-center border border-border bg-surface2">
-                {img && item.url ? (
+                {img && item.url && !imgFailed ? (
                   <img
                     src={item.url}
                     alt={item.name}
                     className="h-full w-full object-cover"
-                    loading="lazy"
+                    onError={() => {
+                      if (item.url) setFailedUrls((prev) => new Set(prev).add(item.url!));
+                    }}
                   />
                 ) : (
                   <FileText className="h-4 w-4 text-muted" />
