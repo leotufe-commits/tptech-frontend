@@ -244,7 +244,7 @@ export const MY_COL_LS_KEY = "tptech_col_myentity";
 Reglas:
 - Las columnas con `canHide: false` no aparecen en el picker (siempre visibles).
 - El estado `colVis` se maneja en el **padre** (page/panel), no dentro de la tabla.
-- El picker `<TPColumnPicker>` se ubica a la **derecha del buscador** en la toolbar.
+- El picker `<TPColumnPicker>` se ubica a la **izquierda del buscador** en la toolbar.
 - El dropdown usa `createPortal` + `position: fixed` para no quedar tapado por la tabla.
 - Persistir visibilidad en `localStorage` con la clave `MY_COL_LS_KEY`.
 - Columnas de acciones siempre al final, `align: "right"`.
@@ -257,7 +257,8 @@ Antes de implementar cualquier pantalla nueva, verificar que cumple estas reglas
 
 | Elemento | Cuándo aplicar |
 |---|---|
-| Listado con tabla + buscador | Siempre que haya más de un registro |
+| Listado con tabla + **buscador** | **Siempre** que haya más de un registro. El buscador es obligatorio en toda pantalla con listado. |
+| **Ordenamiento** de columnas | Cuando tenga sentido funcional (columnas de texto, fecha, número). Implementar con `sortKey` en la definición de columna. |
 | Filtro por fechas | Cuando aplique por negocio o auditoría |
 | Modal **View** (solo lectura) | Toda entidad con detalles que mostrar |
 | Modal **Edit** | Toda entidad editable |

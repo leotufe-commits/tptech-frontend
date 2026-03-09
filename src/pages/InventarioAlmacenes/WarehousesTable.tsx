@@ -68,6 +68,7 @@ export default function WarehousesTable({
   onEdit,
   onToggleActive,
   onAskDelete,
+  colVis,
 }: {
   loading: boolean;
   rows: WarehouseRow[];

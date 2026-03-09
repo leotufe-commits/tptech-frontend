@@ -40,6 +40,11 @@ import SystemUiCatalog from "./pages/configuracion-sistema/SystemUiCatalog";
 import ConfiguracionSistemaVendedor from "./pages/configuracion-sistema/ConfiguracionSistemaVendedor";
 import ConfiguracionSistemaItems from "./pages/configuracion-sistema/ConfiguracionSistemaItems";
 import ConfiguracionSistemaInformes from "./pages/configuracion-sistema/ConfiguracionSistemaInformes";
+import ConfiguracionSistemaCategorias from "./pages/configuracion-sistema/ConfiguracionSistemaCategorias";
+import ConfiguracionSistemaImpuestos from "./pages/configuracion-sistema/ConfiguracionSistemaImpuestos";
+import ConfiguracionSistemaPagos from "./pages/configuracion-sistema/ConfiguracionSistemaPagos";
+import ConfiguracionSistemaEnvios from "./pages/configuracion-sistema/ConfiguracionSistemaEnvios";
+import ConfiguracionSistemaListasPrecios from "./pages/configuracion-sistema/ConfiguracionSistemaListasPrecios";
 
 import ProtectedRoute from "./components/ProtectedRoute";
 
@@ -174,11 +179,11 @@ const router = createBrowserRouter([
           { path: "configuracion-sistema/vendedor", element: <ConfiguracionSistemaVendedor /> },
 
           // ✅ NUEVAS SECCIONES (placeholders por ahora)
-          { path: "configuracion-sistema/impuestos", element: <Placeholder title="Impuestos y tributos" /> },
-          { path: "configuracion-sistema/pagos", element: <Placeholder title="Pagos y cobros" /> },
-          { path: "configuracion-sistema/envios", element: <Placeholder title="Envíos y logística" /> },
-          { path: "configuracion-sistema/listas-precios", element: <Placeholder title="Listas de precios" /> },
-          { path: "configuracion-sistema/categorias", element: <Placeholder title="Categorías de artículos" /> },
+          { path: "configuracion-sistema/impuestos", element: <ConfiguracionSistemaImpuestos /> },
+          { path: "configuracion-sistema/pagos", element: <ConfiguracionSistemaPagos /> },
+          { path: "configuracion-sistema/envios", element: <ConfiguracionSistemaEnvios /> },
+          { path: "configuracion-sistema/listas-precios", element: <ConfiguracionSistemaListasPrecios /> },
+          { path: "configuracion-sistema/categorias", element: <ConfiguracionSistemaCategorias /> },
           { path: "configuracion-sistema/numeracion", element: <Placeholder title="Numeración de comprobantes" /> },
           { path: "configuracion-sistema/etiquetas", element: <Placeholder title="Impresión de etiquetas" /> },
 
