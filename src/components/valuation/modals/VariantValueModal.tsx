@@ -243,7 +243,7 @@ export default function VariantValueModal({
       subtitle={subtitle}
       onClose={onClose}
       busy={false}
-      maxWidth="5xl"
+      maxWidth="6xl"
       footer={
         <button
           type="button"

@@ -498,7 +498,6 @@ export default function Divisas() {
           }}
           variant={variantViewing}
           baseCurrencySymbol={baseCurrencySymbol}
-          baseCurrencyCode={baseCurrencyCode}
         />
 
         {/* CONFIRM DELETE METAL */}

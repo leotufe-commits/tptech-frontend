@@ -388,22 +388,26 @@ export default function ConfiguracionSistemaListasPrecios() {
       description="Definí las listas de precios con sus márgenes, redondeos y vigencia."
     >
       {/* Toolbar */}
-      <TPTableHeader>
-        <TPSearchInput
-          value={search}
-          onChange={setSearch}
-          placeholder="Buscar por nombre, código, alcance..."
-          className="w-full md:w-72"
-        />
-        <TPButton
-          variant="primary"
-          icon={<Plus size={16} />}
-          onClick={openCreate}
-          className="shrink-0"
-        >
-          Nueva lista
-        </TPButton>
-      </TPTableHeader>
+      <TPTableHeader
+        left={
+          <TPSearchInput
+            value={search}
+            onChange={setSearch}
+            placeholder="Buscar por nombre, código, alcance..."
+            className="w-full md:w-72"
+          />
+        }
+        right={
+          <TPButton
+            variant="primary"
+            iconLeft={<Plus size={16} />}
+            onClick={openCreate}
+            className="shrink-0"
+          >
+            Nueva lista
+          </TPButton>
+        }
+      />
 
       {/* Table */}
       <TPTableWrap>
@@ -417,21 +421,17 @@ export default function ConfiguracionSistemaListasPrecios() {
                 <TPTh>Modo</TPTh>
                 <TPTh>Márgenes</TPTh>
                 <TPTh>Vigencia</TPTh>
-                <TPTh align="right">Acciones</TPTh>
+                <TPTh className="text-right">Acciones</TPTh>
               </TPTr>
             </TPThead>
             <TPTbody>
               {loading ? (
-                <TPEmptyRow colSpan={7}>
-                  <Loader2 size={18} className="animate-spin text-muted" />
-                </TPEmptyRow>
+                <TPEmptyRow colSpan={7} text="Cargando..." />
               ) : filtered.length === 0 ? (
-                <TPEmptyRow colSpan={7}>
-                  {search ? "Sin resultados." : "No hay listas de precios creadas."}
-                </TPEmptyRow>
+                <TPEmptyRow colSpan={7} text={search ? "Sin resultados." : "No hay listas de precios creadas."} />
               ) : (
                 filtered.map((r) => (
-                  <TPTr key={r.id} muted={!r.isActive}>
+                  <TPTr key={r.id} className={!r.isActive ? "opacity-60" : undefined}>
                     <TPTd label="Nombre">
                       <div className="flex items-center gap-2">
                         {r.isFavorite && (
@@ -491,7 +491,7 @@ export default function ConfiguracionSistemaListasPrecios() {
                       </div>
                     </TPTd>
 
-                    <TPTd label="Acciones" align="right">
+                    <TPTd label="Acciones" className="text-right">
                       <div className="flex items-center justify-end gap-1 flex-wrap">
                         {/* Favorita */}
                         <button
@@ -597,6 +597,7 @@ export default function ConfiguracionSistemaListasPrecios() {
       {/* ===== Modal Ver ===== */}
       {viewRow && (
         <Modal
+          open={!!viewRow}
           title="Detalle de lista de precios"
           onClose={() => setViewRow(null)}
         >
@@ -612,10 +613,11 @@ export default function ConfiguracionSistemaListasPrecios() {
       {/* ===== Confirm Delete ===== */}
       {deleteRow && (
         <ConfirmDeleteDialog
+          open={!!deleteRow}
           title="Eliminar lista de precios"
           description={`¿Eliminar "${deleteRow.name}"? Esta acción no se puede deshacer.`}
           onConfirm={handleDelete}
-          onCancel={() => setDeleteRow(null)}
+          onClose={() => setDeleteRow(null)}
         />
       )}
     </TPSectionShell>
@@ -643,7 +645,7 @@ function PriceListFormModal({
   saving: boolean;
   categories: CategoryRow[];
   isEdit: boolean;
-  firstInputRef: React.RefObject<HTMLInputElement>;
+  firstInputRef: React.RefObject<HTMLInputElement | null>;
   onSave: () => void;
   onClose: () => void;
   onKey: (e: React.KeyboardEvent) => void;
@@ -667,9 +669,10 @@ function PriceListFormModal({
 
   return (
     <Modal
+      open
       title={isEdit ? "Editar lista de precios" : "Nueva lista de precios"}
       onClose={onClose}
-      size="lg"
+      maxWidth="lg"
     >
       <div className="space-y-5" onKeyDown={onKey}>
         {/* Nombre + Código */}
@@ -679,7 +682,7 @@ function PriceListFormModal({
             error={submitted && !draft.name.trim() ? "Campo requerido." : null}
           >
             <TPInput
-              ref={firstInputRef}
+              inputRef={firstInputRef}
               value={draft.name}
               onChange={(v) => set("name", v)}
               placeholder="Ej: Lista minorista"
@@ -751,7 +754,6 @@ function PriceListFormModal({
               min="0"
               inputMode="decimal"
               placeholder="Ej: 30 (= 30%)"
-              suffix="%"
             />
           </TPField>
         )}
@@ -767,7 +769,6 @@ function PriceListFormModal({
                 min="0"
                 inputMode="decimal"
                 placeholder="Ej: 20"
-                suffix="%"
               />
             </TPField>
             <TPField label="Margen sobre hechura *" error={marginHechuraError}>
@@ -779,7 +780,6 @@ function PriceListFormModal({
                 min="0"
                 inputMode="decimal"
                 placeholder="Ej: 40"
-                suffix="%"
               />
             </TPField>
           </div>
@@ -810,7 +810,6 @@ function PriceListFormModal({
               min="0"
               inputMode="decimal"
               placeholder="Ej: 5 (= 5%)"
-              suffix="%"
             />
           </TPField>
           <TPField label="Precio mínimo">
@@ -927,7 +926,6 @@ function PriceListFormModal({
             variant="primary"
             onClick={onSave}
             loading={saving}
-            icon={saving ? <Loader2 size={14} className="animate-spin" /> : undefined}
           >
             {isEdit ? "Guardar cambios" : "Crear lista"}
           </TPButton>
