@@ -30,7 +30,6 @@ import { prefetchUserDetail, getRolesCached, getPermsCached } from "./users.data
 import type { UserDetail, Role, Override } from "../../services/users";
 import type { Permission } from "../../services/permissions";
 
-import ButtonBar from "../ui/ButtonBar";
 
 const OPEN_USERS_EDIT_KEY = "tptech_users_open_edit_v1";
 
@@ -343,7 +342,7 @@ export default function UserView() {
           <h1 className="text-2xl font-semibold truncate">Ver usuario</h1>
         </div>
 
-        <ButtonBar>
+        <div className="flex items-center gap-2 shrink-0">
           <button
             type="button"
             className="tp-btn-secondary inline-flex items-center gap-2"
@@ -369,7 +368,7 @@ export default function UserView() {
               Editar
             </button>
           )}
-        </ButtonBar>
+        </div>
       </div>
 
       {err && <div className="rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm">{err}</div>}

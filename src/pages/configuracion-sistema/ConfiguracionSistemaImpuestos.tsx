@@ -2,13 +2,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import {
   Plus,
-  Pencil,
-  Eye,
-  Trash2,
-  ShieldBan,
-  ShieldCheck,
-  Copy,
-  Loader2,
+  Save,
   Receipt,
   AlertTriangle,
 } from "lucide-react";
@@ -16,7 +10,6 @@ import {
 import { cn } from "../../components/ui/tp";
 import { TPSectionShell } from "../../components/ui/TPSectionShell";
 import { TPButton } from "../../components/ui/TPButton";
-import { TPSearchInput } from "../../components/ui/TPSearchInput";
 import TPInput from "../../components/ui/TPInput";
 import { TPField } from "../../components/ui/TPField";
 import { TPCheckbox } from "../../components/ui/TPCheckbox";
@@ -24,17 +17,14 @@ import TPTextarea from "../../components/ui/TPTextarea";
 import { Modal } from "../../components/ui/Modal";
 import ConfirmDeleteDialog from "../../components/ui/ConfirmDeleteDialog";
 import {
-  TPTableWrap,
-  TPTableHeader,
-  TPTableXScroll,
-  TPTableElBase,
-  TPThead,
-  TPTbody,
   TPTr,
   TPTd,
-  TPTh,
-  TPEmptyRow,
 } from "../../components/ui/TPTable";
+import { TPTableKit, type TPColDef } from "../../components/ui/TPTableKit";
+import { TPStatusPill } from "../../components/ui/TPStatusPill";
+import { TPRowActions } from "../../components/ui/TPRowActions";
+import TPComboFixed from "../../components/ui/TPComboFixed";
+import TPNumberInput from "../../components/ui/TPNumberInput";
 
 import { toast } from "../../lib/toast";
 import {
@@ -128,24 +118,6 @@ function formatISOtoDateInput(iso: string | null | undefined): string {
   } catch {
     return "";
   }
-}
-
-/* =========================================================
-   Pill de estado
-========================================================= */
-function StatusPill({ active }: { active: boolean }) {
-  return (
-    <span
-      className={cn(
-        "inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium",
-        active
-          ? "bg-green-500/15 text-green-600 dark:text-green-400"
-          : "bg-surface2 text-muted"
-      )}
-    >
-      {active ? "Activa" : "Inactiva"}
-    </span>
-  );
 }
 
 /* =========================================================
@@ -300,6 +272,19 @@ function validate(draft: Draft): FormErrors {
 }
 
 /* =========================================================
+   Column definitions
+========================================================= */
+const IMP_COLS: TPColDef[] = [
+  { key: "name",     label: "Nombre / Código", canHide: false, sortKey: "name" },
+  { key: "type",     label: "Tipo",             sortKey: "taxType" },
+  { key: "calc",     label: "Cálculo" },
+  { key: "base",     label: "Base" },
+  { key: "vigencia", label: "Vigencia" },
+  { key: "estado",   label: "Estado" },
+  { key: "acciones", label: "Acciones",         canHide: false, align: "right" },
+];
+
+/* =========================================================
    Página principal
 ========================================================= */
 export default function ConfiguracionSistemaImpuestos() {
@@ -308,12 +293,26 @@ export default function ConfiguracionSistemaImpuestos() {
   const [loading, setLoading] = useState(false);
   const [q, setQ] = useState("");
 
+  /* ---- sort ---- */
+  type SortKey = "name" | "taxType" | "createdAt";
+  const [sortKey, setSortKey] = useState<SortKey>("name");
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
+
+  function toggleSort(key: SortKey) {
+    if (sortKey === key) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    else { setSortKey(key); setSortDir("asc"); }
+  }
+
   /* ---- modal editar/crear ---- */
   const [editOpen, setEditOpen] = useState(false);
   const [editTarget, setEditTarget] = useState<TaxRow | null>(null);
   const [draft, setDraft] = useState<Draft>(EMPTY_DRAFT);
   const [submitted, setSubmitted] = useState(false);
   const [formErrors, setFormErrors] = useState<FormErrors>({});
+
+  /* ---- numeric state para TPNumberInput ---- */
+  const [rateNum, setRateNum] = useState<number | null>(null);
+  const [fixedAmountNum, setFixedAmountNum] = useState<number | null>(null);
 
   /* ---- modal ver ---- */
   const [viewOpen, setViewOpen] = useState(false);
@@ -345,17 +344,35 @@ export default function ConfiguracionSistemaImpuestos() {
     load();
   }, []);
 
-  /* ---- filtrado ---- */
+  /* ---- filtrado y ordenamiento ---- */
   const filteredRows = useMemo(() => {
     const s = q.trim().toLowerCase();
-    if (!s) return rows;
-    return rows.filter(
-      (r) =>
-        r.name.toLowerCase().includes(s) ||
-        r.code.toLowerCase().includes(s) ||
-        TAX_TYPE_LABELS[r.taxType].toLowerCase().includes(s)
-    );
-  }, [rows, q]);
+    const filtered = s
+      ? rows.filter(
+          (r) =>
+            r.name.toLowerCase().includes(s) ||
+            r.code.toLowerCase().includes(s) ||
+            TAX_TYPE_LABELS[r.taxType].toLowerCase().includes(s)
+        )
+      : rows;
+
+    return [...filtered].sort((a, b) => {
+      const mul = sortDir === "asc" ? 1 : -1;
+      if (sortKey === "name") {
+        return String(a.name ?? "").localeCompare(String(b.name ?? ""), "es") * mul;
+      }
+      if (sortKey === "taxType") {
+        return String(TAX_TYPE_LABELS[a.taxType] ?? "").localeCompare(
+          String(TAX_TYPE_LABELS[b.taxType] ?? ""),
+          "es"
+        ) * mul;
+      }
+      if (sortKey === "createdAt") {
+        return (String(a.createdAt ?? "").localeCompare(String(b.createdAt ?? ""), "es")) * mul;
+      }
+      return 0;
+    });
+  }, [rows, q, sortKey, sortDir]);
 
   /* ---- helpers draft ---- */
   function patchDraft(patch: Partial<Draft>) {
@@ -366,6 +383,8 @@ export default function ConfiguracionSistemaImpuestos() {
   function openCreate() {
     setEditTarget(null);
     setDraft(EMPTY_DRAFT);
+    setRateNum(null);
+    setFixedAmountNum(null);
     setSubmitted(false);
     setFormErrors({});
     setEditOpen(true);
@@ -374,6 +393,8 @@ export default function ConfiguracionSistemaImpuestos() {
   /* ---- abrir modal editar ---- */
   function openEdit(row: TaxRow) {
     setEditTarget(row);
+    const rateVal = row.rate != null ? parseFloat(row.rate) : null;
+    const fixedVal = row.fixedAmount != null ? parseFloat(row.fixedAmount) : null;
     setDraft({
       name: row.name,
       code: row.code,
@@ -388,6 +409,8 @@ export default function ConfiguracionSistemaImpuestos() {
       isActive: row.isActive,
       notes: row.notes ?? "",
     });
+    setRateNum(rateVal);
+    setFixedAmountNum(fixedVal);
     setSubmitted(false);
     setFormErrors({});
     setEditOpen(true);
@@ -407,32 +430,40 @@ export default function ConfiguracionSistemaImpuestos() {
 
   /* ---- guardar ---- */
   async function handleSave() {
+    // sync numeric values back to draft strings before validation
+    const currentDraft: Draft = {
+      ...draft,
+      rate: rateNum != null ? String(rateNum) : "",
+      fixedAmount: fixedAmountNum != null ? String(fixedAmountNum) : "",
+    };
+    setDraft(currentDraft);
+
     setSubmitted(true);
-    const errors = validate(draft);
+    const errors = validate(currentDraft);
     setFormErrors(errors);
     if (Object.keys(errors).length > 0) return;
 
     const payload: TaxPayload = {
-      name: draft.name.trim(),
-      code: draft.code.trim() || undefined,
-      taxType: draft.taxType,
-      calculationType: draft.calculationType,
+      name: currentDraft.name.trim(),
+      code: currentDraft.code.trim() || undefined,
+      taxType: currentDraft.taxType,
+      calculationType: currentDraft.calculationType,
       rate:
-        draft.calculationType === "PERCENTAGE" ||
-        draft.calculationType === "PERCENTAGE_PLUS_FIXED"
-          ? parseFloat(draft.rate)
+        currentDraft.calculationType === "PERCENTAGE" ||
+        currentDraft.calculationType === "PERCENTAGE_PLUS_FIXED"
+          ? rateNum
           : null,
       fixedAmount:
-        draft.calculationType === "FIXED_AMOUNT" ||
-        draft.calculationType === "PERCENTAGE_PLUS_FIXED"
-          ? parseFloat(draft.fixedAmount)
+        currentDraft.calculationType === "FIXED_AMOUNT" ||
+        currentDraft.calculationType === "PERCENTAGE_PLUS_FIXED"
+          ? fixedAmountNum
           : null,
-      applyOn: draft.applyOn,
-      includedInPrice: draft.includedInPrice,
-      validFrom: draft.validFrom || null,
-      validTo: draft.validTo || null,
-      isActive: draft.isActive,
-      notes: draft.notes.trim(),
+      applyOn: currentDraft.applyOn,
+      includedInPrice: currentDraft.includedInPrice,
+      validFrom: currentDraft.validFrom || null,
+      validTo: currentDraft.validTo || null,
+      isActive: currentDraft.isActive,
+      notes: currentDraft.notes.trim(),
     };
 
     try {
@@ -524,6 +555,9 @@ export default function ConfiguracionSistemaImpuestos() {
   /* ---- errores en tiempo real ---- */
   const errors = submitted ? formErrors : {};
 
+  // suppress unused warning — cloningId is set during clone operations
+  void cloningId;
+
   /* =========================================================
      RENDER
   ========================================================= */
@@ -533,203 +567,107 @@ export default function ConfiguracionSistemaImpuestos() {
       subtitle="Configurá los impuestos aplicables a las ventas"
       icon={<Receipt size={22} />}
     >
-      <TPTableWrap>
-        {/* ---- header ---- */}
-        <TPTableHeader
-          left={
-            <span className="text-sm text-muted">
-              {filteredRows.length}{" "}
-              {filteredRows.length === 1 ? "impuesto" : "impuestos"}
-            </span>
-          }
-          right={
-            <div className="flex items-center gap-2 w-full md:w-auto">
-              <TPSearchInput
-                value={q}
-                onChange={setQ}
-                placeholder="Buscar…"
-                className="h-9 w-full md:w-64"
-              />
-              <TPButton
-                variant="primary"
-                onClick={openCreate}
-                iconLeft={<Plus size={16} />}
-                className="h-9 whitespace-nowrap shrink-0"
-              >
-                Nuevo impuesto
-              </TPButton>
-            </div>
-          }
-        />
-
-        {/* ---- tabla ---- */}
-        <TPTableXScroll>
-          <TPTableElBase responsive="stack">
-            <TPThead>
-              <tr>
-                <TPTh>Nombre / Código</TPTh>
-                <TPTh className="hidden md:table-cell">Tipo</TPTh>
-                <TPTh className="hidden md:table-cell">Cálculo</TPTh>
-                <TPTh className="hidden lg:table-cell">Base</TPTh>
-                <TPTh className="hidden lg:table-cell">Vigencia</TPTh>
-                <TPTh className="hidden md:table-cell">Estado</TPTh>
-                <TPTh className="text-right">Acciones</TPTh>
-              </tr>
-            </TPThead>
-
-            <TPTbody>
-              {loading ? (
-                <tr>
-                  <td colSpan={7} className="px-5 py-12 text-center text-sm text-muted">
-                    <Loader2 className="mx-auto mb-3 h-6 w-6 animate-spin" />
-                    Cargando…
-                  </td>
-                </tr>
-              ) : filteredRows.length === 0 ? (
-                <TPEmptyRow
-                  colSpan={7}
-                  text={
-                    q
-                      ? "No hay resultados para esa búsqueda."
-                      : "Todavía no hay impuestos configurados. Creá el primero."
-                  }
-                />
-              ) : (
-                filteredRows.map((row) => (
-                  <TPTr key={row.id}>
-                    {/* Nombre / Código */}
-                    <TPTd label="Nombre / Código">
-                      <div className="min-w-0">
-                        <div className="text-sm font-medium text-text truncate">
-                          {row.name}
-                        </div>
-                        {row.code && (
-                          <div className="text-xs text-muted font-mono mt-0.5">
-                            {row.code}
-                          </div>
-                        )}
-                      </div>
-                    </TPTd>
-
-                    {/* Tipo */}
-                    <TPTd label="Tipo" className="hidden md:table-cell">
-                      <TaxTypeBadge taxType={row.taxType} />
-                    </TPTd>
-
-                    {/* Cálculo */}
-                    <TPTd label="Cálculo" className="hidden md:table-cell">
-                      <div className="space-y-0.5">
-                        <div className="text-xs text-muted">
-                          {CALC_TYPE_LABELS[row.calculationType]}
-                        </div>
-                        <CalcDisplay
-                          calculationType={row.calculationType}
-                          rate={row.rate}
-                          fixedAmount={row.fixedAmount}
-                        />
-                      </div>
-                    </TPTd>
-
-                    {/* Base */}
-                    <TPTd label="Base" className="hidden lg:table-cell">
-                      <span className="text-sm text-muted truncate block max-w-[160px]">
-                        {APPLY_ON_LABELS[row.applyOn]}
-                      </span>
-                    </TPTd>
-
-                    {/* Vigencia */}
-                    <TPTd label="Vigencia" className="hidden lg:table-cell">
-                      <div className="space-y-1">
-                        {row.validFrom || row.validTo ? (
-                          <div className="text-xs text-muted whitespace-nowrap">
-                            {formatDate(row.validFrom)} — {row.validTo ? formatDate(row.validTo) : "Sin vencimiento"}
-                          </div>
-                        ) : (
-                          <span className="text-xs text-muted">Sin vencimiento</span>
-                        )}
-                        {isExpired(row.validTo) && <ExpiredBadge />}
-                      </div>
-                    </TPTd>
-
-                    {/* Estado */}
-                    <TPTd label="Estado" className="hidden md:table-cell">
-                      <StatusPill active={row.isActive} />
-                    </TPTd>
-
-                    {/* Acciones */}
-                    <TPTd label="Acciones" className="text-right">
-                      <div className="flex items-center justify-end gap-1.5 flex-wrap">
-                        {/* estado en mobile */}
-                        <span className="md:hidden">
-                          <StatusPill active={row.isActive} />
-                        </span>
-                        {/* tipo en mobile */}
-                        <span className="md:hidden">
-                          <TaxTypeBadge taxType={row.taxType} />
-                        </span>
-
-                        <button
-                          type="button"
-                          title="Ver detalle"
-                          onClick={() => openView(row)}
-                          className="tp-btn-secondary h-9 w-9 !p-0 grid place-items-center shrink-0"
-                        >
-                          <Eye size={15} />
-                        </button>
-
-                        <button
-                          type="button"
-                          title="Editar"
-                          onClick={() => openEdit(row)}
-                          className="tp-btn-secondary h-9 w-9 !p-0 grid place-items-center shrink-0"
-                        >
-                          <Pencil size={15} />
-                        </button>
-
-                        <button
-                          type="button"
-                          title="Clonar"
-                          disabled={cloningId === row.id}
-                          onClick={() => handleClone(row)}
-                          className="tp-btn-secondary h-9 w-9 !p-0 grid place-items-center shrink-0 disabled:opacity-50"
-                        >
-                          {cloningId === row.id ? (
-                            <Loader2 size={15} className="animate-spin" />
-                          ) : (
-                            <Copy size={15} />
-                          )}
-                        </button>
-
-                        <button
-                          type="button"
-                          title={row.isActive ? "Desactivar" : "Activar"}
-                          onClick={() => handleToggle(row)}
-                          className="tp-btn-secondary h-9 w-9 !p-0 grid place-items-center shrink-0"
-                        >
-                          {row.isActive ? (
-                            <ShieldBan size={15} />
-                          ) : (
-                            <ShieldCheck size={15} className="text-green-500" />
-                          )}
-                        </button>
-
-                        <button
-                          type="button"
-                          title="Eliminar"
-                          onClick={() => openDelete(row)}
-                          className="tp-btn-secondary h-9 w-9 !p-0 grid place-items-center shrink-0 text-red-400 hover:text-red-500"
-                        >
-                          <Trash2 size={15} />
-                        </button>
-                      </div>
-                    </TPTd>
-                  </TPTr>
-                ))
-              )}
-            </TPTbody>
-          </TPTableElBase>
-        </TPTableXScroll>
-      </TPTableWrap>
+      <TPTableKit
+        rows={filteredRows}
+        columns={IMP_COLS}
+        storageKey="tptech_col_impuestos"
+        search={q}
+        onSearchChange={setQ}
+        searchPlaceholder="Buscar impuestos..."
+        sortKey={sortKey}
+        sortDir={sortDir}
+        onSort={(key) => toggleSort(key as SortKey)}
+        loading={loading}
+        emptyText={q ? "No hay resultados para esa búsqueda." : "Todavía no hay impuestos configurados. Creá el primero."}
+        countLabel={(n) => `${n} ${n === 1 ? "impuesto" : "impuestos"}`}
+        responsive="stack"
+        actions={
+          <TPButton
+            variant="primary"
+            iconLeft={<Plus size={16} />}
+            onClick={openCreate}
+          >
+            Nuevo impuesto
+          </TPButton>
+        }
+        renderRow={(row, vis) => (
+          <TPTr key={row.id} className={!row.isActive ? "opacity-60" : undefined}>
+            {vis.name && (
+              <TPTd>
+                <div className="min-w-0">
+                  <div className="text-sm font-medium text-text truncate">{row.name}</div>
+                  {row.code && (
+                    <div className="text-xs text-muted font-mono mt-0.5">{row.code}</div>
+                  )}
+                </div>
+              </TPTd>
+            )}
+            {vis.type && (
+              <TPTd className="hidden md:table-cell">
+                <TaxTypeBadge taxType={row.taxType} />
+              </TPTd>
+            )}
+            {vis.calc && (
+              <TPTd className="hidden md:table-cell">
+                <div className="space-y-0.5">
+                  <div className="text-xs text-muted">{CALC_TYPE_LABELS[row.calculationType]}</div>
+                  <CalcDisplay
+                    calculationType={row.calculationType}
+                    rate={row.rate}
+                    fixedAmount={row.fixedAmount}
+                  />
+                </div>
+              </TPTd>
+            )}
+            {vis.base && (
+              <TPTd className="hidden lg:table-cell">
+                <span className="text-sm text-muted truncate block max-w-[160px]">
+                  {APPLY_ON_LABELS[row.applyOn]}
+                </span>
+              </TPTd>
+            )}
+            {vis.vigencia && (
+              <TPTd className="hidden lg:table-cell">
+                <div className="space-y-1">
+                  {row.validFrom || row.validTo ? (
+                    <div className="text-xs text-muted whitespace-nowrap">
+                      {formatDate(row.validFrom)} — {row.validTo ? formatDate(row.validTo) : "Sin vencimiento"}
+                    </div>
+                  ) : (
+                    <span className="text-xs text-muted">Sin vencimiento</span>
+                  )}
+                  {isExpired(row.validTo) && <ExpiredBadge />}
+                </div>
+              </TPTd>
+            )}
+            {vis.estado && (
+              <TPTd className="hidden md:table-cell">
+                <TPStatusPill active={row.isActive} />
+              </TPTd>
+            )}
+            {vis.acciones && (
+              <TPTd className="text-right">
+                <div className="flex items-center justify-end gap-1.5 flex-wrap">
+                  <span className="md:hidden">
+                    <TPStatusPill active={row.isActive} />
+                  </span>
+                  <span className="md:hidden">
+                    <TaxTypeBadge taxType={row.taxType} />
+                  </span>
+                  <TPRowActions
+                    onView={() => openView(row)}
+                    onEdit={() => openEdit(row)}
+                    onClone={() => handleClone(row)}
+                    onToggle={() => handleToggle(row)}
+                    isActive={row.isActive}
+                    onDelete={() => openDelete(row)}
+                  />
+                </div>
+              </TPTd>
+            )}
+          </TPTr>
+        )}
+      />
 
       {/* =========================================================
           MODAL CREAR / EDITAR
@@ -754,6 +692,7 @@ export default function ConfiguracionSistemaImpuestos() {
               variant="primary"
               onClick={handleSave}
               loading={busySave}
+              iconLeft={<Save size={16} />}
             >
               Guardar
             </TPButton>
@@ -782,20 +721,15 @@ export default function ConfiguracionSistemaImpuestos() {
 
               {/* Tipo de tributo */}
               <TPField label="Tipo de tributo" required>
-                <select
+                <TPComboFixed
                   value={draft.taxType}
-                  onChange={(e) =>
-                    patchDraft({ taxType: e.target.value as TaxType })
-                  }
+                  onChange={(v) => patchDraft({ taxType: v as TaxType })}
                   disabled={busySave}
-                  className="tp-select w-full"
-                >
-                  {(Object.keys(TAX_TYPE_LABELS) as TaxType[]).map((k) => (
-                    <option key={k} value={k}>
-                      {TAX_TYPE_LABELS[k]}
-                    </option>
-                  ))}
-                </select>
+                  options={(Object.keys(TAX_TYPE_LABELS) as TaxType[]).map((k) => ({
+                    value: k,
+                    label: TAX_TYPE_LABELS[k],
+                  }))}
+                />
               </TPField>
 
               {/* Código */}
@@ -818,33 +752,36 @@ export default function ConfiguracionSistemaImpuestos() {
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               {/* Modo de cálculo */}
               <TPField label="Modo de cálculo" required className="sm:col-span-2">
-                <select
+                <TPComboFixed
                   value={draft.calculationType}
-                  onChange={(e) =>
-                    patchDraft({ calculationType: e.target.value as TaxCalculationType })
-                  }
+                  onChange={(v) => {
+                    patchDraft({ calculationType: v as TaxCalculationType });
+                    // reset numeric values when mode changes
+                    setRateNum(null);
+                    setFixedAmountNum(null);
+                  }}
                   disabled={busySave}
-                  className="tp-select w-full"
-                >
-                  {(Object.keys(CALC_TYPE_LABELS) as TaxCalculationType[]).map((k) => (
-                    <option key={k} value={k}>
-                      {CALC_TYPE_LABELS[k]}
-                    </option>
-                  ))}
-                </select>
+                  options={(Object.keys(CALC_TYPE_LABELS) as TaxCalculationType[]).map((k) => ({
+                    value: k,
+                    label: CALC_TYPE_LABELS[k],
+                  }))}
+                />
               </TPField>
 
               {/* Porcentaje — solo si aplica */}
               {(draft.calculationType === "PERCENTAGE" ||
                 draft.calculationType === "PERCENTAGE_PLUS_FIXED") && (
                 <TPField label="Porcentaje (%)" required error={errors.rate}>
-                  <TPInput
-                    value={draft.rate}
-                    onChange={(v) => patchDraft({ rate: v })}
-                    type="number"
+                  <TPNumberInput
+                    value={rateNum}
+                    onChange={(v) => {
+                      setRateNum(v);
+                      patchDraft({ rate: v != null ? String(v) : "" });
+                    }}
+                    decimals={2}
+                    step={1}
+                    min={0}
                     placeholder="Ej: 21"
-                    min="0"
-                    step="0.01"
                     disabled={busySave}
                   />
                 </TPField>
@@ -854,13 +791,16 @@ export default function ConfiguracionSistemaImpuestos() {
               {(draft.calculationType === "FIXED_AMOUNT" ||
                 draft.calculationType === "PERCENTAGE_PLUS_FIXED") && (
                 <TPField label="Monto fijo ($)" required error={errors.fixedAmount}>
-                  <TPInput
-                    value={draft.fixedAmount}
-                    onChange={(v) => patchDraft({ fixedAmount: v })}
-                    type="number"
+                  <TPNumberInput
+                    value={fixedAmountNum}
+                    onChange={(v) => {
+                      setFixedAmountNum(v);
+                      patchDraft({ fixedAmount: v != null ? String(v) : "" });
+                    }}
+                    decimals={2}
+                    step={1}
+                    min={0}
                     placeholder="Ej: 100"
-                    min="0"
-                    step="0.01"
                     disabled={busySave}
                   />
                 </TPField>
@@ -876,20 +816,15 @@ export default function ConfiguracionSistemaImpuestos() {
                     : ""
                 }
               >
-                <select
+                <TPComboFixed
                   value={draft.applyOn}
-                  onChange={(e) =>
-                    patchDraft({ applyOn: e.target.value as TaxApplyOn })
-                  }
+                  onChange={(v) => patchDraft({ applyOn: v as TaxApplyOn })}
                   disabled={busySave}
-                  className="tp-select w-full"
-                >
-                  {(Object.keys(APPLY_ON_LABELS) as TaxApplyOn[]).map((k) => (
-                    <option key={k} value={k}>
-                      {APPLY_ON_LABELS[k]}
-                    </option>
-                  ))}
-                </select>
+                  options={(Object.keys(APPLY_ON_LABELS) as TaxApplyOn[]).map((k) => ({
+                    value: k,
+                    label: APPLY_ON_LABELS[k],
+                  }))}
+                />
               </TPField>
 
               {/* Incluido en el precio */}
@@ -912,21 +847,19 @@ export default function ConfiguracionSistemaImpuestos() {
           <ModalSection title="Vigencia">
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               <TPField label="Válido desde">
-                <input
+                <TPInput
                   type="date"
                   value={draft.validFrom}
-                  onChange={(e) => patchDraft({ validFrom: e.target.value })}
+                  onChange={(v) => patchDraft({ validFrom: v })}
                   disabled={busySave}
-                  className="tp-select w-full"
                 />
               </TPField>
               <TPField label="Válido hasta">
-                <input
+                <TPInput
                   type="date"
                   value={draft.validTo}
-                  onChange={(e) => patchDraft({ validTo: e.target.value })}
+                  onChange={(v) => patchDraft({ validTo: v })}
                   disabled={busySave}
-                  className="tp-select w-full"
                 />
               </TPField>
             </div>
@@ -1013,7 +946,7 @@ export default function ConfiguracionSistemaImpuestos() {
               </div>
             </DetailRow>
             <DetailRow label="Estado">
-              <StatusPill active={viewTarget.isActive} />
+              <TPStatusPill active={viewTarget.isActive} />
             </DetailRow>
             {viewTarget.notes && (
               <div className="flex flex-col gap-1 py-2 border-b border-border">

@@ -267,7 +267,7 @@ export default function TPDateRangeInline({
     <div className={cn("flex items-center gap-2", className)}>
       {/* desde */}
       <div className="relative flex-1 min-w-[170px]">
-        <Calendar size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted" />
+        <Calendar size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-text opacity-50" />
         <input
           type="date"
           value={fromInput}
@@ -311,7 +311,7 @@ export default function TPDateRangeInline({
 
       {/* hasta */}
       <div className="relative flex-1 min-w-[170px]">
-        <Calendar size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted" />
+        <Calendar size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-text opacity-50" />
         <input
           type="date"
           value={toInput}

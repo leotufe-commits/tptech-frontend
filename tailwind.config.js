@@ -9,6 +9,7 @@ export default {
       colors: {
         /* Core */
         bg: "var(--bg)",
+        background: "var(--card)", // alias para compatibilidad con bg-background
         card: "var(--card)",
         text: "var(--text)",
 

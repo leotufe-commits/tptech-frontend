@@ -4,19 +4,15 @@ import {
   ArrowDown,
   ArrowUp,
   ChevronRight,
-  Eye,
   Loader2,
-  Pencil,
   Plus,
-  ShieldBan,
-  ShieldCheck,
-  Star,
-  Trash2,
   X,
 } from "lucide-react";
+import { TPRowActions } from "../../ui/TPRowActions";
 
 import type { MetalRow, VariantRow } from "../../../hooks/useValuation";
 import { cn, norm, Pill, ModalShell } from "../valuation.ui";
+import TPStatusPill from "../../ui/TPStatusPill";
 
 import { SortArrows } from "../../ui/TPSort";
 import { TPColumnPicker } from "../../ui/TPColumnPicker";
@@ -630,8 +626,8 @@ export default function MetalsAndVariantsPanel({
     });
   }, [refHistorySorted, refRange.from, refRange.to]);
 
-  async function openRefHistory(e: React.MouseEvent, m: MetalRow) {
-    e.stopPropagation();
+  async function openRefHistory(e: React.MouseEvent | null, m: MetalRow) {
+    e?.stopPropagation();
 
     setRefHistMetal(m);
 
@@ -776,12 +772,14 @@ export default function MetalsAndVariantsPanel({
                   const hasNoVariants = vCount === 0;
 
                   return (
-                    <button
+                    <div
                       key={m.id}
-                      type="button"
+                      role="button"
+                      tabIndex={0}
                       onClick={() => setSelectedMetalId(m.id)}
+                      onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") setSelectedMetalId(m.id); }}
                       className={cn(
-                        "w-full rounded-2xl border p-3 text-left transition relative overflow-hidden",
+                        "w-full rounded-2xl border p-3 text-left transition relative overflow-hidden cursor-pointer",
                         "focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-primary/20",
                         active
                           ? "border-primary/50 bg-surface2 shadow-[0_0_0_1px_rgba(59,130,246,0.25)]"
@@ -791,7 +789,7 @@ export default function MetalsAndVariantsPanel({
                     >
                       <div className="absolute right-3 top-3 flex items-center gap-2">
                         {hasNoVariants ? <Pill tone="off">Sin variantes</Pill> : null}
-                        {isActive ? <Pill tone="ok">Activo</Pill> : <Pill tone="off">Inactivo</Pill>}
+                        <TPStatusPill active={isActive} />
                       </div>
 
                       <div className="flex items-start gap-3 min-w-0 pr-14">
@@ -834,27 +832,19 @@ export default function MetalsAndVariantsPanel({
                           </div>
 
                           <div className="flex items-center justify-end gap-2">
-                            <IconBtn title="Ver historial valor ref." onClick={(e) => void openRefHistory(e, m)} disabled={saving}>
-                              <Eye className="h-4 w-4" />
-                            </IconBtn>
-
-                            <IconBtn title="Editar" onClick={(e) => onEditMetalClick(e, m)} disabled={saving}>
-                              <Pencil className="h-4 w-4" />
-                            </IconBtn>
-
-                            <IconBtn title={isActive ? "Desactivar" : "Activar"} onClick={(e) => onToggleMetalClick(e, m)} disabled={saving}>
-                              {isActive ? <ShieldBan className="h-4 w-4" /> : <ShieldCheck className="h-4 w-4" />}
-                            </IconBtn>
-
-                            <IconBtn title="Eliminar" onClick={(e) => onDeleteMetalClick(e, m)} disabled={saving}>
-                              <Trash2 className="h-4 w-4" />
-                            </IconBtn>
+                              <TPRowActions
+                              onView={() => void openRefHistory(null, m)}
+                              onEdit={() => onOpenMetalEdit?.(m)}
+                              onToggle={() => { if (onToggleMetal) void onToggleMetal((m as any).id, !isActive); }}
+                              isActive={isActive}
+                              onDelete={onDeleteMetal ? () => void onDeleteMetal!(m) : undefined}
+                            />
 
                             <ChevronRight size={18} className={cn(active ? "text-text" : "text-muted")} />
                           </div>
                         </div>
                       </div>
-                    </button>
+                    </div>
                   );
                 })
               )}
@@ -994,70 +984,23 @@ export default function MetalsAndVariantsPanel({
 
                                 {varColVis["status"] !== false && (
                                   <TPTd label="Estado" className="text-left">
-                                    {isActive ? <Pill tone="ok">Activa</Pill> : <Pill tone="off">Inactiva</Pill>}
+                                    <TPStatusPill active={isActive} activeLabel="Activa" inactiveLabel="Inactiva" />
                                   </TPTd>
                                 )}
 
                                 <TPTd label="Acciones" className="text-right">
-                                  <div className="flex justify-end gap-2">
-                                    <TPButton
-                                      variant="secondary"
-                                      onClick={() => void onFavorite(v)}
-                                      disabled={lockActions}
-                                      title={isFav ? "Quitar favorito" : "Marcar favorita"}
-                                      className="h-9 w-9 !p-0 grid place-items-center"
-                                    >
-                                      <Star
-                                        size={16}
-                                        className={cn("stroke-current", isFav ? "fill-current text-yellow-400" : "fill-transparent text-text/80")}
-                                      />
-                                    </TPButton>
-
-                                    <IconBtn
-                                      title="Ver"
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        onOpenVariantView?.(v);
-                                      }}
-                                      disabled={lockActions || !onOpenVariantView}
-                                    >
-                                      <Eye className="h-4 w-4" />
-                                    </IconBtn>
-
-                                    <IconBtn
-                                      title="Editar"
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        onOpenVariantEdit?.(v);
-                                      }}
-                                      disabled={lockActions || !onOpenVariantEdit}
-                                    >
-                                      <Pencil className="h-4 w-4" />
-                                    </IconBtn>
-
-                                    <IconBtn
-                                      title={isActive ? "Desactivar" : "Activar"}
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        void onToggleVariant(v as any);
-                                      }}
-                                      disabled={lockActions}
-                                    >
-                                      {isActive ? <ShieldBan className="h-4 w-4" /> : <ShieldCheck className="h-4 w-4" />}
-                                    </IconBtn>
-
-                                    {onDeleteVariant ? (
-                                      <IconBtn
-                                        title="Eliminar"
-                                        onClick={(e) => {
-                                          e.stopPropagation();
-                                          void onAskDeleteVariant(v as any);
-                                        }}
-                                        disabled={lockActions}
-                                      >
-                                        <Trash2 className="h-4 w-4" />
-                                      </IconBtn>
-                                    ) : null}
+                                  {/* eslint-disable-next-line jsx-a11y/click-events-have-key-events */}
+                                  <div onClick={(e) => e.stopPropagation()}>
+                                    <TPRowActions
+                                      onFavorite={() => void onFavorite(v)}
+                                      isFavorite={isFav}
+                                      busyFavorite={lockActions}
+                                      onView={onOpenVariantView ? () => onOpenVariantView(v) : undefined}
+                                      onEdit={onOpenVariantEdit ? () => onOpenVariantEdit(v) : undefined}
+                                      onToggle={() => void onToggleVariant(v as any)}
+                                      isActive={isActive}
+                                      onDelete={onDeleteVariant ? () => void onAskDeleteVariant(v as any) : undefined}
+                                    />
                                   </div>
                                 </TPTd>
                               </TPTr>

@@ -3,6 +3,11 @@ import React, { useEffect, useMemo, useState } from "react";
 import { apiFetch } from "../lib/api";
 import { useMe } from "../hooks/useMe";
 import { useNavigate } from "react-router-dom";
+import TPInput from "../components/ui/TPInput";
+import { TPButton } from "../components/ui/TPButton";
+import { TPCard } from "../components/ui/TPCard";
+import { TPField } from "../components/ui/TPField";
+import { TPSectionShell } from "../components/ui/TPSectionShell";
 
 /* =========================
    TYPES
@@ -209,12 +214,11 @@ export default function Cuenta() {
   }
 
   return (
-    <div className="mx-auto max-w-4xl p-6 space-y-6">
-      <header>
-        <h2 className="text-xl font-semibold">Cuenta</h2>
-        <p className="text-sm text-muted">Datos del usuario autenticado.</p>
-      </header>
-
+    <TPSectionShell
+      title="Cuenta"
+      subtitle="Datos del usuario autenticado."
+      className="mx-auto max-w-4xl p-6"
+    >
       {msg && (
         <div className="rounded-xl border border-border bg-card px-4 py-3 text-sm">
           {msg}
@@ -222,46 +226,44 @@ export default function Cuenta() {
       )}
 
       {/* DATOS */}
-      <Card title="Datos personales">
+      <TPCard title="Datos personales">
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          <Field label="Nombre">
-            <input
-              className="tp-input"
+          <TPField label="Nombre">
+            <TPInput
               value={form.firstName}
-              onChange={(e) => setField("firstName", e.target.value)}
+              onChange={(v) => setField("firstName", v)}
             />
-          </Field>
+          </TPField>
 
-          <Field label="Apellido">
-            <input
-              className="tp-input"
+          <TPField label="Apellido">
+            <TPInput
               value={form.lastName}
-              onChange={(e) => setField("lastName", e.target.value)}
+              onChange={(v) => setField("lastName", v)}
             />
-          </Field>
+          </TPField>
 
           <div className="md:col-span-2">
-            <Field label="Correo electrónico">
-              <input className="tp-input opacity-70" value={form.email} disabled />
-            </Field>
+            <TPField label="Correo electrónico">
+              <TPInput value={form.email} onChange={() => {}} disabled className="opacity-70" />
+            </TPField>
           </div>
         </div>
 
         <div className="mt-6 flex justify-end">
-          <button className="tp-btn-primary" disabled={!canSave || saving} onClick={onSave}>
+          <TPButton variant="primary" disabled={!canSave || saving} onClick={onSave}>
             {saving ? "Guardando…" : "Guardar"}
-          </button>
+          </TPButton>
         </div>
-      </Card>
+      </TPCard>
 
       {/* SEGURIDAD */}
-      <Card title="Seguridad">
+      <TPCard title="Seguridad">
         <div className="flex justify-between items-start gap-4">
           <p className="text-sm text-muted">La contraseña se gestiona desde recuperación.</p>
 
-          <button className="tp-btn-secondary" onClick={onChangePassword}>
+          <TPButton variant="secondary" onClick={onChangePassword}>
             Cambiar contraseña
-          </button>
+          </TPButton>
         </div>
 
         {/* PIN */}
@@ -289,32 +291,31 @@ export default function Cuenta() {
             <div>
               {/* ✅ PIN actual (solo si ya existe) */}
               {pinState.hasQuickPin && (
-                <Field label="PIN actual">
-                  <input
-                    className="tp-input"
+                <TPField label="PIN actual">
+                  <TPInput
                     inputMode="numeric"
                     value={pinCurrent}
-                    onChange={(e) => setPinCurrent(onlyPin4(e.target.value))}
+                    onChange={(v) => setPinCurrent(onlyPin4(v))}
                     maxLength={4}
                     disabled={pinBusy}
                   />
-                </Field>
+                </TPField>
               )}
 
               <div className={pinState.hasQuickPin ? "mt-4" : ""}>
-                <Field label={pinState.hasQuickPin ? "Nuevo PIN" : "Definir PIN"}>
-                  <input
-                    className="tp-input"
+                <TPField label={pinState.hasQuickPin ? "Nuevo PIN" : "Definir PIN"}>
+                  <TPInput
                     inputMode="numeric"
                     value={pinNew}
-                    onChange={(e) => setPinNew(onlyPin4(e.target.value))}
+                    onChange={(v) => setPinNew(onlyPin4(v))}
                     maxLength={4}
                     disabled={pinBusy}
                   />
-                </Field>
+                </TPField>
 
-                <button
-                  className="tp-btn-primary mt-3 w-full"
+                <TPButton
+                  variant="primary"
+                  className="mt-3 w-full"
                   disabled={
                     pinBusy ||
                     pinNew.length !== 4 ||
@@ -323,49 +324,29 @@ export default function Cuenta() {
                   onClick={onSetPin}
                 >
                   {pinBusy ? "Guardando…" : pinState.hasQuickPin ? "Cambiar PIN" : "Guardar PIN"}
-                </button>
+                </TPButton>
               </div>
             </div>
 
             {pinState.hasQuickPin && (
               <div>
-                <Field label="Eliminar PIN">
+                <TPField label="Eliminar PIN">
                   <div className="text-xs text-muted">Elimina la clave rápida de tu cuenta.</div>
-                </Field>
+                </TPField>
 
-                <button
-                  className="tp-btn-secondary mt-6 w-full"
+                <TPButton
+                  variant="secondary"
+                  className="mt-6 w-full"
                   disabled={pinBusy || pinCurrent.length !== 4}
                   onClick={onRemovePin}
                 >
                   {pinBusy ? "Procesando…" : "Eliminar PIN"}
-                </button>
+                </TPButton>
               </div>
             )}
           </div>
         </div>
-      </Card>
-    </div>
-  );
-}
-
-/* =========================
-   UI HELPERS
-========================= */
-function Card({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <div className="rounded-2xl border border-border bg-card p-6 space-y-4">
-      <div className="text-sm font-semibold">{title}</div>
-      {children}
-    </div>
-  );
-}
-
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <div>
-      <label className="mb-1 block text-sm text-muted">{label}</label>
-      {children}
-    </div>
+      </TPCard>
+    </TPSectionShell>
   );
 }

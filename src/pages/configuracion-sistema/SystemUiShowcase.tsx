@@ -6,7 +6,6 @@ import { cn } from "../../components/ui/tp";
 // UI base
 import { Modal } from "../../components/ui/Modal";
 import ConfirmDeleteDialog from "../../components/ui/ConfirmDeleteDialog";
-import ConfirmActionDialog from "../../components/ui/ConfirmActionDialog";
 import ConfirmUnsavedChangesDialog from "../../components/ui/ConfirmUnsavedChangesDialog";
 
 import { TPBadge, TPSegmentedPills } from "../../components/ui/TPBadges";
@@ -32,7 +31,6 @@ type DemoCatalogItem = { id: string; label: string; isFavorite?: boolean };
 export default function SystemUiShowcase() {
   const [openModal, setOpenModal] = useState(false);
   const [openConfirmDelete, setOpenConfirmDelete] = useState(false);
-  const [openConfirmAction, setOpenConfirmAction] = useState(false);
   const [openConfirmUnsaved, setOpenConfirmUnsaved] = useState(false);
 
   const [segValue, setSegValue] = useState(false);
@@ -271,12 +269,6 @@ export default function SystemUiShowcase() {
             </button>
             <button
               className="rounded-xl border border-border bg-card px-3 py-2 text-sm hover:bg-muted"
-              onClick={() => setOpenConfirmAction(true)}
-            >
-              Abrir ConfirmAction
-            </button>
-            <button
-              className="rounded-xl border border-border bg-card px-3 py-2 text-sm hover:bg-muted"
               onClick={() => setOpenConfirmDelete(true)}
             >
               Abrir ConfirmDelete
@@ -324,19 +316,6 @@ export default function SystemUiShowcase() {
       </Modal>
 
       {/* Confirms */}
-      <ConfirmActionDialog
-        open={openConfirmAction}
-        title="ConfirmAction (demo)"
-        description="Esto simula una confirmación genérica."
-        confirmText="Confirmar"
-        cancelText="Cancelar"
-        onConfirm={() => {
-          toast.success("ConfirmAction OK");
-          setOpenConfirmAction(false);
-        }}
-        onClose={() => setOpenConfirmAction(false)}
-      />
-
       <ConfirmDeleteDialog
         open={openConfirmDelete}
         title="ConfirmDelete (demo)"

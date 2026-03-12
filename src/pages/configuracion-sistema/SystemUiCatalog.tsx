@@ -10,9 +10,6 @@ import {
   Database,
   UserRound,
   BadgeCheck,
-  AlignLeft,
-  AlignRight,
-  BetweenHorizontalStart,
   Table2,
   RectangleHorizontal,
   MousePointerClick,
@@ -26,7 +23,6 @@ import { useAuth } from "../../context/AuthContext";
 import ThemeSwitcher from "../../components/ThemeSwitcher";
 
 import Modal from "../../components/ui/Modal";
-import ButtonBar from "../../components/ui/ButtonBar";
 import ConfirmDeleteDialog from "../../components/ui/ConfirmDeleteDialog";
 
 import {
@@ -94,10 +90,8 @@ export default function SystemUiCatalog() {
       {
         group: "Core UI (src/components/ui)",
         items: [
-          { name: "ButtonBar", file: "src/components/ui/ButtonBar.tsx" },
           { name: "Modal", file: "src/components/ui/Modal.tsx" },
           { name: "Toaster + toast helper", file: "src/components/ui/Toaster.tsx / src/lib/toast.ts" },
-          { name: "ConfirmActionDialog", file: "src/components/ui/ConfirmActionDialog.tsx" },
           { name: "ConfirmDeleteDialog", file: "src/components/ui/ConfirmDeleteDialog.tsx" },
           { name: "ConfirmUnsavedChangesDialog", file: "src/components/ui/ConfirmUnsavedChangesDialog.tsx" },
           { name: "TPBadges", file: "src/components/ui/TPBadges.tsx" },
@@ -292,7 +286,7 @@ export default function SystemUiCatalog() {
           <div className="flex items-center gap-2">
             <BadgeCheck className="h-4 w-4 text-primary" />
             <div className="text-sm font-semibold text-text">Preview real</div>
-            <Pill>TPBadges + ButtonBar + TPTable + Modal + ConfirmDeleteDialog</Pill>
+            <Pill>TPBadges + TPTable + Modal + ConfirmDeleteDialog</Pill>
           </div>
 
           <div className="grid gap-4 lg:grid-cols-2">
@@ -358,54 +352,6 @@ export default function SystemUiCatalog() {
               <div className="text-[11px] text-muted mt-3">Nota: PENDING/BLOCKED hoy se ven “Inactivo” (como está en tu archivo).</div>
             </Block>
 
-            <Block title="ButtonBar" desc="Alineación y wrap reales (ButtonBar.tsx).">
-              <div className="space-y-3">
-                <div className="text-xs font-semibold text-muted flex items-center gap-2">
-                  <AlignLeft className="h-4 w-4 text-primary" /> align=&quot;left&quot;
-                </div>
-                <div className="rounded-2xl border border-border bg-surface2 p-3">
-                  <ButtonBar align="left">
-                    <DemoButton variant="ghost">Cancelar</DemoButton>
-                    <DemoButton variant="primary">Guardar</DemoButton>
-                  </ButtonBar>
-                </div>
-
-                <div className="text-xs font-semibold text-muted flex items-center gap-2">
-                  <AlignRight className="h-4 w-4 text-primary" /> align=&quot;right&quot; (default)
-                </div>
-                <div className="rounded-2xl border border-border bg-surface2 p-3">
-                  <ButtonBar>
-                    <DemoButton variant="ghost">Volver</DemoButton>
-                    <DemoButton variant="primary">Aplicar</DemoButton>
-                  </ButtonBar>
-                </div>
-
-                <div className="text-xs font-semibold text-muted flex items-center gap-2">
-                  <BetweenHorizontalStart className="h-4 w-4 text-primary" /> align=&quot;between&quot;
-                </div>
-                <div className="rounded-2xl border border-border bg-surface2 p-3">
-                  <ButtonBar align="between">
-                    <DemoButton variant="ghost">Ayuda</DemoButton>
-                    <div className="flex items-center gap-2">
-                      <DemoButton variant="ghost">Cancelar</DemoButton>
-                      <DemoButton variant="primary">Guardar</DemoButton>
-                    </div>
-                  </ButtonBar>
-                </div>
-
-                <div className="text-xs font-semibold text-muted">wrap=true</div>
-                <div className="rounded-2xl border border-border bg-surface2 p-3">
-                  <ButtonBar align="left" wrap>
-                    <DemoButton variant="ghost">Acción 1</DemoButton>
-                    <DemoButton variant="ghost">Acción 2</DemoButton>
-                    <DemoButton variant="ghost">Acción 3</DemoButton>
-                    <DemoButton variant="ghost">Acción 4</DemoButton>
-                    <DemoButton variant="ghost">Acción 5</DemoButton>
-                    <DemoButton variant="primary">Guardar</DemoButton>
-                  </ButtonBar>
-                </div>
-              </div>
-            </Block>
 
             <Block title="TPTable" desc="Tabla real con header + rows + empty row (TPTable.tsx).">
               <div className="space-y-3">
@@ -419,10 +365,10 @@ export default function SystemUiCatalog() {
                       </div>
                     }
                     right={
-                      <ButtonBar>
+                      <div className="flex items-center gap-2 justify-end">
                         <DemoButton variant="ghost">Exportar</DemoButton>
                         <DemoButton variant="primary">Nuevo</DemoButton>
-                      </ButtonBar>
+                      </div>
                     }
                   />
                   <TPTable>
@@ -446,10 +392,10 @@ export default function SystemUiCatalog() {
                             <TPStockLabelBadge n={1} low={2} />
                           </TPTd>
                           <TPTd>
-                            <ButtonBar align="left">
+                            <div className="flex items-center gap-2 justify-start">
                               <DemoButton variant="ghost">Ver</DemoButton>
                               <DemoButton variant="primary">Editar</DemoButton>
-                            </ButtonBar>
+                            </div>
                           </TPTd>
                         </TPTr>
 
@@ -462,10 +408,10 @@ export default function SystemUiCatalog() {
                             <TPStockBadge n={0} />
                           </TPTd>
                           <TPTd>
-                            <ButtonBar align="left">
+                            <div className="flex items-center gap-2 justify-start">
                               <DemoButton variant="ghost">Ver</DemoButton>
                               <DemoButton variant="danger">Eliminar</DemoButton>
-                            </ButtonBar>
+                            </div>
                           </TPTd>
                         </TPTr>
 
@@ -478,10 +424,10 @@ export default function SystemUiCatalog() {
                             <TPStockBadge n={10} />
                           </TPTd>
                           <TPTd>
-                            <ButtonBar align="left">
+                            <div className="flex items-center gap-2 justify-start">
                               <DemoButton variant="ghost">Duplicar</DemoButton>
                               <DemoButton variant="primary">Editar</DemoButton>
-                            </ButtonBar>
+                            </div>
                           </TPTd>
                         </TPTr>
                       </TPTbody>
@@ -526,7 +472,7 @@ export default function SystemUiCatalog() {
                     Abrí un modal y probá: <span className="font-semibold text-text">ESC</span>, click fuera, y drag en header.
                   </div>
 
-                  <ButtonBar align="left" wrap>
+                  <div className="flex items-center gap-2 justify-start flex-wrap">
                     <DemoButton variant="ghost" onClick={() => setModalOpen(true)}>
                       <MousePointerClick className="inline-block h-4 w-4 mr-2 text-primary" />
                       Abrir modal normal
@@ -552,7 +498,7 @@ export default function SystemUiCatalog() {
                       <Layers3 className="inline-block h-4 w-4 mr-2 text-primary" />
                       Abrir nested (stack)
                     </DemoButton>
-                  </ButtonBar>
+                  </div>
                 </div>
 
                 {/* MODAL normal */}
@@ -568,14 +514,14 @@ export default function SystemUiCatalog() {
                       </div>
                     </div>
 
-                    <ButtonBar>
+                    <div className="flex items-center gap-2 justify-end">
                       <DemoButton variant="ghost" onClick={() => setModalOpen(false)}>
                         Cancelar
                       </DemoButton>
                       <DemoButton variant="primary" onClick={() => setModalOpen(false)}>
                         Guardar
                       </DemoButton>
-                    </ButtonBar>
+                    </div>
                   </div>
                 </Modal>
 
@@ -610,14 +556,14 @@ export default function SystemUiCatalog() {
                       </TPTable>
                     </TPTableWrap>
 
-                    <ButtonBar>
+                    <div className="flex items-center gap-2 justify-end">
                       <DemoButton variant="ghost" onClick={() => setModalWideOpen(false)}>
                         Cerrar
                       </DemoButton>
                       <DemoButton variant="primary" onClick={() => setModalWideOpen(false)}>
                         Aceptar
                       </DemoButton>
-                    </ButtonBar>
+                    </div>
                   </div>
                 </Modal>
 
@@ -640,11 +586,11 @@ export default function SystemUiCatalog() {
                       <div className="text-sm text-muted mt-1">Simulación: para cerrar usá el botón de abajo.</div>
                     </div>
 
-                    <ButtonBar>
+                    <div className="flex items-center gap-2 justify-end">
                       <DemoButton variant="ghost" onClick={() => setModalBusyOpen(false)}>
                         Forzar cierre (demo)
                       </DemoButton>
-                    </ButtonBar>
+                    </div>
                   </div>
                 </Modal>
 
@@ -653,28 +599,28 @@ export default function SystemUiCatalog() {
                   <div className="space-y-3">
                     <div className="text-sm text-muted">Abrí el hijo: el overlay se suaviza y solo el top responde al ESC/backdrop.</div>
 
-                    <ButtonBar align="left">
+                    <div className="flex items-center gap-2 justify-start">
                       <DemoButton variant="primary" onClick={() => setNestedChildOpen(true)}>
                         Abrir hijo
                       </DemoButton>
                       <DemoButton variant="ghost" onClick={() => setNestedParentOpen(false)}>
                         Cerrar padre
                       </DemoButton>
-                    </ButtonBar>
+                    </div>
 
                     <Modal open={nestedChildOpen} title="Modal hijo (topmost)" onClose={() => setNestedChildOpen(false)}>
                       <div className="space-y-3">
                         <div className="text-sm text-muted">
                           Este es el <span className="font-semibold text-text">top</span>. Probá ESC o click afuera.
                         </div>
-                        <ButtonBar>
+                        <div className="flex items-center gap-2 justify-end">
                           <DemoButton variant="ghost" onClick={() => setNestedChildOpen(false)}>
                             Volver
                           </DemoButton>
                           <DemoButton variant="primary" onClick={() => setNestedChildOpen(false)}>
                             Aceptar
                           </DemoButton>
-                        </ButtonBar>
+                        </div>
                       </div>
                     </Modal>
                   </div>
@@ -690,7 +636,7 @@ export default function SystemUiCatalog() {
                     <span className="font-semibold text-text">requireTypeToConfirm</span>.
                   </div>
 
-                  <ButtonBar align="left" wrap>
+                  <div className="flex items-center gap-2 justify-start flex-wrap">
                     <DemoButton
                       variant="danger"
                       onClick={() => {
@@ -712,7 +658,7 @@ export default function SystemUiCatalog() {
                       <Trash2 className="inline-block h-4 w-4 mr-2" />
                       Eliminar (con tipeo)
                     </DemoButton>
-                  </ButtonBar>
+                  </div>
                 </div>
 
                 <div className="text-[11px] text-muted">
@@ -848,7 +794,7 @@ export default function SystemUiCatalog() {
       >
         <div className="px-4 md:px-6 pb-4">
           <div className="rounded-2xl border border-border bg-card px-3 py-2" style={{ backdropFilter: "blur(8px)" }}>
-            <ButtonBar align="between" wrap>
+            <div className="flex items-center gap-2 justify-between flex-wrap">
               <div className="flex items-center gap-2">
                 <Pill>Toolbar</Pill>
                 <span className="text-xs text-muted">
@@ -867,7 +813,7 @@ export default function SystemUiCatalog() {
                   Subir
                 </DemoButton>
               </div>
-            </ButtonBar>
+            </div>
           </div>
         </div>
       </div>

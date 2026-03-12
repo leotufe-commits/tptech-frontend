@@ -3,23 +3,38 @@ import React, { useEffect, useMemo, useState } from "react";
 import {
   ChevronRight,
   Plus,
-  Search,
-  X,
-  Pencil,
-  Trash2,
   Tag,
-  Save,
   Receipt,
   Phone,
   Building2,
   MapPin,
-  ShieldBan,
-  ShieldCheck,
-  Star,
   Loader2,
 } from "lucide-react";
 
+import { cn } from "../../components/ui/tp";
+import { TPSectionShell } from "../../components/ui/TPSectionShell";
+import { TPButton } from "../../components/ui/TPButton";
+import { TPSearchInput } from "../../components/ui/TPSearchInput";
+import { TPStatusPill } from "../../components/ui/TPStatusPill";
+import { TPRowActions } from "../../components/ui/TPRowActions";
+import { TPField } from "../../components/ui/TPField";
+import TPInput from "../../components/ui/TPInput";
+import TPSelect from "../../components/ui/TPSelect";
+import { Modal } from "../../components/ui/Modal";
 import { SortArrows } from "../../components/ui/TPSort";
+import {
+  TPTableWrap,
+  TPTableHeader,
+  TPTableFooter,
+  TPTableXScroll,
+  TPTableElBase,
+  TPThead,
+  TPTbody,
+  TPTh,
+  TPTd,
+  TPEmptyRow,
+} from "../../components/ui/TPTable";
+
 import {
   listCatalog,
   createCatalogItem,
@@ -40,11 +55,6 @@ import {
   statusRank,
   itemToRow,
 } from "./catalogs.config";
-import { Pill, ModalShell } from "./catalogs.ui";
-
-function cn(...classes: Array<string | false | null | undefined>) {
-  return classes.filter(Boolean).join(" ");
-}
 
 /* =========================
    Página
@@ -52,14 +62,13 @@ function cn(...classes: Array<string | false | null | undefined>) {
 export default function ConfiguracionSistemaItems() {
   const catalogs: Catalog[] = useMemo(
     () => [
-          {
-      key: "DOCUMENT_TYPE",
-      title: "Tipos de documento",
-      desc: "Tipos de documento para usuarios y clientes.",
-      group: "Fiscal",
-      icon: <Tag size={18} />,
-    },
-
+      {
+        key: "DOCUMENT_TYPE",
+        title: "Tipos de documento",
+        desc: "Tipos de documento para usuarios y clientes.",
+        group: "Fiscal",
+        icon: <Tag size={18} />,
+      },
       {
         key: "IVA_CONDITION",
         title: "Condición de IVA",
@@ -139,7 +148,6 @@ export default function ConfiguracionSistemaItems() {
   }
 
   useEffect(() => {
-    // cargar catálogo al cambiar el selector
     refreshSelected(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selected]);
@@ -150,16 +158,14 @@ export default function ConfiguracionSistemaItems() {
     return rowsAll.filter((r) => norm(r.label).includes(s));
   }, [q, rowsAll]);
 
-  // ✅ siempre mostrar ordenado
   const visibleRows = useMemo(() => {
     const arr = [...filteredRows];
     const dir = sortDir === "asc" ? 1 : -1;
 
     arr.sort((a, b) => {
-      // ⭐ favoritos primero SIEMPRE (independiente del sort), para UX y coherencia con PerfilJoyeria
       const fa = a.favorite ? 1 : 0;
       const fb = b.favorite ? 1 : 0;
-      if (fa !== fb) return (fb - fa); // desc
+      if (fa !== fb) return fb - fa;
 
       if (sortBy === "STATUS") {
         const ra = statusRank(a.status);
@@ -169,10 +175,8 @@ export default function ConfiguracionSistemaItems() {
         return norm(a.label).localeCompare(norm(b.label), "es", { sensitivity: "base" }) * dir;
       }
 
-      // LABEL
       const primary = norm(a.label).localeCompare(norm(b.label), "es", { sensitivity: "base" }) * dir;
       if (primary !== 0) return primary;
-
       return String(a.id).localeCompare(String(b.id)) * dir;
     });
 
@@ -225,8 +229,9 @@ export default function ConfiguracionSistemaItems() {
       return;
     }
 
-    // Validación local rápida (sin bloquear si backend decide distinto)
-    const dup = rowsAll.some((r) => r.label.trim().toLowerCase() === label.toLowerCase() && r.id !== editingId);
+    const dup = rowsAll.some(
+      (r) => r.label.trim().toLowerCase() === label.toLowerCase() && r.id !== editingId
+    );
     if (dup) {
       setFormError("Ya existe un ítem con ese nombre en este catálogo.");
       return;
@@ -243,10 +248,11 @@ export default function ConfiguracionSistemaItems() {
         });
       } else {
         await createCatalogItem(selected, label);
-        // si lo creás como inactivo, lo bajamos después con patch (para no tocar tu endpoint POST)
         if (fStatus === "Inactivo") {
           await refreshSelected(true);
-          const just = (rowsByKey[selected] ?? []).find((x) => x.label.trim().toLowerCase() === label.toLowerCase());
+          const just = (rowsByKey[selected] ?? []).find(
+            (x) => x.label.trim().toLowerCase() === label.toLowerCase()
+          );
           if (just?.id) await updateCatalogItem(just.id, { isActive: false });
         }
       }
@@ -265,10 +271,11 @@ export default function ConfiguracionSistemaItems() {
       setSavingBusy(true);
       const nextStatus: RowStatus = r.status === "Activo" ? "Inactivo" : "Activo";
 
-      // optimistic
       setRowsByKey((prev) => ({
         ...prev,
-        [selected]: (prev[selected] ?? []).map((x) => (x.id === r.id ? { ...x, status: nextStatus } : x)),
+        [selected]: (prev[selected] ?? []).map((x) =>
+          x.id === r.id ? { ...x, status: nextStatus } : x
+        ),
       }));
 
       await updateCatalogItem(r.id, { isActive: nextStatus === "Activo" });
@@ -281,19 +288,20 @@ export default function ConfiguracionSistemaItems() {
     }
   }
 
-  // ✅ solo 1 favorito por catálogo (backend) + ✅ se puede deseleccionar
   async function setFavorite(r: Row) {
     try {
       setSavingBusy(true);
       const alreadyFav = Boolean(r.favorite);
 
-      // optimistic: si deselecciona -> todos false, si selecciona -> solo ese true
       setRowsByKey((prev) => {
         const list = prev[selected] ?? [];
         if (alreadyFav) {
           return { ...prev, [selected]: list.map((x) => ({ ...x, favorite: false })) };
         }
-        return { ...prev, [selected]: list.map((x) => ({ ...x, favorite: x.id === r.id })) };
+        return {
+          ...prev,
+          [selected]: list.map((x) => ({ ...x, favorite: x.id === r.id })),
+        };
       });
 
       await setCatalogItemFavorite(r.id, !alreadyFav);
@@ -307,35 +315,30 @@ export default function ConfiguracionSistemaItems() {
   }
 
   async function removeRow(r: Row) {
-    // No tenemos DELETE implementado en backend en lo que pegaste.
-    // Para no romper, mantenemos confirm y avisamos.
     const ok = window.confirm(
       `¿Eliminar "${r.label}"?\n\nTodavía no está implementado el DELETE en backend. Si querés, lo agregamos (soft delete / isActive=false).`
     );
     if (!ok) return;
   }
 
-  const page = 1;
-  const totalPages = 1;
-
-  // Ítem | Estado | Acciones
-  const tableCols = "grid-cols-[1fr,160px,180px]";
-
   return (
-    <div className="p-6">
-      <div className="mb-5">
-        <div className="text-sm text-muted">Configuración del sistema</div>
-        <h1 className="text-2xl font-bold text-text">Ítems del sistema</h1>
-        <div className="mt-1 text-sm text-muted">Catálogos base usados en combos y selecciones (fiscal, ubicaciones, etc.).</div>
-      </div>
-
+    <TPSectionShell
+      title="Ítems del sistema"
+      subtitle="Catálogos base usados en combos y selecciones (fiscal, ubicaciones, etc.)."
+      icon={<Tag size={22} />}
+    >
       <div className="grid gap-4 lg:grid-cols-[340px,1fr]">
         {/* ================= LEFT: Catálogos ================= */}
-        <aside className="rounded-2xl border border-border bg-card p-4" style={{ boxShadow: "var(--shadow)" }}>
+        <aside
+          className="rounded-2xl border border-border bg-card p-4"
+          style={{ boxShadow: "var(--shadow)" }}
+        >
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0">
               <div className="text-sm font-semibold text-text">Catálogos</div>
-              <div className="text-xs text-muted mt-0.5">Elegí un combo y gestioná sus ítems.</div>
+              <div className="text-xs text-muted mt-0.5">
+                Elegí un combo y gestioná sus ítems.
+              </div>
             </div>
           </div>
 
@@ -346,7 +349,9 @@ export default function ConfiguracionSistemaItems() {
 
               return (
                 <div key={groupName}>
-                  <div className="text-xs font-semibold text-muted uppercase tracking-wide px-1">{groupName}</div>
+                  <div className="text-xs font-semibold text-muted uppercase tracking-wide px-1">
+                    {groupName}
+                  </div>
 
                   <div className="mt-2 space-y-2">
                     {list.map((c) => {
@@ -375,7 +380,9 @@ export default function ConfiguracionSistemaItems() {
                               <div
                                 className={cn(
                                   "grid h-10 w-10 place-items-center rounded-xl border bg-bg",
-                                  active ? "border-primary/40 text-primary" : "border-border text-primary"
+                                  active
+                                    ? "border-primary/40 text-primary"
+                                    : "border-border text-primary"
                                 )}
                               >
                                 {c.icon}
@@ -383,14 +390,24 @@ export default function ConfiguracionSistemaItems() {
 
                               <div className="min-w-0">
                                 <div className="flex items-center gap-2">
-                                  <div className="font-semibold text-text truncate">{c.title}</div>
+                                  <div className="font-semibold text-text truncate">
+                                    {c.title}
+                                  </div>
                                   <span className="text-[11px] text-muted">({count})</span>
                                 </div>
-                                <div className="text-xs text-muted mt-0.5 line-clamp-2">{c.desc}</div>
+                                <div className="text-xs text-muted mt-0.5 line-clamp-2">
+                                  {c.desc}
+                                </div>
                               </div>
                             </div>
 
-                            <ChevronRight size={18} className={cn("mt-1 shrink-0", active ? "text-text" : "text-muted")} />
+                            <ChevronRight
+                              size={18}
+                              className={cn(
+                                "mt-1 shrink-0",
+                                active ? "text-text" : "text-muted"
+                              )}
+                            />
                           </div>
                         </button>
                       );
@@ -404,272 +421,206 @@ export default function ConfiguracionSistemaItems() {
 
         {/* ================= RIGHT ================= */}
         <section className="space-y-3">
-          {/* Header */}
-          <div className="rounded-2xl border border-border bg-card p-4" style={{ boxShadow: "var(--shadow)" }}>
-            <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-              <div className="min-w-0 text-left">
-                <div className="text-lg font-bold text-text truncate text-left">{current.title}</div>
-                <div className="text-sm text-muted mt-0.5 text-left">{current.desc}</div>
+          {/* Cabecera del catálogo seleccionado */}
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <div className="text-base font-semibold text-text truncate">
+                {current.title}
               </div>
-
-              <div className="flex items-center justify-end gap-2">
-                <button
-                  type="button"
-                  className="tp-btn-secondary h-10 inline-flex items-center gap-2"
-                  onClick={() => refreshSelected(true)}
-                  disabled={loading || savingBusy}
-                  title="Recargar"
-                >
-                  {loading ? <Loader2 size={16} className="animate-spin" /> : <Tag size={16} />}
-                  {loading ? "Cargando…" : "Recargar"}
-                </button>
-              </div>
+              <div className="text-sm text-muted mt-0.5">{current.desc}</div>
             </div>
+            <TPButton
+              variant="secondary"
+              onClick={() => refreshSelected(true)}
+              disabled={loading || savingBusy}
+              iconLeft={
+                loading ? (
+                  <Loader2 size={15} className="animate-spin" />
+                ) : (
+                  <Tag size={15} />
+                )
+              }
+              className="shrink-0"
+            >
+              {loading ? "Cargando…" : "Recargar"}
+            </TPButton>
+          </div>
 
-            <div className="mt-4 flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
-              <div className="relative w-full md:max-w-[520px]">
-                <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted" />
-                <input
+          {err && <div className="text-sm text-red-600">{err}</div>}
+
+          {/* Tabla */}
+          <TPTableWrap>
+            <TPTableHeader
+              left={
+                <TPSearchInput
                   value={q}
-                  onChange={(e) => setQ(e.target.value)}
+                  onChange={setQ}
                   placeholder="Buscar por nombre…"
-                  className={cn(
-                    "w-full h-10 rounded-xl border border-border bg-bg text-text pl-9 pr-3 text-sm",
-                    "focus:outline-none focus:ring-4 focus:ring-primary/20"
-                  )}
+                  className="w-full md:w-64"
                 />
-              </div>
-
-              <div className="flex items-center justify-end">
-                <button
-                  type="button"
-                  className={cn("tp-btn-primary h-10 inline-flex items-center gap-2")}
+              }
+              right={
+                <TPButton
+                  variant="primary"
                   onClick={openCreate}
                   disabled={savingBusy}
+                  iconLeft={<Plus size={15} />}
                 >
-                  <Plus size={16} />
                   Nuevo ítem
-                </button>
-              </div>
-            </div>
+                </TPButton>
+              }
+            />
 
-            {err && <div className="mt-3 text-sm text-red-600">{err}</div>}
-          </div>
+            <TPTableXScroll>
+              <TPTableElBase responsive="scroll">
+                <TPThead>
+                  <tr>
+                    <TPTh>
+                      <button
+                        type="button"
+                        onClick={() => toggleSort("LABEL")}
+                        className="inline-flex items-center gap-1.5 hover:text-text transition-colors"
+                      >
+                        Ítem
+                        <SortArrows dir={sortDir} active={sortBy === "LABEL"} />
+                      </button>
+                    </TPTh>
+                    <TPTh className="hidden md:table-cell">
+                      <button
+                        type="button"
+                        onClick={() => toggleSort("STATUS")}
+                        className="inline-flex items-center gap-1.5 hover:text-text transition-colors"
+                      >
+                        Estado
+                        <SortArrows dir={sortDir} active={sortBy === "STATUS"} />
+                      </button>
+                    </TPTh>
+                    <TPTh className="text-right">Acciones</TPTh>
+                  </tr>
+                </TPThead>
 
-          {/* Tabla estilo Users */}
-          <div className="rounded-2xl border border-border bg-card overflow-hidden" style={{ boxShadow: "var(--shadow)" }}>
-            {/* header */}
-            <div className={cn("grid gap-0 border-b border-border bg-surface2 px-5 py-3 text-[11px] font-semibold text-muted", tableCols)}>
-              <div className="uppercase tracking-wide text-left">
-                <button
-                  type="button"
-                  className="inline-flex items-center gap-1 hover:opacity-90"
-                  onClick={() => toggleSort("LABEL")}
-                  title="Ordenar por ítem"
-                >
-                  Ítem
-                  <SortArrows dir={sortDir} active={sortBy === "LABEL"} />
-                </button>
-              </div>
-
-              <div className="uppercase tracking-wide text-left">
-                <button
-                  type="button"
-                  className="inline-flex items-center gap-1 hover:opacity-90"
-                  onClick={() => toggleSort("STATUS")}
-                  title="Ordenar por estado"
-                >
-                  Estado
-                  <SortArrows dir={sortDir} active={sortBy === "STATUS"} />
-                </button>
-              </div>
-
-              <div className="uppercase tracking-wide text-right">Acciones</div>
-            </div>
-
-            {loading ? (
-              <div className="p-10 text-center text-sm text-muted">
-                <Loader2 className="mx-auto mb-3 h-6 w-6 animate-spin" />
-                Cargando…
-              </div>
-            ) : visibleRows.length === 0 ? (
-              <div className="p-8 text-center">
-                <div className="mx-auto mb-2 grid h-12 w-12 place-items-center rounded-2xl border border-border bg-surface2 text-primary">
-                  <Tag size={20} />
-                </div>
-                <div className="text-base font-semibold text-text">Sin resultados</div>
-                <div className="mx-auto mt-1 max-w-[560px] text-sm text-muted">
-                  No se encontraron ítems con ese filtro. Probá otra búsqueda o creá uno nuevo.
-                </div>
-                <div className="mt-4">
-                  <button type="button" className="tp-btn-primary inline-flex items-center gap-2" onClick={openCreate}>
-                    <Plus size={16} />
-                    Nuevo ítem
-                  </button>
-                </div>
-              </div>
-            ) : (
-              <div className="divide-y divide-border">
-                {visibleRows.map((r) => {
-                  const isFav = Boolean(r.favorite);
-                  return (
-                    <div key={r.id} className="px-5 py-4 hover:bg-surface2 transition">
-                      <div className={cn("grid items-center gap-4", tableCols)}>
-                        {/* Ítem */}
-                        <button
-                          type="button"
-                          onClick={() => openEdit(r)}
-                          className="min-w-0 text-left focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-primary/20 rounded-xl -ml-2 px-2 py-1"
-                          title="Editar"
-                        >
-                          <div className="font-semibold text-text truncate">{r.label}</div>
-                          </button>
-
-                        {/* Estado */}
-                        <div className="min-w-0 text-left">
-                          <Pill tone={r.status === "Activo" ? "ok" : "off"}>{r.status}</Pill>
-                        </div>
-
-                        {/* Acciones */}
-                        <div className="flex items-center justify-end gap-2">
-                          <button
-                            type="button"
-                            className="tp-btn-secondary h-9 w-9 !p-0 grid place-items-center"
-                            title={isFav ? "Quitar favorito" : "Marcar como favorito"}
-                            onClick={() => setFavorite(r)}
-                            disabled={savingBusy}
+                <TPTbody>
+                  {loading ? (
+                    <tr>
+                      <td colSpan={3} className="px-5 py-10 text-center text-sm text-muted">
+                        <Loader2 className="mx-auto mb-2 h-6 w-6 animate-spin" />
+                        Cargando…
+                      </td>
+                    </tr>
+                  ) : visibleRows.length === 0 ? (
+                    <TPEmptyRow
+                      colSpan={3}
+                      text="No se encontraron ítems con ese filtro."
+                    />
+                  ) : (
+                    visibleRows.map((r) => (
+                      <tr
+                        key={r.id}
+                        className="border-b border-border hover:bg-surface2/40 transition-colors"
+                      >
+                        <TPTd>
+                          <span className="font-medium text-text">{r.label}</span>
+                        </TPTd>
+                        <TPTd className="hidden md:table-cell">
+                          <TPStatusPill
+                            active={r.status === "Activo"}
+                            activeLabel="Activo"
+                            inactiveLabel="Inactivo"
+                          />
+                        </TPTd>
+                        <TPTd className="text-right">
+                          <div
+                            className={cn(
+                              savingBusy && "pointer-events-none opacity-50"
+                            )}
                           >
-                            <Star size={16} className={cn("stroke-current", isFav ? "fill-current text-yellow-400" : "fill-transparent text-text/80")} />
-                          </button>
+                            <TPRowActions
+                              onFavorite={() => setFavorite(r)}
+                              isFavorite={Boolean(r.favorite)}
+                              onEdit={() => openEdit(r)}
+                              onToggle={() => toggleActive(r)}
+                              isActive={r.status === "Activo"}
+                              onDelete={() => removeRow(r)}
+                            />
+                          </div>
+                        </TPTd>
+                      </tr>
+                    ))
+                  )}
+                </TPTbody>
+              </TPTableElBase>
+            </TPTableXScroll>
 
-                          <button
-                            type="button"
-                            className="tp-btn-secondary h-9 w-9 !p-0 grid place-items-center"
-                            title="Editar"
-                            onClick={() => openEdit(r)}
-                            disabled={savingBusy}
-                          >
-                            <Pencil size={16} />
-                          </button>
-
-                          <button
-                            type="button"
-                            className="tp-btn-secondary h-9 w-9 !p-0 grid place-items-center"
-                            title={r.status === "Activo" ? "Desactivar" : "Activar"}
-                            onClick={() => toggleActive(r)}
-                            disabled={savingBusy}
-                          >
-                            {r.status === "Activo" ? <ShieldBan size={16} /> : <ShieldCheck size={16} />}
-                          </button>
-
-                          <button
-                            type="button"
-                            className="tp-btn-secondary h-9 w-9 !p-0 grid place-items-center"
-                            title="Eliminar (no implementado)"
-                            onClick={() => removeRow(r)}
-                            disabled={savingBusy}
-                          >
-                            <Trash2 size={16} />
-                          </button>
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-
-            {/* footer estilo Users */}
-            <div className="flex items-center justify-between border-t border-border px-5 py-3 text-xs text-muted">
-              <div>
-                {visibleRows.length} ítem{visibleRows.length === 1 ? "" : "s"}
-              </div>
-
-              <div className="flex items-center gap-2">
-                <button type="button" className="tp-btn-secondary h-9 w-9 !p-0 grid place-items-center" disabled title="Anterior">
-                  <ChevronRight size={16} className="rotate-180" />
-                </button>
-                <div className="min-w-[48px] text-center font-semibold text-text">
-                  {page} / {totalPages}
-                </div>
-                <button type="button" className="tp-btn-secondary h-9 w-9 !p-0 grid place-items-center" disabled title="Siguiente">
-                  <ChevronRight size={16} />
-                </button>
-              </div>
-            </div>
-          </div>
+            <TPTableFooter>
+              {visibleRows.length} ítem{visibleRows.length === 1 ? "" : "s"}
+            </TPTableFooter>
+          </TPTableWrap>
         </section>
       </div>
 
       {/* ================= Modal Crear/Editar ================= */}
-      <ModalShell
+      <Modal
         open={modalOpen}
-        title={editingId ? `Editar ítem — ${current.title}` : `Nuevo ítem — ${current.title}`}
-        subtitle={hints.modalSubtitle}
+        title={
+          editingId
+            ? `Editar ítem — ${current.title}`
+            : `Nuevo ítem — ${current.title}`
+        }
+        maxWidth="sm"
+        busy={savingBusy}
         onClose={closeModal}
+        onEnter={upsertRow}
         footer={
           <>
-            <button type="button" className="tp-btn-secondary h-10 inline-flex items-center gap-2" onClick={closeModal} disabled={savingBusy}>
-              <X size={16} />
+            <TPButton variant="secondary" onClick={closeModal} disabled={savingBusy}>
               Cancelar
-            </button>
-
-            <button type="button" className="tp-btn-primary h-10 inline-flex items-center gap-2" onClick={upsertRow} disabled={savingBusy}>
-              {savingBusy ? <Loader2 size={16} className="animate-spin" /> : <Save size={16} />}
+            </TPButton>
+            <TPButton variant="primary" onClick={upsertRow} loading={savingBusy}>
               Guardar
-            </button>
+            </TPButton>
           </>
         }
       >
-        {formError && (
-          <div className="mb-3 rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-text">{formError}</div>
-        )}
+        <div className="space-y-4">
+          {formError && (
+            <div className="rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-text">
+              {formError}
+            </div>
+          )}
 
-        <div className="grid gap-3">
-          <div>
-            <label className="mb-1 block text-xs font-semibold text-muted">{hints.nameLabel}</label>
-            <input
+          <TPField label={hints.nameLabel} hint={hints.nameHint}>
+            <TPInput
               value={fLabel}
-              onChange={(e) => {
-                setFLabel(e.target.value);
+              onChange={(v) => {
+                setFLabel(v);
                 setFormError(null);
               }}
-              className={cn(
-                "w-full h-10 rounded-xl border border-border bg-bg text-text px-3 text-sm",
-                "focus:outline-none focus:ring-4 focus:ring-primary/20"
-              )}
               placeholder={hints.namePlaceholder}
-              autoFocus
               disabled={savingBusy}
             />
-            <div className="mt-1 text-xs text-muted">{hints.nameHint}</div>
-          </div>
+          </TPField>
 
           <div className="grid gap-3 md:grid-cols-2">
-            <div>
-              <label className="mb-1 block text-xs font-semibold text-muted">Estado</label>
-              <select
+            <TPField label="Estado" hint={hints.statusHint}>
+              <TPSelect
                 value={fStatus}
-                onChange={(e) => setFStatus(e.target.value as RowStatus)}
-                className={cn(
-                  "w-full h-10 rounded-xl border border-border bg-bg text-text px-3 text-sm",
-                  "focus:outline-none focus:ring-4 focus:ring-primary/20"
-                )}
+                onChange={(v) => setFStatus(v as RowStatus)}
+                options={[
+                  { value: "Activo", label: "Activo" },
+                  { value: "Inactivo", label: "Inactivo" },
+                ]}
                 disabled={savingBusy}
-              >
-                <option value="Activo">Activo</option>
-                <option value="Inactivo">Inactivo</option>
-              </select>
-              <div className="mt-1 text-xs text-muted">{hints.statusHint}</div>
-            </div>
+              />
+            </TPField>
 
             <div className="rounded-xl border border-border bg-surface2 p-3 text-xs text-muted">
               <div className="font-semibold text-text text-xs mb-1">Favorito ⭐</div>
-              Definí un favorito por catálogo. En <b>Perfil de joyería</b>, si el campo está vacío al editar/crear, se tomará el favorito como valor inicial.
+              Definí un favorito por catálogo. En <b>Perfil de joyería</b>, si el campo está
+              vacío al editar/crear, se tomará el favorito como valor inicial.
             </div>
           </div>
         </div>
-      </ModalShell>
-    </div>
+      </Modal>
+    </TPSectionShell>
   );
 }

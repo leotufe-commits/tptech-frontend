@@ -28,10 +28,9 @@ import {
 } from "./InventarioAlmacenes/warehouses.utils";
 
 import WarehousesKpis from "./InventarioAlmacenes/WarehousesKpis";
-import WarehousesTable, { WH_COLUMNS, WH_COL_LS_KEY } from "./InventarioAlmacenes/WarehousesTable";
+import WarehousesTable from "./InventarioAlmacenes/WarehousesTable";
 import WarehouseViewModal from "./InventarioAlmacenes/WarehouseViewModal";
 import WarehouseEditModal from "./InventarioAlmacenes/WarehouseEditModal";
-import { TPColumnPicker } from "../components/ui/TPColumnPicker";
 
 function cleanErrMsg(msg: any) {
   const m = String(msg ?? "").trim();
@@ -47,22 +46,6 @@ export default function InventarioAlmacenes() {
   const [loading, setLoading] = useState(false);
   const [rows, setRows] = useState<WarehouseRow[]>([]);
   const [q, setQ] = useState("");
-
-  // ── Visibilidad de columnas ──
-  const [whColVis, setWhColVis] = useState<Record<string, boolean>>(() => {
-    try {
-      const saved = localStorage.getItem(WH_COL_LS_KEY);
-      if (saved) return JSON.parse(saved);
-    } catch {}
-    return Object.fromEntries(WH_COLUMNS.map((c) => [c.key, c.visible]));
-  });
-  function toggleWhCol(key: string, visible: boolean) {
-    setWhColVis((prev) => {
-      const next = { ...prev, [key]: visible };
-      try { localStorage.setItem(WH_COL_LS_KEY, JSON.stringify(next)); } catch {}
-      return next;
-    });
-  }
 
   const [sortKey, setSortKey] = useState<SortKey>("name");
   const [sortDir, setSortDir] = useState<SortDir>("asc");
@@ -331,16 +314,9 @@ export default function InventarioAlmacenes() {
       />
 
       <TPCard className="mt-4">
-        <div className="flex flex-col gap-3 md:flex-row md:items-center">
-          <div className="flex-1 min-w-0 flex items-center gap-2">
-            <div className="flex-1 min-w-0 md:max-w-xl">
-              <TPSearchInput value={q} onChange={setQ} placeholder="Buscar por nombre, código, ubicación, ciudad…" />
-            </div>
-            <TPColumnPicker
-              columns={WH_COLUMNS.map((c) => ({ key: c.key, label: c.label, canHide: c.canHide }))}
-              visibility={whColVis}
-              onChange={toggleWhCol}
-            />
+        <div className="flex flex-col gap-3 md:flex-row md:items-center mb-3">
+          <div className="flex-1 min-w-0 md:max-w-xl">
+            <TPSearchInput value={q} onChange={setQ} placeholder="Buscar por nombre, código, ubicación, ciudad…" />
           </div>
 
           <div className="flex w-full items-center gap-3 md:justify-end md:w-auto">
@@ -354,23 +330,21 @@ export default function InventarioAlmacenes() {
           </div>
         </div>
 
-        <div className="mt-3">
-          <WarehousesTable
-            loading={loading}
-            rows={filtered}
-            sortKey={sortKey}
-            sortDir={sortDir}
-            onToggleSort={toggleSort}
-            busyFavoriteId={busyFavoriteId}
-            busyRowId={busyRowId}
-            onFavorite={favorite}
-            onView={openView}
-            onEdit={openEdit}
-            onToggleActive={toggleActive}
-            onAskDelete={askDelete}
-            colVis={whColVis}
-          />
-        </div>
+        <WarehousesTable
+          loading={loading}
+          rows={filtered}
+          sortKey={sortKey}
+          sortDir={sortDir}
+          onToggleSort={toggleSort}
+          busyFavoriteId={busyFavoriteId}
+          busyRowId={busyRowId}
+          onFavorite={favorite}
+          onView={openView}
+          onEdit={openEdit}
+          onToggleActive={toggleActive}
+          onAskDelete={askDelete}
+          colVis={{}}
+        />
       </TPCard>
 
       <WarehouseViewModal open={viewOpen} onClose={() => setViewOpen(false)} target={viewTarget} />

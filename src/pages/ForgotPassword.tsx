@@ -1,6 +1,8 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { apiFetch } from "../lib/api";
+import TPInput from "../components/ui/TPInput";
+import { TPButton } from "../components/ui/TPButton";
 
 export default function ForgotPassword() {
   const [email, setEmail] = useState("");
@@ -115,22 +117,22 @@ export default function ForgotPassword() {
                 Email
               </label>
 
-              <input
+              <TPInput
                 type="email"
                 value={email}
-                onChange={(e) => setEmail(e.target.value)}
+                onChange={setEmail}
                 placeholder="tuemail@ejemplo.com"
-                className="tp-input"
               />
             </div>
 
-            <button
+            <TPButton
               type="submit"
+              variant="primary"
               disabled={!email.trim() || loading}
-              className="tp-btn-primary w-full"
+              className="w-full"
             >
               {loading ? "Enviando..." : "Enviar link"}
-            </button>
+            </TPButton>
 
             <p className="text-center text-sm" style={{ color: "var(--muted)" }}>
               <Link to="/login" className="hover:underline" style={{ color: "var(--primary)" }}>

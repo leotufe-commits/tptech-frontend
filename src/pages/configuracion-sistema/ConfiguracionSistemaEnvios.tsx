@@ -2,13 +2,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import {
   Plus,
-  Pencil,
-  Eye,
-  Trash2,
-  ShieldBan,
-  ShieldCheck,
-  Copy,
-  Loader2,
+  Save,
   Truck,
   Star,
   X,
@@ -17,25 +11,18 @@ import {
 import { cn } from "../../components/ui/tp";
 import { TPSectionShell } from "../../components/ui/TPSectionShell";
 import { TPButton } from "../../components/ui/TPButton";
-import { TPSearchInput } from "../../components/ui/TPSearchInput";
 import TPInput from "../../components/ui/TPInput";
 import { TPField } from "../../components/ui/TPField";
 import { TPCheckbox } from "../../components/ui/TPCheckbox";
 import TPTextarea from "../../components/ui/TPTextarea";
 import { Modal } from "../../components/ui/Modal";
 import ConfirmDeleteDialog from "../../components/ui/ConfirmDeleteDialog";
-import {
-  TPTableWrap,
-  TPTableHeader,
-  TPTableXScroll,
-  TPTableElBase,
-  TPThead,
-  TPTbody,
-  TPTr,
-  TPTd,
-  TPTh,
-  TPEmptyRow,
-} from "../../components/ui/TPTable";
+import { TPTr, TPTd } from "../../components/ui/TPTable";
+import { TPTableKit, type TPColDef } from "../../components/ui/TPTableKit";
+import { TPStatusPill } from "../../components/ui/TPStatusPill";
+import { TPRowActions } from "../../components/ui/TPRowActions";
+import TPComboFixed from "../../components/ui/TPComboFixed";
+import TPNumberInput from "../../components/ui/TPNumberInput";
 
 import { toast } from "../../lib/toast";
 import {
@@ -138,21 +125,6 @@ function formatDate(iso: string | null | undefined): string {
 /* =========================================================
    Componentes pequeños
 ========================================================= */
-function StatusPill({ active }: { active: boolean }) {
-  return (
-    <span
-      className={cn(
-        "inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium",
-        active
-          ? "bg-green-500/15 text-green-600 dark:text-green-400"
-          : "bg-surface2 text-muted"
-      )}
-    >
-      {active ? "Activo" : "Inactivo"}
-    </span>
-  );
-}
-
 function ModalSection({
   title,
   children,
@@ -285,11 +257,11 @@ function RatesEditor({
                 {/* Modo */}
                 <div>
                   <div className="mb-1 text-xs text-muted md:hidden">Modo de cálculo</div>
-                  <select
+                  <TPComboFixed
                     value={rate.calculationMode}
-                    onChange={(e) =>
+                    onChange={(v) =>
                       patchRate(idx, {
-                        calculationMode: e.target.value as ShippingCalcMode,
+                        calculationMode: v as ShippingCalcMode,
                         fixedPrice: "",
                         pricePerKg: "",
                         minWeight: "",
@@ -297,14 +269,12 @@ function RatesEditor({
                       })
                     }
                     disabled={disabled}
-                    className="tp-select w-full text-sm"
-                  >
-                    {(Object.keys(CALC_MODE_LABELS) as ShippingCalcMode[]).map((k) => (
-                      <option key={k} value={k}>
-                        {CALC_MODE_LABELS[k]}
-                      </option>
-                    ))}
-                  </select>
+                    options={(Object.keys(CALC_MODE_LABELS) as ShippingCalcMode[]).map((k) => ({
+                      value: k,
+                      label: CALC_MODE_LABELS[k],
+                    }))}
+                    className="text-sm"
+                  />
                 </div>
 
                 {/* Precio fijo / $/kg */}
@@ -312,15 +282,15 @@ function RatesEditor({
                   {rate.calculationMode === "FIXED" && (
                     <>
                       <div className="mb-1 text-xs text-muted md:hidden">Precio fijo ($)</div>
-                      <input
-                        type="number"
-                        value={rate.fixedPrice}
-                        onChange={(e) => patchRate(idx, { fixedPrice: e.target.value })}
+                      <TPNumberInput
+                        value={rate.fixedPrice ? parseFloat(rate.fixedPrice) : null}
+                        onChange={(v) => patchRate(idx, { fixedPrice: v != null ? String(v) : "" })}
                         disabled={disabled}
-                        placeholder="0.00"
-                        min="0"
-                        step="0.01"
-                        className="tp-input w-full text-sm"
+                        placeholder="0,00"
+                        decimals={2}
+                        step={1}
+                        min={0}
+                        className="text-sm"
                       />
                     </>
                   )}
@@ -328,37 +298,37 @@ function RatesEditor({
                     <div className="space-y-1.5">
                       <div>
                         <div className="mb-1 text-xs text-muted md:hidden">$/kg</div>
-                        <input
-                          type="number"
-                          value={rate.pricePerKg}
-                          onChange={(e) => patchRate(idx, { pricePerKg: e.target.value })}
+                        <TPNumberInput
+                          value={rate.pricePerKg ? parseFloat(rate.pricePerKg) : null}
+                          onChange={(v) => patchRate(idx, { pricePerKg: v != null ? String(v) : "" })}
                           disabled={disabled}
                           placeholder="$/kg"
-                          min="0"
-                          step="0.01"
-                          className="tp-input w-full text-sm"
+                          decimals={2}
+                          step={1}
+                          min={0}
+                          className="text-sm"
                         />
                       </div>
                       <div className="flex gap-1.5">
-                        <input
-                          type="number"
-                          value={rate.minWeight}
-                          onChange={(e) => patchRate(idx, { minWeight: e.target.value })}
+                        <TPNumberInput
+                          value={rate.minWeight ? parseFloat(rate.minWeight) : null}
+                          onChange={(v) => patchRate(idx, { minWeight: v != null ? String(v) : "" })}
                           disabled={disabled}
                           placeholder="Min kg"
-                          min="0"
-                          step="0.1"
-                          className="tp-input w-full text-xs"
+                          decimals={1}
+                          step={0.1}
+                          min={0}
+                          className="text-xs"
                         />
-                        <input
-                          type="number"
-                          value={rate.maxWeight}
-                          onChange={(e) => patchRate(idx, { maxWeight: e.target.value })}
+                        <TPNumberInput
+                          value={rate.maxWeight ? parseFloat(rate.maxWeight) : null}
+                          onChange={(v) => patchRate(idx, { maxWeight: v != null ? String(v) : "" })}
                           disabled={disabled}
                           placeholder="Max kg"
-                          min="0"
-                          step="0.1"
-                          className="tp-input w-full text-xs"
+                          decimals={1}
+                          step={0.1}
+                          min={0}
+                          className="text-xs"
                         />
                       </div>
                     </div>
@@ -413,6 +383,14 @@ function RatesEditor({
   );
 }
 
+const ENV_COLS: TPColDef[] = [
+  { key: "name",        label: "Nombre / Código",  canHide: false, sortKey: "name" },
+  { key: "tarifas",     label: "Tarifas" },
+  { key: "enviogratis", label: "Envío gratis desde" },
+  { key: "estado",      label: "Estado" },
+  { key: "acciones",    label: "Acciones",          canHide: false, align: "right" },
+];
+
 /* =========================================================
    Página principal
 ========================================================= */
@@ -422,6 +400,15 @@ export default function ConfiguracionSistemaEnvios() {
   const [loading, setLoading] = useState(false);
   const [q, setQ] = useState("");
 
+  /* ---- sort ---- */
+  const [sortKey, setSortKey] = useState("name");
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
+
+  function toggleSort(key: string) {
+    if (sortKey === key) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    else { setSortKey(key); setSortDir("asc"); }
+  }
+
   /* ---- modal editar/crear ---- */
   const [editOpen, setEditOpen] = useState(false);
   const [editTarget, setEditTarget] = useState<ShippingCarrierRow | null>(null);
@@ -429,6 +416,9 @@ export default function ConfiguracionSistemaEnvios() {
   const [ratesDraft, setRatesDraft] = useState<RateDraft[]>([]);
   const [submitted, setSubmitted] = useState(false);
   const [formErrors, setFormErrors] = useState<FormErrors>({});
+
+  /* ---- numeric state para freeShippingThreshold ---- */
+  const [freeShippingNum, setFreeShippingNum] = useState<number | null>(null);
 
   /* ---- modal ver ---- */
   const [viewOpen, setViewOpen] = useState(false);
@@ -462,16 +452,22 @@ export default function ConfiguracionSistemaEnvios() {
     load();
   }, []);
 
-  /* ---- filtrado ---- */
+  /* ---- filtrado y ordenamiento ---- */
   const filteredRows = useMemo(() => {
     const s = q.trim().toLowerCase();
-    if (!s) return rows;
-    return rows.filter(
-      (r) =>
-        r.name.toLowerCase().includes(s) ||
-        r.code.toLowerCase().includes(s)
-    );
-  }, [rows, q]);
+    const filtered = s
+      ? rows.filter(
+          (r) =>
+            r.name.toLowerCase().includes(s) ||
+            r.code.toLowerCase().includes(s)
+        )
+      : rows;
+
+    return [...filtered].sort((a, b) => {
+      const mul = sortDir === "asc" ? 1 : -1;
+      return String(a.name ?? "").localeCompare(String(b.name ?? ""), "es") * mul;
+    });
+  }, [rows, q, sortKey, sortDir]);
 
   /* ---- helpers draft ---- */
   function patchDraft(patch: Partial<CarrierDraft>) {
@@ -483,6 +479,7 @@ export default function ConfiguracionSistemaEnvios() {
     setEditTarget(null);
     setDraft(EMPTY_DRAFT);
     setRatesDraft([]);
+    setFreeShippingNum(null);
     setSubmitted(false);
     setFormErrors({});
     setEditOpen(true);
@@ -491,6 +488,9 @@ export default function ConfiguracionSistemaEnvios() {
   /* ---- abrir modal editar ---- */
   function openEdit(row: ShippingCarrierRow) {
     setEditTarget(row);
+    const threshold = row.freeShippingThreshold != null
+      ? parseFloat(row.freeShippingThreshold)
+      : null;
     setDraft({
       name: row.name,
       code: row.code ?? "",
@@ -505,6 +505,7 @@ export default function ConfiguracionSistemaEnvios() {
       isActive: row.isActive,
       notes: row.notes ?? "",
     });
+    setFreeShippingNum(threshold && !isNaN(threshold) ? threshold : null);
     setRatesDraft(
       (row.rates ?? []).map((rate) => ({
         id: rate.id,
@@ -548,8 +549,8 @@ export default function ConfiguracionSistemaEnvios() {
       trackingUrl: draft.trackingUrl.trim() || undefined,
       logoUrl: draft.logoUrl.trim() || undefined,
       freeShippingThreshold: draft.hasFreeShipping
-        ? draft.freeShippingThreshold
-          ? parseFloat(draft.freeShippingThreshold)
+        ? freeShippingNum != null
+          ? freeShippingNum
           : null
         : null,
       isFavorite: draft.isFavorite,
@@ -684,226 +685,126 @@ export default function ConfiguracionSistemaEnvios() {
       subtitle="Transportistas, tarifas y parámetros de envío"
       icon={<Truck size={22} />}
     >
-      <TPTableWrap>
-        {/* ---- header ---- */}
-        <TPTableHeader
-          left={
-            <span className="text-sm text-muted">
-              {filteredRows.length}{" "}
-              {filteredRows.length === 1 ? "transportista" : "transportistas"}
-            </span>
-          }
-          right={
-            <div className="flex items-center gap-2 w-full md:w-auto">
-              <TPSearchInput
-                value={q}
-                onChange={setQ}
-                placeholder="Buscar…"
-                className="h-9 w-full md:w-64"
-              />
-              <TPButton
-                variant="primary"
-                onClick={openCreate}
-                iconLeft={<Plus size={16} />}
-                className="h-9 whitespace-nowrap shrink-0"
-              >
-                Nuevo transportista
-              </TPButton>
-            </div>
-          }
-        />
-
-        {/* ---- tabla ---- */}
-        <TPTableXScroll>
-          <TPTableElBase responsive="stack">
-            <TPThead>
-              <tr>
-                <TPTh>Nombre / Código</TPTh>
-                <TPTh className="hidden md:table-cell">Tarifas</TPTh>
-                <TPTh className="hidden md:table-cell">Envío gratis desde</TPTh>
-                <TPTh className="hidden md:table-cell">Estado</TPTh>
-                <TPTh className="text-right">Acciones</TPTh>
-              </tr>
-            </TPThead>
-
-            <TPTbody>
-              {loading ? (
-                <tr>
-                  <td colSpan={5} className="px-5 py-12 text-center text-sm text-muted">
-                    <Loader2 className="mx-auto mb-3 h-6 w-6 animate-spin" />
-                    Cargando…
-                  </td>
-                </tr>
-              ) : filteredRows.length === 0 ? (
-                <TPEmptyRow
-                  colSpan={5}
-                  text={
-                    q
-                      ? "No hay resultados para esa búsqueda."
-                      : "Todavía no hay transportistas. Creá el primero."
-                  }
-                />
-              ) : (
-                filteredRows.map((row) => (
-                  <TPTr key={row.id}>
-                    {/* Nombre / Código */}
-                    <TPTd label="Nombre / Código">
-                      <div className="flex items-center gap-2 min-w-0">
-                        {/* Logo o ícono */}
-                        <div className="grid h-9 w-9 shrink-0 place-items-center rounded-xl border border-border bg-surface2 text-muted overflow-hidden">
-                          {row.logoUrl ? (
-                            <img
-                              src={row.logoUrl}
-                              alt={row.name}
-                              className="h-full w-full object-contain p-1"
-                            />
-                          ) : (
-                            <Truck size={16} />
-                          )}
-                        </div>
-                        <div className="min-w-0">
-                          <div className="flex items-center gap-1.5">
-                            <span className="text-sm font-medium text-text truncate">
-                              {row.name}
-                            </span>
-                            {row.isFavorite && (
-                              <Star
-                                size={12}
-                                className="shrink-0 fill-yellow-400 text-yellow-400"
-                              />
-                            )}
-                          </div>
-                          {row.code && (
-                            <div className="text-xs text-muted font-mono mt-0.5">
-                              {row.code}
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    </TPTd>
-
-                    {/* Tarifas */}
-                    <TPTd label="Tarifas" className="hidden md:table-cell">
-                      <span className="text-sm text-muted">
-                        {row.rates && row.rates.length > 0
-                          ? `${row.rates.length} tarifa${row.rates.length !== 1 ? "s" : ""}`
-                          : "Sin tarifas"}
+      <TPTableKit<ShippingCarrierRow>
+        rows={filteredRows}
+        columns={ENV_COLS}
+        storageKey="tptech_envios_colvis"
+        search={q}
+        onSearchChange={setQ}
+        searchPlaceholder="Buscar..."
+        sortKey={sortKey}
+        sortDir={sortDir}
+        onSort={toggleSort}
+        loading={loading}
+        emptyText={
+          q
+            ? "No hay resultados para esa búsqueda."
+            : "Todavía no hay transportistas. Creá el primero."
+        }
+        actions={
+          <TPButton
+            variant="primary"
+            iconLeft={<Plus size={16} />}
+            onClick={openCreate}
+          >
+            Nuevo transportista
+          </TPButton>
+        }
+        renderRow={(row, vis) => (
+          <TPTr key={row.id} className={!row.isActive ? "opacity-60" : undefined}>
+            {/* Nombre / Código */}
+            {vis.name && (
+              <TPTd>
+                <div className="flex items-center gap-2 min-w-0">
+                  {/* Logo o ícono */}
+                  <div className="grid h-9 w-9 shrink-0 place-items-center rounded-xl border border-border bg-surface2 text-muted overflow-hidden">
+                    {row.logoUrl ? (
+                      <img
+                        src={row.logoUrl}
+                        alt={row.name}
+                        className="h-full w-full object-contain p-1"
+                      />
+                    ) : (
+                      <Truck size={16} />
+                    )}
+                  </div>
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-sm font-medium text-text truncate">
+                        {row.name}
                       </span>
-                    </TPTd>
-
-                    {/* Envío gratis */}
-                    <TPTd label="Envío gratis desde" className="hidden md:table-cell">
-                      <span className="text-sm text-muted">
-                        {row.freeShippingThreshold
-                          ? formatCurrency(row.freeShippingThreshold)
-                          : "No aplica"}
-                      </span>
-                    </TPTd>
-
-                    {/* Estado */}
-                    <TPTd label="Estado" className="hidden md:table-cell">
-                      <StatusPill active={row.isActive} />
-                    </TPTd>
-
-                    {/* Acciones */}
-                    <TPTd label="Acciones" className="text-right">
-                      <div className="flex items-center justify-end gap-1.5 flex-wrap">
-                        {/* estado en mobile */}
-                        <span className="md:hidden">
-                          <StatusPill active={row.isActive} />
-                        </span>
-
-                        {/* Favorito */}
-                        <button
-                          type="button"
-                          title={row.isFavorite ? "Quitar favorito" : "Marcar como favorito"}
-                          disabled={favoritingId === row.id}
-                          onClick={() => handleFavorite(row)}
-                          className={cn(
-                            "tp-btn-secondary h-9 w-9 !p-0 grid place-items-center shrink-0 disabled:opacity-50",
-                            row.isFavorite && "text-yellow-500"
-                          )}
-                        >
-                          {favoritingId === row.id ? (
-                            <Loader2 size={15} className="animate-spin" />
-                          ) : (
-                            <Star
-                              size={15}
-                              className={cn(row.isFavorite && "fill-yellow-400")}
-                            />
-                          )}
-                        </button>
-
-                        {/* Ver */}
-                        <button
-                          type="button"
-                          title="Ver detalle"
-                          onClick={() => openView(row)}
-                          className="tp-btn-secondary h-9 w-9 !p-0 grid place-items-center shrink-0"
-                        >
-                          <Eye size={15} />
-                        </button>
-
-                        {/* Editar */}
-                        <button
-                          type="button"
-                          title="Editar"
-                          onClick={() => openEdit(row)}
-                          className="tp-btn-secondary h-9 w-9 !p-0 grid place-items-center shrink-0"
-                        >
-                          <Pencil size={15} />
-                        </button>
-
-                        {/* Clonar */}
-                        <button
-                          type="button"
-                          title="Clonar"
-                          disabled={cloningId === row.id}
-                          onClick={() => handleClone(row)}
-                          className="tp-btn-secondary h-9 w-9 !p-0 grid place-items-center shrink-0 disabled:opacity-50"
-                        >
-                          {cloningId === row.id ? (
-                            <Loader2 size={15} className="animate-spin" />
-                          ) : (
-                            <Copy size={15} />
-                          )}
-                        </button>
-
-                        {/* Toggle */}
-                        <button
-                          type="button"
-                          title={row.isActive ? "Desactivar" : "Activar"}
-                          disabled={togglingId === row.id}
-                          onClick={() => handleToggle(row)}
-                          className="tp-btn-secondary h-9 w-9 !p-0 grid place-items-center shrink-0 disabled:opacity-50"
-                        >
-                          {togglingId === row.id ? (
-                            <Loader2 size={15} className="animate-spin" />
-                          ) : row.isActive ? (
-                            <ShieldBan size={15} />
-                          ) : (
-                            <ShieldCheck size={15} className="text-green-500" />
-                          )}
-                        </button>
-
-                        {/* Eliminar */}
-                        <button
-                          type="button"
-                          title="Eliminar"
-                          onClick={() => openDelete(row)}
-                          className="tp-btn-secondary h-9 w-9 !p-0 grid place-items-center shrink-0 text-red-400 hover:text-red-500"
-                        >
-                          <Trash2 size={15} />
-                        </button>
+                      {row.isFavorite && (
+                        <Star
+                          size={12}
+                          className="shrink-0 fill-yellow-400 text-yellow-400"
+                        />
+                      )}
+                    </div>
+                    {row.code && (
+                      <div className="text-xs text-muted font-mono mt-0.5">
+                        {row.code}
                       </div>
-                    </TPTd>
-                  </TPTr>
-                ))
-              )}
-            </TPTbody>
-          </TPTableElBase>
-        </TPTableXScroll>
-      </TPTableWrap>
+                    )}
+                  </div>
+                </div>
+              </TPTd>
+            )}
+
+            {/* Tarifas */}
+            {vis.tarifas && (
+              <TPTd className="hidden md:table-cell">
+                <span className="text-sm text-muted">
+                  {row.rates && row.rates.length > 0
+                    ? `${row.rates.length} tarifa${row.rates.length !== 1 ? "s" : ""}`
+                    : "Sin tarifas"}
+                </span>
+              </TPTd>
+            )}
+
+            {/* Envío gratis */}
+            {vis.enviogratis && (
+              <TPTd className="hidden md:table-cell">
+                <span className="text-sm text-muted">
+                  {row.freeShippingThreshold
+                    ? formatCurrency(row.freeShippingThreshold)
+                    : "No aplica"}
+                </span>
+              </TPTd>
+            )}
+
+            {/* Estado */}
+            {vis.estado && (
+              <TPTd className="hidden md:table-cell">
+                <TPStatusPill active={row.isActive} />
+              </TPTd>
+            )}
+
+            {/* Acciones */}
+            {vis.acciones && (
+              <TPTd className="text-right">
+                <div className="flex items-center justify-end gap-1.5 flex-wrap">
+                  {/* estado en mobile */}
+                  <span className="md:hidden">
+                    <TPStatusPill active={row.isActive} />
+                  </span>
+
+                  <TPRowActions
+                    onFavorite={() => handleFavorite(row)}
+                    isFavorite={row.isFavorite}
+                    busyFavorite={!row.isActive}
+                    onView={() => openView(row)}
+                    onEdit={() => openEdit(row)}
+                    onClone={() => handleClone(row)}
+                    onToggle={() => handleToggle(row)}
+                    isActive={row.isActive}
+                    onDelete={() => openDelete(row)}
+                  />
+                </div>
+              </TPTd>
+            )}
+          </TPTr>
+        )}
+      />
 
       {/* =========================================================
           MODAL CREAR / EDITAR
@@ -924,7 +825,7 @@ export default function ConfiguracionSistemaEnvios() {
             >
               Cancelar
             </TPButton>
-            <TPButton variant="primary" onClick={handleSave} loading={busySave}>
+            <TPButton variant="primary" onClick={handleSave} loading={busySave} iconLeft={<Save size={16} />}>
               Guardar
             </TPButton>
           </>
@@ -1011,9 +912,10 @@ export default function ConfiguracionSistemaEnvios() {
             <div className="space-y-3">
               <TPCheckbox
                 checked={draft.hasFreeShipping}
-                onChange={(v) =>
-                  patchDraft({ hasFreeShipping: v, freeShippingThreshold: "" })
-                }
+                onChange={(v) => {
+                  patchDraft({ hasFreeShipping: v, freeShippingThreshold: "" });
+                  if (!v) setFreeShippingNum(null);
+                }}
                 disabled={busySave}
                 label={
                   <span className="text-sm text-text">
@@ -1024,13 +926,16 @@ export default function ConfiguracionSistemaEnvios() {
 
               {draft.hasFreeShipping && (
                 <TPField label="Envío gratis a partir de $">
-                  <TPInput
-                    value={draft.freeShippingThreshold}
-                    onChange={(v) => patchDraft({ freeShippingThreshold: v })}
-                    type="number"
+                  <TPNumberInput
+                    value={freeShippingNum}
+                    onChange={(v) => {
+                      setFreeShippingNum(v);
+                      patchDraft({ freeShippingThreshold: v != null ? String(v) : "" });
+                    }}
+                    decimals={2}
+                    step={1}
+                    min={0}
                     placeholder="Ej: 5000"
-                    min="0"
-                    step="0.01"
                     disabled={busySave}
                   />
                 </TPField>
@@ -1130,7 +1035,7 @@ export default function ConfiguracionSistemaEnvios() {
             </DetailRow>
 
             <DetailRow label="Estado">
-              <StatusPill active={viewTarget.isActive} />
+              <TPStatusPill active={viewTarget.isActive} />
             </DetailRow>
 
             <DetailRow label="Favorito">

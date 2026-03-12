@@ -1,5 +1,6 @@
 // tptech-frontend/src/pages/Users.tsx
 import React, { useState } from "react";
+import { Plus, Trash2, ArrowLeft } from "lucide-react";
 
 import { Modal } from "../components/ui/Modal";
 import ConfirmUnsavedChangesDialog from "../components/ui/ConfirmUnsavedChangesDialog";
@@ -71,6 +72,7 @@ export default function UsersPage() {
           {Boolean(String(p.returnToRef.current || "").trim()) && (
             <TPButton
               variant="secondary"
+              iconLeft={<ArrowLeft className="h-4 w-4" />}
               onClick={() => {
                 if (p.modalOpen && p.isDirtyNow()) {
                   p.setConfirmUnsavedOpen(true);
@@ -103,7 +105,7 @@ export default function UsersPage() {
           </div>
 
           {p.canAdmin && (
-            <TPButton onClick={p.openCreate}>
+            <TPButton onClick={p.openCreate} iconLeft={<Plus className="h-4 w-4" />}>
               Nuevo usuario
             </TPButton>
           )}
@@ -274,6 +276,7 @@ export default function UsersPage() {
               variant="danger"
               loading={p.deleteBusy}
               onClick={() => void p.confirmDelete()}
+              iconLeft={<Trash2 className="h-4 w-4" />}
             >
               Eliminar
             </TPButton>

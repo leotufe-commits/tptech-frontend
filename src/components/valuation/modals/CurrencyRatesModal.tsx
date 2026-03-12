@@ -298,13 +298,11 @@ export default function CurrencyRatesModal({
       bodyClassName="overscroll-contain touch-pan-y"
       footer={
         <>
-          <TPButton variant="secondary" onClick={onClose} disabled={lockUI}>
-            <X size={16} className="inline-block mr-2" />
+          <TPButton variant="secondary" onClick={onClose} disabled={lockUI} iconLeft={<X size={16} />}>
             Cancelar
           </TPButton>
 
-          <TPButton variant="primary" onClick={submit} disabled={lockUI || !currency} loading={lockUI}>
-            {!lockUI ? <Save size={16} className="inline-block mr-2" /> : null}
+          <TPButton variant="primary" onClick={submit} disabled={lockUI || !currency} loading={lockUI} iconLeft={<Save size={16} />}>
             Guardar
           </TPButton>
         </>

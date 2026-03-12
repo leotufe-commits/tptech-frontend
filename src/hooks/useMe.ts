@@ -11,36 +11,17 @@ import { useAuth } from "../context/AuthContext";
  * { user, jewelry, roles, permissions }
  */
 export function useMe() {
-  const auth = useAuth();
-
-  const roles = Array.isArray(auth.roles) ? auth.roles : [];
-  const permissions = Array.isArray(auth.permissions) ? auth.permissions : [];
+  const { user, jewelry, roles, permissions, loading, refreshMe } = useAuth();
 
   const me = useMemo(() => {
-    if (!auth.user) return null;
-    return {
-      user: auth.user,
-      jewelry: auth.jewelry ?? null,
-      roles,
-      permissions,
-    };
-  }, [auth.user, auth.jewelry, roles, permissions]);
+    if (!user) return null;
+    return { user, jewelry, roles, permissions };
+  }, [user, jewelry, roles, permissions]);
 
-  const error = useMemo(() => null as string | null, []);
+  const refresh = useCallback(
+    (opts?: { force?: boolean; silent?: boolean }) => refreshMe(opts),
+    [refreshMe]
+  );
 
-  // ✅ depender solo de refreshMe (estable por useCallback en AuthContext)
-  const refresh = useCallback(async () => {
-    await auth.refreshMe({ force: true, silent: true });
-  }, [auth.refreshMe]);
-
-  return {
-    me,
-    user: auth.user,
-    jewelry: auth.jewelry,
-    roles,
-    permissions,
-    loading: auth.loading,
-    error,
-    refresh,
-  };
+  return { me, loading, error: null as string | null, refresh };
 }

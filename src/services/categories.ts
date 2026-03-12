@@ -1,10 +1,10 @@
-// src/services/categories.ts
 import { apiFetch } from "../lib/api";
 
 export type CategoryRow = {
   id: string;
   jewelryId: string;
   parentId: string | null;
+  defaultPriceListId: string | null;
   name: string;
   description: string;
   imageUrl: string;
@@ -14,12 +14,16 @@ export type CategoryRow = {
   createdAt: string;
   updatedAt: string;
   parent: { id: string; name: string } | null;
+  defaultPriceList: { id: string; name: string; code: string } | null;
   childrenCount: number;
+  attributeCount: number;
+  attributePreview: string[];
 };
 
 export type CategoryPayload = {
   name: string;
   parentId?: string | null;
+  defaultPriceListId?: string | null;
   description?: string;
   imageUrl?: string;
   sortOrder?: number;
@@ -53,6 +57,13 @@ export const categoriesApi = {
   remove: (id: string) =>
     apiFetch<{ id: string }>(`/categories/${id}`, {
       method: "DELETE",
+      on401: "throw",
+    }),
+
+  reorder: (data: { parentId: string | null; orderedIds: string[] }) =>
+    apiFetch<{ ok: boolean }>("/categories/reorder", {
+      method: "PATCH",
+      body: data,
       on401: "throw",
     }),
 };

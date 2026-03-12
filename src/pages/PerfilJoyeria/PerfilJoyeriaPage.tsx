@@ -1,6 +1,6 @@
 // src/pages/PerfilJoyeria/PerfilJoyeriaPage.tsx
 import React, { useState } from "react";
-import { Pencil, Save, Loader2, X, ChevronLeft } from "lucide-react";
+import { Pencil, Save, Loader2, X, ArrowLeft } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 
 import ConfirmUnsavedChangesDialog from "../../components/ui/ConfirmUnsavedChangesDialog";
@@ -120,7 +120,7 @@ export default function PerfilJoyeriaPage() {
               variant="secondary"
               type="button"
               onClick={() => nav(-1)}
-              iconLeft={<ChevronLeft className="h-4 w-4" />}
+              iconLeft={<ArrowLeft className="h-4 w-4" />}
             >
               Volver
             </TPButton>

@@ -9,6 +9,7 @@ type Props = {
 
   placeholder?: string;
   disabled?: boolean;
+  autoFocus?: boolean;
 
   className?: string;
   wrapClassName?: string;
@@ -22,6 +23,7 @@ export function TPSearchInput({
   onChange,
   placeholder = "Buscar…",
   disabled,
+  autoFocus,
   className,
   wrapClassName,
   refocusOnClear = true,
@@ -80,6 +82,7 @@ export function TPSearchInput({
         placeholder={placeholder}
         value={local}
         disabled={disabled}
+        autoFocus={autoFocus}
         onChange={(e) => {
           const next = e.target.value;
           setLocal(next);

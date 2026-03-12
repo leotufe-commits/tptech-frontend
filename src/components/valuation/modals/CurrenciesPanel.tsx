@@ -1,7 +1,8 @@
 // src/components/valuation/modals/CurrenciesPanel.tsx
 import React, { useMemo, useState } from "react";
 import { TPColumnPicker } from "../../ui/TPColumnPicker";
-import { Eye, Loader2, Plus, Search, ShieldBan, ShieldCheck, Star, Trash2, X, Pencil } from "lucide-react";
+import { Loader2, Plus, Search, X } from "lucide-react";
+import { TPRowActions } from "../../ui/TPRowActions";
 
 import type { CurrencyRow } from "../../../hooks/useValuation";
 import { cn, norm, Pill } from "../valuation.ui";
@@ -38,32 +39,6 @@ const CURR_COLUMNS: CurrColDef[] = [
 
 const LS_KEY_CURR = "tptech_col_currencies";
 
-function IconBtn({
-  title,
-  onClick,
-  disabled,
-  children,
-}: {
-  title: string;
-  onClick: () => void;
-  disabled?: boolean;
-  children: React.ReactNode;
-}) {
-  return (
-    <button
-      type="button"
-      className={cn(
-        "tp-btn-secondary h-9 w-9 !p-0 grid place-items-center",
-        disabled ? "opacity-60 pointer-events-none" : ""
-      )}
-      title={title}
-      onClick={onClick}
-      disabled={disabled}
-    >
-      {children}
-    </button>
-  );
-}
 
 export default function CurrenciesPanel({
   loading,
@@ -414,57 +389,16 @@ export default function CurrenciesPanel({
                               case "actions":
                                 return (
                                   <TPTd key="actions" className="text-right">
-                                    <div className="flex justify-end gap-2">
-                                      <button
-                                        type="button"
-                                        className="tp-btn-secondary h-9 w-9 !p-0 grid place-items-center"
-                                        title={isBase ? "Moneda base" : "Marcar como base"}
-                                        onClick={() => onSetBaseClick(row)}
-                                        disabled={lockActions || isBase}
-                                      >
-                                        <Star size={16} className={cn(isBase ? "fill-current text-yellow-400" : "fill-transparent text-text/80")} />
-                                      </button>
-
-                                      <button
-                                        type="button"
-                                        className="tp-btn-secondary h-9 w-9 !p-0 grid place-items-center"
-                                        title="Ver detalle / historial"
-                                        onClick={() => openView(row.id)}
-                                        disabled={lockActions}
-                                      >
-                                        <Eye size={16} />
-                                      </button>
-
-                                      <button
-                                        type="button"
-                                        className="tp-btn-secondary h-9 w-9 !p-0 grid place-items-center"
-                                        title="Editar (moneda / tipo de cambio)"
-                                        onClick={() => onOpenRates(row)}
-                                        disabled={lockActions}
-                                      >
-                                        <Pencil size={16} />
-                                      </button>
-
-                                      <button
-                                        type="button"
-                                        className="tp-btn-secondary h-9 w-9 !p-0 grid place-items-center"
-                                        title={isActive ? "Desactivar" : "Activar"}
-                                        onClick={() => onToggle(row)}
-                                        disabled={lockActions || isBase}
-                                      >
-                                        {isActive ? <ShieldBan size={16} /> : <ShieldCheck size={16} />}
-                                      </button>
-
-                                      <button
-                                        type="button"
-                                        className="tp-btn-secondary h-9 w-9 !p-0 grid place-items-center"
-                                        title={!onDelete ? "Eliminar (pendiente)" : "Eliminar"}
-                                        onClick={() => onAskDelete(row)}
-                                        disabled={lockActions || isBase || !onDelete}
-                                      >
-                                        <Trash2 size={16} />
-                                      </button>
-                                    </div>
+                                    <TPRowActions
+                                      onFavorite={() => { if (!lockActions && !isBase) void onSetBaseClick(row); }}
+                                      isFavorite={isBase}
+                                      busyFavorite={lockActions || isBase}
+                                      onView={() => openView(row.id)}
+                                      onEdit={() => onOpenRates(row)}
+                                      onToggle={!isBase ? () => { if (!lockActions) void onToggle(row); } : undefined}
+                                      isActive={isActive}
+                                      onDelete={(!isBase && !!onDelete) ? () => { if (!lockActions) onAskDelete(row); } : undefined}
+                                    />
                                   </TPTd>
                                 );
 
@@ -540,25 +474,16 @@ export default function CurrenciesPanel({
                   </div>
 
                   <div className="mt-3 flex flex-wrap gap-2 justify-end">
-                    <IconBtn title={isBase ? "Moneda base" : "Marcar como base"} onClick={() => onSetBaseClick(row)} disabled={lockActions || isBase}>
-                      <Star size={16} className={cn(isBase ? "fill-current text-yellow-400" : "fill-transparent text-text/80")} />
-                    </IconBtn>
-
-                    <IconBtn title="Ver detalle / historial" onClick={() => openView(row.id)} disabled={lockActions}>
-                      <Eye size={16} />
-                    </IconBtn>
-
-                    <IconBtn title="Editar (moneda / tipo de cambio)" onClick={() => onOpenRates(row)} disabled={lockActions}>
-                      <Pencil size={16} />
-                    </IconBtn>
-
-                    <IconBtn title={isActive ? "Desactivar" : "Activar"} onClick={() => onToggle(row)} disabled={lockActions || isBase}>
-                      {isActive ? <ShieldBan size={16} /> : <ShieldCheck size={16} />}
-                    </IconBtn>
-
-                    <IconBtn title={!onDelete ? "Eliminar (pendiente)" : "Eliminar"} onClick={() => onAskDelete(row)} disabled={lockActions || isBase || !onDelete}>
-                      <Trash2 size={16} />
-                    </IconBtn>
+                    <TPRowActions
+                      onFavorite={() => { if (!lockActions && !isBase) void onSetBaseClick(row); }}
+                      isFavorite={isBase}
+                      busyFavorite={lockActions || isBase}
+                      onView={() => openView(row.id)}
+                      onEdit={() => onOpenRates(row)}
+                      onToggle={!isBase ? () => { if (!lockActions) void onToggle(row); } : undefined}
+                      isActive={isActive}
+                      onDelete={(!isBase && !!onDelete) ? () => { if (!lockActions) onAskDelete(row); } : undefined}
+                    />
                   </div>
                 </TPCard>
               );

@@ -1,9 +1,23 @@
 // tptech-frontend/src/pages/Catalogos.tsx
 import React, { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Save, Plus, ArrowLeft, RotateCcw, Star } from "lucide-react";
+import {
+  Save,
+  Plus,
+  ArrowLeft,
+  RotateCcw,
+  Star,
+  ShieldBan,
+  ShieldCheck,
+  BookOpen,
+} from "lucide-react";
 
-import { cn } from "../components/users/users.ui";
+import { cn } from "../components/ui/tp";
+import { TPSectionShell } from "../components/ui/TPSectionShell";
+import { TPButton } from "../components/ui/TPButton";
+import TPInput from "../components/ui/TPInput";
+import TPNumberInput from "../components/ui/TPNumberInput";
+import TPTextarea from "../components/ui/TPTextarea";
 import { toast } from "../lib/toast";
 
 import type { CatalogType, CatalogItem } from "../services/catalogs";
@@ -12,7 +26,7 @@ import {
   createCatalogItem,
   listCatalog,
   updateCatalogItem,
-  setCatalogItemFavorite, // ✅ NUEVO
+  setCatalogItemFavorite,
 } from "../services/catalogs";
 
 const TYPE_LABEL: Record<CatalogType, string> = {
@@ -60,10 +74,9 @@ export default function Catalogos() {
     setLoading(true);
     setError(null);
     try {
-      const next = await listCatalog(type, { includeInactive: true }); // ✅ devuelve array directo
+      const next = await listCatalog(type, { includeInactive: true });
       setItems(next);
 
-      // inicializar drafts si no existen
       setDraftById((prev) => {
         const copy = { ...prev };
 
@@ -71,7 +84,6 @@ export default function Catalogos() {
           if (!copy[it.id]) copy[it.id] = { label: it.label, sortOrder: it.sortOrder };
         }
 
-        // limpiar drafts huérfanos
         for (const id of Object.keys(copy)) {
           if (!next.some((x) => x.id === id)) delete copy[id];
         }
@@ -85,14 +97,12 @@ export default function Catalogos() {
     }
   }
 
-  // reload cuando cambia el tipo
   React.useEffect(() => {
     void reload();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [type]);
 
   const sorted = useMemo(() => {
-    // ✅ favoritos primero, después sortOrder, después label
     return [...items].sort((a, b) => {
       const af = (a as any)?.isFavorite ? 1 : 0;
       const bf = (b as any)?.isFavorite ? 1 : 0;
@@ -104,30 +114,31 @@ export default function Catalogos() {
   const activeCount = useMemo(() => items.filter((x) => x.isActive).length, [items]);
 
   return (
-    <div className="w-full space-y-4">
-      <div className="flex items-center gap-3">
-        <button type="button" className="tp-btn-secondary" onClick={() => nav(-1)} disabled={busy} title="Volver">
-          <ArrowLeft className="h-4 w-4" />
-        </button>
-
-        <div className="min-w-0 flex-1">
-          <div className="text-lg font-semibold">Catálogos (Combos)</div>
-          <div className="text-xs text-muted">
-            Administrá opciones por joyería: crear, activar/desactivar, ordenar y favorito.
-          </div>
-        </div>
-
-        <button
-          type="button"
-          className="tp-btn-secondary"
-          onClick={() => reload()}
-          disabled={busy || loading}
-          title="Recargar"
-        >
-          <RotateCcw className="h-4 w-4" />
-        </button>
-      </div>
-
+    <TPSectionShell
+      title="Catálogos (Combos)"
+      subtitle="Administrá opciones por joyería: crear, activar/desactivar, ordenar y favorito."
+      icon={<BookOpen size={22} />}
+      right={
+        <>
+          <TPButton
+            variant="secondary"
+            onClick={() => nav(-1)}
+            disabled={busy}
+            iconLeft={<ArrowLeft size={15} />}
+          >
+            Volver
+          </TPButton>
+          <TPButton
+            variant="secondary"
+            onClick={() => reload()}
+            disabled={busy || loading}
+            iconLeft={<RotateCcw size={15} />}
+          >
+            Recargar
+          </TPButton>
+        </>
+      }
+    >
       {/* Selector de tipo */}
       <div className="tp-card p-3">
         <div className="flex flex-wrap items-center gap-2">
@@ -158,17 +169,17 @@ export default function Catalogos() {
       <div className="tp-card p-3">
         <div className="text-sm font-semibold mb-2">Agregar ítem</div>
         <div className="flex gap-2">
-          <input
-            className="tp-input flex-1"
+          <TPInput
+            className="flex-1"
             placeholder="Ej: Córdoba"
             value={newLabel}
-            onChange={(e) => setNewLabel(e.target.value)}
+            onChange={setNewLabel}
             disabled={busy}
           />
-          <button
-            type="button"
-            className="tp-btn-primary"
+          <TPButton
+            variant="primary"
             disabled={busy || !newLabel.trim()}
+            iconLeft={<Plus size={15} />}
             onClick={async () => {
               setBusy(true);
               setError(null);
@@ -184,9 +195,8 @@ export default function Catalogos() {
               }
             }}
           >
-            <Plus className="h-4 w-4" />
             Agregar
-          </button>
+          </TPButton>
         </div>
 
         <div className="mt-3 border-t border-[color-mix(in_oklab,var(--border)_75%,transparent)] pt-3">
@@ -195,19 +205,19 @@ export default function Catalogos() {
             Pegá una lista (una por línea o separadas por coma). Se ignoran duplicados automáticamente.
           </div>
 
-          <textarea
-            className="tp-input w-full min-h-[120px]"
-            placeholder={"Ej:\nBuenos Aires\nCórdoba\nRosario"}
+          <TPTextarea
             value={bulkText}
-            onChange={(e) => setBulkText(e.target.value)}
+            onChange={setBulkText}
+            placeholder={"Ej:\nBuenos Aires\nCórdoba\nRosario"}
             disabled={busy}
+            minH={120}
           />
 
           <div className="flex justify-end mt-2">
-            <button
-              type="button"
-              className="tp-btn-primary"
+            <TPButton
+              variant="primary"
               disabled={busy || parseBulkTextarea(bulkText).length === 0}
+              iconLeft={<Plus size={15} />}
               onClick={async () => {
                 const labels = parseBulkTextarea(bulkText);
                 setBusy(true);
@@ -224,9 +234,8 @@ export default function Catalogos() {
                 }
               }}
             >
-              <Plus className="h-4 w-4" />
               Cargar lista
-            </button>
+            </TPButton>
           </div>
         </div>
       </div>
@@ -252,7 +261,6 @@ export default function Catalogos() {
           {sorted.map((it) => {
             const d = draftById[it.id] ?? { label: it.label, sortOrder: it.sortOrder };
             const dirty = d.label !== it.label || d.sortOrder !== it.sortOrder;
-
             const isFav = Boolean((it as any)?.isFavorite);
 
             return (
@@ -276,7 +284,7 @@ export default function Catalogos() {
                     setBusy(true);
                     setError(null);
                     try {
-                      await setCatalogItemFavorite(it.id, !isFav); // ✅ toggle (permite deseleccionar)
+                      await setCatalogItemFavorite(it.id, !isFav);
                       toast({ tone: "success", message: !isFav ? "Marcado como favorito" : "Favorito quitado" } as any);
                       await reload();
                     } catch (e: any) {
@@ -294,43 +302,43 @@ export default function Catalogos() {
                   />
                 </button>
 
-                <input
-                  className="tp-input flex-1 min-w-[220px]"
+                {/* Label */}
+                <TPInput
+                  className="flex-1 min-w-[220px]"
                   value={d.label}
                   disabled={busy}
-                  onChange={(e) =>
+                  onChange={(v) =>
                     setDraftById((prev) => ({
                       ...prev,
-                      [it.id]: { ...d, label: e.target.value },
+                      [it.id]: { ...d, label: v },
                     }))
                   }
                 />
 
+                {/* Orden */}
                 <div className="flex items-center gap-2">
                   <label className="text-xs text-muted">Orden</label>
-                  <input
-                    className="tp-input w-[90px]"
-                    type="number"
+                  <TPNumberInput
+                    className="w-[90px]"
                     value={d.sortOrder}
+                    decimals={0}
                     disabled={busy}
-                    onChange={(e) =>
+                    onChange={(v) =>
                       setDraftById((prev) => ({
                         ...prev,
-                        [it.id]: { ...d, sortOrder: Number(e.target.value) },
+                        [it.id]: { ...d, sortOrder: v ?? 0 },
                       }))
                     }
                   />
                 </div>
 
-                <button
-                  type="button"
-                  className={cn(
-                    "px-3 py-1.5 rounded-xl text-sm border",
-                    it.isActive
-                      ? "bg-[color-mix(in_oklab,var(--success)_12%,var(--card))] border-[color-mix(in_oklab,var(--success)_28%,var(--border))]"
-                      : "bg-[color-mix(in_oklab,var(--danger)_10%,var(--card))] border-[color-mix(in_oklab,var(--danger)_28%,var(--border))]"
-                  )}
+                {/* Toggle activo/inactivo */}
+                <TPButton
+                  variant="secondary"
                   disabled={busy}
+                  iconLeft={
+                    it.isActive ? <ShieldBan size={14} /> : <ShieldCheck size={14} />
+                  }
                   onClick={async () => {
                     setBusy(true);
                     setError(null);
@@ -345,12 +353,13 @@ export default function Catalogos() {
                   }}
                 >
                   {it.isActive ? "Activo" : "Inactivo"}
-                </button>
+                </TPButton>
 
-                <button
-                  type="button"
-                  className="tp-btn-secondary"
+                {/* Guardar cambios */}
+                <TPButton
+                  variant="secondary"
                   disabled={busy || !dirty}
+                  iconLeft={<Save size={14} />}
                   onClick={async () => {
                     const label = String(d.label ?? "").trim();
                     setBusy(true);
@@ -365,20 +374,20 @@ export default function Catalogos() {
                       setBusy(false);
                     }
                   }}
-                  title="Guardar cambios"
                 >
-                  <Save className="h-4 w-4" />
                   Guardar
-                </button>
+                </TPButton>
 
                 {dirty && <div className="text-xs text-muted">Cambios sin guardar</div>}
               </div>
             );
           })}
 
-          {!loading && sorted.length === 0 && <div className="text-sm text-muted">No hay items para este catálogo.</div>}
+          {!loading && sorted.length === 0 && (
+            <div className="text-sm text-muted">No hay items para este catálogo.</div>
+          )}
         </div>
       </div>
-    </div>
+    </TPSectionShell>
   );
 }

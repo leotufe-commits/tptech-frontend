@@ -2,6 +2,7 @@
 import { useMemo, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { apiFetch } from "../lib/api";
+import TPInput from "../components/ui/TPInput";
 
 function EyeIcon({ open }: { open: boolean }) {
   return (
@@ -125,49 +126,47 @@ export default function AcceptInvite() {
         <form onSubmit={onSubmit} className="mt-8 space-y-5">
           <div>
             <label className="block text-sm text-gray-600 mb-2">Nueva contraseña</label>
-            <div className="relative">
-              <input
-                type={show1 ? "text" : "password"}
-                value={newPassword}
-                onChange={(e) => setNewPassword(e.target.value)}
-                placeholder="Mínimo 6 caracteres"
-                className="tp-input pr-11"
-                disabled={!token || loading}
-                autoFocus
-              />
-              <button
-                type="button"
-                onClick={() => setShow1((s) => !s)}
-                className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 hover:text-[#F36A21] transition"
-                aria-label={show1 ? "Ocultar contraseña" : "Ver contraseña"}
-                disabled={!token || loading}
-              >
-                <EyeIcon open={show1} />
-              </button>
-            </div>
+            <TPInput
+              type={show1 ? "text" : "password"}
+              value={newPassword}
+              onChange={setNewPassword}
+              placeholder="Mínimo 6 caracteres"
+              disabled={!token || loading}
+              autoFocus
+              rightIcon={
+                <button
+                  type="button"
+                  onClick={() => setShow1((s) => !s)}
+                  className="text-gray-500 hover:text-[#F36A21] transition"
+                  aria-label={show1 ? "Ocultar contraseña" : "Ver contraseña"}
+                  disabled={!token || loading}
+                >
+                  <EyeIcon open={show1} />
+                </button>
+              }
+            />
           </div>
 
           <div>
             <label className="block text-sm text-gray-600 mb-2">Repetir contraseña</label>
-            <div className="relative">
-              <input
-                type={show2 ? "text" : "password"}
-                value={confirm}
-                onChange={(e) => setConfirm(e.target.value)}
-                placeholder="Repetí la contraseña"
-                className="tp-input pr-11"
-                disabled={!token || loading}
-              />
-              <button
-                type="button"
-                onClick={() => setShow2((s) => !s)}
-                className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 hover:text-[#F36A21] transition"
-                aria-label={show2 ? "Ocultar contraseña" : "Ver contraseña"}
-                disabled={!token || loading}
-              >
-                <EyeIcon open={show2} />
-              </button>
-            </div>
+            <TPInput
+              type={show2 ? "text" : "password"}
+              value={confirm}
+              onChange={setConfirm}
+              placeholder="Repetí la contraseña"
+              disabled={!token || loading}
+              rightIcon={
+                <button
+                  type="button"
+                  onClick={() => setShow2((s) => !s)}
+                  className="text-gray-500 hover:text-[#F36A21] transition"
+                  aria-label={show2 ? "Ocultar contraseña" : "Ver contraseña"}
+                  disabled={!token || loading}
+                >
+                  <EyeIcon open={show2} />
+                </button>
+              }
+            />
           </div>
 
           <button

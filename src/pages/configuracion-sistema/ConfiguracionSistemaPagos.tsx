@@ -2,39 +2,27 @@
 import React, { useEffect, useMemo, useState } from "react";
 import {
   Plus,
-  Pencil,
-  Eye,
-  Trash2,
-  ShieldBan,
-  ShieldCheck,
-  Loader2,
-  Copy,
+  Save,
   Star,
   CreditCard,
+  Trash2,
 } from "lucide-react";
 
 import { cn } from "../../components/ui/tp";
 import { TPSectionShell } from "../../components/ui/TPSectionShell";
 import { TPButton } from "../../components/ui/TPButton";
-import { TPSearchInput } from "../../components/ui/TPSearchInput";
 import TPInput from "../../components/ui/TPInput";
 import { TPField } from "../../components/ui/TPField";
 import { TPCheckbox } from "../../components/ui/TPCheckbox";
 import TPTextarea from "../../components/ui/TPTextarea";
 import { Modal } from "../../components/ui/Modal";
 import ConfirmDeleteDialog from "../../components/ui/ConfirmDeleteDialog";
-import {
-  TPTableWrap,
-  TPTableHeader,
-  TPTableXScroll,
-  TPTableElBase,
-  TPThead,
-  TPTbody,
-  TPTr,
-  TPTd,
-  TPTh,
-  TPEmptyRow,
-} from "../../components/ui/TPTable";
+import { TPTr, TPTd } from "../../components/ui/TPTable";
+import { TPTableKit, type TPColDef } from "../../components/ui/TPTableKit";
+import { TPStatusPill } from "../../components/ui/TPStatusPill";
+import { TPRowActions } from "../../components/ui/TPRowActions";
+import TPComboFixed from "../../components/ui/TPComboFixed";
+import TPNumberInput from "../../components/ui/TPNumberInput";
 
 import { toast } from "../../lib/toast";
 import {
@@ -154,24 +142,6 @@ function formatAdjustment(
 }
 
 /* =========================================================
-   STATUS PILL
-========================================================= */
-function StatusPill({ active }: { active: boolean }) {
-  return (
-    <span
-      className={cn(
-        "inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium",
-        active
-          ? "bg-green-500/15 text-green-600 dark:text-green-400"
-          : "bg-surface2 text-muted"
-      )}
-    >
-      {active ? "Activo" : "Inactivo"}
-    </span>
-  );
-}
-
-/* =========================================================
    TYPE BADGE
 ========================================================= */
 function TypeBadge({ type }: { type: PaymentMethodType }) {
@@ -188,6 +158,18 @@ function TypeBadge({ type }: { type: PaymentMethodType }) {
 }
 
 /* =========================================================
+   COLUMN DEFINITIONS
+========================================================= */
+const PAY_COLS: TPColDef[] = [
+  { key: "name",    label: "Nombre / Código", canHide: false, sortKey: "name" },
+  { key: "tipo",    label: "Tipo",             sortKey: "tipo" },
+  { key: "ajuste",  label: "Ajuste" },
+  { key: "cuotas",  label: "Cuotas" },
+  { key: "estado",  label: "Estado" },
+  { key: "acciones", label: "Acciones",        canHide: false, align: "right" },
+];
+
+/* =========================================================
    MAIN PAGE
 ========================================================= */
 export default function ConfiguracionSistemaPagos() {
@@ -195,6 +177,17 @@ export default function ConfiguracionSistemaPagos() {
   const [rows, setRows] = useState<PaymentMethodRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [q, setQ] = useState("");
+
+  /* ---------- sort ---------- */
+  type SortKey = "name" | "code";
+  const [sortKey, setSortKey] = useState<SortKey>("name");
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
+
+  function toggleSort(key: string) {
+    const k = key as SortKey;
+    if (sortKey === k) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    else { setSortKey(k); setSortDir("asc"); }
+  }
 
   /* ---------- modal editar/crear ---------- */
   const [editOpen, setEditOpen] = useState(false);
@@ -219,6 +212,10 @@ export default function ConfiguracionSistemaPagos() {
   /* ---------- draft ---------- */
   const [draft, setDraft] = useState({ ...EMPTY_DRAFT });
 
+  /* ---------- numeric state para TPNumberInput ---------- */
+  const [adjustmentValueNum, setAdjustmentValueNum] = useState<number | null>(null);
+  const [interestRateNums, setInterestRateNums] = useState<(number | null)[]>([]);
+
   /* ---------- cuotas toggle ---------- */
   const [allowsInstallments, setAllowsInstallments] = useState(false);
 
@@ -239,17 +236,23 @@ export default function ConfiguracionSistemaPagos() {
     load();
   }, []);
 
-  /* ---------- filtrado ---------- */
+  /* ---------- filtrado y ordenamiento ---------- */
   const filteredRows = useMemo(() => {
     const s = q.trim().toLowerCase();
-    if (!s) return rows;
-    return rows.filter(
-      (r) =>
-        r.name.toLowerCase().includes(s) ||
-        r.code.toLowerCase().includes(s) ||
-        PM_TYPE_LABELS[r.type].toLowerCase().includes(s)
-    );
-  }, [rows, q]);
+    const filtered = s
+      ? rows.filter(
+          (r) =>
+            r.name.toLowerCase().includes(s) ||
+            r.code.toLowerCase().includes(s) ||
+            PM_TYPE_LABELS[r.type].toLowerCase().includes(s)
+        )
+      : rows;
+
+    return [...filtered].sort((a, b) => {
+      const mul = sortDir === "asc" ? 1 : -1;
+      return String(a[sortKey] ?? "").localeCompare(String(b[sortKey] ?? ""), "es") * mul;
+    });
+  }, [rows, q, sortKey, sortDir]);
 
   /* ---------- helpers de draft ---------- */
   function setDraftField<K extends keyof typeof EMPTY_DRAFT>(
@@ -263,6 +266,8 @@ export default function ConfiguracionSistemaPagos() {
   function openCreate() {
     setEditTarget(null);
     setDraft({ ...EMPTY_DRAFT });
+    setAdjustmentValueNum(null);
+    setInterestRateNums([]);
     setAllowsInstallments(false);
     setSubmitted(false);
     setEditOpen(true);
@@ -288,6 +293,12 @@ export default function ConfiguracionSistemaPagos() {
       notes: row.notes ?? "",
       installmentPlans: plans,
     });
+    const adjNum = row.adjustmentValue ? parseFloat(row.adjustmentValue) : null;
+    setAdjustmentValueNum(isNaN(adjNum as number) ? null : adjNum);
+    setInterestRateNums(plans.map((p) => {
+      const n = parseFloat(p.interestRate);
+      return isNaN(n) ? null : n;
+    }));
     setAllowsInstallments(plans.length > 0);
     setSubmitted(false);
     setEditOpen(true);
@@ -434,11 +445,11 @@ export default function ConfiguracionSistemaPagos() {
 
   /* ---------- planes de cuotas ---------- */
   function addInstallmentPlan() {
-    const nextSort = draft.installmentPlans.length;
     setDraftField("installmentPlans", [
       ...draft.installmentPlans,
       { installments: "3", interestRate: "0", isActive: true },
     ]);
+    setInterestRateNums((prev) => [...prev, 0]);
   }
 
   function updateInstallmentPlan(
@@ -459,6 +470,7 @@ export default function ConfiguracionSistemaPagos() {
       "installmentPlans",
       draft.installmentPlans.filter((_, i) => i !== index)
     );
+    setInterestRateNums((prev) => prev.filter((_, i) => i !== index));
   }
 
   /* ---------- error names para validación ---------- */
@@ -480,225 +492,119 @@ export default function ConfiguracionSistemaPagos() {
       subtitle="Configurá los métodos de pago aceptados en la joyería"
       icon={<CreditCard size={22} />}
     >
-      <TPTableWrap>
-        {/* ---- header: contador + buscador + botón ---- */}
-        <TPTableHeader
-          left={
-            <span className="text-sm text-muted">
-              {filteredRows.length}{" "}
-              {filteredRows.length === 1 ? "medio de pago" : "medios de pago"}
-            </span>
-          }
-          right={
-            <div className="flex items-center gap-2 w-full md:w-auto">
-              <TPSearchInput
-                value={q}
-                onChange={setQ}
-                placeholder="Buscar…"
-                className="h-9 w-full md:w-64"
-              />
-              <TPButton
-                variant="primary"
-                onClick={openCreate}
-                iconLeft={<Plus size={16} />}
-                className="h-9 whitespace-nowrap shrink-0"
-              >
-                Nuevo método
-              </TPButton>
-            </div>
-          }
-        />
+      <TPTableKit
+        columns={PAY_COLS}
+        rows={filteredRows}
+        storageKey="tptech_col_pagos"
+        loading={loading}
+        search={q}
+        onSearchChange={setQ}
+        searchPlaceholder="Buscar medios de pago..."
+        sortKey={sortKey}
+        sortDir={sortDir}
+        onSort={toggleSort}
+        emptyText={q ? "No hay resultados para esa búsqueda." : "Todavía no hay medios de pago. Creá el primero."}
+        countLabel={(n) => `${n} ${n === 1 ? "medio" : "medios"}`}
+        responsive="stack"
+        actions={
+          <TPButton
+            variant="primary"
+            iconLeft={<Plus size={16} />}
+            onClick={openCreate}
+          >
+            Nuevo método
+          </TPButton>
+        }
+        renderRow={(row: PaymentMethodRow, vis) => {
+          const activePlans = row.installmentPlans?.filter((p: any) => p.isActive) ?? [];
 
-        {/* ---- tabla ---- */}
-        <TPTableXScroll>
-          <TPTableElBase responsive="stack">
-            <TPThead>
-              <tr>
-                <TPTh>Nombre / Código</TPTh>
-                <TPTh className="hidden md:table-cell">Tipo</TPTh>
-                <TPTh className="hidden md:table-cell">Ajuste</TPTh>
-                <TPTh className="hidden md:table-cell">Cuotas</TPTh>
-                <TPTh className="hidden md:table-cell">Estado</TPTh>
-                <TPTh className="text-right">Acciones</TPTh>
-              </tr>
-            </TPThead>
-
-            <TPTbody>
-              {loading ? (
-                <tr>
-                  <td colSpan={6} className="px-5 py-12 text-center text-sm text-muted">
-                    <Loader2 className="mx-auto mb-3 h-6 w-6 animate-spin" />
-                    Cargando…
-                  </td>
-                </tr>
-              ) : filteredRows.length === 0 ? (
-                <TPEmptyRow
-                  colSpan={6}
-                  text={
-                    q
-                      ? "No hay resultados para esa búsqueda."
-                      : "Todavía no hay medios de pago. Creá el primero."
-                  }
-                />
-              ) : (
-                filteredRows.map((row) => {
-                  const activePlans = row.installmentPlans?.filter((p) => p.isActive) ?? [];
-                  const isCloning = busyCloningId === row.id;
-
-                  return (
-                    <TPTr key={row.id}>
-                      {/* Nombre + Código */}
-                      <TPTd label="Nombre / Código">
-                        <div className="flex items-center gap-2 min-w-0">
-                          {row.isFavorite && (
-                            <Star
-                              size={13}
-                              className="shrink-0 fill-amber-400 text-amber-400"
-                            />
-                          )}
-                          <div className="min-w-0">
-                            <span className="block text-sm font-medium text-text truncate">
-                              {row.name}
-                            </span>
-                            {row.code && (
-                              <span className="block text-xs text-muted font-mono">
-                                {row.code}
-                              </span>
-                            )}
-                          </div>
-                        </div>
-                      </TPTd>
-
-                      {/* Tipo */}
-                      <TPTd label="Tipo" className="hidden md:table-cell">
-                        <TypeBadge type={row.type} />
-                      </TPTd>
-
-                      {/* Ajuste */}
-                      <TPTd label="Ajuste" className="hidden md:table-cell">
-                        {formatAdjustment(row.adjustmentType, row.adjustmentValue)}
-                      </TPTd>
-
-                      {/* Cuotas */}
-                      <TPTd label="Cuotas" className="hidden md:table-cell">
-                        {row.type === "CREDIT_CARD" ? (
-                          <span className="text-sm text-text">
-                            {activePlans.length > 0 ? (
-                              <span className="inline-flex items-center gap-1 text-xs">
-                                <CreditCard size={12} className="shrink-0" />
-                                {activePlans.length}{" "}
-                                {activePlans.length === 1 ? "plan" : "planes"}
-                              </span>
-                            ) : (
-                              <span className="text-muted text-xs">Sin planes</span>
-                            )}
-                          </span>
-                        ) : (
-                          <span className="text-muted text-xs">—</span>
-                        )}
-                      </TPTd>
-
-                      {/* Estado */}
-                      <TPTd label="Estado" className="hidden md:table-cell">
-                        <StatusPill active={row.isActive} />
-                      </TPTd>
-
-                      {/* Acciones */}
-                      <TPTd label="Acciones" className="text-right">
-                        <div className="flex items-center justify-end gap-1 flex-wrap">
-                          {/* tipo en mobile */}
-                          <span className="md:hidden">
-                            <TypeBadge type={row.type} />
-                          </span>
-                          {/* estado en mobile */}
-                          <span className="md:hidden">
-                            <StatusPill active={row.isActive} />
-                          </span>
-
-                          {/* Favorito */}
-                          <button
-                            type="button"
-                            title={row.isFavorite ? "Quitar favorito" : "Marcar como favorito"}
-                            onClick={() => handleFavorite(row)}
-                            className={cn(
-                              "tp-btn-secondary h-9 w-9 !p-0 grid place-items-center shrink-0",
-                              row.isFavorite && "text-amber-400"
-                            )}
-                          >
-                            <Star
-                              size={15}
-                              className={row.isFavorite ? "fill-amber-400" : ""}
-                            />
-                          </button>
-
-                          {/* Ver */}
-                          <button
-                            type="button"
-                            title="Ver detalle"
-                            onClick={() => openView(row)}
-                            className="tp-btn-secondary h-9 w-9 !p-0 grid place-items-center shrink-0"
-                          >
-                            <Eye size={15} />
-                          </button>
-
-                          {/* Editar */}
-                          <button
-                            type="button"
-                            title="Editar"
-                            onClick={() => openEdit(row)}
-                            className="tp-btn-secondary h-9 w-9 !p-0 grid place-items-center shrink-0"
-                          >
-                            <Pencil size={15} />
-                          </button>
-
-                          {/* Clonar */}
-                          <button
-                            type="button"
-                            title="Clonar"
-                            onClick={() => handleClone(row)}
-                            disabled={isCloning}
-                            className="tp-btn-secondary h-9 w-9 !p-0 grid place-items-center shrink-0 disabled:opacity-50"
-                          >
-                            {isCloning ? (
-                              <Loader2 size={15} className="animate-spin" />
-                            ) : (
-                              <Copy size={15} />
-                            )}
-                          </button>
-
-                          {/* Toggle activo */}
-                          <button
-                            type="button"
-                            title={row.isActive ? "Desactivar" : "Activar"}
-                            onClick={() => handleToggle(row)}
-                            className="tp-btn-secondary h-9 w-9 !p-0 grid place-items-center shrink-0"
-                          >
-                            {row.isActive ? (
-                              <ShieldBan size={15} />
-                            ) : (
-                              <ShieldCheck size={15} className="text-green-500" />
-                            )}
-                          </button>
-
-                          {/* Eliminar */}
-                          <button
-                            type="button"
-                            title="Eliminar"
-                            onClick={() => openDelete(row)}
-                            className="tp-btn-secondary h-9 w-9 !p-0 grid place-items-center shrink-0 text-red-400 hover:text-red-500"
-                          >
-                            <Trash2 size={15} />
-                          </button>
-                        </div>
-                      </TPTd>
-                    </TPTr>
-                  );
-                })
+          return (
+            <TPTr key={row.id} className={!row.isActive ? "opacity-60" : undefined}>
+              {vis.name && (
+                <TPTd>
+                  <div className="flex items-center gap-2 min-w-0">
+                    {row.isFavorite && (
+                      <Star size={13} className="shrink-0 fill-amber-400 text-amber-400" />
+                    )}
+                    <div className="min-w-0">
+                      <span className="block text-sm font-medium text-text truncate">
+                        {row.name}
+                      </span>
+                      {row.code && (
+                        <span className="block text-xs text-muted font-mono">
+                          {row.code}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                </TPTd>
               )}
-            </TPTbody>
-          </TPTableElBase>
-        </TPTableXScroll>
-      </TPTableWrap>
+
+              {vis.tipo && (
+                <TPTd className="hidden md:table-cell">
+                  <TypeBadge type={row.type} />
+                </TPTd>
+              )}
+
+              {vis.ajuste && (
+                <TPTd className="hidden md:table-cell">
+                  {formatAdjustment(row.adjustmentType, row.adjustmentValue)}
+                </TPTd>
+              )}
+
+              {vis.cuotas && (
+                <TPTd className="hidden md:table-cell">
+                  {row.type === "CREDIT_CARD" ? (
+                    <span className="text-sm text-text">
+                      {activePlans.length > 0 ? (
+                        <span className="inline-flex items-center gap-1 text-xs">
+                          <CreditCard size={12} className="shrink-0" />
+                          {activePlans.length}{" "}
+                          {activePlans.length === 1 ? "plan" : "planes"}
+                        </span>
+                      ) : (
+                        <span className="text-muted text-xs">Sin planes</span>
+                      )}
+                    </span>
+                  ) : (
+                    <span className="text-muted text-xs">—</span>
+                  )}
+                </TPTd>
+              )}
+
+              {vis.estado && (
+                <TPTd className="hidden md:table-cell">
+                  <TPStatusPill active={row.isActive} />
+                </TPTd>
+              )}
+
+              {vis.acciones && (
+                <TPTd className="text-right">
+                  <div className="flex items-center justify-end gap-1.5 flex-wrap">
+                    <span className="md:hidden">
+                      <TypeBadge type={row.type} />
+                    </span>
+                    <span className="md:hidden">
+                      <TPStatusPill active={row.isActive} />
+                    </span>
+                    <TPRowActions
+                      onFavorite={() => handleFavorite(row)}
+                      isFavorite={row.isFavorite}
+                      busyFavorite={!row.isActive}
+                      onView={() => openView(row)}
+                      onEdit={() => openEdit(row)}
+                      onClone={() => handleClone(row)}
+                      onToggle={() => handleToggle(row)}
+                      isActive={row.isActive}
+                      onDelete={() => openDelete(row)}
+                    />
+                  </div>
+                </TPTd>
+              )}
+            </TPTr>
+          );
+        }}
+      />
 
       {/* =========================================================
           MODAL CREAR / EDITAR
@@ -719,7 +625,7 @@ export default function ConfiguracionSistemaPagos() {
             >
               Cancelar
             </TPButton>
-            <TPButton variant="primary" onClick={handleSave} loading={busySave}>
+            <TPButton variant="primary" onClick={handleSave} loading={busySave} iconLeft={<Save size={16} />}>
               Guardar
             </TPButton>
           </>
@@ -727,9 +633,12 @@ export default function ConfiguracionSistemaPagos() {
       >
         <div className="space-y-6">
           {/* ---- Sección: Identificación ---- */}
-          <div className="space-y-1">
-            <div className="text-xs font-semibold uppercase tracking-wider text-muted mb-3">
-              Identificación
+          <div className="space-y-3">
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-semibold uppercase tracking-wide text-muted">
+                Identificación
+              </span>
+              <div className="flex-1 border-t border-border" />
             </div>
             <div className="space-y-4">
               {/* Nombre */}
@@ -752,10 +661,10 @@ export default function ConfiguracionSistemaPagos() {
 
               {/* Tipo */}
               <TPField label="Tipo" required>
-                <select
+                <TPComboFixed
                   value={draft.type}
-                  onChange={(e) => {
-                    const t = e.target.value as PaymentMethodType;
+                  onChange={(v) => {
+                    const t = v as PaymentMethodType;
                     setDraftField("type", t);
                     // si cambia a algo que no es tarjeta de crédito, limpiar planes
                     if (t !== "CREDIT_CARD") {
@@ -763,14 +672,11 @@ export default function ConfiguracionSistemaPagos() {
                     }
                   }}
                   disabled={busySave}
-                  className="tp-select w-full"
-                >
-                  {(Object.keys(PM_TYPE_LABELS) as PaymentMethodType[]).map((key) => (
-                    <option key={key} value={key}>
-                      {PM_TYPE_LABELS[key]}
-                    </option>
-                  ))}
-                </select>
+                  options={(Object.keys(PM_TYPE_LABELS) as PaymentMethodType[]).map((key) => ({
+                    value: key,
+                    label: PM_TYPE_LABELS[key],
+                  }))}
+                />
               </TPField>
 
               {/* Código */}
@@ -789,29 +695,32 @@ export default function ConfiguracionSistemaPagos() {
           </div>
 
           {/* ---- Sección: Ajuste de precio ---- */}
-          <div className="space-y-1">
-            <div className="text-xs font-semibold uppercase tracking-wider text-muted mb-3">
-              Ajuste de precio
+          <div className="space-y-3">
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-semibold uppercase tracking-wide text-muted">
+                Ajuste de precio
+              </span>
+              <div className="flex-1 border-t border-border" />
             </div>
             <div className="space-y-4">
               {/* Tipo de ajuste */}
               <TPField label="Tipo de ajuste">
-                <select
+                <TPComboFixed
                   value={draft.adjustmentType}
-                  onChange={(e) => {
-                    const t = e.target.value as PaymentAdjustmentType;
+                  onChange={(v) => {
+                    const t = v as PaymentAdjustmentType;
                     setDraftField("adjustmentType", t);
-                    if (t === "NONE") setDraftField("adjustmentValue", "");
+                    if (t === "NONE") {
+                      setDraftField("adjustmentValue", "");
+                      setAdjustmentValueNum(null);
+                    }
                   }}
                   disabled={busySave}
-                  className="tp-select w-full"
-                >
-                  {(Object.keys(ADJ_TYPE_LABELS) as PaymentAdjustmentType[]).map((key) => (
-                    <option key={key} value={key}>
-                      {ADJ_TYPE_LABELS[key]}
-                    </option>
-                  ))}
-                </select>
+                  options={(Object.keys(ADJ_TYPE_LABELS) as PaymentAdjustmentType[]).map((key) => ({
+                    value: key,
+                    label: ADJ_TYPE_LABELS[key],
+                  }))}
+                />
               </TPField>
 
               {/* Valor del ajuste — solo si no es NONE */}
@@ -825,10 +734,14 @@ export default function ConfiguracionSistemaPagos() {
                   hint="Positivo = recargo, negativo = descuento"
                   error={adjValueError}
                 >
-                  <TPInput
-                    value={draft.adjustmentValue}
-                    onChange={(v) => setDraftField("adjustmentValue", v)}
-                    type="number"
+                  <TPNumberInput
+                    value={adjustmentValueNum}
+                    onChange={(v) => {
+                      setAdjustmentValueNum(v);
+                      setDraftField("adjustmentValue", v != null ? String(v) : "");
+                    }}
+                    decimals={2}
+                    step={0.01}
                     placeholder={draft.adjustmentType === "PERCENTAGE" ? "Ej: 5 o -3" : "Ej: 100 o -50"}
                     disabled={busySave}
                   />
@@ -839,9 +752,12 @@ export default function ConfiguracionSistemaPagos() {
 
           {/* ---- Sección: Cuotas (solo CREDIT_CARD) ---- */}
           {draft.type === "CREDIT_CARD" && (
-            <div className="space-y-1">
-              <div className="text-xs font-semibold uppercase tracking-wider text-muted mb-3">
-                Cuotas
+            <div className="space-y-3">
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-semibold uppercase tracking-wide text-muted">
+                  Cuotas
+                </span>
+                <div className="flex-1 border-t border-border" />
               </div>
               <div className="space-y-4">
                 <TPField label="">
@@ -849,7 +765,10 @@ export default function ConfiguracionSistemaPagos() {
                     checked={allowsInstallments}
                     onChange={(v) => {
                       setAllowsInstallments(v);
-                      if (!v) setDraftField("installmentPlans", []);
+                      if (!v) {
+                        setDraftField("installmentPlans", []);
+                        setInterestRateNums([]);
+                      }
                     }}
                     disabled={busySave}
                     label={
@@ -890,15 +809,19 @@ export default function ConfiguracionSistemaPagos() {
                                   />
                                 </td>
                                 <td className="px-3 py-2">
-                                  <input
-                                    type="number"
-                                    step="0.01"
-                                    value={plan.interestRate}
-                                    onChange={(e) =>
-                                      updateInstallmentPlan(i, "interestRate", e.target.value)
-                                    }
+                                  <TPNumberInput
+                                    value={interestRateNums[i] ?? null}
+                                    onChange={(v) => {
+                                      const newNums = [...interestRateNums];
+                                      newNums[i] = v;
+                                      setInterestRateNums(newNums);
+                                      updateInstallmentPlan(i, "interestRate", v != null ? String(v) : "0");
+                                    }}
+                                    decimals={2}
+                                    step={0.01}
+                                    min={0}
                                     disabled={busySave}
-                                    className="tp-input w-24 text-sm"
+                                    className="w-24 text-sm"
                                   />
                                 </td>
                                 <td className="px-3 py-2">
@@ -947,9 +870,12 @@ export default function ConfiguracionSistemaPagos() {
 
           {/* ---- Sección: General (solo en modo editar) ---- */}
           {editTarget && (
-            <div className="space-y-1">
-              <div className="text-xs font-semibold uppercase tracking-wider text-muted mb-3">
-                General
+            <div className="space-y-3">
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-semibold uppercase tracking-wide text-muted">
+                  General
+                </span>
+                <div className="flex-1 border-t border-border" />
               </div>
               <div className="space-y-4">
                 <TPField label="">
@@ -1036,7 +962,7 @@ export default function ConfiguracionSistemaPagos() {
                 <span className="text-muted font-medium">Planes de cuotas</span>
                 {viewTarget.installmentPlans && viewTarget.installmentPlans.length > 0 ? (
                   <div className="space-y-1">
-                    {viewTarget.installmentPlans.map((plan, i) => (
+                    {viewTarget.installmentPlans.map((plan: any, i: number) => (
                       <div
                         key={plan.id ?? i}
                         className="flex items-center justify-between text-xs text-text bg-surface2/50 rounded-xl px-3 py-1.5"
@@ -1047,7 +973,7 @@ export default function ConfiguracionSistemaPagos() {
                             ? "Sin interés"
                             : `${plan.interestRate}% interés`}
                         </span>
-                        <StatusPill active={plan.isActive} />
+                        <TPStatusPill active={plan.isActive} />
                       </div>
                     ))}
                   </div>
@@ -1059,7 +985,7 @@ export default function ConfiguracionSistemaPagos() {
 
             <div className="flex justify-between gap-4 py-2 border-b border-border">
               <span className="text-muted font-medium">Estado</span>
-              <StatusPill active={viewTarget.isActive} />
+              <TPStatusPill active={viewTarget.isActive} />
             </div>
 
             <div className="flex justify-between gap-4 py-2 border-b border-border">

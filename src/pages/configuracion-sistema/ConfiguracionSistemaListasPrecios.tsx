@@ -1,69 +1,42 @@
 // src/pages/configuracion-sistema/ConfiguracionSistemaListasPrecios.tsx
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import {
-  Plus,
-  Pencil,
-  Eye,
-  Trash2,
-  ShieldBan,
-  ShieldCheck,
-  Copy,
-  Loader2,
-  Star,
-  X,
-} from "lucide-react";
+import { Plus, Save, Star, X } from "lucide-react";
 
 import { cn } from "../../components/ui/tp";
 import { TPSectionShell } from "../../components/ui/TPSectionShell";
 import { TPButton } from "../../components/ui/TPButton";
-import { TPSearchInput } from "../../components/ui/TPSearchInput";
 import TPInput from "../../components/ui/TPInput";
 import { TPField } from "../../components/ui/TPField";
-import TPSelect from "../../components/ui/TPSelect";
+import TPComboFixed from "../../components/ui/TPComboFixed";
+import TPNumberInput from "../../components/ui/TPNumberInput";
 import TPTextarea from "../../components/ui/TPTextarea";
-import { TPCheckbox } from "../../components/ui/TPCheckbox";
+import { TPCard } from "../../components/ui/TPCard";
 import { Modal } from "../../components/ui/Modal";
 import ConfirmDeleteDialog from "../../components/ui/ConfirmDeleteDialog";
-import {
-  TPTableWrap,
-  TPTableHeader,
-  TPTableXScroll,
-  TPTableElBase,
-  TPThead,
-  TPTbody,
-  TPTr,
-  TPTd,
-  TPTh,
-  TPEmptyRow,
-} from "../../components/ui/TPTable";
+import TPDateRangeInline, { type TPDateRangeValue } from "../../components/ui/TPDateRangeInline";
+import { TPTr, TPTd } from "../../components/ui/TPTable";
+import { TPTableKit, type TPColDef } from "../../components/ui/TPTableKit";
+import { TPRowActions } from "../../components/ui/TPRowActions";
+import TPStatusPill from "../../components/ui/TPStatusPill";
 
 import { toast } from "../../lib/toast";
 import {
   priceListsApi,
   type PriceListRow,
   type PriceListPayload,
-  type PriceListScope,
   type PriceListMode,
   type RoundingTarget,
   type RoundingMode,
   type RoundingDirection,
 } from "../../services/price-lists";
-import { categoriesApi, type CategoryRow } from "../../services/categories";
 
 /* =========================================================
    Label maps
 ========================================================= */
-const SCOPE_LABELS: Record<PriceListScope, string> = {
-  GENERAL: "General",
-  CHANNEL: "Canal",
-  CATEGORY: "Categoría",
-  CLIENT: "Cliente",
-};
-
 const MODE_LABELS: Record<PriceListMode, string> = {
   MARGIN_TOTAL: "Margen total",
   METAL_HECHURA: "Metal + Hechura",
-  COST_PER_GRAM: "Costo por gramo",
+  COST_PER_GRAM: "Costo/g",
 };
 
 const ROUNDING_TARGET_LABELS: Record<RoundingTarget, string> = {
@@ -101,105 +74,145 @@ function fmtDate(v: string | null) {
   return new Date(v).toLocaleDateString("es-AR");
 }
 
-function toDateInput(v: string | null): string {
-  if (!v) return "";
-  return v.slice(0, 10);
+function strToNumOrNull(v: string | null | undefined): number | null {
+  if (!v || v.trim() === "") return null;
+  const n = parseFloat(v);
+  return Number.isFinite(n) ? n : null;
+}
+
+function numToStr(v: number | null): string {
+  return v === null || v === undefined ? "" : String(v);
 }
 
 /* =========================================================
-   Form draft
+   Draft
 ========================================================= */
 type Draft = {
   name: string;
-  code: string;
-  description: string;
-  scope: PriceListScope;
-  categoryId: string;
   mode: PriceListMode;
-  marginTotal: string;
-  marginMetal: string;
-  marginHechura: string;
-  costPerGram: string;
-  surcharge: string;
-  minimumPrice: string;
+  marginTotal: number | null;
+  marginMetal: number | null;
+  marginHechura: number | null;
+  costPerGram: number | null;
+  surcharge: number | null;
   roundingTarget: RoundingTarget;
   roundingMode: RoundingMode;
   roundingDirection: RoundingDirection;
-  validFrom: string;
-  validTo: string;
-  isFavorite: boolean;
+  roundingValueMetal: number | null;
+  roundingValueHechura: number | null;
+  vigenciaActiva: boolean;
+  validityRange: TPDateRangeValue;
   notes: string;
 };
 
 const EMPTY_DRAFT: Draft = {
   name: "",
-  code: "",
-  description: "",
-  scope: "GENERAL",
-  categoryId: "",
   mode: "MARGIN_TOTAL",
-  marginTotal: "",
-  marginMetal: "",
-  marginHechura: "",
-  costPerGram: "",
-  surcharge: "",
-  minimumPrice: "",
+  marginTotal: null,
+  marginMetal: null,
+  marginHechura: null,
+  costPerGram: null,
+  surcharge: null,
   roundingTarget: "NONE",
   roundingMode: "NONE",
   roundingDirection: "NEAREST",
-  validFrom: "",
-  validTo: "",
-  isFavorite: false,
+  roundingValueMetal: null,
+  roundingValueHechura: null,
+  vigenciaActiva: false,
+  validityRange: { from: null, to: null },
   notes: "",
 };
+
+function parseDateStr(v: string | null | undefined): Date | null {
+  if (!v) return null;
+  const d = new Date(v + "T00:00:00");
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
+function dateToStr(d: Date | null): string | null {
+  if (!d) return null;
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
 
 function rowToDraft(r: PriceListRow): Draft {
   return {
     name: r.name,
-    code: r.code,
-    description: r.description,
-    scope: r.scope,
-    categoryId: r.categoryId ?? "",
     mode: r.mode,
-    marginTotal: r.marginTotal ?? "",
-    marginMetal: r.marginMetal ?? "",
-    marginHechura: r.marginHechura ?? "",
-    costPerGram: r.costPerGram ?? "",
-    surcharge: r.surcharge ?? "",
-    minimumPrice: r.minimumPrice ?? "",
+    marginTotal: strToNumOrNull(r.marginTotal),
+    marginMetal: strToNumOrNull(r.marginMetal),
+    marginHechura: strToNumOrNull(r.marginHechura),
+    costPerGram: strToNumOrNull(r.costPerGram),
+    surcharge: strToNumOrNull(r.surcharge),
     roundingTarget: r.roundingTarget,
     roundingMode: r.roundingMode,
     roundingDirection: r.roundingDirection,
-    validFrom: toDateInput(r.validFrom),
-    validTo: toDateInput(r.validTo),
-    isFavorite: r.isFavorite,
+    roundingValueMetal: strToNumOrNull(r.roundingValueMetal),
+    roundingValueHechura: strToNumOrNull(r.roundingValueHechura),
+    vigenciaActiva: !!(r.validFrom || r.validTo),
+    validityRange: {
+      from: parseDateStr(r.validFrom),
+      to: parseDateStr(r.validTo),
+    },
     notes: r.notes,
   };
 }
 
 function draftToPayload(d: Draft): PriceListPayload {
+  const validFrom = d.vigenciaActiva ? dateToStr(d.validityRange.from) : null;
+  const validTo = d.vigenciaActiva ? dateToStr(d.validityRange.to) : null;
+
+  const roundingTarget: RoundingTarget = d.roundingTarget;
+  const roundingMode: RoundingMode = roundingTarget === "NONE" ? "NONE" : d.roundingMode;
+  const roundingDirection: RoundingDirection =
+    roundingTarget === "NONE" || roundingMode === "NONE" ? "NEAREST" : d.roundingDirection;
+  const roundingValueMetal =
+    roundingTarget !== "NONE" && d.roundingValueMetal !== null
+      ? numToStr(d.roundingValueMetal)
+      : null;
+  const roundingValueHechura =
+    roundingTarget !== "NONE" && d.roundingValueHechura !== null
+      ? numToStr(d.roundingValueHechura)
+      : null;
+
   return {
     name: d.name.trim(),
-    code: d.code.trim() || undefined,
-    description: d.description.trim(),
-    scope: d.scope,
-    categoryId: d.scope === "CATEGORY" ? (d.categoryId || null) : null,
+    scope: "GENERAL",
     mode: d.mode,
-    marginTotal: d.mode === "MARGIN_TOTAL" ? (d.marginTotal || null) : null,
-    marginMetal: d.mode === "METAL_HECHURA" ? (d.marginMetal || null) : null,
-    marginHechura: d.mode === "METAL_HECHURA" ? (d.marginHechura || null) : null,
-    costPerGram: d.mode === "COST_PER_GRAM" ? (d.costPerGram || null) : null,
-    surcharge: d.surcharge || null,
-    minimumPrice: d.minimumPrice || null,
-    roundingTarget: d.roundingTarget,
-    roundingMode: d.roundingMode,
-    roundingDirection: d.roundingMode !== "NONE" ? d.roundingDirection : undefined,
-    validFrom: d.validFrom || null,
-    validTo: d.validTo || null,
-    isFavorite: d.isFavorite,
+    marginTotal:
+      d.mode === "MARGIN_TOTAL" && d.marginTotal !== null ? numToStr(d.marginTotal) : null,
+    marginMetal:
+      d.mode === "METAL_HECHURA" && d.marginMetal !== null ? numToStr(d.marginMetal) : null,
+    marginHechura:
+      d.mode === "METAL_HECHURA" && d.marginHechura !== null ? numToStr(d.marginHechura) : null,
+    costPerGram:
+      d.mode === "COST_PER_GRAM" && d.costPerGram !== null ? numToStr(d.costPerGram) : null,
+    surcharge: d.surcharge !== null ? numToStr(d.surcharge) : null,
+    roundingTarget,
+    roundingMode,
+    roundingDirection,
+    roundingValueMetal,
+    roundingValueHechura,
+    validFrom,
+    validTo,
+    isFavorite: false,
     notes: d.notes.trim(),
   };
 }
+
+/* =========================================================
+   Table columns
+========================================================= */
+const PL_COLS: TPColDef[] = [
+  { key: "name", label: "Nombre", canHide: false, sortKey: "name" },
+  { key: "mode", label: "Modo" },
+  { key: "margins", label: "Márgenes" },
+  { key: "validity", label: "Vigencia" },
+  { key: "estado", label: "Estado" },
+  { key: "acciones", label: "Acciones", canHide: false, align: "right" },
+];
 
 /* =========================================================
    Main page
@@ -208,31 +221,26 @@ export default function ConfiguracionSistemaListasPrecios() {
   const [rows, setRows] = useState<PriceListRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
-  const [categories, setCategories] = useState<CategoryRow[]>([]);
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
 
-  // Modals
   const [editRow, setEditRow] = useState<PriceListRow | null>(null);
   const [viewRow, setViewRow] = useState<PriceListRow | null>(null);
   const [deleteRow, setDeleteRow] = useState<PriceListRow | null>(null);
   const [showCreate, setShowCreate] = useState(false);
 
-  // Form
   const [draft, setDraft] = useState<Draft>(EMPTY_DRAFT);
   const [submitted, setSubmitted] = useState(false);
   const [saving, setSaving] = useState(false);
   const firstInputRef = useRef<HTMLInputElement>(null);
 
-  // Load
   useEffect(() => {
     load();
-    loadCategories();
   }, []);
 
   async function load() {
     setLoading(true);
     try {
-      const data = await priceListsApi.list();
-      setRows(data);
+      setRows(await priceListsApi.list());
     } catch {
       toast.error("No se pudieron cargar las listas de precios.");
     } finally {
@@ -240,29 +248,23 @@ export default function ConfiguracionSistemaListasPrecios() {
     }
   }
 
-  async function loadCategories() {
-    try {
-      const data = await categoriesApi.list();
-      setCategories(data.filter((c) => c.isActive));
-    } catch {
-      // silencioso — categorías no son críticas
-    }
-  }
-
-  // Filtered list
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
-    if (!q) return rows;
-    return rows.filter(
-      (r) =>
-        r.name.toLowerCase().includes(q) ||
-        r.code.toLowerCase().includes(q) ||
-        SCOPE_LABELS[r.scope].toLowerCase().includes(q) ||
-        MODE_LABELS[r.mode].toLowerCase().includes(q)
-    );
-  }, [rows, search]);
+    const result = q
+      ? rows.filter(
+          (r) =>
+            r.name.toLowerCase().includes(q) ||
+            r.code.toLowerCase().includes(q) ||
+            MODE_LABELS[r.mode].toLowerCase().includes(q)
+        )
+      : rows;
 
-  /* ---------- autofocus ---------- */
+    return [...result].sort((a, b) => {
+      const cmp = a.name.localeCompare(b.name, "es");
+      return sortDir === "asc" ? cmp : -cmp;
+    });
+  }, [rows, search, sortDir]);
+
   function openCreate() {
     setDraft(EMPTY_DRAFT);
     setSubmitted(false);
@@ -277,20 +279,26 @@ export default function ConfiguracionSistemaListasPrecios() {
     setTimeout(() => firstInputRef.current?.focus(), 50);
   }
 
-  /* ---------- helpers ---------- */
   function set<K extends keyof Draft>(key: K, value: Draft[K]) {
     setDraft((d) => ({ ...d, [key]: value }));
   }
 
   function validateDraft(): boolean {
     if (!draft.name.trim()) return false;
-    if (draft.mode === "MARGIN_TOTAL" && !draft.marginTotal) return false;
-    if (draft.mode === "METAL_HECHURA" && (!draft.marginMetal || !draft.marginHechura)) return false;
-    if (draft.mode === "COST_PER_GRAM" && !draft.costPerGram) return false;
+    if (draft.mode === "MARGIN_TOTAL" && draft.marginTotal === null) return false;
+    if (
+      draft.mode === "METAL_HECHURA" &&
+      (draft.marginMetal === null || draft.marginHechura === null)
+    )
+      return false;
+    if (draft.mode === "COST_PER_GRAM" && draft.costPerGram === null) return false;
+    if (draft.vigenciaActiva) {
+      const { from, to } = draft.validityRange;
+      if (from && to && to < from) return false;
+    }
     return true;
   }
 
-  /* ---------- CRUD ---------- */
   async function handleSave() {
     setSubmitted(true);
     if (!validateDraft()) return;
@@ -299,6 +307,7 @@ export default function ConfiguracionSistemaListasPrecios() {
     try {
       const payload = draftToPayload(draft);
       let saved: PriceListRow;
+
       if (editRow) {
         saved = await priceListsApi.update(editRow.id, payload);
         setRows((prev) => prev.map((r) => (r.id === saved.id ? saved : r)));
@@ -310,12 +319,10 @@ export default function ConfiguracionSistemaListasPrecios() {
         setShowCreate(false);
         toast.success("Lista de precios creada.");
       }
-      // Si se marcó como favorita, quitar favorita de otras del mismo scope
+
       if (saved.isFavorite) {
         setRows((prev) =>
-          prev.map((r) =>
-            r.id !== saved.id && r.scope === saved.scope ? { ...r, isFavorite: false } : r
-          )
+          prev.map((r) => (r.id !== saved.id && r.isFavorite ? { ...r, isFavorite: false } : r))
         );
       }
     } catch (e: any) {
@@ -329,7 +336,7 @@ export default function ConfiguracionSistemaListasPrecios() {
     try {
       const cloned = await priceListsApi.clone(r.id);
       setRows((prev) => [cloned, ...prev]);
-      toast.success(`Lista "${r.name}" duplicada.`);
+      toast.success(`"${r.name}" duplicada correctamente.`);
     } catch (e: any) {
       toast.error(e?.data?.message ?? e?.message ?? "Error al clonar.");
     }
@@ -350,12 +357,12 @@ export default function ConfiguracionSistemaListasPrecios() {
       setRows((prev) =>
         prev.map((x) => {
           if (x.id === updated.id) return updated;
-          if (x.scope === updated.scope && x.isFavorite) return { ...x, isFavorite: false };
+          if (x.isFavorite) return { ...x, isFavorite: false };
           return x;
         })
       );
     } catch (e: any) {
-      toast.error(e?.data?.message ?? e?.message ?? "Error al marcar como favorita.");
+      toast.error(e?.data?.message ?? e?.message ?? "Error al marcar favorita.");
     }
   }
 
@@ -371,7 +378,6 @@ export default function ConfiguracionSistemaListasPrecios() {
     }
   }
 
-  /* ---------- form key handler ---------- */
   function handleFormKey(e: React.KeyboardEvent) {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
@@ -379,25 +385,25 @@ export default function ConfiguracionSistemaListasPrecios() {
     }
   }
 
-  /* =========================================================
-     Render
-  ========================================================= */
   return (
     <TPSectionShell
       title="Listas de precios"
       description="Definí las listas de precios con sus márgenes, redondeos y vigencia."
     >
-      {/* Toolbar */}
-      <TPTableHeader
-        left={
-          <TPSearchInput
-            value={search}
-            onChange={setSearch}
-            placeholder="Buscar por nombre, código, alcance..."
-            className="w-full md:w-72"
-          />
-        }
-        right={
+      <TPTableKit
+        rows={filtered}
+        columns={PL_COLS}
+        storageKey="tptech_col_pricelists"
+        search={search}
+        onSearchChange={setSearch}
+        searchPlaceholder="Buscar por nombre o modo..."
+        sortKey="name"
+        sortDir={sortDir}
+        onSort={() => setSortDir((d) => (d === "asc" ? "desc" : "asc"))}
+        loading={loading}
+        emptyText={search ? "Sin resultados." : "No hay listas de precios creadas."}
+        countLabel={(n) => `${n} ${n === 1 ? "lista" : "listas"}`}
+        actions={
           <TPButton
             variant="primary"
             iconLeft={<Plus size={16} />}
@@ -407,182 +413,94 @@ export default function ConfiguracionSistemaListasPrecios() {
             Nueva lista
           </TPButton>
         }
+        renderRow={(r, vis) => (
+          <TPTr key={r.id} className={!r.isActive ? "opacity-60" : undefined}>
+            {/* Nombre */}
+            {vis.name && (
+              <TPTd>
+                <span className="font-medium text-sm">{r.name}</span>
+              </TPTd>
+            )}
+
+            {/* Modo */}
+            {vis.mode && (
+              <TPTd>
+                <span className="text-sm text-muted">{MODE_LABELS[r.mode]}</span>
+              </TPTd>
+            )}
+
+            {/* Márgenes */}
+            {vis.margins && (
+              <TPTd>
+                <div className="text-sm space-y-0.5">
+                  {r.mode === "MARGIN_TOTAL" && <span>{fmt(r.marginTotal)}</span>}
+                  {r.mode === "METAL_HECHURA" && (
+                    <>
+                      <div>Metal: {fmt(r.marginMetal)}</div>
+                      <div>Hechura: {fmt(r.marginHechura)}</div>
+                    </>
+                  )}
+                  {r.mode === "COST_PER_GRAM" && <span>{fmt(r.costPerGram)}</span>}
+                </div>
+              </TPTd>
+            )}
+
+            {/* Vigencia */}
+            {vis.validity && (
+              <TPTd>
+                <div className="text-sm space-y-0.5">
+                  {r.validFrom || r.validTo ? (
+                    <>
+                      <div>{r.validFrom ? fmtDate(r.validFrom) : "Sin inicio"}</div>
+                      <div className="text-muted text-xs">
+                        {r.validTo ? fmtDate(r.validTo) : "Sin vencimiento"}
+                      </div>
+                    </>
+                  ) : (
+                    <span className="text-muted text-xs">Indefinida</span>
+                  )}
+                </div>
+              </TPTd>
+            )}
+
+            {/* Estado */}
+            {vis.estado && (
+              <TPTd>
+                <TPStatusPill
+                  active={r.isActive}
+                  activeLabel="Activa"
+                  inactiveLabel="Inactiva"
+                />
+              </TPTd>
+            )}
+
+            {/* Acciones */}
+            {vis.acciones && (
+              <TPTd className="text-right">
+                <TPRowActions
+                  onFavorite={() => { if (r.isActive) handleFavorite(r); }}
+                  busyFavorite={!r.isActive}
+                  isFavorite={r.isFavorite}
+                  onView={() => setViewRow(r)}
+                  onEdit={() => openEdit(r)}
+                  onClone={() => handleClone(r)}
+                  onToggle={() => handleToggle(r)}
+                  isActive={r.isActive}
+                  onDelete={() => setDeleteRow(r)}
+                />
+              </TPTd>
+            )}
+          </TPTr>
+        )}
       />
 
-      {/* Table */}
-      <TPTableWrap>
-        <TPTableXScroll>
-          <TPTableElBase responsive="stack">
-            <TPThead>
-              <TPTr>
-                <TPTh>Nombre</TPTh>
-                <TPTh>Código</TPTh>
-                <TPTh>Alcance</TPTh>
-                <TPTh>Modo</TPTh>
-                <TPTh>Márgenes</TPTh>
-                <TPTh>Vigencia</TPTh>
-                <TPTh className="text-right">Acciones</TPTh>
-              </TPTr>
-            </TPThead>
-            <TPTbody>
-              {loading ? (
-                <TPEmptyRow colSpan={7} text="Cargando..." />
-              ) : filtered.length === 0 ? (
-                <TPEmptyRow colSpan={7} text={search ? "Sin resultados." : "No hay listas de precios creadas."} />
-              ) : (
-                filtered.map((r) => (
-                  <TPTr key={r.id} className={!r.isActive ? "opacity-60" : undefined}>
-                    <TPTd label="Nombre">
-                      <div className="flex items-center gap-2">
-                        {r.isFavorite && (
-                          <Star size={13} className="text-primary fill-primary shrink-0" />
-                        )}
-                        <span className={cn("font-medium", !r.isActive && "opacity-50")}>
-                          {r.name}
-                        </span>
-                      </div>
-                    </TPTd>
-
-                    <TPTd label="Código">
-                      <span className="font-mono text-sm">{r.code}</span>
-                    </TPTd>
-
-                    <TPTd label="Alcance">
-                      <span className="text-sm">{SCOPE_LABELS[r.scope]}</span>
-                      {r.category && (
-                        <div className="text-xs text-muted">{r.category.name}</div>
-                      )}
-                    </TPTd>
-
-                    <TPTd label="Modo">
-                      <span className="text-sm">{MODE_LABELS[r.mode]}</span>
-                    </TPTd>
-
-                    <TPTd label="Márgenes">
-                      <div className="text-sm space-y-0.5">
-                        {r.mode === "MARGIN_TOTAL" && (
-                          <div>Total: {fmt(r.marginTotal)}</div>
-                        )}
-                        {r.mode === "METAL_HECHURA" && (
-                          <>
-                            <div>Metal: {fmt(r.marginMetal)}</div>
-                            <div>Hechura: {fmt(r.marginHechura)}</div>
-                          </>
-                        )}
-                        {r.mode === "COST_PER_GRAM" && (
-                          <div>Costo/g: {fmt(r.costPerGram, "")}</div>
-                        )}
-                        {r.surcharge && (
-                          <div className="text-xs text-muted">Recargo: {fmt(r.surcharge)}</div>
-                        )}
-                      </div>
-                    </TPTd>
-
-                    <TPTd label="Vigencia">
-                      <div className="text-sm">
-                        {r.validFrom || r.validTo ? (
-                          <>
-                            <div>{r.validFrom ? fmtDate(r.validFrom) : "Sin inicio"}</div>
-                            <div>{r.validTo ? fmtDate(r.validTo) : "Sin vencimiento"}</div>
-                          </>
-                        ) : (
-                          <span className="text-muted text-xs">Indefinida</span>
-                        )}
-                      </div>
-                    </TPTd>
-
-                    <TPTd label="Acciones" className="text-right">
-                      <div className="flex items-center justify-end gap-1 flex-wrap">
-                        {/* Favorita */}
-                        <button
-                          type="button"
-                          onClick={() => handleFavorite(r)}
-                          title={r.isFavorite ? "Quitar favorita" : "Marcar como favorita"}
-                          className={cn(
-                            "p-1.5 rounded-lg transition-colors",
-                            r.isFavorite
-                              ? "text-primary"
-                              : "text-muted hover:text-primary"
-                          )}
-                        >
-                          <Star
-                            size={14}
-                            className={r.isFavorite ? "fill-primary" : ""}
-                          />
-                        </button>
-
-                        {/* Ver */}
-                        <button
-                          type="button"
-                          onClick={() => setViewRow(r)}
-                          title="Ver detalle"
-                          className="p-1.5 rounded-lg text-muted hover:text-text transition-colors"
-                        >
-                          <Eye size={14} />
-                        </button>
-
-                        {/* Editar */}
-                        <button
-                          type="button"
-                          onClick={() => openEdit(r)}
-                          title="Editar"
-                          className="p-1.5 rounded-lg text-muted hover:text-text transition-colors"
-                        >
-                          <Pencil size={14} />
-                        </button>
-
-                        {/* Clonar */}
-                        <button
-                          type="button"
-                          onClick={() => handleClone(r)}
-                          title="Duplicar"
-                          className="p-1.5 rounded-lg text-muted hover:text-text transition-colors"
-                        >
-                          <Copy size={14} />
-                        </button>
-
-                        {/* Activar/inactivar */}
-                        <button
-                          type="button"
-                          onClick={() => handleToggle(r)}
-                          title={r.isActive ? "Desactivar" : "Activar"}
-                          className={cn(
-                            "p-1.5 rounded-lg transition-colors",
-                            r.isActive
-                              ? "text-muted hover:text-danger"
-                              : "text-muted hover:text-success"
-                          )}
-                        >
-                          {r.isActive ? <ShieldBan size={14} /> : <ShieldCheck size={14} />}
-                        </button>
-
-                        {/* Eliminar */}
-                        <button
-                          type="button"
-                          onClick={() => setDeleteRow(r)}
-                          title="Eliminar"
-                          className="p-1.5 rounded-lg text-muted hover:text-danger transition-colors"
-                        >
-                          <Trash2 size={14} />
-                        </button>
-                      </div>
-                    </TPTd>
-                  </TPTr>
-                ))
-              )}
-            </TPTbody>
-          </TPTableElBase>
-        </TPTableXScroll>
-      </TPTableWrap>
-
-      {/* ===== Modal Crear / Editar ===== */}
+      {/* Modal crear / editar */}
       {(showCreate || editRow !== null) && (
         <PriceListFormModal
           draft={draft}
           set={set}
           submitted={submitted}
           saving={saving}
-          categories={categories}
           isEdit={editRow !== null}
           firstInputRef={firstInputRef}
           onSave={handleSave}
@@ -594,14 +512,15 @@ export default function ConfiguracionSistemaListasPrecios() {
         />
       )}
 
-      {/* ===== Modal Ver ===== */}
+      {/* Modal ver */}
       {viewRow && (
         <Modal
-          open={!!viewRow}
+          open
           title="Detalle de lista de precios"
           onClose={() => setViewRow(null)}
+          maxWidth="lg"
         >
-          <PriceListViewContent row={viewRow} categories={categories} />
+          <PriceListViewContent row={viewRow} />
           <div className="mt-6 flex justify-end">
             <TPButton variant="secondary" onClick={() => setViewRow(null)}>
               Cerrar
@@ -610,10 +529,10 @@ export default function ConfiguracionSistemaListasPrecios() {
         </Modal>
       )}
 
-      {/* ===== Confirm Delete ===== */}
+      {/* Confirmar eliminación */}
       {deleteRow && (
         <ConfirmDeleteDialog
-          open={!!deleteRow}
+          open
           title="Eliminar lista de precios"
           description={`¿Eliminar "${deleteRow.name}"? Esta acción no se puede deshacer.`}
           onConfirm={handleDelete}
@@ -632,7 +551,6 @@ function PriceListFormModal({
   set,
   submitted,
   saving,
-  categories,
   isEdit,
   firstInputRef,
   onSave,
@@ -643,44 +561,77 @@ function PriceListFormModal({
   set: <K extends keyof Draft>(key: K, value: Draft[K]) => void;
   submitted: boolean;
   saving: boolean;
-  categories: CategoryRow[];
   isEdit: boolean;
   firstInputRef: React.RefObject<HTMLInputElement | null>;
   onSave: () => void;
   onClose: () => void;
   onKey: (e: React.KeyboardEvent) => void;
 }) {
+  const nameError = submitted && !draft.name.trim() ? "Campo requerido." : null;
   const marginTotalError =
-    submitted && draft.mode === "MARGIN_TOTAL" && !draft.marginTotal
+    submitted && draft.mode === "MARGIN_TOTAL" && draft.marginTotal === null
       ? "Campo requerido."
       : null;
   const marginMetalError =
-    submitted && draft.mode === "METAL_HECHURA" && !draft.marginMetal
+    submitted && draft.mode === "METAL_HECHURA" && draft.marginMetal === null
       ? "Campo requerido."
       : null;
   const marginHechuraError =
-    submitted && draft.mode === "METAL_HECHURA" && !draft.marginHechura
+    submitted && draft.mode === "METAL_HECHURA" && draft.marginHechura === null
       ? "Campo requerido."
       : null;
   const costPerGramError =
-    submitted && draft.mode === "COST_PER_GRAM" && !draft.costPerGram
+    submitted && draft.mode === "COST_PER_GRAM" && draft.costPerGram === null
       ? "Campo requerido."
       : null;
+  const validityError =
+    submitted &&
+    draft.vigenciaActiva &&
+    draft.validityRange.from &&
+    draft.validityRange.to &&
+    draft.validityRange.to < draft.validityRange.from
+      ? "La fecha hasta no puede ser menor que la fecha desde."
+      : null;
+
+  const hasRounding = draft.roundingTarget !== "NONE";
+
+  function changeMode(next: PriceListMode) {
+    set("mode", next);
+    if (next !== "MARGIN_TOTAL") set("marginTotal", null);
+    if (next !== "METAL_HECHURA") {
+      set("marginMetal", null);
+      set("marginHechura", null);
+    }
+    if (next !== "COST_PER_GRAM") set("costPerGram", null);
+  }
+
+  function changeRoundingTarget(next: RoundingTarget) {
+    set("roundingTarget", next);
+    if (next === "NONE") {
+      set("roundingMode", "NONE");
+      set("roundingDirection", "NEAREST");
+      set("roundingValueMetal", null);
+      set("roundingValueHechura", null);
+    }
+  }
+
+  function changeRoundingMode(next: RoundingMode) {
+    set("roundingMode", next);
+    if (next === "NONE") set("roundingDirection", "NEAREST");
+  }
 
   return (
     <Modal
       open
       title={isEdit ? "Editar lista de precios" : "Nueva lista de precios"}
       onClose={onClose}
-      maxWidth="lg"
+      maxWidth="2xl"
     >
-      <div className="space-y-5" onKeyDown={onKey}>
-        {/* Nombre + Código */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <TPField
-            label="Nombre *"
-            error={submitted && !draft.name.trim() ? "Campo requerido." : null}
-          >
+      <div className="space-y-4" onKeyDown={onKey}>
+
+        {/* A. Identificación */}
+        <TPCard title="Identificación">
+          <TPField label="Nombre *" error={nameError}>
             <TPInput
               inputRef={firstInputRef}
               value={draft.name}
@@ -688,244 +639,213 @@ function PriceListFormModal({
               placeholder="Ej: Lista minorista"
             />
           </TPField>
+        </TPCard>
 
-          <TPField label="Código">
-            <TPInput
-              value={draft.code}
-              onChange={(v) => set("code", v)}
-              placeholder="Auto-generado si se deja vacío"
-            />
-          </TPField>
-        </div>
-
-        {/* Alcance + Categoría */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <TPField label="Alcance *">
-            <TPSelect
-              value={draft.scope}
-              onChange={(v) => set("scope", v as PriceListScope)}
-              options={[
-                { value: "GENERAL", label: "General" },
-                { value: "CHANNEL", label: "Canal" },
-                { value: "CATEGORY", label: "Categoría" },
-                { value: "CLIENT", label: "Cliente" },
-              ]}
-            />
-          </TPField>
-
-          {draft.scope === "CATEGORY" && (
-            <TPField label="Categoría">
-              <TPSelect
-                value={draft.categoryId}
-                onChange={(v) => set("categoryId", v)}
+        {/* B. Cálculo */}
+        <TPCard title="Cálculo">
+          <div className="space-y-4">
+            <TPField label="Modo de cálculo *">
+              <TPComboFixed
+                value={draft.mode}
+                onChange={(v) => changeMode(v as PriceListMode)}
                 options={[
-                  { value: "", label: "Seleccionar categoría..." },
-                  ...categories.map((c) => ({
-                    value: c.id,
-                    label: c.parent ? `${c.parent.name} › ${c.name}` : c.name,
-                  })),
+                  { value: "MARGIN_TOTAL", label: "Margen total (%)" },
+                  { value: "METAL_HECHURA", label: "Metal + Hechura por separado (%)" },
+                  { value: "COST_PER_GRAM", label: "Costo por gramo (%)" },
                 ]}
               />
             </TPField>
+
+            {draft.mode === "MARGIN_TOTAL" && (
+              <TPField label="Margen total *" error={marginTotalError}>
+                <TPNumberInput
+                  rightAddon="%"
+                  value={draft.marginTotal}
+                  onChange={(v) => set("marginTotal", v)}
+                  decimals={2}
+                  step={1}
+                  min={0}
+                  placeholder="30.00"
+                />
+              </TPField>
+            )}
+
+            {draft.mode === "METAL_HECHURA" && (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <TPField label="Margen metal *" error={marginMetalError}>
+                  <TPNumberInput
+                    rightAddon="%"
+                    value={draft.marginMetal}
+                    onChange={(v) => set("marginMetal", v)}
+                    decimals={2}
+                    step={1}
+                    min={0}
+                    placeholder="20.00"
+                  />
+                </TPField>
+                <TPField label="Margen hechura *" error={marginHechuraError}>
+                  <TPNumberInput
+                    rightAddon="%"
+                    value={draft.marginHechura}
+                    onChange={(v) => set("marginHechura", v)}
+                    decimals={2}
+                    step={1}
+                    min={0}
+                    placeholder="40.00"
+                  />
+                </TPField>
+              </div>
+            )}
+
+            {draft.mode === "COST_PER_GRAM" && (
+              <TPField label="Costo por gramo *" error={costPerGramError}>
+                <TPNumberInput
+                  rightAddon="%"
+                  value={draft.costPerGram}
+                  onChange={(v) => set("costPerGram", v)}
+                  decimals={2}
+                  step={1}
+                  min={0}
+                  placeholder="15.00"
+                />
+              </TPField>
+            )}
+          </div>
+        </TPCard>
+
+        {/* C. Redondeo */}
+        <TPCard title="Redondeo">
+          <div className="space-y-4">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <TPField label="Aplicar redondeo en">
+                <TPComboFixed
+                  value={draft.roundingTarget}
+                  onChange={(v) => changeRoundingTarget(v as RoundingTarget)}
+                  options={[
+                    { value: "NONE", label: "Sin redondeo" },
+                    { value: "METAL", label: "Valor metal" },
+                    { value: "FINAL_PRICE", label: "Precio final" },
+                  ]}
+                />
+              </TPField>
+
+              <TPField label="Precisión">
+                <TPComboFixed
+                  value={draft.roundingMode}
+                  onChange={(v) => changeRoundingMode(v as RoundingMode)}
+                  disabled={!hasRounding}
+                  options={[
+                    { value: "NONE", label: "Sin redondeo" },
+                    { value: "INTEGER", label: "Entero" },
+                    { value: "DECIMAL_1", label: "1 decimal" },
+                    { value: "DECIMAL_2", label: "2 decimales" },
+                    { value: "TEN", label: "Decena" },
+                    { value: "HUNDRED", label: "Centena" },
+                  ]}
+                />
+              </TPField>
+
+              <TPField label="Dirección">
+                <TPComboFixed
+                  value={draft.roundingDirection}
+                  onChange={(v) => set("roundingDirection", v as RoundingDirection)}
+                  disabled={!hasRounding || draft.roundingMode === "NONE"}
+                  options={[
+                    { value: "NEAREST", label: "Al más cercano" },
+                    { value: "UP", label: "Hacia arriba" },
+                    { value: "DOWN", label: "Hacia abajo" },
+                  ]}
+                />
+              </TPField>
+            </div>
+
+            {hasRounding && (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <TPField label="Valor a redondear — Metal">
+                  <TPNumberInput
+                    value={draft.roundingValueMetal}
+                    onChange={(v) => set("roundingValueMetal", v)}
+                    decimals={4}
+                    step={0.01}
+                    min={0}
+                    placeholder="Ej: 0.50"
+                  />
+                </TPField>
+                <TPField label="Valor a redondear — Hechura">
+                  <TPNumberInput
+                    value={draft.roundingValueHechura}
+                    onChange={(v) => set("roundingValueHechura", v)}
+                    decimals={4}
+                    step={0.01}
+                    min={0}
+                    placeholder="Ej: 10"
+                  />
+                </TPField>
+              </div>
+            )}
+          </div>
+        </TPCard>
+
+        {/* D. Vigencia */}
+        <TPCard title="Vigencia">
+          <div className="space-y-3">
+            <label className="flex items-center gap-2 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={draft.vigenciaActiva}
+                onChange={(e) => {
+                  const active = e.target.checked;
+                  set("vigenciaActiva", active);
+                  if (active) {
+                    const today = new Date();
+                    today.setHours(0, 0, 0, 0);
+                    const to = new Date(today);
+                    to.setDate(to.getDate() + 30);
+                    set("validityRange", { from: today, to });
+                  } else {
+                    set("validityRange", { from: null, to: null });
+                  }
+                }}
+                className="h-4 w-4 rounded border-border accent-primary"
+              />
+              <span className="text-sm text-text">Activar vigencia</span>
+            </label>
+
+            <div className="w-full md:w-auto md:min-w-[320px]">
+              <TPDateRangeInline
+                value={draft.validityRange}
+                onChange={(v) => set("validityRange", v)}
+                showPresets={false}
+                disabled={!draft.vigenciaActiva}
+              />
+            </div>
+          </div>
+          {validityError && (
+            <p className="text-xs text-red-500 mt-2">{validityError}</p>
           )}
-        </div>
+        </TPCard>
 
-        {/* Modo de margen */}
-        <TPField label="Modo de cálculo *">
-          <TPSelect
-            value={draft.mode}
-            onChange={(v) => set("mode", v as PriceListMode)}
-            options={[
-              { value: "MARGIN_TOTAL", label: "Margen total (%)" },
-              { value: "METAL_HECHURA", label: "Metal + Hechura por separado" },
-              { value: "COST_PER_GRAM", label: "Costo por gramo (precio fijo)" },
-            ]}
-          />
-        </TPField>
-
-        {/* Campos condicionales */}
-        {draft.mode === "MARGIN_TOTAL" && (
-          <TPField label="Margen total *" error={marginTotalError}>
-            <TPInput
-              value={draft.marginTotal}
-              onChange={(v) => set("marginTotal", v)}
-              type="number"
-              step="0.01"
-              min="0"
-              inputMode="decimal"
-              placeholder="Ej: 30 (= 30%)"
+        {/* E. Notas */}
+        <TPCard title="Notas">
+          <TPField label="Notas internas">
+            <TPTextarea
+              value={draft.notes}
+              onChange={(v) => set("notes", v)}
+              rows={2}
+              placeholder="Información interna sobre esta lista..."
             />
           </TPField>
-        )}
+        </TPCard>
 
-        {draft.mode === "METAL_HECHURA" && (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <TPField label="Margen sobre metal *" error={marginMetalError}>
-              <TPInput
-                value={draft.marginMetal}
-                onChange={(v) => set("marginMetal", v)}
-                type="number"
-                step="0.01"
-                min="0"
-                inputMode="decimal"
-                placeholder="Ej: 20"
-              />
-            </TPField>
-            <TPField label="Margen sobre hechura *" error={marginHechuraError}>
-              <TPInput
-                value={draft.marginHechura}
-                onChange={(v) => set("marginHechura", v)}
-                type="number"
-                step="0.01"
-                min="0"
-                inputMode="decimal"
-                placeholder="Ej: 40"
-              />
-            </TPField>
-          </div>
-        )}
-
-        {draft.mode === "COST_PER_GRAM" && (
-          <TPField label="Costo por gramo *" error={costPerGramError}>
-            <TPInput
-              value={draft.costPerGram}
-              onChange={(v) => set("costPerGram", v)}
-              type="number"
-              step="0.01"
-              min="0"
-              inputMode="decimal"
-              placeholder="Ej: 15000"
-            />
-          </TPField>
-        )}
-
-        {/* Recargo y precio mínimo */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <TPField label="Recargo adicional">
-            <TPInput
-              value={draft.surcharge}
-              onChange={(v) => set("surcharge", v)}
-              type="number"
-              step="0.01"
-              min="0"
-              inputMode="decimal"
-              placeholder="Ej: 5 (= 5%)"
-            />
-          </TPField>
-          <TPField label="Precio mínimo">
-            <TPInput
-              value={draft.minimumPrice}
-              onChange={(v) => set("minimumPrice", v)}
-              type="number"
-              step="0.01"
-              min="0"
-              inputMode="decimal"
-              placeholder="Ej: 1000"
-            />
-          </TPField>
-        </div>
-
-        {/* Redondeo */}
-        <div className="rounded-lg border border-border p-4 space-y-4">
-          <div className="text-sm font-medium text-text">Redondeo</div>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <TPField label="Aplicar redondeo en">
-              <TPSelect
-                value={draft.roundingTarget}
-                onChange={(v) => set("roundingTarget", v as RoundingTarget)}
-                options={[
-                  { value: "NONE", label: "Sin redondeo" },
-                  { value: "METAL", label: "Valor metal" },
-                  { value: "FINAL_PRICE", label: "Precio final" },
-                ]}
-              />
-            </TPField>
-
-            <TPField label="Precisión">
-              <TPSelect
-                value={draft.roundingMode}
-                onChange={(v) => set("roundingMode", v as RoundingMode)}
-                disabled={draft.roundingTarget === "NONE"}
-                options={[
-                  { value: "NONE", label: "Sin redondeo" },
-                  { value: "INTEGER", label: "Entero" },
-                  { value: "DECIMAL_1", label: "1 decimal" },
-                  { value: "DECIMAL_2", label: "2 decimales" },
-                  { value: "TEN", label: "Decena" },
-                  { value: "HUNDRED", label: "Centena" },
-                ]}
-              />
-            </TPField>
-
-            <TPField label="Dirección">
-              <TPSelect
-                value={draft.roundingDirection}
-                onChange={(v) => set("roundingDirection", v as RoundingDirection)}
-                disabled={draft.roundingTarget === "NONE" || draft.roundingMode === "NONE"}
-                options={[
-                  { value: "NEAREST", label: "Al más cercano" },
-                  { value: "UP", label: "Hacia arriba" },
-                  { value: "DOWN", label: "Hacia abajo" },
-                ]}
-              />
-            </TPField>
-          </div>
-        </div>
-
-        {/* Vigencia */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <TPField label="Válida desde">
-            <TPInput
-              value={draft.validFrom}
-              onChange={(v) => set("validFrom", v)}
-              type="date"
-            />
-          </TPField>
-          <TPField label="Válida hasta">
-            <TPInput
-              value={draft.validTo}
-              onChange={(v) => set("validTo", v)}
-              type="date"
-            />
-          </TPField>
-        </div>
-
-        {/* Descripción */}
-        <TPField label="Descripción">
-          <TPTextarea
-            value={draft.description}
-            onChange={(v) => set("description", v)}
-            rows={2}
-            placeholder="Descripción opcional..."
-          />
-        </TPField>
-
-        {/* Notas */}
-        <TPField label="Notas internas">
-          <TPTextarea
-            value={draft.notes}
-            onChange={(v) => set("notes", v)}
-            rows={2}
-            placeholder="Notas internas opcionales..."
-          />
-        </TPField>
-
-        {/* Favorita */}
-        <TPCheckbox
-          checked={draft.isFavorite}
-          onChange={(v) => set("isFavorite", v)}
-          label="Marcar como lista favorita en este alcance"
-        />
-
-        {/* Botones */}
-        <div className="flex justify-end gap-2 pt-2">
-          <TPButton variant="secondary" onClick={onClose} disabled={saving}>
+        <div className="flex justify-end gap-2 pt-1">
+          <TPButton variant="secondary" onClick={onClose} disabled={saving} iconLeft={<X size={16} />}>
             Cancelar
           </TPButton>
           <TPButton
             variant="primary"
             onClick={onSave}
             loading={saving}
+            iconLeft={isEdit ? <Save size={16} /> : <Plus size={16} />}
           >
             {isEdit ? "Guardar cambios" : "Crear lista"}
           </TPButton>
@@ -938,53 +858,45 @@ function PriceListFormModal({
 /* =========================================================
    View Content
 ========================================================= */
-function PriceListViewContent({
-  row,
-  categories,
-}: {
-  row: PriceListRow;
-  categories: CategoryRow[];
-}) {
+function PriceListViewContent({ row }: { row: PriceListRow }) {
   function item(label: string, value: React.ReactNode) {
     return (
       <div>
         <div className="text-xs text-muted mb-0.5">{label}</div>
-        <div className="text-sm text-text">{value || <span className="text-muted">-</span>}</div>
+        <div className="text-sm text-text">{value ?? <span className="text-muted">—</span>}</div>
       </div>
     );
   }
 
+  const hasRounding = row.roundingTarget !== "NONE";
+
   return (
-    <div className="space-y-4">
-      <div className="grid grid-cols-2 gap-x-6 gap-y-4">
-        {item("Nombre", row.name)}
-        {item("Código", <span className="font-mono">{row.code}</span>)}
-        {item("Alcance", SCOPE_LABELS[row.scope])}
-        {item(
-          "Categoría",
-          row.category?.name ?? (row.categoryId ? row.categoryId : "-")
-        )}
+    <div className="space-y-5">
+      {/* Identificación */}
+      <div className="grid grid-cols-2 gap-x-6 gap-y-3">
+        {item("Nombre", <span className="font-medium">{row.name}</span>)}
+        {item("Código", <span className="font-mono text-sm">{row.code}</span>)}
         {item("Modo de cálculo", MODE_LABELS[row.mode])}
         {item(
           "Estado",
-          <span
-            className={cn(
-              "inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full",
-              row.isActive
-                ? "bg-success/10 text-success"
-                : "bg-muted/10 text-muted"
-            )}
-          >
-            {row.isActive ? "Activa" : "Inactiva"}
-          </span>
+          <TPStatusPill active={row.isActive} activeLabel="Activa" inactiveLabel="Inactiva" />
+        )}
+        {item(
+          "Favorita",
+          row.isFavorite ? (
+            <span className="inline-flex items-center gap-1 text-sm font-medium">
+              <Star size={13} className="fill-yellow-400 text-yellow-400" />
+              Sí, predeterminada
+            </span>
+          ) : (
+            "No"
+          )
         )}
       </div>
 
       {/* Márgenes */}
-      <div className="rounded-lg bg-surface p-3 space-y-2">
-        <div className="text-xs font-semibold text-muted uppercase tracking-wide">
-          Márgenes y precios
-        </div>
+      <div className="rounded-lg bg-surface border border-border/50 p-3 space-y-2">
+        <p className="text-xs font-semibold text-muted uppercase tracking-wide">Márgenes</p>
         <div className="grid grid-cols-2 gap-x-6 gap-y-2">
           {row.mode === "MARGIN_TOTAL" && item("Margen total", fmt(row.marginTotal))}
           {row.mode === "METAL_HECHURA" && (
@@ -993,28 +905,28 @@ function PriceListViewContent({
               {item("Margen hechura", fmt(row.marginHechura))}
             </>
           )}
-          {row.mode === "COST_PER_GRAM" && item("Costo por gramo", fmt(row.costPerGram, ""))}
-          {item("Recargo", fmt(row.surcharge))}
-          {item(
-            "Precio mínimo",
-            row.minimumPrice
-              ? parseFloat(row.minimumPrice).toLocaleString("es-AR")
-              : "-"
-          )}
+          {row.mode === "COST_PER_GRAM" && item("Costo por gramo (%)", fmt(row.costPerGram))}
         </div>
       </div>
 
       {/* Redondeo */}
-      <div className="rounded-lg bg-surface p-3 space-y-2">
-        <div className="text-xs font-semibold text-muted uppercase tracking-wide">
-          Redondeo
+      {hasRounding && (
+        <div className="rounded-lg bg-surface border border-border/50 p-3 space-y-2">
+          <p className="text-xs font-semibold text-muted uppercase tracking-wide">Redondeo</p>
+          <div className="grid grid-cols-2 gap-x-6 gap-y-2">
+            {item("Aplicar en", ROUNDING_TARGET_LABELS[row.roundingTarget])}
+            {item("Precisión", ROUNDING_MODE_LABELS[row.roundingMode])}
+            {item("Dirección", ROUNDING_DIRECTION_LABELS[row.roundingDirection])}
+            {row.roundingValueMetal &&
+              item("Valor metal", parseFloat(row.roundingValueMetal).toLocaleString("es-AR"))}
+            {row.roundingValueHechura &&
+              item(
+                "Valor hechura",
+                parseFloat(row.roundingValueHechura).toLocaleString("es-AR")
+              )}
+          </div>
         </div>
-        <div className="grid grid-cols-3 gap-x-6 gap-y-2">
-          {item("Aplicar en", ROUNDING_TARGET_LABELS[row.roundingTarget])}
-          {item("Precisión", ROUNDING_MODE_LABELS[row.roundingMode])}
-          {item("Dirección", ROUNDING_DIRECTION_LABELS[row.roundingDirection])}
-        </div>
-      </div>
+      )}
 
       {/* Vigencia */}
       <div className="grid grid-cols-2 gap-x-6 gap-y-2">
@@ -1022,19 +934,7 @@ function PriceListViewContent({
         {item("Válida hasta", fmtDate(row.validTo))}
       </div>
 
-      {row.description && item("Descripción", row.description)}
       {row.notes && item("Notas internas", row.notes)}
-
-      {item(
-        "Favorita",
-        row.isFavorite ? (
-          <span className="inline-flex items-center gap-1 text-primary text-xs font-medium">
-            <Star size={12} className="fill-primary" /> Sí
-          </span>
-        ) : (
-          "No"
-        )
-      )}
     </div>
   );
 }

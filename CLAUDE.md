@@ -2,126 +2,149 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## Communication preferences
+---
+
+## 1. Communication preferences
 
 - Always respond in Spanish.
 - The user is not a developer. Keep all explanations clear and simple.
 
-## Mobile-first design (OBLIGATORIO)
+---
 
-La app debe funcionar correctamente en dispositivos móviles pequeños (mínimo 375px de ancho, como iPhone SE).
+## 2. Mobile-first design (OBLIGATORIO)
 
-- Diseñar **mobile-first**: construir la versión mobile primero, luego adaptar para pantallas grandes con Tailwind (`md:`, `lg:`).
-- Todos los componentes `TP*` y todas las páginas deben ser usables con una sola mano en pantalla pequeña.
-- Evitar tablas horizontales en mobile: reemplazar con cards o listas apiladas usando clases responsive.
-- Botones y áreas táctiles: mínimo 44×44px (`min-h-11`, `min-w-11`).
-- Formularios: campos a ancho completo en mobile (`w-full`), inputs grandes para facilitar el toque.
-- Sidebars y menús: en mobile deben ser drawers/overlays, no columnas fijas.
+La app debe funcionar en dispositivos móviles pequeños (mínimo 375px, como iPhone SE).
+
+- Diseñar **mobile-first**: construir la versión mobile primero, luego adaptar con `md:`, `lg:`.
+- Todos los componentes `TP*` y páginas deben ser usables con una sola mano en pantalla pequeña.
+- Evitar tablas horizontales en mobile: usar cards o listas apiladas con clases responsive.
+- Botones y áreas táctiles: mínimo 44×44px (`min-h-11 min-w-11`).
+- Formularios: campos a ancho completo en mobile (`w-full`).
+- Sidebars: en mobile deben ser drawers/overlays, nunca columnas fijas.
 - Texto: nunca menor a `text-sm` (14px) en contenido principal.
-- Espaciado: usar padding generoso en mobile para evitar toques accidentales.
-- Antes de hacer un commit con nueva UI, verificar mentalmente que se ve bien en 375px.
+- Verificar mentalmente que toda UI nueva se ve bien en 375px antes de hacer commit.
 
-## Deployment
+---
 
-- **Hosting**: [Render](https://render.com) — Static Site. La configuración de headers de seguridad (CSP, X-Frame-Options, etc.) está en `render.yaml`.
+## 3. Deployment
+
+- **Hosting**: [Render](https://render.com) — Static Site. Headers de seguridad (CSP, X-Frame-Options) en `render.yaml`.
 - **Repositorio**: GitHub (`leotufe-commits/tptech-frontend`)
-- **Backend**: servicio separado en Render. En producción, configurar `VITE_API_URL` con la URL absoluta del backend (ej. `https://tptech-backend.onrender.com/api`).
+- **Backend**: servicio separado en Render. En producción configurar `VITE_API_URL` con la URL absoluta del backend.
 
-## Commands
+---
+
+## 4. Commands
 
 ```bash
-npm run dev        # Start dev server (Vite, proxies /api to backend)
-npm run build      # Type-check (tsc -b) then Vite build
+npm run dev        # Dev server (Vite, proxies /api → backend en 3001)
+npm run build      # Type-check (tsc -b) + Vite build
 npm run lint       # ESLint
-npm run preview    # Preview production build
+npm run preview    # Preview del build de producción
 ```
 
-No test runner is configured.
+No hay test runner configurado.
 
-## Environment
+---
 
-Create a `.env.local` for local development:
+## 5. Environment
+
+Crear `.env.local` para desarrollo local:
 
 ```
 VITE_API_URL=http://localhost:3001/api
 ```
 
-If `VITE_API_URL` is omitted, the app falls back to the relative `/api` path (Vite proxy). The `apiFetch` helper in `src/lib/api.ts` normalizes the URL and auto-appends `/api` if absent.
+Si `VITE_API_URL` se omite, la app usa la ruta relativa `/api` (Vite proxy). El helper `apiFetch` en `src/lib/api.ts` normaliza la URL y agrega `/api` si falta.
 
-## Architecture
+---
 
-### Entry point and providers
+## 6. Architecture
 
-`src/main.tsx` mounts the app with two providers wrapping `RouterProvider`:
-- `AuthProvider` — session state, PIN lock, quick-switch, multi-tab sync
-- `ThemeProvider` — theme selection (persisted per-user in localStorage)
+### Entry point
 
-CSS import order matters: `themes.css` must load before `index.css` because `index.css` consumes the CSS variables defined in `themes.css`.
+`src/main.tsx` monta la app con dos providers que envuelven `RouterProvider`:
+- `AuthProvider` — sesión, PIN lock, quick-switch, sincronización multi-tab.
+- `ThemeProvider` — selección de tema (persistido por usuario en localStorage).
 
-### Routing (`src/router.tsx`)
+**Orden de CSS importa**: `themes.css` debe cargar antes de `index.css`, porque `index.css` consume las variables CSS definidas en `themes.css`.
 
-Three-tier structure:
-1. Public-only routes (`/login`, `/register`, `/forgot-password`) — redirect to `/dashboard` if already authenticated.
-2. Private routes wrapped in `<ProtectedRoute>` — validates session on first entry via `/auth/me`, shows loading gate until `bootstrapped` is true.
-3. `<MainLayout>` — contains Sidebar, Topbar, LockScreen, and `<Outlet>` for page content.
+### Routing
 
-Legacy route aliases (e.g. `/usuarios` → `/configuracion/usuarios`) are kept as `<Navigate>` redirects.
+`src/router.tsx` — estructura de tres niveles:
+1. Rutas públicas (`/login`, `/register`, `/forgot-password`) — redirigen a `/dashboard` si ya hay sesión.
+2. Rutas privadas en `<ProtectedRoute>` — valida sesión via `/auth/me` en la primera visita; muestra loading hasta que `bootstrapped` sea true.
+3. `<MainLayout>` — contiene Sidebar, Topbar, LockScreen y `<Outlet>` para el contenido de página.
 
-### Auth flow (`src/context/AuthContext.tsx`)
+Aliases de rutas legacy (ej. `/usuarios` → `/configuracion/usuarios`) se mantienen como `<Navigate>`.
 
-Authentication uses **httpOnly cookies** — no Bearer token is sent by default. The legacy token storage in localStorage/sessionStorage exists only for backward compat (`forceBearer: true` opt-in on `apiFetch`).
+### Auth flow
 
-Key behaviors:
-- `refreshMe()` is called lazily by `ProtectedRoute` on first protected-route visit, not on app boot.
-- `bootstrapped` flag prevents redirect to `/login` while the first session check is in-flight.
-- Lock screen (PIN) state survives F5 via `sessionStorage` (`tptech_locked`).
-- Multi-tab sync uses both `localStorage` events and `BroadcastChannel("tptech_auth")`.
-- Auto-lock fires on inactivity only if the current user has a PIN set (`hasQuickPin`).
-- Server-side lock settings (`jewelry.pinLockEnabled`, `pinLockTimeoutSec`) override local settings.
+`src/context/AuthContext.tsx`. Autenticación usa **httpOnly cookies** — no se envía Bearer token por defecto.
 
-### Theme system (`src/context/ThemeContext.tsx`)
+Comportamientos clave:
+- `refreshMe()` se llama lazily por `ProtectedRoute`, no al arrancar la app.
+- `bootstrapped` previene redirección a `/login` mientras el primer check de sesión está en curso.
+- Estado de lock screen (PIN) sobrevive F5 via `sessionStorage` (`tptech_locked`).
+- Sincronización multi-tab via `localStorage` events y `BroadcastChannel("tptech_auth")`.
+- Auto-lock por inactividad solo si el usuario tiene PIN configurado (`hasQuickPin`).
+- Configuración de PIN del servidor (`jewelry.pinLockEnabled`, `pinLockTimeoutSec`) tiene prioridad sobre la local.
 
-Themes: `classic | dark | blue | gray | emerald`. Applied via `data-theme` attribute on `<html>`. Per-user theme stored as `tptech_theme:<userId>` in localStorage; falls back to `tptech_theme:public`.
+### Theme system
 
-### API layer (`src/lib/api.ts`)
+`src/context/ThemeContext.tsx`. Temas: `classic | dark | blue | gray | emerald`. Aplicados via atributo `data-theme` en `<html>`. Tema por usuario: `tptech_theme:<userId>` en localStorage; fallback a `tptech_theme:public`.
 
-`apiFetch<T>(path, options)` — central fetch wrapper with:
-- Automatic JSON serialization
-- 25s default timeout via `AbortController`
-- GET/HEAD request deduplication (in-flight map)
-- `on401: "logout"` (default) or `"throw"`
-- `ApiError` class with `.status` and `.data` fields
+### API layer
 
-### Componentes reutilizables (OBLIGATORIO)
+`apiFetch<T>(path, options)` — wrapper central en `src/lib/api.ts`:
+- Serialización JSON automática.
+- Timeout de 25s via `AbortController`.
+- Deduplicación de GET/HEAD en vuelo.
+- `on401: "logout"` (default) o `"throw"`.
+- Clase `ApiError` con `.status` y `.data`.
 
-Todo elemento visual nuevo debe crearse en `src/components/ui/` como un componente `TP*` reutilizable. Nunca escribir estilos o estructuras visuales ad-hoc dentro de una página o módulo si el elemento puede aparecer en otro lugar del sistema. Antes de crear un componente nuevo, verificar si ya existe uno en `src/components/ui/` que se pueda usar o extender.
+---
 
-### UI component library (`src/components/ui/`)
+## 7. Componentes reutilizables (OBLIGATORIO)
 
-All shared UI components are prefixed `TP` (e.g. `TPInput`, `TPButton`, `TPSelect`, `TPTable`). Style constants and the `cn()` utility are in `src/components/ui/tp.ts`. CSS class names `.tp-input` and `.tp-select` are defined globally in `index.css` and consume theme CSS variables.
+Todo elemento visual nuevo debe crearse en `src/components/ui/` como componente `TP*` reutilizable. Nunca escribir estilos o estructuras visuales ad-hoc dentro de una página si el elemento puede aparecer en otro lugar. Antes de crear un componente nuevo, verificar si ya existe uno que se pueda usar o extender.
 
-Button variants exported from `tp.ts`: `TP_BTN_PRIMARY`, `TP_BTN_SECONDARY`, `TP_BTN_GHOST`, `TP_BTN_DANGER`, `TP_BTN_LINK_PRIMARY`.
+---
 
-### Permissions (`src/hooks/usePermissions.ts`)
+## 8. UI component library
 
-Convention: `"MODULE:ACTION"` strings (e.g. `"USERS_ROLES:VIEW"`). The hook normalizes multiple API response shapes (plain strings, `{ code }`, `{ name }`, nested `{ permission: { code } }`). Exposes `can()`, `canAny()`, `canAll()`, `canMA()` helpers. Use `<RequirePermission>` component for declarative gating.
+Todos los componentes compartidos tienen prefijo `TP` (`TPInput`, `TPButton`, `TPSelect`, etc.). Utilidades CSS y `cn()` están en `src/components/ui/tp.ts`. Las clases `.tp-input` y `.tp-select` están definidas en `index.css` y consumen variables CSS del tema.
 
-### Services and hooks
+Variantes de botón exportadas desde `tp.ts`: `TP_BTN_PRIMARY`, `TP_BTN_SECONDARY`, `TP_BTN_GHOST`, `TP_BTN_DANGER`, `TP_BTN_LINK_PRIMARY`. **Nunca usar estas clases directamente** — usar siempre `<TPButton variant="...">`.
 
-- `src/services/` — thin API call functions per domain (users, roles, permissions, company, valuation, catalogs)
-- `src/hooks/` — custom hooks that compose services (e.g. `useUsersPage`, `useValuation`, `useMe`)
-- Feature-level logic is co-located: e.g. `src/hooks/usersPage/` contains constants, parsers, normalizers, and event handlers for the Users page
+---
 
-### Formato de valores numéricos (OBLIGATORIO)
+## 9. Permisos
 
-- **Valores monetarios y cantidades generales**: formato `1,00` (dos decimales, separador de coma). El input sube/baja de a enteros (step 1). Ejemplo: precio, gramos, cantidad.
-- **Pureza / Ley de metal**: formato `0,000` (tres decimales, separador de coma). El input sube/baja de a `0,001` (step 0.001). Ejemplo: pureza 750 → se muestra como `0,750`.
-- Usar siempre `toLocaleString("es-AR")` o equivalente para mostrar los valores formateados en pantalla.
-- En inputs numéricos, configurar `step`, `min`, y `inputMode="decimal"` correctamente según el tipo de valor.
+`src/hooks/usePermissions.ts`. Formato: `"MODULE:ACTION"` (ej. `"USERS_ROLES:VIEW"`). El hook normaliza múltiples formas de respuesta de la API. Expone `can()`, `canAny()`, `canAll()`, `canMA()`. Usar `<RequirePermission>` para gating declarativo.
 
-### Enter para guardar en modales simples (OBLIGATORIO)
+---
 
-En pantallas o modales que principalmente editan un valor o tienen poca información para modificar (ej: editar precio, editar nombre, ajustar stock), presionar **Enter** debe guardar y cerrar el modal automáticamente. Implementar con `onKeyDown` en el formulario o input principal:
+## 10. Servicios y hooks
+
+- `src/services/` — funciones de llamada a API por dominio (users, roles, permissions, company, valuation, catalogs).
+- `src/hooks/` — hooks custom que componen servicios (ej. `useUsersPage`, `useValuation`, `useMe`).
+- Lógica a nivel de feature se co-localiza: ej. `src/hooks/usersPage/` contiene constantes, parsers, normalizadores y handlers para la página de usuarios.
+
+---
+
+## 11. Formato de valores numéricos (OBLIGATORIO)
+
+- **Monetarios y cantidades generales**: formato `1,00` (dos decimales, coma). Step 1.
+- **Pureza / Ley de metal**: formato `0,000` (tres decimales, coma). Step 0.001. Ejemplo: pureza 750 → `0,750`.
+- Usar siempre `toLocaleString("es-AR")` o equivalente para mostrar valores en pantalla.
+- En inputs numéricos: configurar `step`, `min` e `inputMode="decimal"` según el tipo de valor.
+
+---
+
+## 12. Enter para guardar en modales simples (OBLIGATORIO)
+
+En modales que editan un solo valor o tienen poca información (ej. editar precio, editar nombre, ajustar stock), presionar **Enter** debe guardar y cerrar automáticamente:
 
 ```tsx
 onKeyDown={(e) => {
@@ -132,20 +155,22 @@ onKeyDown={(e) => {
 }}
 ```
 
-No aplicar esta regla en formularios grandes con múltiples secciones (como registro o edición completa de usuario), donde Enter en un campo debe pasar al siguiente.
+No aplicar en formularios grandes con múltiples secciones, donde Enter en un campo debe pasar al siguiente.
 
-### Campos obligatorios en formularios (OBLIGATORIO)
+---
 
-- Todo campo obligatorio debe usar `<TPField required label="...">` — esto muestra un asterisco al lado del label, del mismo color que el label (hereda el color).
-- Cuando el usuario toca **Guardar / Aceptar** sin completar un campo requerido, se le debe pasar el prop `error="Campo requerido."` a `TPField`. Esto muestra el campo resaltado en rojo debajo del input.
-- Patrón estándar: el componente mantiene un estado `submitted: boolean`. Cuando `submitted=true`, se evalúa si el campo está vacío y se pasa el `error` condicionalmente.
+## 13. Campos obligatorios (OBLIGATORIO)
+
+- Todo campo obligatorio usa `<TPField required label="...">` — muestra `*` junto al label (mismo color).
+- Al hacer Guardar sin completar un campo requerido: pasar `error="Campo requerido."` a `TPField`.
+- Patrón estándar con `submitted`:
 
 ```tsx
 const [submitted, setSubmitted] = useState(false);
 
 function handleSave() {
   setSubmitted(true);
-  if (!name.trim()) return; // validar antes de enviar
+  if (!name.trim()) return;
   // ... guardar
 }
 
@@ -154,24 +179,35 @@ function handleSave() {
 </TPField>
 ```
 
-### Global custom events
+- El `*` va al **final del label** con el **mismo color del label**. Nunca usar `<span style="color:red">`.
 
-Instant cross-component sync without refetch is done via `window.dispatchEvent`:
-- `tptech:jewelry_logo_changed` — updates favicon immediately after logo upload
-- `tptech:user_avatar_changed` — updates sidebar avatar immediately
-- `tptech:user-pin-updated` — syncs PIN state in AuthContext
-- `tptech:open_quick_switch` — opens the quick-user-switch UI
+---
 
-### Tailwind color opacity modifiers
+## 14. Eventos globales
 
-**Crítico**: no todos los colores del tema soportan modificadores de opacidad (`/50`, `/20`).
+Sincronización instantánea sin refetch via `window.dispatchEvent`:
 
-| Color | Soporte `primary/20` |
+| Evento | Cuándo dispararlo |
+|---|---|
+| `tptech:jewelry_logo_changed` | Tras subir logo — actualiza favicon |
+| `tptech:user_avatar_changed` | Tras subir avatar — actualiza sidebar |
+| `tptech:user-pin-updated` | Tras cambiar PIN — sincroniza AuthContext |
+| `tptech:open_quick_switch` | Para abrir UI de cambio rápido de usuario |
+| `tptech:valuation-changed` | Tras cambios en valuación — sincroniza componentes |
+
+---
+
+## 15. Tailwind opacity rules (OBLIGATORIO)
+
+No todos los colores del tema soportan modificadores de opacidad (`/50`, `/20`):
+
+| Color | Soporte `/alpha` |
 |---|---|
 | `primary`, `secondary`, `border` | ✅ usan `rgb(var(--*-rgb) / <alpha-value>)` |
 | `text`, `bg`, `card`, `muted`, `surface`, `surface2` | ❌ usan `var(--*)` plano |
 
-Para `text`, `muted`, etc. usar `opacity-*` de Tailwind en vez de `/`:
+Para `text`, `muted`, etc. usar `opacity-*` en vez de `/`:
+
 ```tsx
 // ❌ no funciona
 <span className="text-text/50">...</span>
@@ -180,122 +216,240 @@ Para `text`, `muted`, etc. usar `opacity-*` de Tailwind en vez de `/`:
 <span className="text-text opacity-50">...</span>
 ```
 
-### Comillas tipográficas (bug frecuente)
+---
 
-Nunca usar comillas curvas/tipográficas (`"` U+201C, `"` U+201D) como delimitadores en JSX o TypeScript. El parser de Babel falla con un error críptico de tokenización. Usar siempre comillas ASCII rectas (`"` U+0022). Este problema ocurre cuando se copia código desde editores de texto con "smart quotes" activado.
+## 16. Comillas tipográficas (bug frecuente)
 
-### Módulo de valuación (`src/components/valuation/`, `src/hooks/useValuation.ts`)
+Nunca usar comillas curvas/tipográficas (`"` U+201C, `"` U+201D) como delimitadores en JSX o TypeScript. Babel falla con un error críptico de tokenización. Usar siempre comillas ASCII rectas (`"` U+0022). Ocurre cuando se copia código desde editores con "smart quotes" activado.
 
-Fórmula de precio (única): `finalSalePrice = referenceValue × purity × saleFactor`.
+---
 
-- `MetalQuote` tiene un campo único `price` (antes había `purchasePrice` + `salePrice`, ya eliminados).
-- El endpoint `/valuation/variants/:id/quotes` devuelve `price` (en la moneda de la cotización) y `basePrice` (convertido a moneda base).
-- El hook `useValuation` expone todo el estado y acciones; las páginas no llaman `apiFetch` directamente.
-- Cambios en valuación disparan el evento `tptech:valuation-changed` para sincronizar componentes.
+## 17. Valuation module
 
-### Campos obligatorios — asterisco en label (OBLIGATORIO)
+`src/components/valuation/` + `src/hooks/useValuation.ts`.
 
-Todo campo obligatorio debe mostrar un `*` al **final del label**, con el **mismo color del label** (nunca rojo ni color especial).
+Fórmula única: `finalSalePrice = referenceValue × purity × saleFactor`.
 
-```tsx
-<TPInput label="Nombre *" ... />
-```
+- `MetalQuote` tiene campo único `price` (ya no hay `purchasePrice` + `salePrice`).
+- El endpoint `/valuation/variants/:id/quotes` devuelve `price` (en moneda de la cotización) y `basePrice` (convertido a moneda base).
+- Las páginas no llaman `apiFetch` directamente — usan el hook `useValuation`.
+- Cambios en valuación disparan `tptech:valuation-changed`.
 
-- Nunca usar `<span style="color:red">*</span>` ni clases especiales para el asterisco.
-- Aplica a: `TPInput`, `TPTextarea`, `TPSelect`, `TPCombo`, `TPDate` y cualquier campo requerido.
+---
 
-### Tablas — ancho completo (OBLIGATORIO)
+## 18. Tablas — reglas obligatorias (OBLIGATORIO)
 
-Todas las tablas deben ocupar el **100% del ancho disponible** de su contenedor. Siempre usar el wrapper estándar:
+### Ancho completo
 
-```tsx
-<TPTableWrap>
-  <TPTable>...</TPTable>
-</TPTableWrap>
-```
+Toda tabla ocupa el 100% del ancho disponible. Nunca usar `max-w-sm`, `max-w-md` ni widths fijos en tablas.
 
-- Nunca usar `max-w-sm`, `max-w-md` ni widths fijos en tablas.
-- Si el contenido supera el ancho, el wrapper activa scroll horizontal automáticamente.
+### TPTableKit — tabla administrativa estándar
 
-### Tablas — sistema de columnas configurables (OBLIGATORIO)
-
-Todas las tablas administrativas deben definir sus columnas como un array exportado, con estado de visibilidad manejado en el componente padre (no en la tabla):
+**Toda tabla administrativa nueva debe usar `TPTableKit`** (`src/components/ui/TPTableKit.tsx`). Incluye automáticamente: column picker, buscador, sort arrows y footer con conteo.
 
 ```tsx
-type ColDef = {
-  key: string;
-  label: string;
-  width?: string;
-  visible: boolean;
-  canHide?: boolean;      // false = la columna no se puede ocultar (ej: nombre, acciones)
-  align?: "left" | "right";
-  sortKey?: SortKey;
-};
+import { TPTableKit, type TPColDef } from "../../components/ui/TPTableKit";
+import { TPTr, TPTd } from "../../components/ui/TPTable";
 
-export const MY_COLUMNS: ColDef[] = [
-  { key: "name",    label: "Nombre",   visible: true,  canHide: false },
-  { key: "city",    label: "Ciudad",   width: "160px", visible: true },
-  { key: "notes",   label: "Notas",    visible: false },
-  { key: "actions", label: "Acciones", width: "200px", visible: true, canHide: false, align: "right" },
+const COLUMNS: TPColDef[] = [
+  { key: "nombre",   label: "Nombre",   canHide: false, sortKey: "displayName" },
+  { key: "ciudad",   label: "Ciudad",   width: "160px" },
+  { key: "notas",    label: "Notas",    visible: false },  // oculta por defecto
+  { key: "acciones", label: "Acciones", width: "120px", canHide: false, align: "right" },
 ];
-export const MY_COL_LS_KEY = "tptech_col_myentity";
+
+const [q, setQ] = useState("");
+const [sortKey, setSortKey] = useState("displayName");
+const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
+
+function toggleSort(key: string) {
+  if (sortKey === key) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+  else { setSortKey(key); setSortDir("asc"); }
+}
+
+<TPTableKit
+  rows={filteredRows}
+  columns={COLUMNS}
+  storageKey="tptech_col_<entidad>"
+  search={q}
+  onSearchChange={setQ}
+  searchPlaceholder="Buscar…"
+  sortKey={sortKey}
+  sortDir={sortDir}
+  onSort={toggleSort}
+  actions={<TPButton variant="primary" onClick={openCreate}>Nuevo</TPButton>}
+  emptyText="No hay registros."
+  countLabel="registros"
+  renderRow={(row, vis) => (
+    <TPTr key={row.id}>
+      {vis.nombre   && <TPTd>{row.name}</TPTd>}
+      {vis.ciudad   && <TPTd>{row.city}</TPTd>}
+      {vis.notas    && <TPTd>{row.notes}</TPTd>}
+      {vis.acciones && <TPTd className="text-right"><TPRowActions onEdit={() => open(row)} /></TPTd>}
+    </TPTr>
+  )}
+/>
 ```
 
-Reglas:
-- Las columnas con `canHide: false` no aparecen en el picker (siempre visibles).
-- El estado `colVis` se maneja en el **padre** (page/panel), no dentro de la tabla.
-- El picker `<TPColumnPicker>` se ubica a la **izquierda del buscador** en la toolbar.
-- El dropdown usa `createPortal` + `position: fixed` para no quedar tapado por la tabla.
-- Persistir visibilidad en `localStorage` con la clave `MY_COL_LS_KEY`.
-- Columnas de acciones siempre al final, `align: "right"`.
+Reglas de `TPColDef`:
+- `canHide: false` → siempre visible, no aparece en el picker (usar en "nombre" y "acciones").
+- `visible: false` → oculta por defecto (el usuario puede activarla desde el picker).
+- `sortKey` → activa sort en el header; el valor debe coincidir con lo que `onSort` recibe.
+- `align: "right"` → alinea el header a la derecha (columnas de acciones).
+- `storageKey` → persiste visibilidad en `localStorage`; formato `"tptech_col_<entidad>"`.
 
-## Diseño de pantallas nuevas — reglas base (OBLIGATORIO)
+### TPTreeTable — tabla jerárquica
+
+Para datos en árbol (ej. categorías anidadas) usar `TPTreeTable` (`src/components/ui/TPTreeTable.tsx`). No usar `TPTableKit` para estructuras jerárquicas.
+
+### TPTd — sin prop label
+
+No pasar el prop `label` a `<TPTd>`. Las etiquetas mobile-stack no se usan en TPTech.
+
+---
+
+## 19. CRUD estándar para pantallas (OBLIGATORIO)
 
 Antes de implementar cualquier pantalla nueva, verificar que cumple estas reglas:
 
-### Estructura CRUD estándar
-
 | Elemento | Cuándo aplicar |
 |---|---|
-| Listado con tabla + **buscador** | **Siempre** que haya más de un registro. El buscador es obligatorio en toda pantalla con listado. |
-| **Ordenamiento** de columnas | Cuando tenga sentido funcional (columnas de texto, fecha, número). Implementar con `sortKey` en la definición de columna. |
-| Filtro por fechas | Cuando aplique por negocio o auditoría |
-| Modal **View** (solo lectura) | Toda entidad con detalles que mostrar |
-| Modal **Edit** | Toda entidad editable |
-| Estado **Activo / Inactivo** | Cuando tenga sentido funcional |
-| **Soft delete** con confirmación | Siempre que aplique; nunca hard delete sin justificación |
-| **Favorito** | Cuando el usuario necesite destacar un registro por defecto |
-| **Clonar** | Entidades complejas o con mucha información cargada |
+| Listado con tabla + **buscador** | Siempre que haya más de un registro. El buscador es obligatorio. |
+| **Ordenamiento** de columnas | Cuando tenga sentido funcional. Implementar con `sortKey` en `TPColDef`. |
+| Filtro por fechas | Cuando aplique por negocio o auditoría. |
+| Modal **View** (solo lectura) | Toda entidad con detalles que mostrar. |
+| Modal **Edit** | Toda entidad editable. |
+| Estado **Activo / Inactivo** con `TPStatusPill` | Cuando tenga sentido funcional. |
+| **Soft delete** con `ConfirmDeleteDialog` | Siempre; nunca hard delete sin justificación. |
+| **Favorito** | Cuando el usuario necesite destacar un registro por defecto. |
+| **Clonar** | Entidades complejas con mucha información. |
 
-### Soft delete y confirmación (OBLIGATORIO)
+Toda alta, edición, activación/inactivación o eliminación debe reflejarse **inmediatamente** en la tabla sin refresh manual: llamar `refetch()` o actualizar el estado local directamente.
 
-- Eliminar = soft delete (marcar como eliminado en DB), salvo justificación explícita.
-- Siempre confirmar con `<ConfirmDeleteDialog>` o `<Modal>` con descripción del impacto.
-- El botón de confirmar debe ser `variant="danger"`.
+Referencia de implementación: **Users**, **Warehouses**, **Divisas**, **Valuation**.
 
-### Actualización automática de listas (OBLIGATORIO)
+---
 
-Toda alta, edición, activación, inactivación o eliminación debe reflejarse inmediatamente en la tabla sin que el usuario haga refresh manual:
-- Llamar `refetch()` o actualizar el estado local directamente tras la operación exitosa.
-- Para sincronización cruzada entre componentes usar `window.dispatchEvent(new CustomEvent("tptech:..."))`.
+## 20. Soft delete (OBLIGATORIO)
 
-### Focus automático (OBLIGATORIO)
+- Eliminar = soft delete (marcar `deletedAt` en DB), salvo justificación explícita.
+- Siempre confirmar con `<ConfirmDeleteDialog open title description onConfirm onClose busy>`.
+- El botón de confirmar dentro del dialog debe ser `variant="danger"`.
+
+---
+
+## 21. Focus automático (OBLIGATORIO)
 
 - Al abrir un modal o pantalla de alta/edición: foco automático en el primer campo útil.
-- En modales simples (editar un valor), usar `useEffect` + `setTimeout(..., 50)` + `.focus()` + `.select()`.
-- En formularios de creación, foco en el primer campo vacío.
+- En modales simples: `useEffect` + `setTimeout(..., 50)` + `.focus()` + `.select()`.
+- En formularios de creación: foco en el primer campo vacío.
 
-### Orden de campos en formularios
+---
 
-1. Identificadores: nombre, código, SKU
-2. Clasificación: tipo, categoría
-3. Contacto: teléfono, email, dirección
-4. Valores numéricos
-5. Notas y campos opcionales al final
+## 22. Orden de campos en formularios
 
-### Código limpio y modular
+1. Identificadores: nombre, código, SKU.
+2. Clasificación: tipo, categoría.
+3. Contacto: teléfono, email, dirección.
+4. Valores numéricos.
+5. Notas y campos opcionales al final.
+
+Campos de ciudad, provincia y país: siempre usar `TPComboCreatable` con `useCatalog("CITY")`, `useCatalog("PROVINCE")`, `useCatalog("COUNTRY")`. Nunca `TPInput`.
+
+---
+
+## 23. Estándares UI TPTech (OBLIGATORIO)
+
+### Componentes por tipo de campo
+
+| Tipo de campo | Componente |
+|---|---|
+| Texto libre | `TPInput` |
+| Numérico | `TPNumberInput` — `value: number \| null`, `onChange: (v: number \| null) => void` |
+| Enum fijo | `TPComboFixed` con `options={[...]}` |
+| Catálogo dinámico (ciudad, provincia, doc) | `TPComboCreatable` con `type` y `items` |
+| Fecha única | `TPInput type="date"` |
+| Rango de fechas | `TPDateRangeInline` con `value: TPDateRangeValue` |
+| Checkbox | `TPCheckbox` |
+| Texto largo | `TPTextarea` |
+
+### Secciones de formulario en modales
+
+Agrupar campos con `TPCard`:
+
+```tsx
+import { TPCard } from "../../components/ui/TPCard";
+
+<TPCard title="Datos personales">
+  {/* campos */}
+</TPCard>
+<TPCard title="Domicilio">
+  {/* campos de dirección */}
+</TPCard>
+```
+
+### Activo/Inactivo — patrón unificado
+
+- En tabla: `TPStatusPill` (nunca badges hardcodeados con `bg-green-*` / `bg-red-*`).
+- En modal: `TPCheckbox` con label "Activo" o toggle con `ShieldCheck`/`ShieldBan`.
+- Al activar/desactivar: actualización optimista + llamada a API.
+
+### Acciones de fila
+
+Siempre usar `TPRowActions` con las props que correspondan:
+- `onView` — abrir modal de vista
+- `onEdit` — abrir modal de edición
+- `onToggle` + `isActive` — activar/desactivar
+- `onFavorite` + `isFavorite` — favorito
+- `onDelete` — eliminar (abre `ConfirmDeleteDialog`)
+
+### Icono de calendario en dark mode
+
+Usar `className="text-text opacity-50"` en el icono `<Calendar>`, nunca `text-muted` (puede ser invisible en dark mode).
+
+### Código limpio
 
 - No hacer refactors no solicitados.
-- Reutilizar hooks, helpers y componentes existentes antes de crear nuevos.
+- Reutilizar hooks, helpers y componentes existentes.
 - Mantener el estilo visual actual de TPTech.
-- Para nuevas entidades con tabla + formulario + view + confirmación, seguir la estructura de **Users**, **Warehouses**, **Divisas** o **Valuation** como referencia.
+
+---
+
+## 24. UI System Rules (OBLIGATORIO)
+
+Todo código nuevo o modificado debe usar **exclusivamente** los componentes de `src/components/ui/`.
+
+### Tabla de componentes obligatorios
+
+| Elemento | Componente obligatorio |
+|---|---|
+| Input de texto | `TPInput` |
+| Input numérico | `TPNumberInput` |
+| Textarea | `TPTextarea` |
+| Select / combo fijo | `TPComboFixed` |
+| Combo con creación | `TPComboCreatable` |
+| Botón | `TPButton` (variants: `primary`, `secondary`, `ghost`, `danger`, `linkPrimary`) |
+| Tabla administrativa | `TPTableKit` |
+| Tabla jerárquica | `TPTreeTable` |
+| Modal | `Modal` |
+| Confirmación de borrado | `ConfirmDeleteDialog` |
+| Estado activo/inactivo | `TPStatusPill` |
+| Shell de página | `TPSectionShell` |
+| Wrapper de campo | `TPField` |
+| Sección de formulario | `TPCard` |
+| Acciones de fila | `TPRowActions` |
+| Flechas de ordenamiento | `SortArrows` (de `TPSort`) |
+
+### Prohibido — nunca usar en código nuevo
+
+```
+❌  <input>         →  usar TPInput
+❌  <textarea>      →  usar TPTextarea
+❌  <select>        →  usar TPComboFixed o TPComboCreatable
+❌  <button className="tp-btn-*">  →  usar <TPButton variant="...">
+❌  <table>, <thead>, <tbody>, <tr>, <th>, <td> HTML nativos  →  usar TPTableKit
+❌  Modales locales (fixed inset-0, createPortal propio)  →  usar Modal
+❌  Grids CSS usados como tabla (grid-cols-[...] con encabezados)
+❌  Headers manuales con <h1> / <h2> hardcodeados  →  usar TPSectionShell
+❌  Pills de estado con bg-green-* / bg-red-*  →  usar TPStatusPill
+```

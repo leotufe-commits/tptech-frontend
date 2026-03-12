@@ -167,6 +167,82 @@ textarea.tp-input:hover {
 }
 
 /* =====================================
+   TPNumberInput — flex wrapper (número + unidad + flechas)
+   Misma apariencia visual que tp-input pero como div flex
+   para que los elementos no se superpongan.
+===================================== */
+.tp-input-wrap {
+  width: 100%;
+  border-radius: 0.75rem;
+  border: 1px solid var(--border);
+  height: 42px;
+  background-color: var(--card);
+  color: var(--text);
+  display: flex;
+  align-items: center;
+  overflow: hidden;
+  box-sizing: border-box;
+  transition: box-shadow 180ms ease, border-color 180ms ease, opacity 180ms ease, background 180ms ease;
+}
+
+.tp-input-wrap:hover {
+  border-color: color-mix(in oklab, var(--border) 65%, var(--primary));
+  box-shadow: 0 6px 18px color-mix(in oklab, var(--primary) 10%, transparent);
+}
+
+.tp-input-wrap:focus-within {
+  border-color: color-mix(in oklab, var(--primary) 55%, var(--border));
+  box-shadow: 0 0 0 4px color-mix(in oklab, var(--primary) 28%, transparent);
+}
+
+.tp-input-wrap.tp-error {
+  border-color: rgba(239, 68, 68, 0.6);
+}
+
+.tp-input-wrap.tp-error:focus-within {
+  box-shadow: 0 0 0 4px rgba(239, 68, 68, 0.2);
+}
+
+[data-theme="dark"] .tp-input-wrap {
+  background-color: color-mix(in oklab, var(--card) 82%, #000) !important;
+  border-color: rgba(255, 255, 255, 0.22);
+}
+
+[data-theme="dark"] .tp-input-wrap:hover {
+  border-color: rgba(255, 255, 255, 0.3);
+}
+
+[data-theme="dark"] .tp-input-wrap:focus-within {
+  border-color: color-mix(in oklab, var(--primary) 60%, rgba(255, 255, 255, 0.22));
+  box-shadow:
+    0 0 0 4px color-mix(in oklab, var(--primary) 26%, transparent),
+    0 10px 26px rgba(0, 0, 0, 0.35);
+}
+
+/* Input sin borde propio — el borde lo da el wrapper */
+.tp-input-wrap > input.tp-inner {
+  flex: 1;
+  min-width: 0;
+  background: transparent;
+  border: none;
+  outline: none;
+  color: var(--text);
+  font-size: 0.95rem;
+  height: 100%;
+  padding: 0 0.5rem;
+  text-align: center;
+}
+
+.tp-input-wrap > input.tp-inner::placeholder {
+  color: var(--muted);
+}
+
+.tp-input-wrap:has(> input.tp-inner:disabled) {
+  opacity: 0.65;
+  cursor: not-allowed;
+}
+
+/* =====================================
    Selects / Combos (TPTech - THEME AWARE)
    ✅ Ajustado para que quede IDÉNTICO a .tp-input
    ===================================== */

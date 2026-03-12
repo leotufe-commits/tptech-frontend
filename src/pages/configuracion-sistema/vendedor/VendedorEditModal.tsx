@@ -1,0 +1,82 @@
+import React from "react";
+import { X, Save, Plus } from "lucide-react";
+import { Modal } from "../../../components/ui/Modal";
+import { TPButton } from "../../../components/ui/TPButton";
+import type { TPAttachmentItem } from "../../../components/ui/TPAttachmentList";
+import type { SellerRow } from "../../../services/sellers";
+import type { SellerDraft, WarehouseOption } from "./vendedor.types";
+import { VendedorForm } from "./VendedorForm";
+
+interface Props {
+  open: boolean;
+  editTarget: SellerRow | null;
+  draft: SellerDraft;
+  set: <K extends keyof SellerDraft>(key: K, value: SellerDraft[K]) => void;
+  toggleWarehouse: (id: string) => void;
+  submitted: boolean;
+  busySave: boolean;
+  busyAvatar: boolean;
+  warehouses: WarehouseOption[];
+  deletingAttachmentId: string | null;
+  onAvatarUpload: (file: File) => void;
+  onAddAttachment: (file: File) => void;
+  onDeleteAttachment: (item: TPAttachmentItem) => void;
+  onSave: () => void;
+  onClose: () => void;
+  firstInputRef: React.RefObject<HTMLInputElement | null>;
+}
+
+export function VendedorEditModal({
+  open,
+  editTarget,
+  draft,
+  set,
+  toggleWarehouse,
+  submitted,
+  busySave,
+  busyAvatar,
+  warehouses,
+  deletingAttachmentId,
+  onAvatarUpload,
+  onAddAttachment,
+  onDeleteAttachment,
+  onSave,
+  onClose,
+  firstInputRef,
+}: Props) {
+  return (
+    <Modal
+      open={open}
+      title={editTarget ? "Editar vendedor" : "Nuevo vendedor"}
+      maxWidth="4xl"
+      busy={busySave}
+      onClose={onClose}
+      footer={
+        <>
+          <TPButton variant="secondary" onClick={onClose} disabled={busySave} iconLeft={<X size={16} />}>
+            Cancelar
+          </TPButton>
+          <TPButton variant="primary" onClick={onSave} loading={busySave} iconLeft={editTarget ? <Save size={16} /> : <Plus size={16} />}>
+            {editTarget ? "Guardar" : "Crear vendedor"}
+          </TPButton>
+        </>
+      }
+    >
+      <VendedorForm
+        draft={draft}
+        set={set}
+        toggleWarehouse={toggleWarehouse}
+        submitted={submitted}
+        busySave={busySave}
+        editTarget={editTarget}
+        warehouses={warehouses}
+        busyAvatar={busyAvatar}
+        onAvatarUpload={onAvatarUpload}
+        deletingAttachmentId={deletingAttachmentId}
+        onAddAttachment={onAddAttachment}
+        onDeleteAttachment={onDeleteAttachment}
+        firstInputRef={firstInputRef}
+      />
+    </Modal>
+  );
+}

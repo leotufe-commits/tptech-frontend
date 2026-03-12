@@ -21,6 +21,7 @@ type Props = {
   readOnly?: boolean;
 
   leftIcon?: React.ReactNode;
+  rightAddon?: React.ReactNode;
 
   className?: string;
   wrapClassName?: string;
@@ -117,6 +118,7 @@ export default function TPNumberInput({
   disabled,
   readOnly,
   leftIcon,
+  rightAddon,
   className,
   wrapClassName,
   disableWheel = true,
@@ -156,8 +158,10 @@ export default function TPNumberInput({
     if (p) {
       let s = toScaled(next, p);
 
-      const minS = typeof min === "number" && Number.isFinite(min) ? toScaled(min, p) : undefined;
-      const maxS = typeof max === "number" && Number.isFinite(max) ? toScaled(max, p) : undefined;
+      const minS =
+        typeof min === "number" && Number.isFinite(min) ? toScaled(min, p) : undefined;
+      const maxS =
+        typeof max === "number" && Number.isFinite(max) ? toScaled(max, p) : undefined;
 
       s = clampScaled(s, minS, maxS);
       onChange(fromScaled(s, p));
@@ -178,7 +182,9 @@ export default function TPNumberInput({
 
     if (typeof value === "number" && Number.isFinite(value)) return value;
 
-    if (typeof emptyBaseValue === "number" && Number.isFinite(emptyBaseValue)) return emptyBaseValue;
+    if (typeof emptyBaseValue === "number" && Number.isFinite(emptyBaseValue)) {
+      return emptyBaseValue;
+    }
     if (typeof min === "number" && Number.isFinite(min)) return min;
     return 0;
   }
@@ -194,8 +200,10 @@ export default function TPNumberInput({
       const stepS = Math.max(1, toScaled(stepSafe, p));
       const nextS = baseS + dir * stepS;
 
-      const minS = typeof min === "number" && Number.isFinite(min) ? toScaled(min, p) : undefined;
-      const maxS = typeof max === "number" && Number.isFinite(max) ? toScaled(max, p) : undefined;
+      const minS =
+        typeof min === "number" && Number.isFinite(min) ? toScaled(min, p) : undefined;
+      const maxS =
+        typeof max === "number" && Number.isFinite(max) ? toScaled(max, p) : undefined;
 
       const clampedS = clampScaled(nextS, minS, maxS);
       nextNum = fromScaled(clampedS, p);
@@ -227,6 +235,7 @@ export default function TPNumberInput({
   }, [disableWheel]);
 
   const hasLeft = Boolean(leftIcon);
+  const hasRight = Boolean(rightAddon);
   const wantSelectAll = Boolean(selectAllOnFocus || autoSelect);
 
   return (
@@ -332,6 +341,16 @@ export default function TPNumberInput({
           }}
         />
 
+        {hasRight ? (
+          <div
+            className={cn(
+              "absolute top-1/2 -translate-y-1/2 left-1/2 ml-7 text-sm font-medium text-muted pointer-events-none select-none"
+            )}
+          >
+            {rightAddon}
+          </div>
+        ) : null}
+
         {showArrows ? (
           <div className="absolute right-2 top-1/2 -translate-y-1/2 flex flex-col">
             <button
@@ -359,7 +378,11 @@ export default function TPNumberInput({
         ) : null}
       </div>
 
-      {error ? <div className="text-xs text-red-400">{error}</div> : hint ? <div className="text-xs text-muted">{hint}</div> : null}
+      {error ? (
+        <div className="text-xs text-red-400">{error}</div>
+      ) : hint ? (
+        <div className="text-xs text-muted">{hint}</div>
+      ) : null}
     </div>
   );
 }

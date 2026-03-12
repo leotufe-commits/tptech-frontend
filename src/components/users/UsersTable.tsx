@@ -3,33 +3,19 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   Loader2,
-  Pencil,
-  Trash2,
-  ShieldBan,
-  ShieldCheck,
   Paperclip,
   KeyRound,
   Shield,
   ChevronLeft,
   ChevronRight,
-  Eye,
   Mail,
 } from "lucide-react";
 
-
 import { cn, initialsFrom, absUrl } from "./users.ui";
-import { SortArrows } from "../ui/TPSort";
 import { TPBadge } from "../ui/TPBadges";
-
-import {
-  TPTableWrap,
-  TPTable,
-  TPThead,
-  TPTbody,
-  TPTh,
-  TPEmptyRow,
-  TPTableFooter,
-} from "../ui/TPTable";
+import { TPTableKit, type TPColDef } from "../ui/TPTableKit";
+import { TPTr, TPTd, TPTableFooter } from "../ui/TPTable";
+import { TPRowActions } from "../ui/TPRowActions";
 
 import type { UserListItem } from "../../services/users";
 import { prefetchUserDetail as prefetchUserDetailInternal } from "./users.data";
@@ -54,25 +40,13 @@ import UsersAttachmentPanel from "./UsersAttachmentPanel";
 /* ======================================================
    Column definitions
 ====================================================== */
-type UserSortKey = "USER" | "STATUS" | "PIN" | "ROLES" | "FAV";
-
-type ColDef = {
-  key: string;
-  label: string;
-  width?: string;
-  visible: boolean;
-  canHide?: boolean;
-  align?: "left" | "right";
-  sortKey?: UserSortKey;
-};
-
-export const USERS_COLUMNS: ColDef[] = [
-  { key: "user",      label: "Usuario",          visible: true,  canHide: false, sortKey: "USER" },
-  { key: "status",    label: "Estado",            visible: true,  width: "130px", sortKey: "STATUS" },
-  { key: "pin",       label: "PIN",               visible: true,  width: "160px", sortKey: "PIN" },
-  { key: "roles",     label: "Roles",             visible: true,  sortKey: "ROLES" },
-  { key: "warehouse", label: "Almacén favorito",  visible: true,  width: "180px", sortKey: "FAV" },
-  { key: "actions",   label: "Acciones",          visible: true,  canHide: false, width: "260px", align: "right" },
+export const USERS_COLUMNS: TPColDef[] = [
+  { key: "user",      label: "Usuario",          canHide: false, sortKey: "USER" },
+  { key: "status",    label: "Estado",            width: "130px", sortKey: "STATUS" },
+  { key: "pin",       label: "PIN",               width: "160px", sortKey: "PIN" },
+  { key: "roles",     label: "Roles",             sortKey: "ROLES" },
+  { key: "warehouse", label: "Almacén favorito",  width: "180px", sortKey: "FAV" },
+  { key: "actions",   label: "Acciones",          canHide: false, width: "260px", align: "right" },
 ];
 
 export const USERS_COL_LS_KEY = "tptech_col_users";
@@ -135,22 +109,19 @@ export default function UsersTable(props: Props) {
 
   const nav = useNavigate();
 
-  const visibleCols = USERS_COLUMNS.filter((c) => colVis[c.key] !== false);
-  const colSpan = visibleCols.length;
-
   const [sortBy, setSortBy] = useState<SortCol>("USER");
   const [sortDir, setSortDir] = useState<SortDir>("asc");
 
-  function toggleSort(col: SortCol) {
-    if (sortBy !== col) {
-      setSortBy(col);
+  function handleSort(key: string) {
+    if (sortBy !== key) {
+      setSortBy(key as SortCol);
       setSortDir("asc");
       return;
     }
     setSortDir((d) => (d === "asc" ? "desc" : "asc"));
   }
 
-  // ✅ Override local para que el listado se sincronice aunque no hayas refetch
+  // Override local para sincronizar listado sin refetch
   const pinOverridesRef = useRef<Map<string, PinOverride>>(new Map());
   const [pinTick, setPinTick] = useState(0);
 
@@ -473,7 +444,7 @@ export default function UsersTable(props: Props) {
   }, [sortedUsers.length]);
 
   return (
-    <TPTableWrap className="w-full">
+    <>
       {/* Flash msg */}
       {inviteFlash ? (
         <div
@@ -597,10 +568,12 @@ export default function UsersTable(props: Props) {
                   </button>
 
                   <div className="shrink-0 flex flex-col gap-2">
+                    {/* Ver */}
                     <button type="button" className={cn(iconBtnBase)} onClick={() => openView(u)} title="Ver">
-                      <Eye className="h-4 w-4" />
+                      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>
                     </button>
 
+                    {/* Invitar */}
                     <button
                       type="button"
                       className={cn(iconBtnBase, (!canInviteThis || inviteBusy) && disabledCls)}
@@ -623,6 +596,7 @@ export default function UsersTable(props: Props) {
                       {inviteBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Mail className="h-4 w-4" />}
                     </button>
 
+                    {/* Editar */}
                     <button
                       type="button"
                       className={cn(iconBtnBase, !canEditThis && disabledCls)}
@@ -632,9 +606,10 @@ export default function UsersTable(props: Props) {
                       }}
                       title={isMe ? "Editar tu perfil" : "Editar usuario"}
                     >
-                      <Pencil className="h-4 w-4" />
+                      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/><path d="m15 5 4 4"/></svg>
                     </button>
 
+                    {/* Adjuntos */}
                     <button
                       type="button"
                       className={cn(iconBtnBase, attCount <= 0 && disabledCls)}
@@ -647,6 +622,7 @@ export default function UsersTable(props: Props) {
                       <Paperclip className="h-4 w-4" />
                     </button>
 
+                    {/* Toggle estado */}
                     <button
                       type="button"
                       className={cn(iconBtnBase, !canToggleThis && disabledCls)}
@@ -664,9 +640,14 @@ export default function UsersTable(props: Props) {
                           : "Activar"
                       }
                     >
-                      {isActive ? <ShieldBan className="h-4 w-4" /> : <ShieldCheck className="h-4 w-4" />}
+                      {isActive ? (
+                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10"/><path d="m4.9 4.9 14.2 14.2"/></svg>
+                      ) : (
+                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10"/><path d="m9 12 2 2 4-4"/></svg>
+                      )}
                     </button>
 
+                    {/* Eliminar */}
                     <button
                       type="button"
                       className={cn(iconBtnBase, !canDeleteThis && disabledCls)}
@@ -676,7 +657,7 @@ export default function UsersTable(props: Props) {
                       }}
                       title={!canAdmin ? "Sin permisos" : isMe ? "No podés eliminarte" : "Eliminar"}
                     >
-                      <Trash2 className="h-4 w-4" />
+                      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>
                     </button>
                   </div>
                 </div>
@@ -685,7 +666,7 @@ export default function UsersTable(props: Props) {
           })
         )}
 
-        {/* ✅ Footer MOBILE (Usuarios + paginado) */}
+        {/* Footer MOBILE */}
         <TPTableFooter className="flex items-center justify-between gap-3 px-4 py-3">
           <div className="text-xs text-muted">
             <span className="text-text font-medium">{usersLegend}</span>
@@ -721,264 +702,214 @@ export default function UsersTable(props: Props) {
       </div>
 
       {/* =========================
-          DESKTOP
+          DESKTOP — usa TPTableKit
          ========================= */}
-      <div className="hidden sm:block w-full overflow-x-auto">
-        <TPTable>
-          <table className="min-w-[1060px] w-full text-sm">
-            <TPThead>
-              <tr className="border-b border-border">
-                {visibleCols.map((col) => (
-                  <TPTh
-                    key={col.key}
-                    className={col.align === "right" ? "text-right" : "text-left"}
-                    style={col.width ? { width: col.width } : undefined}
-                  >
-                    {col.sortKey ? (
-                      <button
-                        type="button"
-                        className={cn("inline-flex items-center gap-1 font-semibold hover:opacity-90")}
-                        onClick={() => toggleSort(col.sortKey!)}
-                        title={`Ordenar por ${col.label}`}
-                      >
-                        {col.label}
-                        <SortArrows dir={sortDir} active={sortBy === col.sortKey} />
-                      </button>
+      <div className="hidden sm:block w-full">
+        <TPTableKit
+          rows={sortedUsers}
+          columns={USERS_COLUMNS}
+          storageKey={USERS_COL_LS_KEY}
+          sortKey={sortBy}
+          sortDir={sortDir}
+          onSort={handleSort}
+          loading={loading}
+          emptyText="Sin resultados."
+          countLabel={(n) => `${n} ${n === 1 ? "Usuario" : "Usuarios"}`}
+          renderRow={(u: any, vis) => {
+            const status = String(u.status || "").toUpperCase();
+            const isActive = status === "ACTIVE";
+            const isPending = status === "PENDING";
+            const isBlocked = status === "BLOCKED";
+            const isMe = Boolean(meId && u.id === meId);
+
+            const canToggleThis = canEditStatus && !isMe;
+            const canEditThis = (canAdmin || isMe) && true;
+            const canDeleteThis = canAdmin && !isMe;
+
+            const canInviteThis = canAdmin && !isMe && isPending;
+            const inviteBusy = isInviteBusy(String(u.id)) || false;
+
+            const avatarSrc = u.avatarUrl ? absUrl(u.avatarUrl) : "";
+            const initials = initialsFrom(u.name || u.email || "U");
+
+            const attCount = listAttCount(u);
+
+            const pin = effectivePin(u);
+            const pinHas = pin.hasQuickPin;
+            const pinEnabled = pin.pinEnabled;
+
+            return (
+              <TPTr key={u.id}>
+                {vis.user && (
+                  <TPTd className="align-top">
+                    <button
+                      type="button"
+                      className={cn("w-full text-left rounded-xl hover:opacity-95 active:scale-[0.995] transition")}
+                      onClick={() => openView(u)}
+                      title="Ver usuario"
+                    >
+                      <div className="flex items-start gap-3">
+                        <div className="h-10 w-10 rounded-full overflow-hidden border border-border bg-surface shrink-0 mt-0.5">
+                          {avatarSrc ? (
+                            <img src={avatarSrc} alt="Avatar" className="h-full w-full object-cover" />
+                          ) : (
+                            <div className="grid h-full w-full place-items-center text-xs font-bold text-primary">
+                              {initials}
+                            </div>
+                          )}
+                        </div>
+                        <div className="min-w-0">
+                          <div className="font-semibold truncate flex items-center gap-2">
+                            <span className="truncate">{u.name || "Sin nombre"}</span>
+                            {isMe && <span className="text-[11px] text-muted">(vos)</span>}
+                          </div>
+                          <div className="text-xs text-muted truncate">{u.email}</div>
+                          {u.createdAt && (
+                            <div className="text-[11px] text-muted">Creado: {formatDateTime(u.createdAt)}</div>
+                          )}
+                        </div>
+                      </div>
+                    </button>
+                  </TPTd>
+                )}
+
+                {vis.status && (
+                  <TPTd className="align-top">
+                    <TPBadge
+                      tone={isActive ? "success" : isPending ? "warning" : "danger"}
+                      title={
+                        isPending
+                          ? "Pendiente (sin contraseña / invitación)"
+                          : isBlocked
+                          ? "Inactivo"
+                          : isActive
+                          ? "Activo"
+                          : statusLabel(u)
+                      }
+                    >
+                      {isActive ? "Activo" : isPending ? "Pendiente" : "Inactivo"}
+                    </TPBadge>
+                  </TPTd>
+                )}
+
+                {vis.pin && (
+                  <TPTd className="align-top">
+                    {pinHas ? (
+                      <TPBadge tone={pinEnabled ? "success" : "danger"} title={pinEnabled ? "PIN habilitado" : "PIN deshabilitado"} className="gap-1">
+                        {pinEnabled ? <KeyRound className="h-3.5 w-3.5" /> : <Shield className="h-3.5 w-3.5" />}
+                        {pinEnabled ? "Habilitado" : "Deshabilitado"}
+                      </TPBadge>
                     ) : (
-                      col.label
+                      <TPBadge tone="danger" title="Sin PIN">Sin PIN</TPBadge>
                     )}
-                  </TPTh>
-                ))}
-              </tr>
-            </TPThead>
+                  </TPTd>
+                )}
 
-            <TPTbody>
-              {loading ? (
-                <tr>
-                  <td colSpan={colSpan} className="px-5 py-4">
-                    Cargando…
-                  </td>
-                </tr>
-              ) : sortedUsers.length === 0 ? (
-                <TPEmptyRow colSpan={colSpan} text="Sin resultados." />
-              ) : (
-                sortedUsers.map((u: any) => {
-                  const status = String(u.status || "").toUpperCase();
-                  const isActive = status === "ACTIVE";
-                  const isPending = status === "PENDING";
-                  const isBlocked = status === "BLOCKED";
-                  const isMe = Boolean(meId && u.id === meId);
+                {vis.roles && (
+                  <TPTd className="align-top">
+                    <div className="flex flex-wrap gap-2">
+                      {(u.roles || []).length ? (
+                        u.roles.map((r: any) => (
+                          <TPBadge key={r.id ?? r.name} tone={roleTone(r, roleLabel) as any}>
+                            {roleLabel(r)}
+                          </TPBadge>
+                        ))
+                      ) : (
+                        <span className="text-muted">Sin roles</span>
+                      )}
+                      {hasSpecial(u) && (
+                        <TPBadge tone="neutral" className={specialPillCls} title="Tiene permisos especiales">
+                          Permiso especial
+                        </TPBadge>
+                      )}
+                    </div>
+                  </TPTd>
+                )}
 
-                  const canToggleThis = canEditStatus && !isMe;
-                  const canEditThis = (canAdmin || isMe) && true;
-                  const canDeleteThis = canAdmin && !isMe;
+                {vis.warehouse && (
+                  <TPTd className="align-top">
+                    {u.favoriteWarehouseId ? (
+                      <TPBadge tone="neutral">
+                        ⭐ {warehouseLabelById(u.favoriteWarehouseId) ?? u.favoriteWarehouseId}
+                      </TPBadge>
+                    ) : (
+                      <span className="text-muted">—</span>
+                    )}
+                  </TPTd>
+                )}
 
-                  const canInviteThis = canAdmin && !isMe && isPending;
-                  const inviteBusy = isInviteBusy(String(u.id)) || false;
+                {vis.actions && (
+                  <TPTd className="align-top text-right">
+                    <TPRowActions
+                      extra={
+                        <>
+                          <button
+                            type="button"
+                            className={cn("tp-btn-secondary h-9 w-9 !p-0 grid place-items-center shrink-0", (!canInviteThis || inviteBusy) && "opacity-40 cursor-not-allowed")}
+                            disabled={!canInviteThis || inviteBusy}
+                            onClick={() => { if (canInviteThis && !inviteBusy) void sendInvite(u); }}
+                            title={!canAdmin ? "Sin permisos" : isMe ? "No aplica" : !isPending ? "Solo disponible para Pendiente" : inviteBusy ? "Enviando…" : "Enviar invitación"}
+                          >
+                            {inviteBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Mail className="h-4 w-4" />}
+                          </button>
+                          <button
+                            type="button"
+                            className={cn("tp-btn-secondary h-9 w-9 !p-0 grid place-items-center shrink-0", attCount <= 0 && "opacity-40 cursor-not-allowed")}
+                            disabled={attCount <= 0}
+                            onClick={() => { if (attCount > 0) void openAttPanel(u); }}
+                            title={attCount > 0 ? `PDF/Adjuntos (${attCount})` : "Sin adjuntos"}
+                          >
+                            <Paperclip className="h-4 w-4" />
+                          </button>
+                        </>
+                      }
+                      onView={() => openView(u)}
+                      onEdit={canEditThis ? () => { void openEdit(u); } : undefined}
+                      onToggle={canToggleThis ? () => { void toggleStatus(u); } : undefined}
+                      isActive={isActive}
+                      onDelete={canDeleteThis ? () => askDelete(u) : undefined}
+                    />
+                  </TPTd>
+                )}
+              </TPTr>
+            );
+          }}
+        />
 
-                  const avatarSrc = u.avatarUrl ? absUrl(u.avatarUrl) : "";
-                  const initials = initialsFrom(u.name || u.email || "U");
-
-                  const attCount = listAttCount(u);
-
-                  const pin = effectivePin(u);
-                  const pinHas = pin.hasQuickPin;
-                  const pinEnabled = pin.pinEnabled;
-
-                  return (
-                    <tr key={u.id} className={cn("border-t border-border hover:bg-surface2/40")}>
-                      {visibleCols.map((col) => {
-                        if (col.key === "user") return (
-                          <td key="user" className="px-5 py-3 align-top">
-                            <button
-                              type="button"
-                              className={cn("w-full text-left rounded-xl hover:opacity-95 active:scale-[0.995] transition")}
-                              onClick={() => openView(u)}
-                              title="Ver usuario"
-                            >
-                              <div className="flex items-start gap-3">
-                                <div className="h-10 w-10 rounded-full overflow-hidden border border-border bg-surface shrink-0 mt-0.5">
-                                  {avatarSrc ? (
-                                    <img src={avatarSrc} alt="Avatar" className="h-full w-full object-cover" />
-                                  ) : (
-                                    <div className="grid h-full w-full place-items-center text-xs font-bold text-primary">
-                                      {initials}
-                                    </div>
-                                  )}
-                                </div>
-                                <div className="min-w-0">
-                                  <div className="font-semibold truncate flex items-center gap-2">
-                                    <span className="truncate">{u.name || "Sin nombre"}</span>
-                                    {isMe && <span className="text-[11px] text-muted">(vos)</span>}
-                                  </div>
-                                  <div className="text-xs text-muted truncate">{u.email}</div>
-                                  {u.createdAt && (
-                                    <div className="text-[11px] text-muted">Creado: {formatDateTime(u.createdAt)}</div>
-                                  )}
-                                </div>
-                              </div>
-                            </button>
-                          </td>
-                        );
-                        if (col.key === "status") return (
-                          <td key="status" className="px-5 py-3 align-top">
-                            <TPBadge
-                              tone={isActive ? "success" : isPending ? "warning" : "danger"}
-                              title={
-                                isPending
-                                  ? "Pendiente (sin contraseña / invitación)"
-                                  : isBlocked
-                                  ? "Inactivo"
-                                  : isActive
-                                  ? "Activo"
-                                  : statusLabel(u)
-                              }
-                            >
-                              {isActive ? "Activo" : isPending ? "Pendiente" : "Inactivo"}
-                            </TPBadge>
-                          </td>
-                        );
-                        if (col.key === "pin") return (
-                          <td key="pin" className="px-5 py-3 align-top">
-                            {pinHas ? (
-                              <TPBadge tone={pinEnabled ? "success" : "danger"} title={pinEnabled ? "PIN habilitado" : "PIN deshabilitado"} className="gap-1">
-                                {pinEnabled ? <KeyRound className="h-3.5 w-3.5" /> : <Shield className="h-3.5 w-3.5" />}
-                                {pinEnabled ? "Habilitado" : "Deshabilitado"}
-                              </TPBadge>
-                            ) : (
-                              <TPBadge tone="danger" title="Sin PIN">Sin PIN</TPBadge>
-                            )}
-                          </td>
-                        );
-                        if (col.key === "roles") return (
-                          <td key="roles" className="px-5 py-3 align-top">
-                            <div className="flex flex-wrap gap-2">
-                              {(u.roles || []).length ? (
-                                u.roles.map((r: any) => (
-                                  <TPBadge key={r.id ?? r.name} tone={roleTone(r, roleLabel) as any}>
-                                    {roleLabel(r)}
-                                  </TPBadge>
-                                ))
-                              ) : (
-                                <span className="text-muted">Sin roles</span>
-                              )}
-                              {hasSpecial(u) && (
-                                <TPBadge tone="neutral" className={specialPillCls} title="Tiene permisos especiales">
-                                  Permiso especial
-                                </TPBadge>
-                              )}
-                            </div>
-                          </td>
-                        );
-                        if (col.key === "warehouse") return (
-                          <td key="warehouse" className="px-5 py-3 align-top">
-                            {u.favoriteWarehouseId ? (
-                              <TPBadge tone="neutral">
-                                ⭐ {warehouseLabelById(u.favoriteWarehouseId) ?? u.favoriteWarehouseId}
-                              </TPBadge>
-                            ) : (
-                              <span className="text-muted">—</span>
-                            )}
-                          </td>
-                        );
-                        if (col.key === "actions") return (
-                          <td key="actions" className="px-5 py-3 align-top text-right">
-                            <div className="flex justify-end gap-2">
-                              <button type="button" className={cn(iconBtnBase)} onClick={() => openView(u)} title="Ver">
-                                <Eye className="h-4 w-4" />
-                              </button>
-                              <button
-                                type="button"
-                                className={cn(iconBtnBase, (!canInviteThis || inviteBusy) && disabledCls)}
-                                disabled={!canInviteThis || inviteBusy}
-                                onClick={() => { if (canInviteThis && !inviteBusy) void sendInvite(u); }}
-                                title={!canAdmin ? "Sin permisos" : isMe ? "No aplica" : !isPending ? "Solo disponible para Pendiente" : inviteBusy ? "Enviando…" : "Enviar invitación"}
-                              >
-                                {inviteBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Mail className="h-4 w-4" />}
-                              </button>
-                              <button
-                                type="button"
-                                className={cn(iconBtnBase, !canEditThis && disabledCls)}
-                                disabled={!canEditThis}
-                                onClick={() => { if (canEditThis) void openEdit(u); }}
-                                title={!canAdmin && !isMe ? "Sin permisos" : isMe ? "Editar tu perfil" : "Editar usuario"}
-                              >
-                                <Pencil className="h-4 w-4" />
-                              </button>
-                              <button
-                                type="button"
-                                className={cn(iconBtnBase, attCount <= 0 && disabledCls)}
-                                disabled={attCount <= 0}
-                                onClick={() => { if (attCount > 0) void openAttPanel(u); }}
-                                title={attCount > 0 ? `PDF/Adjuntos (${attCount})` : "Sin adjuntos"}
-                              >
-                                <Paperclip className="h-4 w-4" />
-                              </button>
-                              <button
-                                type="button"
-                                className={cn(iconBtnBase, !canToggleThis && disabledCls)}
-                                disabled={!canToggleThis}
-                                onClick={() => { if (canToggleThis) void toggleStatus(u); }}
-                                title={!canEditStatus ? "Sin permisos para cambiar estado" : isMe ? "No podés cambiar tu propio estado" : isActive ? "Inactivar usuario" : "Activar usuario"}
-                              >
-                                {isActive ? <ShieldBan className="h-4 w-4" /> : <ShieldCheck className="h-4 w-4" />}
-                              </button>
-                              <button
-                                type="button"
-                                className={cn(iconBtnBase, !canDeleteThis && disabledCls)}
-                                disabled={!canDeleteThis}
-                                onClick={() => { if (canDeleteThis) askDelete(u); }}
-                                title={!canAdmin ? "Sin permisos de administrador" : isMe ? "No podés eliminar tu propio usuario" : "Eliminar usuario"}
-                              >
-                                <Trash2 className="h-4 w-4" />
-                              </button>
-                            </div>
-                          </td>
-                        );
-                        return null;
-                      })}
-                    </tr>
-                  );
-                })
-              )}
-            </TPTbody>
-          </table>
-        </TPTable>
-      </div>
-
-      {/* ✅ Footer DESKTOP (Usuarios + paginado) */}
-      <TPTableFooter className="hidden sm:flex items-center justify-between gap-3 px-4 py-3">
-        <div className="text-xs text-muted">
-          <span className="text-text font-medium">{usersLegend}</span>
-          {totalLabel ? <span className="ml-2">• {totalLabel}</span> : null}
-        </div>
-
-        <div className="flex items-center gap-2">
-          <button
-            className={cn(iconBtnBase, page <= 1 && disabledCls)}
-            type="button"
-            disabled={page <= 1}
-            onClick={onPrev}
-            title="Anterior"
-          >
-            <ChevronLeft className="h-4 w-4" />
-          </button>
-
+        {/* Footer DESKTOP con paginado */}
+        <TPTableFooter className="flex items-center justify-between gap-3 px-4 py-3">
           <div className="text-xs text-muted">
-            <b className="text-text">{page}</b> / {totalPages}
+            <span className="text-text font-medium">{usersLegend}</span>
+            {totalLabel ? <span className="ml-2">• {totalLabel}</span> : null}
           </div>
 
-          <button
-            className={cn(iconBtnBase, page >= totalPages && disabledCls)}
-            type="button"
-            disabled={page >= totalPages}
-            onClick={onNext}
-            title="Siguiente"
-          >
-            <ChevronRight className="h-4 w-4" />
-          </button>
-        </div>
-      </TPTableFooter>
+          <div className="flex items-center gap-2">
+            <button
+              className={cn(iconBtnBase, page <= 1 && disabledCls)}
+              type="button"
+              disabled={page <= 1}
+              onClick={onPrev}
+              title="Anterior"
+            >
+              <ChevronLeft className="h-4 w-4" />
+            </button>
+
+            <div className="text-xs text-muted">
+              <b className="text-text">{page}</b> / {totalPages}
+            </div>
+
+            <button
+              className={cn(iconBtnBase, page >= totalPages && disabledCls)}
+              type="button"
+              disabled={page >= totalPages}
+              onClick={onNext}
+              title="Siguiente"
+            >
+              <ChevronRight className="h-4 w-4" />
+            </button>
+          </div>
+        </TPTableFooter>
+      </div>
 
       <UsersAttachmentPanel
         attPanelUserId={attPanelUserId}
@@ -991,6 +922,6 @@ export default function UsersTable(props: Props) {
         closeAttPanel={closeAttPanel}
         downloadAttachment={downloadAttachment}
       />
-    </TPTableWrap>
+    </>
   );
 }

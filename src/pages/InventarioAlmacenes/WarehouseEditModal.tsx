@@ -1,6 +1,6 @@
 // src/pages/InventarioAlmacenes/WarehouseEditModal.tsx
 import React, { useEffect } from "react";
-import { Loader2 } from "lucide-react";
+import { Loader2, Save } from "lucide-react";
 
 import Modal from "../../components/ui/Modal";
 import { TPButton } from "../../components/ui/TPButton";
@@ -76,7 +76,7 @@ export default function WarehouseEditModal({
             <TPButton
               onClick={onSave}
               disabled={busySave}
-              iconLeft={busySave ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+              iconLeft={busySave ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
             >
               Guardar
             </TPButton>

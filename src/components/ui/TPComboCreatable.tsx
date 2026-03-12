@@ -243,7 +243,7 @@ export default function TPComboCreatable({
   }, [open, activeItems, value]);
 
   useEffect(() => {
-    if (createOpen) setTimeout(() => createInputRef.current?.focus(), 0);
+    if (createOpen) setTimeout(() => { createInputRef.current?.select(); }, 50);
   }, [createOpen]);
 
   useEffect(() => {
@@ -480,6 +480,7 @@ export default function TPComboCreatable({
           <div className="text-sm text-muted">Tipo: {catTypeEs(type)}</div>
           <input
             ref={createInputRef}
+            autoFocus
             value={createDraft}
             onChange={(e) => setCreateDraft(e.target.value)}
             onKeyDown={(e) => {

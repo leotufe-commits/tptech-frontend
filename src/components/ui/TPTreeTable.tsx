@@ -1,0 +1,354 @@
+// src/components/ui/TPTreeTable.tsx
+/**
+ * Tabla jerárquica genérica reutilizable.
+ *
+ * Características:
+ * - Árbol con indent automático por nivel
+ * - Botón expand/collapse por fila (controlado externamente)
+ * - Drag & drop opcional (requiere DndContext en el padre)
+ * - Columnas configurables con visibilidad
+ * - Celda de acciones opcional (renderActions)
+ * - Estados loading / empty
+ */
+import React, { type ReactNode } from "react";
+import { ChevronDown, ChevronRight, GripVertical, Loader2 } from "lucide-react";
+import {
+  SortableContext,
+  useSortable,
+  verticalListSortingStrategy,
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
+
+import { cn } from "./tp";
+import {
+  TPTableElBase,
+  TPTableXScroll,
+  TPThead,
+  TPTbody,
+  TPTh,
+  TPTd,
+  TPEmptyRow,
+} from "./TPTable";
+
+/* =========================================================
+   Tipos públicos
+========================================================= */
+
+/** Forma mínima que debe tener cada nodo del árbol. */
+export type TreeNodeBase = {
+  id: string;
+  level: number;
+  /** Hijos directos (usados para saber si el nodo es expandible). */
+  children: { id: string }[];
+};
+
+/** Definición de una columna de la tabla. */
+export type TreeColDef = {
+  key: string;
+  /** Contenido del encabezado (puede incluir botones de sort). */
+  header: ReactNode;
+  /**
+   * Si false, la columna se oculta completamente (th + td).
+   * Default: true.
+   */
+  visible?: boolean;
+  /**
+   * Clase CSS aplicada tanto al <th> como al <td>.
+   * Útil para "hidden md:table-cell".
+   */
+  className?: string;
+  /**
+   * Render del contenido de la celda.
+   * La primera columna recibe automáticamente el indent + botón expand/collapse.
+   * Para acceder a campos específicos de TNode, castear: `(node as CategoryNode).name`
+   */
+  renderCell: (node: TreeNodeBase) => ReactNode;
+};
+
+export type TPTreeTableProps = {
+  /** Nodos ya aplanados y filtrados (visibles en el árbol actual). */
+  nodes: TreeNodeBase[];
+
+  /** Definición de columnas. La primera columna recibe indent + botón expand/collapse. */
+  columns: TreeColDef[];
+
+  /**
+   * Renderiza la celda de acciones (columna derecha fija).
+   * Si no se pasa, la columna de acciones no aparece.
+   */
+  renderActions?: (node: TreeNodeBase) => ReactNode;
+
+  /** IDs de nodos expandidos (manejado en el padre). */
+  expanded: Set<string>;
+  onToggleExpand: (id: string) => void;
+
+  /**
+   * Habilita drag & drop por fila.
+   * El padre debe proveer `<DndContext>` y manejar `onDragEnd`.
+   * TPTreeTable maneja `<SortableContext>` y `useSortable` internamente.
+   */
+  draggable?: boolean;
+
+  /**
+   * En modo búsqueda se oculta el drag handle y el botón expand/collapse.
+   * Default: false.
+   */
+  isSearching?: boolean;
+
+  loading?: boolean;
+
+  /** Elemento que se muestra mientras carga (en el centro). Default: spinner. */
+  loadingElement?: ReactNode;
+
+  /** Texto cuando no hay filas. */
+  emptyText?: string;
+
+  /** px de sangría por nivel de árbol. Default: 24. */
+  indentPx?: number;
+
+  /** Clase CSS extra por fila (ej: "opacity-60" para inactivos). */
+  rowClassName?: (node: TreeNodeBase) => string | undefined;
+};
+
+/* =========================================================
+   Fila interna (sin DnD)
+========================================================= */
+type RowInnerProps = {
+  node: TreeNodeBase;
+  visibleCols: TreeColDef[];
+  renderActions?: (node: TreeNodeBase) => ReactNode;
+  expanded: Set<string>;
+  onToggleExpand: (id: string) => void;
+  isSearching: boolean;
+  indentPx: number;
+  rowClassName?: (node: TreeNodeBase) => string | undefined;
+  /** Presencia de dragHandleProps activa la columna de handle en la fila. */
+  dragHandleProps?: React.HTMLAttributes<HTMLDivElement>;
+  trRef?: (el: HTMLTableRowElement | null) => void;
+  trStyle?: React.CSSProperties;
+};
+
+function RowInner({
+  node,
+  visibleCols,
+  renderActions,
+  expanded,
+  onToggleExpand,
+  isSearching,
+  indentPx,
+  rowClassName,
+  dragHandleProps,
+  trRef,
+  trStyle,
+}: RowInnerProps) {
+  const hasChildren = node.children.length > 0;
+  const isExpanded = expanded.has(node.id);
+
+  return (
+    <tr
+      ref={trRef}
+      style={trStyle}
+      className={cn(
+        "border-b border-border",
+        node.level > 0 && "bg-surface/40",
+        rowClassName?.(node)
+      )}
+    >
+      {/* Drag handle */}
+      {dragHandleProps !== undefined && (
+        <td className="w-6 pl-2">
+          <div
+            {...dragHandleProps}
+            className="cursor-grab active:cursor-grabbing text-muted/40 hover:text-muted p-0.5 rounded transition-colors"
+            title="Arrastrar para reordenar"
+          >
+            <GripVertical size={13} />
+          </div>
+        </td>
+      )}
+
+      {/* Columnas de datos */}
+      {visibleCols.map((col, idx) => (
+        <TPTd key={col.key} className={col.className}>
+          {idx === 0 ? (
+            /* Primera columna: recibe indent + botón expand/collapse */
+            <div
+              className="flex items-center gap-1.5 min-w-0"
+              style={{ paddingLeft: `${node.level * indentPx}px` }}
+            >
+              {!isSearching ? (
+                <button
+                  type="button"
+                  onClick={() => hasChildren && onToggleExpand(node.id)}
+                  className={cn(
+                    "h-6 w-6 shrink-0 flex items-center justify-center rounded",
+                    hasChildren
+                      ? "hover:bg-surface2 text-muted cursor-pointer"
+                      : "cursor-default"
+                  )}
+                  tabIndex={hasChildren ? 0 : -1}
+                  aria-label={isExpanded ? "Colapsar" : "Expandir"}
+                >
+                  {hasChildren ? (
+                    isExpanded ? (
+                      <ChevronDown size={13} className="text-muted" />
+                    ) : (
+                      <ChevronRight size={13} className="text-muted" />
+                    )
+                  ) : (
+                    <span className="block w-[13px]" />
+                  )}
+                </button>
+              ) : (
+                <span className="h-6 w-6 shrink-0" />
+              )}
+              {col.renderCell(node)}
+            </div>
+          ) : (
+            col.renderCell(node)
+          )}
+        </TPTd>
+      ))}
+
+      {/* Acciones */}
+      {renderActions && (
+        <TPTd className="text-right">{renderActions(node)}</TPTd>
+      )}
+    </tr>
+  );
+}
+
+/* =========================================================
+   Fila sortable (con DnD)
+========================================================= */
+type PlainRowProps = Omit<RowInnerProps, "dragHandleProps" | "trRef" | "trStyle">;
+
+function SortableRow(props: PlainRowProps) {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id: props.node.id });
+
+  return (
+    <RowInner
+      {...props}
+      trRef={setNodeRef}
+      trStyle={{
+        transform: CSS.Transform.toString(transform),
+        transition,
+        opacity: isDragging ? 0.45 : 1,
+        zIndex: isDragging ? 10 : undefined,
+        position: isDragging ? "relative" : undefined,
+        boxShadow: isDragging
+          ? "0 4px 16px 0 rgba(0,0,0,0.12)"
+          : undefined,
+      }}
+      dragHandleProps={
+        { ...attributes, ...listeners } as React.HTMLAttributes<HTMLDivElement>
+      }
+    />
+  );
+}
+
+/* =========================================================
+   Componente principal
+========================================================= */
+export function TPTreeTable({
+  nodes,
+  columns,
+  renderActions,
+  expanded,
+  onToggleExpand,
+  draggable = false,
+  isSearching = false,
+  loading = false,
+  loadingElement,
+  emptyText = "No hay resultados.",
+  indentPx = 24,
+  rowClassName,
+}: TPTreeTableProps) {
+  const visibleCols = columns.filter((c) => c.visible !== false);
+
+  const useDnd = draggable && !isSearching;
+
+  /* colSpan para filas de loading/empty */
+  const colCount =
+    (useDnd ? 1 : 0) +
+    visibleCols.length +
+    (renderActions ? 1 : 0);
+
+  const rowProps: PlainRowProps = {
+    visibleCols,
+    renderActions,
+    expanded,
+    onToggleExpand,
+    isSearching,
+    indentPx,
+    rowClassName,
+    // node se sobreescribe en cada render
+    node: { id: "", level: 0, children: [] },
+  };
+
+  /* ---- Cuerpo de la tabla ---- */
+  let body: ReactNode;
+
+  if (loading) {
+    body = (
+      <tr>
+        <td
+          colSpan={colCount}
+          className="px-5 py-12 text-center text-sm text-muted"
+        >
+          <div className="flex flex-col items-center gap-2">
+            {loadingElement ?? (
+              <Loader2 size={28} className="animate-spin text-muted" />
+            )}
+            Cargando…
+          </div>
+        </td>
+      </tr>
+    );
+  } else if (nodes.length === 0) {
+    body = <TPEmptyRow colSpan={colCount} text={emptyText} />;
+  } else if (useDnd) {
+    body = (
+      <SortableContext
+        items={nodes.map((n) => n.id)}
+        strategy={verticalListSortingStrategy}
+      >
+        {nodes.map((node) => (
+          <SortableRow key={node.id} {...rowProps} node={node} />
+        ))}
+      </SortableContext>
+    );
+  } else {
+    body = nodes.map((node) => (
+      <RowInner key={node.id} {...rowProps} node={node} />
+    ));
+  }
+
+  return (
+    <TPTableXScroll>
+      <TPTableElBase responsive="stack">
+        <TPThead>
+          <tr>
+            {useDnd && <th className="w-6" />}
+            {visibleCols.map((col) => (
+              <TPTh key={col.key} className={col.className}>
+                {col.header}
+              </TPTh>
+            ))}
+            {renderActions && (
+              <TPTh className="text-right">Acciones</TPTh>
+            )}
+          </tr>
+        </TPThead>
+        <TPTbody>{body}</TPTbody>
+      </TPTableElBase>
+    </TPTableXScroll>
+  );
+}

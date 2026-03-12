@@ -2,17 +2,22 @@
 import React, { useEffect, useMemo, useState } from "react";
 
 import TPSectionShell from "../components/ui/TPSectionShell";
-import { TPCard } from "../components/ui/TPCard";
 import TPSearchInput from "../components/ui/TPSearchInput";
+import TPSelect from "../components/ui/TPSelect";
+import TPInput from "../components/ui/TPInput";
 import { TPButton } from "../components/ui/TPButton";
 import { TPBadge } from "../components/ui/TPBadges";
+import { TPColumnPicker, type ColPickerDef } from "../components/ui/TPColumnPicker";
+import { SortArrows, type SortDir } from "../components/ui/TPSort";
+import TPDateRangeInline, { type TPDateRangeValue } from "../components/ui/TPDateRangeInline";
 import {
   TPTableWrap,
   TPTableHeader,
-  TPTable,
+  TPTableFooter,
+  TPTableXScroll,
+  TPTableElBase,
   TPThead,
   TPTbody,
-  TPTr,
   TPTh,
   TPTd,
   TPEmptyRow,
@@ -23,6 +28,32 @@ import { apiFetch } from "../lib/api";
 import { toast } from "../lib/toast";
 import { fmtNumberSmart } from "../lib/format";
 
+/* =========================================================
+   Column picker
+========================================================= */
+const COL_KEY = "tptech_col_movimientos";
+
+const PICKABLE_COLS: ColPickerDef[] = [
+  { key: "date", label: "Fecha", canHide: false },
+  { key: "type", label: "Tipo" },
+  { key: "code", label: "Comprobante" },
+  { key: "user", label: "Usuario" },
+  { key: "warehouse", label: "Origen / Destino" },
+  { key: "grams", label: "Gramos" },
+  { key: "note", label: "Nota" },
+];
+
+function loadColVis(): Record<string, boolean> {
+  try {
+    const raw = localStorage.getItem(COL_KEY);
+    if (raw) return JSON.parse(raw);
+  } catch {}
+  return { date: true, type: true, code: true, user: true, warehouse: true, grams: true, note: true };
+}
+
+/* =========================================================
+   Types
+========================================================= */
 type MovementKind = "IN" | "OUT" | "TRANSFER" | "ADJUST";
 
 type MovementRow = {
@@ -44,6 +75,9 @@ type MovementRow = {
   deletedAt?: string | null;
 };
 
+/* =========================================================
+   Helpers
+========================================================= */
 function s(v: any) {
   return String(v ?? "").trim();
 }
@@ -90,6 +124,11 @@ function readQueryParam(name: string) {
   }
 }
 
+function dateToIso(d: Date | null): string | null {
+  if (!d) return null;
+  return d.toISOString().slice(0, 10);
+}
+
 async function fetchMovements(body: any) {
   return apiFetch("/movimientos/list", { method: "POST", body }) as Promise<{
     rows: MovementRow[];
@@ -99,8 +138,13 @@ async function fetchMovements(body: any) {
   }>;
 }
 
+/* =========================================================
+   Sort state type
+========================================================= */
+type SortCol = "date" | "code" | "type";
+
 export default function InventarioMovimientos() {
-  // ✅ si venimos desde un almacén (WarehouseViewModal)
+  // si venimos desde un almacén (WarehouseViewModal)
   const initialWarehouseId = useMemo(() => readQueryParam("warehouseId"), []);
 
   const [loading, setLoading] = useState(false);
@@ -110,6 +154,33 @@ export default function InventarioMovimientos() {
   const [q, setQ] = useState("");
   const [kind, setKind] = useState<MovementKind | "">("");
   const [warehouseId, setWarehouseId] = useState<string>(initialWarehouseId);
+
+  /* ---------- date range filter ---------- */
+  const [dateRange, setDateRange] = useState<TPDateRangeValue>({ from: null, to: null });
+
+  /* ---------- column picker ---------- */
+  const [colVis, setColVis] = useState<Record<string, boolean>>(loadColVis);
+
+  function handleColChange(key: string, visible: boolean) {
+    setColVis((prev) => {
+      const next = { ...prev, [key]: visible };
+      try { localStorage.setItem(COL_KEY, JSON.stringify(next)); } catch {}
+      return next;
+    });
+  }
+
+  /* ---------- sort ---------- */
+  const [sortCol, setSortCol] = useState<SortCol>("date");
+  const [sortDir, setSortDir] = useState<SortDir>("desc");
+
+  function handleSort(col: SortCol) {
+    if (sortCol === col) {
+      setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    } else {
+      setSortCol(col);
+      setSortDir("desc");
+    }
+  }
 
   // pagination simple
   const [page, setPage] = useState(1);
@@ -124,9 +195,8 @@ export default function InventarioMovimientos() {
         q: s(q),
         kind: kind || null,
         warehouseId: s(warehouseId) || null,
-        // from/to quedan listos para futuro (filtros por fecha)
-        from: null,
-        to: null,
+        from: dateToIso(dateRange.from),
+        to: dateToIso(dateRange.to),
       });
 
       setRows(Array.isArray(data?.rows) ? data.rows : []);
@@ -151,7 +221,22 @@ export default function InventarioMovimientos() {
     const t = setTimeout(() => void refresh(), 160);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [q, kind, warehouseId]);
+  }, [q, kind, warehouseId, dateRange]);
+
+  /* ---------- client-side sort of current page results ---------- */
+  const sortedRows = useMemo(() => {
+    return [...rows].sort((a, b) => {
+      let cmp = 0;
+      if (sortCol === "date") {
+        cmp = new Date(a.effectiveAt).getTime() - new Date(b.effectiveAt).getTime();
+      } else if (sortCol === "code") {
+        cmp = s(a.code).localeCompare(s(b.code), "es");
+      } else if (sortCol === "type") {
+        cmp = a.kind.localeCompare(b.kind, "es");
+      }
+      return sortDir === "asc" ? cmp : -cmp;
+    });
+  }, [rows, sortCol, sortDir]);
 
   const pageInfo = useMemo(() => {
     const from = (page - 1) * pageSize + 1;
@@ -165,126 +250,213 @@ export default function InventarioMovimientos() {
       title="Movimientos"
       subtitle="Entradas / salidas / transferencias / ajustes. (Historial + documento futuro)"
     >
-      <TPCard className="mt-4">
-        <div className="flex flex-col gap-3 md:flex-row md:items-center">
-          <div className="w-full md:max-w-xl">
-            <TPSearchInput
-              value={q}
-              onChange={setQ}
-              placeholder="Buscar por nota, comprobante, usuario…"
-            />
-          </div>
-
-          <div className="flex w-full flex-col gap-2 md:flex-row md:items-center md:justify-end">
-            <select
-              className="tp-select"
-              value={kind}
-              onChange={(e) => setKind(e.target.value as any)}
-            >
-              <option value="">Todos</option>
-              <option value="IN">Entrada</option>
-              <option value="OUT">Salida</option>
-              <option value="TRANSFER">Transferencia</option>
-              <option value="ADJUST">Ajuste</option>
-            </select>
-
-            <input
-              className="tp-input md:w-[260px]"
-              value={warehouseId}
-              onChange={(e) => setWarehouseId(e.target.value)}
-              placeholder="warehouseId (por ahora)"
-            />
-
-            <div className="text-xs text-muted md:ml-2">
-              {loading ? "Cargando…" : pageInfo}
+      <TPTableWrap>
+        {/* ---- header ---- */}
+        <TPTableHeader
+          left={
+            <div className="flex items-center gap-2 flex-wrap">
+              <TPColumnPicker
+                columns={PICKABLE_COLS}
+                visibility={colVis}
+                onChange={handleColChange}
+              />
+              <TPSearchInput
+                value={q}
+                onChange={setQ}
+                placeholder="Buscar por nota, comprobante, usuario…"
+                className="w-full md:w-64"
+              />
             </div>
-          </div>
+          }
+          right={
+            <div className="flex items-center gap-2 flex-wrap justify-end">
+              {/* Filtro por tipo */}
+              <TPSelect
+                value={kind}
+                onChange={(v) => setKind(v as MovementKind | "")}
+                options={[
+                  { value: "", label: "Todos los tipos" },
+                  { value: "IN", label: "Entrada" },
+                  { value: "OUT", label: "Salida" },
+                  { value: "TRANSFER", label: "Transferencia" },
+                  { value: "ADJUST", label: "Ajuste" },
+                ]}
+              />
+
+              {/* Filtro por almacén (campo libre por ahora) */}
+              <TPInput
+                value={warehouseId}
+                onChange={setWarehouseId}
+                placeholder="ID de almacén (filtro)"
+                className="md:w-[200px]"
+              />
+
+              {/* Paginación info */}
+              <div className="text-xs text-muted whitespace-nowrap">
+                {loading ? "Cargando…" : pageInfo}
+              </div>
+            </div>
+          }
+        />
+
+        {/* ---- filtro de fechas ---- */}
+        <div className="px-4 pb-3">
+          <TPDateRangeInline
+            value={dateRange}
+            onChange={setDateRange}
+            showPresets
+            defaultPresetDays={30}
+            fromLabel="Desde"
+            toLabel="Hasta"
+            className="flex-wrap"
+          />
         </div>
 
-        <div className="mt-3">
-          <TPTableWrap>
-            <TPTableHeader left={`Movimientos: ${rows.length}`} />
+        {/* ---- tabla ---- */}
+        <TPTableXScroll>
+          <TPTableElBase responsive="scroll">
+            <TPThead>
+              <tr>
+                {/* Fecha — siempre visible, sorteable */}
+                <TPTh>
+                  <button
+                    type="button"
+                    onClick={() => handleSort("date")}
+                    className="inline-flex items-center gap-1.5 hover:text-text transition-colors"
+                  >
+                    Fecha
+                    <SortArrows dir={sortDir} active={sortCol === "date"} />
+                  </button>
+                </TPTh>
 
-            <TPTable>
-              <TPThead>
-                <TPTr>
-                  <TPTh>Fecha</TPTh>
-                  <TPTh>Tipo</TPTh>
-                  <TPTh>Comprobante</TPTh>
-                  <TPTh>Usuario</TPTh>
-                  <TPTh>Origen / Destino</TPTh>
-                  <TPTh className="text-right">Gramos</TPTh>
-                  <TPTh>Nota</TPTh>
-                </TPTr>
-              </TPThead>
-
-              <TPTbody>
-                {rows.map((m) => {
-                  const who = s(m.createdBy?.name || m.createdBy?.email) || "—";
-
-                  const wh =
-                    m.kind === "TRANSFER"
-                      ? `${s(m.fromWarehouse?.code || m.fromWarehouse?.name) || "—"} → ${
-                          s(m.toWarehouse?.code || m.toWarehouse?.name) || "—"
-                        }`
-                      : s(m.warehouse?.code || m.warehouse?.name) || "—";
-
-                  const grams = gramsForMovement(m);
-
-                  return (
-                    <TPTr
-                      key={m.id}
-                      className="cursor-pointer hover:bg-surface2/40"
+                {/* Tipo — sorteable */}
+                {colVis.type !== false && (
+                  <TPTh>
+                    <button
+                      type="button"
+                      onClick={() => handleSort("type")}
+                      className="inline-flex items-center gap-1.5 hover:text-text transition-colors"
                     >
-                      <TPTd className="text-muted">{fmtDateTime(m.effectiveAt)}</TPTd>
+                      Tipo
+                      <SortArrows dir={sortDir} active={sortCol === "type"} />
+                    </button>
+                  </TPTh>
+                )}
 
+                {/* Comprobante — sorteable */}
+                {colVis.code !== false && (
+                  <TPTh>
+                    <button
+                      type="button"
+                      onClick={() => handleSort("code")}
+                      className="inline-flex items-center gap-1.5 hover:text-text transition-colors"
+                    >
+                      Comprobante
+                      <SortArrows dir={sortDir} active={sortCol === "code"} />
+                    </button>
+                  </TPTh>
+                )}
+
+                {colVis.user !== false && <TPTh>Usuario</TPTh>}
+                {colVis.warehouse !== false && <TPTh>Origen / Destino</TPTh>}
+                {colVis.grams !== false && <TPTh className="text-right">Gramos</TPTh>}
+                {colVis.note !== false && <TPTh>Nota</TPTh>}
+              </tr>
+            </TPThead>
+
+            <TPTbody>
+              {sortedRows.map((m) => {
+                const who = s(m.createdBy?.name || m.createdBy?.email) || "—";
+
+                const wh =
+                  m.kind === "TRANSFER"
+                    ? `${s(m.fromWarehouse?.code || m.fromWarehouse?.name) || "—"} → ${
+                        s(m.toWarehouse?.code || m.toWarehouse?.name) || "—"
+                      }`
+                    : s(m.warehouse?.code || m.warehouse?.name) || "—";
+
+                const grams = gramsForMovement(m);
+
+                return (
+                  <tr
+                    key={m.id}
+                    className="border-b border-border cursor-pointer hover:bg-surface2/40 transition-colors"
+                  >
+                    {/* Fecha */}
+                    <TPTd className="text-muted">{fmtDateTime(m.effectiveAt)}</TPTd>
+
+                    {/* Tipo */}
+                    {colVis.type !== false && (
                       <TPTd>
                         <TPBadge tone={movementTone(m.kind)}>{m.kind}</TPBadge>
                       </TPTd>
+                    )}
 
+                    {/* Comprobante */}
+                    {colVis.code !== false && (
                       <TPTd className="text-muted">{s(m.code) || "—"}</TPTd>
+                    )}
 
-                      <TPTd>{who}</TPTd>
+                    {/* Usuario */}
+                    {colVis.user !== false && <TPTd>{who}</TPTd>}
 
+                    {/* Origen / Destino */}
+                    {colVis.warehouse !== false && (
                       <TPTd className="text-muted">{wh}</TPTd>
+                    )}
 
+                    {/* Gramos */}
+                    {colVis.grams !== false && (
                       <TPTd className="text-right font-semibold text-text">
                         {fmtNumberSmart(grams)}
                       </TPTd>
+                    )}
 
+                    {/* Nota */}
+                    {colVis.note !== false && (
                       <TPTd className="text-muted">{s(m.note) || "—"}</TPTd>
-                    </TPTr>
-                  );
-                })}
+                    )}
+                  </tr>
+                );
+              })}
 
-                {!loading && rows.length === 0 && (
-                  <TPEmptyRow colSpan={7} text="No hay movimientos." />
-                )}
-              </TPTbody>
-            </TPTable>
-          </TPTableWrap>
-        </div>
+              {!loading && rows.length === 0 && (
+                <TPEmptyRow colSpan={7} text="No hay movimientos." />
+              )}
+            </TPTbody>
+          </TPTableElBase>
+        </TPTableXScroll>
 
-        <div className="mt-3 flex items-center justify-between">
-          <TPButton
-            variant="secondary"
-            disabled={loading || page <= 1}
-            onClick={() => setPage((p) => Math.max(1, p - 1))}
-          >
-            ← Anterior
-          </TPButton>
+        {/* ---- footer con conteo ---- */}
+        <TPTableFooter>
+          <span>
+            {rows.length}{" "}
+            {rows.length === 1 ? "registro" : "registros"} en esta página
+            {total > 0 && ` · ${total} en total`}
+          </span>
+        </TPTableFooter>
+      </TPTableWrap>
 
-          <div className="text-xs text-muted">Página {page}</div>
+      {/* ---- paginación ---- */}
+      <div className="mt-3 flex items-center justify-between">
+        <TPButton
+          variant="secondary"
+          disabled={loading || page <= 1}
+          onClick={() => setPage((p) => Math.max(1, p - 1))}
+        >
+          ← Anterior
+        </TPButton>
 
-          <TPButton
-            variant="secondary"
-            disabled={loading || page * pageSize >= total}
-            onClick={() => setPage((p) => p + 1)}
-          >
-            Siguiente →
-          </TPButton>
-        </div>
-      </TPCard>
+        <div className="text-xs text-muted">Página {page}</div>
+
+        <TPButton
+          variant="secondary"
+          disabled={loading || page * pageSize >= total}
+          onClick={() => setPage((p) => p + 1)}
+        >
+          Siguiente →
+        </TPButton>
+      </div>
     </TPSectionShell>
   );
 }

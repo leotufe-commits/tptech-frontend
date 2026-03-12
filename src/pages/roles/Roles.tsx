@@ -1,6 +1,6 @@
 // tptech-frontend/src/pages/Roles.tsx
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Pencil, Trash2, Loader2, Plus } from "lucide-react";
+import { Plus } from "lucide-react";
 
 import { useAuth } from "../../context/AuthContext";
 
@@ -20,21 +20,13 @@ import { fetchPermissions, type Permission } from "../../services/permissions";
 import ConfirmDeleteDialog from "../../components/ui/ConfirmDeleteDialog";
 import { useConfirmDelete } from "../../hooks/useConfirmDelete";
 import TPAlert from "../../components/ui/TPAlert";
-import { SortArrows } from "../../components/ui/TPSort";
 import { TPBadge } from "../../components/ui/TPBadges";
-import TPIconButton from "../../components/ui/TPIconButton";
 import TPButton from "../../components/ui/TPButton";
+import TPRowActions from "../../components/ui/TPRowActions";
+import { TPSectionShell } from "../../components/ui/TPSectionShell";
 
-import {
-  TPTableWrap,
-  TPTableHeader,
-  TPTable,
-  TPThead,
-  TPTh,
-  TPTbody,
-  TPTr,
-  TPEmptyRow,
-} from "../../components/ui/TPTable";
+import { TPTr } from "../../components/ui/TPTable";
+import { TPTableKit, type TPColDef } from "../../components/ui/TPTableKit";
 
 import RoleEditorModal from "./RoleEditorModal";
 
@@ -56,6 +48,12 @@ function isOwnerRole(r: RoleLite) {
   return String((r as any)?.code || "").toUpperCase().trim() === "OWNER";
 }
 
+const ROLE_COLS: TPColDef[] = [
+  { key: "rol",      label: "Rol",     canHide: false, sortKey: "ROLE" },
+  { key: "tipo",     label: "Tipo",    sortKey: "TYPE" },
+  { key: "acciones", label: "Acciones", canHide: false, align: "right" },
+];
+
 /* =========================
    Row (memo)
 ========================= */
@@ -76,39 +74,16 @@ const RoleRow = React.memo(function RoleRow({
   const isEditingThis = editingRoleId === r.id;
 
   return (
-    <TPTr>
+    <TPTr key={r.id}>
       <td className="px-3 py-2 font-semibold">{roleLabel(r)}</td>
-
       <td className="px-3 py-2 hidden sm:table-cell">
         <TPBadge size="sm">{r.isSystem ? "Sistema" : "Personalizado"}</TPBadge>
       </td>
-
       <td className="px-3 py-2 text-right">
-        <div className="flex items-center justify-end gap-2">
-          <TPIconButton
-            disabled={!canAdmin || isEditingThis}
-            onClick={() => (!canAdmin ? null : onOpenEdit(r))}
-            title={
-              !canAdmin
-                ? "Sin permisos"
-                : isEditingThis
-                ? "Cargando..."
-                : isOwnerRole(r)
-                ? "Editar nombre (Propietario)"
-                : "Editar rol"
-            }
-          >
-            {isEditingThis ? <Loader2 className="h-4 w-4 animate-spin" /> : <Pencil className="h-4 w-4" />}
-          </TPIconButton>
-
-          <TPIconButton
-            disabled={deleteDisabled || isEditingThis}
-            onClick={() => (deleteDisabled || isEditingThis ? null : onDelete(r))}
-            title={deleteDisabled ? "No se puede eliminar un rol del sistema" : "Eliminar rol"}
-          >
-            <Trash2 className="h-4 w-4" />
-          </TPIconButton>
-        </div>
+        <TPRowActions
+          onEdit={canAdmin && !isEditingThis ? () => onOpenEdit(r) : undefined}
+          onDelete={!deleteDisabled && !isEditingThis ? () => onDelete(r) : undefined}
+        />
       </td>
     </TPTr>
   );
@@ -257,10 +232,6 @@ export default function RolesPage() {
       return;
     }
     setSortDir((d) => (d === "ASC" ? "DESC" : "ASC"));
-  }
-
-  function sortActive(col: "ROLE" | "TYPE") {
-    return sortBy === col;
   }
 
   const sortDirForArrows: "asc" | "desc" = sortDir === "ASC" ? "asc" : "desc";
@@ -426,100 +397,45 @@ export default function RolesPage() {
   if (!canView) return <div className="p-6">Sin permisos para ver roles.</div>;
 
   return (
-    <div className="px-4 py-4 sm:p-6 space-y-6">
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
-        <div>
-          <h1 className="text-2xl font-semibold">Roles</h1>
-          <p className="text-sm text-muted">Gestión de roles y permisos.</p>
-        </div>
-
-        {canAdmin ? (
+    <TPSectionShell
+      title="Roles"
+      subtitle="Gestión de roles y permisos."
+      right={
+        canAdmin ? (
           <TPButton
             variant="primary"
             onClick={openCreateModal}
             disabled={creatingOpenLoading}
             loading={creatingOpenLoading}
             iconLeft={!creatingOpenLoading ? <Plus className="h-4 w-4" /> : undefined}
-            className="w-full sm:w-auto sm:min-w-[176px]"
           >
             Nuevo Rol
           </TPButton>
-        ) : null}
-      </div>
-
+        ) : undefined
+      }
+    >
       {pageErr ? <TPAlert tone="danger">{pageErr}</TPAlert> : null}
 
-      <TPTableWrap>
-        <TPTableHeader
-          left={<span>Listado</span>}
-          right={
-            <span className="text-xs text-muted">
-              {sortedRoles.length} {sortedRoles.length === 1 ? "rol" : "roles"}
-            </span>
-          }
-        />
-
-        <TPTable>
-          <table className="w-full text-sm">
-            <TPThead className="border-b border-border">
-              <tr>
-                <TPTh className="text-left">
-                  <button
-                    type="button"
-                    className="inline-flex items-center gap-2 hover:opacity-90"
-                    onClick={() => toggleSort("ROLE")}
-                    title="Ordenar por Rol"
-                  >
-                    <span>Rol</span>
-                    <SortArrows dir={sortDirForArrows} active={sortActive("ROLE")} />
-                  </button>
-                </TPTh>
-
-                <TPTh className="hidden sm:table-cell text-left">
-                  <button
-                    type="button"
-                    className="inline-flex items-center gap-2 hover:opacity-90"
-                    onClick={() => toggleSort("TYPE")}
-                    title="Ordenar por Tipo"
-                  >
-                    <span>Tipo</span>
-                    <SortArrows dir={sortDirForArrows} active={sortActive("TYPE")} />
-                  </button>
-                </TPTh>
-
-                <TPTh className="text-right">Acciones</TPTh>
-              </tr>
-            </TPThead>
-
-            <TPTbody>
-              {loading ? (
-                <TPTr>
-                  {/* ✅ FIX: td nativo para usar colSpan */}
-                  <td colSpan={3} className="px-3 py-2">
-                    <div className="flex items-center gap-2 py-2">
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                      Cargando…
-                    </div>
-                  </td>
-                </TPTr>
-              ) : sortedRoles.length === 0 ? (
-                <TPEmptyRow colSpan={3} text="No hay roles." />
-              ) : (
-                sortedRoles.map((r) => (
-                  <RoleRow
-                    key={r.id}
-                    r={r}
-                    canAdmin={canAdmin}
-                    editingRoleId={editingRoleId}
-                    onOpenEdit={openEditModal}
-                    onDelete={onDelete}
-                  />
-                ))
-              )}
-            </TPTbody>
-          </table>
-        </TPTable>
-      </TPTableWrap>
+      <TPTableKit
+        rows={sortedRoles}
+        columns={ROLE_COLS}
+        sortKey={sortBy}
+        sortDir={sortDirForArrows}
+        onSort={(key) => toggleSort(key as "ROLE" | "TYPE")}
+        loading={loading}
+        emptyText="No hay roles."
+        countLabel={(n) => `${n} ${n === 1 ? "rol" : "roles"}`}
+        renderRow={(r) => (
+          <RoleRow
+            key={r.id}
+            r={r}
+            canAdmin={canAdmin}
+            editingRoleId={editingRoleId}
+            onOpenEdit={openEditModal}
+            onDelete={onDelete}
+          />
+        )}
+      />
 
       {/* CREATE */}
       <RoleEditorModal
@@ -562,6 +478,6 @@ export default function RolesPage() {
       />
 
       <ConfirmDeleteDialog {...dialogProps} />
-    </div>
+    </TPSectionShell>
   );
 }
