@@ -1,5 +1,5 @@
 // tptech-frontend/src/components/users/edit/partials/DeletePinConfirmModal.tsx
-import React, { useEffect, useMemo, useRef } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { cn } from "../../users.ui";
 
 // 🔒 Import defensivo (evita errores de named exports en Vite)
@@ -27,10 +27,19 @@ type Props = {
 
   onClose: () => void;
   onConfirm: (currentPin: string) => void;
+
+  // ✅ "Olvidé mi PIN": confirma con contraseña de cuenta en lugar del PIN
+  forgotBusy?: boolean;
+  onConfirmWithPassword?: (password: string) => void;
 };
 
 export default function DeletePinConfirmModal(props: Props) {
-  const { open, busy, current, setCurrent, err, setErr, onClose, onConfirm } = props;
+  const { open, busy, current, setCurrent, err, setErr, onClose, onConfirm, forgotBusy, onConfirmWithPassword } = props;
+
+  // ✅ modo: "pin" = flujo normal, "password" = olvidé mi PIN
+  const [mode, setMode] = useState<"pin" | "password">("pin");
+  const [passwordValue, setPasswordValue] = useState("");
+  const passwordRef = useRef<HTMLInputElement | null>(null);
 
   const refs = useRef<Array<HTMLInputElement | null>>([]);
   const digits = useMemo(() => {
@@ -84,10 +93,37 @@ export default function DeletePinConfirmModal(props: Props) {
   }
 
   function closeAndReset() {
-    if (busy) return;
+    if (busy || forgotBusy) return;
     setErr(null);
     setCurrent("");
+    setMode("pin");
+    setPasswordValue("");
     onClose();
+  }
+
+  function switchToForgot() {
+    setErr(null);
+    setCurrent("");
+    setPasswordValue("");
+    setMode("password");
+    setTimeout(() => passwordRef.current?.focus(), 0);
+  }
+
+  function switchToPin() {
+    setErr(null);
+    setPasswordValue("");
+    setMode("pin");
+    setTimeout(() => focusAt(0), 0);
+  }
+
+  function confirmWithPassword() {
+    const pw = passwordValue.trim();
+    if (!pw) {
+      setErr("Ingresá tu contraseña.");
+      passwordRef.current?.focus();
+      return;
+    }
+    onConfirmWithPassword?.(pw);
   }
 
   function confirm() {
@@ -100,9 +136,11 @@ export default function DeletePinConfirmModal(props: Props) {
     onConfirm(clean);
   }
 
-  // ✅ foco automático al abrir
+  // ✅ foco automático al abrir + resetear modo
   useEffect(() => {
     if (open) {
+      setMode("pin");
+      setPasswordValue("");
       setTimeout(() => focusAt(0), 0);
     }
   }, [open]);
@@ -139,147 +177,181 @@ export default function DeletePinConfirmModal(props: Props) {
         <div className="px-5 py-5">
           <div className="flex min-h-[220px] items-center justify-center">
             <div className="w-full max-w-[320px] text-center">
-              <div
-                className="tp-card rounded-2xl px-4 py-5 space-y-4"
-                style={{
-                  border: "1px solid var(--border)",
-                  background: "color-mix(in oklab, var(--card) 92%, var(--bg))",
-                }}
-              >
-                <div className="text-xs text-muted">
-                  Se desactiva la <b>clave rápida</b> para este usuario.
-                </div>
 
-                <div className="text-xs text-muted">
-                  Para eliminar tu PIN, ingresá tu <b>PIN actual</b>.
-                </div>
+              {mode === "pin" ? (
+                <>
+                  <div
+                    className="tp-card rounded-2xl px-4 py-5 space-y-4"
+                    style={{
+                      border: "1px solid var(--border)",
+                      background: "color-mix(in oklab, var(--card) 92%, var(--bg))",
+                    }}
+                  >
+                    <div className="text-xs text-muted">
+                      Se desactiva la <b>clave rápida</b> para este usuario.
+                    </div>
 
-                {/* ✅ 4 campos */}
-                <div className="flex justify-center">
-                  <div className="flex gap-2">
-                    {[0, 1, 2, 3].map((i) => (
-                      <input
-                        key={i}
-                        ref={(el) => {
-                          refs.current[i] = el;
-                        }}
-                        className={cn(
-                          "tp-input",
-                          "!mt-0",
-                          "!w-[40px]",
-                          "shrink-0",
-                          "h-[42px]",
-                          "rounded-md",
-                          "px-0 text-center text-lg",
-                          "tracking-[0.25em]",
-                          "focus:ring-2 focus:ring-[color:var(--primary)]",
-                          busy && "opacity-70"
-                        )}
-                        type="password"
-                        inputMode="numeric"
-                        autoComplete="one-time-code"
-                        maxLength={1}
-                        // visual como print 2 (puntos)
-                        value={digits[i] ? "•" : ""}
+                    <div className="text-xs text-muted">
+                      Para eliminar tu PIN, ingresá tu <b>PIN actual</b>.
+                    </div>
+
+                    {/* 4 campos */}
+                    <div className="flex justify-center">
+                      <div className="flex gap-2">
+                        {[0, 1, 2, 3].map((i) => (
+                          <input
+                            key={i}
+                            ref={(el) => {
+                              refs.current[i] = el;
+                            }}
+                            className={cn(
+                              "tp-input",
+                              "!mt-0",
+                              "!w-[40px]",
+                              "shrink-0",
+                              "h-[42px]",
+                              "rounded-md",
+                              "px-0 text-center text-lg",
+                              "tracking-[0.25em]",
+                              "focus:ring-2 focus:ring-[color:var(--primary)]",
+                              busy && "opacity-70"
+                            )}
+                            type="password"
+                            inputMode="numeric"
+                            autoComplete="one-time-code"
+                            maxLength={1}
+                            value={digits[i] ? "•" : ""}
+                            disabled={busy}
+                            onFocus={() => setErr(null)}
+                            onChange={(e) => {
+                              if (busy) return;
+                              setErr(null);
+                              const raw = e.target.value;
+                              if (raw.length > 1) { fillAllFrom(i, raw); return; }
+                              const ch = String(raw || "").replace(/\D/g, "").slice(0, 1);
+                              setDigitAt(i, ch);
+                              if (ch && i < 3) setTimeout(() => focusAt(i + 1), 0);
+                            }}
+                            onKeyDown={(e) => {
+                              if (busy) return;
+                              if (e.key === "Backspace") {
+                                e.preventDefault();
+                                setErr(null);
+                                if (digits[i]) { setDigitAt(i, ""); return; }
+                                if (i > 0) { setDigitAt(i - 1, ""); setTimeout(() => focusAt(i - 1), 0); }
+                                return;
+                              }
+                              if (e.key === "ArrowLeft") { e.preventDefault(); if (i > 0) focusAt(i - 1); return; }
+                              if (e.key === "ArrowRight") { e.preventDefault(); if (i < 3) focusAt(i + 1); return; }
+                              if (e.key === "Enter") {
+                                e.preventDefault();
+                                if (canSubmit) confirm();
+                                else { const firstEmpty = digits.findIndex((d) => !d); focusAt(firstEmpty >= 0 ? firstEmpty : 0); }
+                                return;
+                              }
+                              if (e.key === "Escape") { e.preventDefault(); if (!busy) closeAndReset(); }
+                            }}
+                            onPaste={(e) => {
+                              if (busy) return;
+                              e.preventDefault();
+                              setErr(null);
+                              fillAllFrom(i, e.clipboardData?.getData("text") || "");
+                            }}
+                          />
+                        ))}
+                      </div>
+                    </div>
+
+                    {err ? <div className="text-xs text-red-400">{err}</div> : null}
+                    <div className="text-[11px] text-muted">Debe tener 4 dígitos.</div>
+                  </div>
+
+                  {/* buttons */}
+                  <div className="mt-6 flex justify-center gap-2">
+                    <button type="button" className="tp-btn-secondary" disabled={busy} onClick={clearAll}>
+                      Limpiar
+                    </button>
+                    <button
+                      type="button"
+                      className={cn("tp-btn-primary", "bg-red-600 hover:bg-red-700 border-red-600", (!canSubmit || busy) && "opacity-60")}
+                      disabled={!canSubmit}
+                      onClick={confirm}
+                    >
+                      Eliminar PIN
+                    </button>
+                  </div>
+
+                  {/* link "Olvidé mi PIN" */}
+                  {onConfirmWithPassword && (
+                    <div className="mt-4">
+                      <button
+                        type="button"
+                        className="text-xs text-primary underline-offset-2 hover:underline disabled:opacity-50"
                         disabled={busy}
-                        onFocus={() => setErr(null)}
+                        onClick={switchToForgot}
+                      >
+                        ¿Olvidaste tu PIN?
+                      </button>
+                    </div>
+                  )}
+                </>
+              ) : (
+                <>
+                  {/* modo "password" */}
+                  <div
+                    className="tp-card rounded-2xl px-4 py-5 space-y-4 text-left"
+                    style={{
+                      border: "1px solid var(--border)",
+                      background: "color-mix(in oklab, var(--card) 92%, var(--bg))",
+                    }}
+                  >
+                    <div className="text-sm font-semibold text-text">Restablecer PIN con contraseña</div>
+
+                    <div className="text-xs text-muted">
+                      Esto <b>eliminará tu PIN actual</b>. Luego podrás configurar uno nuevo desde la pantalla de usuario.
+                    </div>
+
+                    <div>
+                      <label className="block text-xs text-muted mb-1">Contraseña de tu cuenta</label>
+                      <input
+                        ref={passwordRef}
+                        type="password"
+                        className={cn("tp-input w-full", forgotBusy && "opacity-70")}
+                        placeholder="Ingresá tu contraseña"
+                        value={passwordValue}
+                        disabled={forgotBusy}
+                        autoComplete="current-password"
                         onChange={(e) => {
-                          if (busy) return;
                           setErr(null);
-
-                          const raw = e.target.value;
-
-                          // pegado "1234"
-                          if (raw.length > 1) {
-                            fillAllFrom(i, raw);
-                            return;
-                          }
-
-                          const ch = String(raw || "").replace(/\D/g, "").slice(0, 1);
-                          setDigitAt(i, ch);
-
-                          if (ch && i < 3) setTimeout(() => focusAt(i + 1), 0);
+                          setPasswordValue(e.target.value);
                         }}
                         onKeyDown={(e) => {
-                          if (busy) return;
-
-                          if (e.key === "Backspace") {
-                            e.preventDefault();
-                            setErr(null);
-
-                            if (digits[i]) {
-                              setDigitAt(i, "");
-                              return;
-                            }
-                            if (i > 0) {
-                              setDigitAt(i - 1, "");
-                              setTimeout(() => focusAt(i - 1), 0);
-                            }
-                            return;
-                          }
-
-                          if (e.key === "ArrowLeft") {
-                            e.preventDefault();
-                            if (i > 0) focusAt(i - 1);
-                            return;
-                          }
-
-                          if (e.key === "ArrowRight") {
-                            e.preventDefault();
-                            if (i < 3) focusAt(i + 1);
-                            return;
-                          }
-
-                          if (e.key === "Enter") {
-                            e.preventDefault();
-                            if (canSubmit) confirm();
-                            else {
-                              const firstEmpty = digits.findIndex((d) => !d);
-                              focusAt(firstEmpty >= 0 ? firstEmpty : 0);
-                            }
-                            return;
-                          }
-
-                          if (e.key === "Escape") {
-                            e.preventDefault();
-                            if (!busy) closeAndReset();
-                          }
-                        }}
-                        onPaste={(e) => {
-                          if (busy) return;
-                          e.preventDefault();
-                          setErr(null);
-                          const text = e.clipboardData?.getData("text") || "";
-                          fillAllFrom(i, text);
+                          if (e.key === "Enter") { e.preventDefault(); confirmWithPassword(); }
+                          if (e.key === "Escape") { e.preventDefault(); if (!forgotBusy) switchToPin(); }
                         }}
                       />
-                    ))}
+                    </div>
+
+                    {err ? <div className="text-xs text-red-400">{err}</div> : null}
                   </div>
-                </div>
 
-                {err ? <div className="text-xs text-red-400">{err}</div> : null}
-                <div className="text-[11px] text-muted">Debe tener 4 dígitos.</div>
-              </div>
+                  {/* buttons */}
+                  <div className="mt-6 flex justify-center gap-2">
+                    <button type="button" className="tp-btn-secondary" disabled={forgotBusy} onClick={switchToPin}>
+                      Volver
+                    </button>
+                    <button
+                      type="button"
+                      className={cn("tp-btn-primary", "bg-red-600 hover:bg-red-700 border-red-600", (forgotBusy || !passwordValue.trim()) && "opacity-60")}
+                      disabled={forgotBusy || !passwordValue.trim()}
+                      onClick={confirmWithPassword}
+                    >
+                      {forgotBusy ? "Procesando…" : "Eliminar PIN"}
+                    </button>
+                  </div>
+                </>
+              )}
 
-              {/* buttons (centrados como print 2) */}
-              <div className="mt-10 flex justify-center gap-2">
-                <button type="button" className="tp-btn-secondary" disabled={busy} onClick={clearAll}>
-                  Limpiar
-                </button>
-
-                <button
-                  type="button"
-                  className={cn(
-                    "tp-btn-primary",
-                    "bg-red-600 hover:bg-red-700 border-red-600",
-                    (!canSubmit || busy) && "opacity-60"
-                  )}
-                  disabled={!canSubmit}
-                  onClick={confirm}
-                >
-                  Eliminar PIN
-                </button>
-              </div>
             </div>
           </div>
         </div>

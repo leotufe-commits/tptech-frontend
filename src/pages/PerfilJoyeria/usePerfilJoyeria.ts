@@ -7,7 +7,7 @@ import { useMe } from "../../hooks/useMe";
 
 import { listCatalog, createCatalogItem, type CatalogItem, type CatalogType } from "../../services/catalogs";
 
-import type { CompanyBody, ExistingBody, JewelryAttachment, JewelryProfile } from "./perfilJoyeria.types";
+import type { CompanyBody, EmailConfigBody, ExistingBody, JewelryAttachment, JewelryProfile } from "./perfilJoyeria.types";
 
 import { absUrl, buildPayload, devLog, getInitials, jewelryToDraft, normalizeJewelryResponse, pickJewelryFromMe } from "./perfilJoyeria.utils";
 
@@ -40,6 +40,7 @@ export function usePerfilJoyeria() {
 
   const [existing, setExisting] = useState<ExistingBody | null>(null);
   const [company, setCompany] = useState<CompanyBody | null>(null);
+  const [emailConfig, setEmailConfig] = useState<EmailConfigBody | null>(null);
 
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -121,6 +122,7 @@ export function usePerfilJoyeria() {
     const d = jewelryToDraft(jewelryFromContext);
     setExisting(d.existing);
     setCompany(d.company);
+    setEmailConfig(d.emailConfig);
     setDirty(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [jewelryFromContext?.id, jewelryFromContext?.updatedAt]);
@@ -173,12 +175,22 @@ export function usePerfilJoyeria() {
     [isEditMode]
   );
 
+  const setEmailField = useCallback(
+    <K extends keyof EmailConfigBody>(key: K, value: EmailConfigBody[K]) => {
+      if (!isEditMode) return;
+      setDirty(true);
+      setEmailConfig((p) => (p ? { ...p, [key]: value } : p));
+    },
+    [isEditMode]
+  );
+
   const resetToServerValues = useCallback(() => {
     if (!serverJewelry) return;
     const d = jewelryToDraft(serverJewelry);
 
     setExisting(d.existing);
     setCompany(d.company);
+    setEmailConfig(d.emailConfig);
     setDirty(false);
     setMsg(null);
 
@@ -203,13 +215,13 @@ export function usePerfilJoyeria() {
   }, [busyAny, isEditMode, dirty, resetToServerValues, goToViewMode, navigate]);
 
   const onSave = useCallback(async () => {
-    if (!existing || !company || !isEditMode) return;
+    if (!existing || !company || !emailConfig || !isEditMode) return;
 
     try {
       setMsg(null);
       setSaving(true);
 
-      const payload = buildPayload(existing, company);
+      const payload = buildPayload(existing, company, emailConfig);
 
       const resp = await apiFetch<any>("/company/me", {
         method: "PATCH",
@@ -223,6 +235,7 @@ export function usePerfilJoyeria() {
       const d = jewelryToDraft(updated);
       setExisting(d.existing);
       setCompany(d.company);
+      setEmailConfig(d.emailConfig);
 
       setDirty(false);
       setMsg("Guardado correctamente ✅");
@@ -456,6 +469,7 @@ export function usePerfilJoyeria() {
     serverJewelry,
     existing,
     company,
+    emailConfig,
 
     dirty,
     saving,
@@ -492,6 +506,7 @@ export function usePerfilJoyeria() {
 
     setExistingField,
     setCompanyField,
+    setEmailField,
     resetToServerValues,
     onSave,
     setMsg,

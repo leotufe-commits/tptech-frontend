@@ -4,7 +4,7 @@ import ReactDOM from "react-dom";
 import { ChevronDown, Check, Search } from "lucide-react";
 import { cn, TP_INPUT } from "./tp";
 
-type Option = { value: string; label: string };
+type Option = { value: string; label: string; disabled?: boolean };
 
 type Props = {
   value: string;
@@ -268,6 +268,7 @@ export default function TPComboFixed({
           filteredOptions.map((opt, idx) => {
             const isSelected = opt.value === value;
             const isActive = idx === activeIndex;
+            const isOptDisabled = !!opt.disabled;
             return (
               <button
                 key={opt.value}
@@ -275,13 +276,16 @@ export default function TPComboFixed({
                 type="button"
                 role="option"
                 aria-selected={isSelected}
-                onMouseEnter={() => setActiveIndex(idx)}
-                onClick={() => pick(opt.value)}
+                aria-disabled={isOptDisabled}
+                onMouseEnter={() => !isOptDisabled && setActiveIndex(idx)}
+                onClick={() => !isOptDisabled && pick(opt.value)}
                 tabIndex={-1}
                 className={cn(
-                  "w-full rounded-xl px-3 py-2 text-left text-sm flex items-center justify-between gap-2",
-                  "hover:bg-primary/10 transition",
-                  isActive && "bg-primary/10",
+                  "w-full rounded-xl px-3 py-2 text-left text-sm flex items-center justify-between gap-2 transition",
+                  isOptDisabled
+                    ? "opacity-40 cursor-not-allowed"
+                    : "hover:bg-primary/10 cursor-pointer",
+                  !isOptDisabled && isActive && "bg-primary/10",
                   isSelected && "font-semibold"
                 )}
               >

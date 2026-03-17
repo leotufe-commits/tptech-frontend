@@ -7,7 +7,8 @@ export type SellerDraft = {
   documentType: string;
   documentNumber: string;
   email: string;
-  phone: string;
+  phoneCountry: string;
+  phoneNumber: string;
   street: string;
   streetNumber: string;
   city: string;
@@ -21,6 +22,7 @@ export type SellerDraft = {
   isFavorite: boolean;
   notes: string;
   warehouseIds: string[];
+  userId: string | null;
   contactName: string;
   contactPhone: string;
   contactEmail: string;

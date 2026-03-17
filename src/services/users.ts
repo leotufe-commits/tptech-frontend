@@ -34,6 +34,8 @@ export type PinAdminMeta = {
 export type UserListItem = {
   id: string;
   email: string;
+  firstName?: string;
+  lastName?: string;
   name?: string | null;
   status: UserStatus;
   avatarUrl?: string | null;
@@ -41,6 +43,17 @@ export type UserListItem = {
   createdAt?: string;
   updatedAt?: string;
   roles?: Role[];
+
+  documentType?: string;
+  documentNumber?: string;
+  phoneCountry?: string;
+  phoneNumber?: string;
+  street?: string;
+  number?: string;
+  city?: string;
+  province?: string;
+  postalCode?: string;
+  country?: string;
 
   /** ✅ quick pin */
   pinEnabled?: boolean;
@@ -71,6 +84,8 @@ export type UserAttachment = {
 export type UserDetail = {
   id: string;
   email: string;
+  firstName?: string;
+  lastName?: string;
   name?: string | null;
   status: UserStatus;
   avatarUrl?: string | null;
@@ -124,6 +139,8 @@ export type UserDetailResponse = { user: UserDetail };
 
 export type CreateUserBody = {
   email: string;
+  firstName: string;
+  lastName: string;
   name?: string | null;
   password?: string;
   roleIds?: string[];
@@ -147,6 +164,8 @@ export type UpdateFavoriteWarehouseResponse = {
 };
 
 export type UpdateUserProfileBody = {
+  firstName?: string;
+  lastName?: string;
   name?: string | null;
 
   phoneCountry?: string;
@@ -590,4 +609,36 @@ export async function uploadUserAttachmentsInstant(
 
 export async function deleteUserAttachmentInstant(userId: string, attachmentId: string): Promise<OkResponse> {
   return apiFetch<OkResponse>(`/users/${userId}/attachments/${attachmentId}`, { method: "DELETE", ...ADMIN_401 });
+}
+
+/* =========================
+   ✅ ADMIN: enviar link de reset de contraseña a usuario ACTIVE
+   - Solo para ACTIVE (PENDING usa /invite)
+   - devLink presente solo en NODE_ENV=development && MAIL_EXPOSE_DEV_LINK=true
+     Si devLink está en la respuesta, significa que el mail NO fue enviado al destinatario
+     real (está en modo preview/console). Mostralo como aviso en la UI.
+========================= */
+/* =========================
+   ✅ SELF: resetear PIN con contraseña (olvidé mi PIN)
+   - Solo para el usuario autenticado sobre su propio PIN
+   - Requiere contraseña de cuenta, no el PIN actual
+   - devuelve el mismo shape que removeMyQuickPin
+========================= */
+export async function resetMyQuickPinWithPassword(
+  password: string
+): Promise<{ ok: true; hasQuickPin: boolean; pinEnabled: boolean; quickPinUpdatedAt?: string | null; pinLockDisabled?: boolean }> {
+  return apiFetch(`/users/me/quick-pin/reset-with-password`, {
+    method: "POST",
+    body: { password },
+    on401: "throw",
+  });
+}
+
+export async function sendResetLinkForUser(
+  userId: string
+): Promise<{ ok: true; devLink?: string }> {
+  return apiFetch<{ ok: true; devLink?: string }>(`/users/${userId}/send-reset`, {
+    method: "POST",
+    ...ADMIN_401,
+  });
 }

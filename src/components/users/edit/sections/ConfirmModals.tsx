@@ -18,6 +18,13 @@ type Props = {
   confirmDisableSpecialOpen: boolean;
   setConfirmDisableSpecialOpen: (v: boolean) => void;
   onConfirmDisableSpecialAndClear: () => void;
+
+  // resend invite
+  confirmResendInviteOpen: boolean;
+  setConfirmResendInviteOpen: (v: boolean) => void;
+  resendInviteEmail: string;
+  resendInviteBusy: boolean;
+  onConfirmResendInvite: () => void;
 };
 
 export function ConfirmModals({
@@ -33,6 +40,12 @@ export function ConfirmModals({
   confirmDisableSpecialOpen,
   setConfirmDisableSpecialOpen,
   onConfirmDisableSpecialAndClear,
+
+  confirmResendInviteOpen,
+  setConfirmResendInviteOpen,
+  resendInviteEmail,
+  resendInviteBusy,
+  onConfirmResendInvite,
 }: Props) {
   const busyPinClear = pinToggling || specialClearing;
   const busySpecialClear = specialClearing;
@@ -110,6 +123,41 @@ export function ConfirmModals({
               title="Deshabilitar y borrar permisos"
             >
               {busySpecialClear ? "Borrando…" : "Deshabilitar y borrar"}
+            </button>
+          </div>
+        </div>
+      </Modal>
+      {/* ✅ Confirm: reenviar invitación */}
+      <Modal
+        open={confirmResendInviteOpen}
+        title="Reenviar invitación"
+        onClose={() => setConfirmResendInviteOpen(false)}
+        wide={false}
+        overlayClassName={confirmOverlay}
+        busy={resendInviteBusy}
+      >
+        <div className="space-y-3">
+          <TPNotice tone="info">
+            Se enviará una nueva invitación a <b>{resendInviteEmail}</b>. El link anterior quedará invalidado automáticamente.
+          </TPNotice>
+
+          <div className="flex justify-end gap-2 pt-1">
+            <button
+              className={cn("tp-btn-secondary", resendInviteBusy && "opacity-60")}
+              type="button"
+              disabled={resendInviteBusy}
+              onClick={() => setConfirmResendInviteOpen(false)}
+            >
+              Cancelar
+            </button>
+
+            <button
+              className={cn("tp-btn-primary", resendInviteBusy && "opacity-60")}
+              type="button"
+              disabled={resendInviteBusy}
+              onClick={onConfirmResendInvite}
+            >
+              {resendInviteBusy ? "Enviando…" : "Reenviar"}
             </button>
           </div>
         </div>

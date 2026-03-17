@@ -1,4 +1,3 @@
-// tptech-frontend/src/components/ui/TPComboCreatable.tsx
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { ChevronDown, X, Plus } from "lucide-react";
@@ -8,44 +7,45 @@ import type { CatalogItem, CatalogType } from "../../services/catalogs";
 /* =========================
    Types
 ========================= */
-type Props = {
+
+type BaseProps = {
   label?: string;
   placeholder?: string;
-
   type: CatalogType;
   items: CatalogItem[];
   loading?: boolean;
   onRefresh?: () => void;
-
-  value: string;
-  onChange: (value: string) => void;
-
   allowCreate?: boolean;
   onCreate?: (label: string) => Promise<void> | void;
-
   disabled?: boolean;
-
-  /** create = puede usar favorito | edit = nunca */
   mode: "create" | "edit";
-
-  /** ✅ para tab horizontal */
   tabIndex?: number;
-
-  /**
-   * ✅ Si el label lo maneja un wrapper externo (TPField),
-   * evitamos renderizar label acá.
-   */
   noLabelSpace?: boolean;
-
   children?: never;
   dangerouslySetInnerHTML?: never;
 };
+
+type PropsSingle = BaseProps & {
+  multiple?: false;
+  value: string;
+  onChange: (value: string) => void;
+};
+
+type PropsMulti = BaseProps & {
+  multiple: true;
+  values: string[];
+  onChange: (values: string[]) => void;
+};
+
+export type Props = PropsSingle | PropsMulti;
 
 /* =========================
    Utils
 ========================= */
 function norm(s: string) {
-  return String(s || "").trim().replace(/\s+/g, " ");
+  return String(s || "")
+    .trim()
+    .replace(/\s+/g, " ");
 }
 
 function catTypeEs(t: CatalogType) {
@@ -67,9 +67,9 @@ function renderHighlightedLabel(label: string, query: string) {
   const src = String(label || "");
   const srcLower = src.toLowerCase();
   const qLower = q.toLowerCase();
-
   let i = 0;
   const parts: React.ReactNode[] = [];
+
   while (i < src.length) {
     const idx = srcLower.indexOf(qLower, i);
     if (idx === -1) {
@@ -77,11 +77,12 @@ function renderHighlightedLabel(label: string, query: string) {
       break;
     }
     if (idx > i) parts.push(src.slice(i, idx));
-
-    const match = src.slice(idx, idx + qLower.length);
     parts.push(
-      <span key={`${idx}-${match}`} className="text-primary font-semibold">
-        {match}
+      <span
+        key={`${idx}-${label.slice(idx, idx + qLower.length)}`}
+        className="text-primary font-semibold"
+      >
+        {src.slice(idx, idx + qLower.length)}
       </span>
     );
     i = idx + qLower.length;
@@ -91,14 +92,12 @@ function renderHighlightedLabel(label: string, query: string) {
 }
 
 /* =========================
-   Modal
+   Create item modal (shared)
 ========================= */
-function Modal({
+function CreateModal({
   open,
   title,
   children,
-  confirmText,
-  cancelText,
   loading,
   onClose,
   onConfirm,
@@ -106,8 +105,6 @@ function Modal({
   open: boolean;
   title: string;
   children: React.ReactNode;
-  confirmText: string;
-  cancelText: string;
   loading?: boolean;
   onClose: () => void;
   onConfirm: () => void;
@@ -119,17 +116,15 @@ function Modal({
       <div className="absolute inset-0 bg-black/40" onMouseDown={onClose} />
       <div className="absolute inset-0 grid place-items-center p-4">
         <div
-  role="dialog"
-  aria-modal="true"
-  className="w-full max-w-[420px] rounded-2xl border border-border bg-card shadow-soft"
-  onMouseDown={(e) => e.stopPropagation()}
->
+          role="dialog"
+          aria-modal="true"
+          className="w-full max-w-[420px] rounded-2xl border border-border bg-card shadow-soft"
+          onMouseDown={(e) => e.stopPropagation()}
+        >
           <div className="p-4 border-b border-border">
             <div className="text-base font-semibold text-text">{title}</div>
           </div>
-
           <div className="p-4">{children}</div>
-
           <div className="p-4 pt-2 flex justify-end gap-2 border-t border-border">
             <button
               className="tp-btn-secondary"
@@ -137,7 +132,7 @@ function Modal({
               disabled={loading}
               type="button"
             >
-              {cancelText}
+              Cancelar
             </button>
             <button
               className="tp-btn-primary"
@@ -145,7 +140,7 @@ function Modal({
               disabled={loading}
               type="button"
             >
-              {loading ? "Guardando…" : confirmText}
+              {loading ? "Guardando…" : "Agregar"}
             </button>
           </div>
         </div>
@@ -156,30 +151,24 @@ function Modal({
 }
 
 /* =========================
-   Component
+   SINGLE mode component
 ========================= */
-export default function TPComboCreatable({
+function SingleCombo({
   label,
   placeholder = "Seleccionar o escribir…",
-
   type,
   items,
   loading = false,
   onRefresh,
-
   value,
   onChange,
-
   allowCreate = false,
   onCreate,
-
   disabled = false,
   mode,
-
   tabIndex,
-
   noLabelSpace = false,
-}: Props) {
+}: PropsSingle) {
   const wrapRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
   const createInputRef = useRef<HTMLInputElement | null>(null);
@@ -197,8 +186,8 @@ export default function TPComboCreatable({
   );
 
   const didAutoPickRef = useRef(false);
-
   const refocusAfterCreateRef = useRef(false);
+
   function closeCreateModalAndRefocus() {
     refocusAfterCreateRef.current = true;
     setCreateOpen(false);
@@ -212,10 +201,8 @@ export default function TPComboCreatable({
     if (disabled || creating) return;
     if (didAutoPickRef.current) return;
     if (norm(value)) return;
-
     const fav = activeItems.find((i) => i.isFavorite);
     if (!fav?.label) return;
-
     didAutoPickRef.current = true;
     onChange(fav.label);
   }, [mode, activeItems, value, disabled, creating, onChange]);
@@ -234,7 +221,6 @@ export default function TPComboCreatable({
       setActiveIndex(-1);
       return;
     }
-
     const v = norm(value).toLowerCase();
     const idx = v
       ? activeItems.findIndex((it) => norm(it.label).toLowerCase() === v)
@@ -243,7 +229,11 @@ export default function TPComboCreatable({
   }, [open, activeItems, value]);
 
   useEffect(() => {
-    if (createOpen) setTimeout(() => { createInputRef.current?.select(); }, 50);
+    if (createOpen) {
+      setTimeout(() => {
+        createInputRef.current?.select();
+      }, 50);
+    }
   }, [createOpen]);
 
   useEffect(() => {
@@ -258,13 +248,11 @@ export default function TPComboCreatable({
     setErrMsg(null);
     setOpen(true);
     onRefresh?.();
-
     const v = norm(value).toLowerCase();
     const idx = v
       ? activeItems.findIndex((it) => norm(it.label).toLowerCase() === v)
       : -1;
     setActiveIndex(activeItems.length ? (idx >= 0 ? idx : 0) : -1);
-
     setTimeout(() => inputRef.current?.focus(), 0);
   }
 
@@ -281,7 +269,6 @@ export default function TPComboCreatable({
     if (!onCreate) return closeCreateModalAndRefocus();
     const clean = norm(createDraft);
     if (!clean) return;
-
     setCreating(true);
     try {
       await onCreate(clean);
@@ -303,6 +290,7 @@ export default function TPComboCreatable({
   }
 
   const canClear = Boolean(value) && !disabled && !creating;
+  const rightPad = canClear ? "pr-16" : "pr-10";
 
   function onInputKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
     if (disabled || creating || createOpen) return;
@@ -335,7 +323,6 @@ export default function TPComboCreatable({
         openDropdown();
         return;
       }
-
       if (activeIndex >= 0 && activeIndex < activeItems.length) {
         e.preventDefault();
         pick(activeItems[activeIndex].label);
@@ -356,20 +343,14 @@ export default function TPComboCreatable({
 
   const showLabel = !noLabelSpace && Boolean(String(label || "").trim());
 
-  // ✅ Igual que TPInput “clásico”: padding para X + caret
-  const rightPad = canClear ? "pr-16" : "pr-10";
-
   return (
     <>
-      {/* ✅ MISMO WRAPPER QUE TPInput: space-y-1 + label text-xs font-medium */}
       <div
         ref={wrapRef}
         className={cn("w-full", !noLabelSpace && "space-y-1")}
         onBlurCapture={onWrapBlurCapture}
       >
-        {showLabel ? (
-          <div className="text-xs font-medium text-muted">{label}</div>
-        ) : null}
+        {showLabel && <div className="text-xs font-medium text-muted">{label}</div>}
 
         <div className="relative">
           <input
@@ -409,8 +390,6 @@ export default function TPComboCreatable({
             onClick={openDropdown}
             disabled={disabled || creating}
             tabIndex={-1}
-            aria-label="Abrir"
-            title="Abrir"
           >
             <ChevronDown size={16} />
           </button>
@@ -448,15 +427,14 @@ export default function TPComboCreatable({
                       "border border-dashed border-border hover:bg-primary/10",
                       "flex items-center gap-2 text-primary"
                     )}
-                    title="Agregar nuevo ítem"
                   >
                     <Plus className="h-4 w-4" />
                     <span className="underline">Agregar ítem</span>
-                    {norm(value) ? (
+                    {norm(value) && (
                       <span className="text-muted no-underline">
-                        “{norm(value)}”
+                        "{norm(value)}"
                       </span>
-                    ) : null}
+                    )}
                   </button>
                 )}
               </div>
@@ -467,11 +445,9 @@ export default function TPComboCreatable({
         {errMsg && <div className="mt-2 text-xs text-red-600">{errMsg}</div>}
       </div>
 
-      <Modal
+      <CreateModal
         open={createOpen}
         title="Agregar nuevo ítem"
-        confirmText="Agregar"
-        cancelText="Cancelar"
         loading={creating}
         onClose={() => !creating && closeCreateModalAndRefocus()}
         onConfirm={doCreate}
@@ -497,7 +473,350 @@ export default function TPComboCreatable({
             placeholder="Escribí el ítem…"
           />
         </div>
-      </Modal>
+      </CreateModal>
     </>
   );
+}
+
+/* =========================
+   MULTI mode component
+========================= */
+function MultiCombo({
+  label,
+  placeholder = "Escribir o seleccionar…",
+  type,
+  items,
+  onRefresh,
+  values,
+  onChange,
+  allowCreate = false,
+  onCreate,
+  disabled = false,
+  noLabelSpace = false,
+}: PropsMulti) {
+  const wrapRef = useRef<HTMLDivElement | null>(null);
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  const createInputRef = useRef<HTMLInputElement | null>(null);
+
+  const [query, setQuery] = useState("");
+  const [open, setOpen] = useState(false);
+  const [activeIndex, setActiveIndex] = useState(-1);
+  const [createOpen, setCreateOpen] = useState(false);
+  const [createDraft, setCreateDraft] = useState("");
+  const [creating, setCreating] = useState(false);
+  const [errMsg, setErrMsg] = useState<string | null>(null);
+
+  const safeItems = useMemo(() => (Array.isArray(items) ? items : []), [items]);
+  const activeItems = useMemo(
+    () => safeItems.filter((i) => i.isActive !== false),
+    [safeItems]
+  );
+
+  const suggestions = useMemo(() => {
+    const lowerValues = values.map((v) => norm(v).toLowerCase());
+    const available = activeItems.filter(
+      (it) => !lowerValues.includes(norm(it.label).toLowerCase())
+    );
+    if (!query.trim()) return available;
+    const q = query.trim().toLowerCase();
+    return available.filter((it) =>
+      norm(it.label).toLowerCase().includes(q)
+    );
+  }, [activeItems, values, query]);
+
+  useEffect(() => {
+    function onDoc(e: MouseEvent) {
+      if (!wrapRef.current?.contains(e.target as any)) setOpen(false);
+    }
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, []);
+
+  useEffect(() => {
+    if (!open) setActiveIndex(-1);
+    else setActiveIndex(suggestions.length > 0 ? 0 : -1);
+  }, [open, suggestions.length]);
+
+  useEffect(() => {
+    if (createOpen) {
+      setTimeout(() => createInputRef.current?.select(), 50);
+    }
+  }, [createOpen]);
+
+  function addValue(val: string) {
+    const clean = norm(val);
+    if (!clean) return;
+    if (
+      values.map((v) => norm(v).toLowerCase()).includes(clean.toLowerCase())
+    ) {
+      setQuery("");
+      return;
+    }
+    onChange([...values, clean]);
+    setQuery("");
+  }
+
+  function removeValue(idx: number) {
+    onChange(values.filter((_, i) => i !== idx));
+  }
+
+  function openDropdown() {
+    if (disabled) return;
+    setOpen(true);
+    onRefresh?.();
+  }
+
+  async function doCreate() {
+    const clean = norm(createDraft);
+    if (!clean) return;
+    setCreating(true);
+    try {
+      if (onCreate) await onCreate(clean);
+      onRefresh?.();
+      addValue(clean);
+      setCreateOpen(false);
+    } catch (e: any) {
+      setErrMsg(String(e?.message || "No se pudo crear el ítem."));
+    } finally {
+      setCreating(false);
+    }
+  }
+
+  function handleKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
+    if (disabled) return;
+
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      if (!open) openDropdown();
+      setActiveIndex((prev) => Math.min(prev + 1, suggestions.length - 1));
+      return;
+    }
+
+    if (e.key === "ArrowUp") {
+      e.preventDefault();
+      setActiveIndex((prev) => Math.max(prev - 1, 0));
+      return;
+    }
+
+    if (e.key === "Enter") {
+      e.preventDefault();
+      if (activeIndex >= 0 && activeIndex < suggestions.length) {
+        addValue(suggestions[activeIndex].label);
+      } else if (query.trim()) {
+        const trimmed = query.trim();
+        const existsInCatalog = activeItems.some(
+          (it) => norm(it.label).toLowerCase() === norm(trimmed).toLowerCase()
+        );
+        if (!existsInCatalog && allowCreate && onCreate) {
+          setCreateDraft(trimmed);
+          setCreateOpen(true);
+          setOpen(false);
+        } else {
+          addValue(trimmed);
+        }
+      }
+      return;
+    }
+
+    if (e.key === "Escape") {
+      e.preventDefault();
+      setOpen(false);
+      return;
+    }
+
+    if (e.key === "Backspace" && !query && values.length > 0) {
+      removeValue(values.length - 1);
+    }
+  }
+
+  function onWrapBlur(e: React.FocusEvent<HTMLDivElement>) {
+    const next = e.relatedTarget as HTMLElement | null;
+    if (!next || !wrapRef.current?.contains(next)) setOpen(false);
+  }
+
+  const showLabel = !noLabelSpace && Boolean(String(label || "").trim());
+  const showCreateButton =
+    allowCreate &&
+    query.trim() &&
+    !activeItems.some(
+      (it) => norm(it.label).toLowerCase() === norm(query).toLowerCase()
+    );
+
+  return (
+    <>
+      <div
+        ref={wrapRef}
+        className={cn("w-full", !noLabelSpace && "space-y-1")}
+        onBlurCapture={onWrapBlur}
+      >
+        {showLabel && <div className="text-xs font-medium text-muted">{label}</div>}
+
+        <div className="relative">
+          <div
+            className={cn(
+              TP_INPUT,
+              "w-full min-h-[38px] h-auto py-1.5 px-2 flex flex-wrap gap-1 items-center cursor-text",
+              disabled && "opacity-60 cursor-not-allowed"
+            )}
+            onClick={() => {
+              if (!disabled) {
+                inputRef.current?.focus();
+                openDropdown();
+              }
+            }}
+          >
+            {values.map((v, i) => (
+              <span
+                key={i}
+                className="inline-flex items-center gap-1 rounded-lg bg-primary/10 border border-primary/20 px-2 py-0.5 text-xs font-medium text-text shrink-0"
+              >
+                {v}
+                {!disabled && (
+                  <button
+                    type="button"
+                    onMouseDown={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                    }}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      removeValue(i);
+                    }}
+                    className="text-muted hover:text-text"
+                    tabIndex={-1}
+                  >
+                    <X size={10} />
+                  </button>
+                )}
+              </span>
+            ))}
+
+            <input
+              ref={inputRef}
+              type="text"
+              value={query}
+              onChange={(e) => {
+                setQuery(e.target.value);
+                if (!open) openDropdown();
+              }}
+              onFocus={openDropdown}
+              onKeyDown={handleKeyDown}
+              disabled={disabled}
+              placeholder={values.length === 0 ? placeholder : ""}
+              className="flex-1 min-w-[80px] bg-transparent text-sm text-text outline-none placeholder:text-muted"
+              tabIndex={disabled ? -1 : 0}
+            />
+
+            <ChevronDown size={16} className="text-muted shrink-0 ml-auto" />
+          </div>
+
+          {open && !disabled && (
+            <div className="absolute z-40 mt-2 w-full rounded-2xl border border-border bg-card shadow-soft">
+              <div className="max-h-56 overflow-auto p-2">
+                {suggestions.length === 0 && !showCreateButton && (
+                  <div className="px-3 py-2 text-sm text-muted">
+                    {query.trim() ? (
+                      <span>
+                        Presioná{" "}
+                        <kbd className="rounded bg-surface2 px-1 text-xs font-mono">
+                          Enter
+                        </kbd>{" "}
+                        para agregar "{query.trim()}"
+                      </span>
+                    ) : (
+                      "Sin opciones disponibles"
+                    )}
+                  </div>
+                )}
+
+                {suggestions.map((it, idx) => (
+                  <button
+                    key={it.id}
+                    type="button"
+                    tabIndex={-1}
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={() => addValue(it.label)}
+                    onMouseEnter={() => setActiveIndex(idx)}
+                    className={cn(
+                      "w-full rounded-xl px-3 py-2 text-left text-sm hover:bg-primary/10",
+                      idx === activeIndex && "bg-primary/10"
+                    )}
+                  >
+                    {renderHighlightedLabel(it.label, query)}
+                  </button>
+                ))}
+
+                {showCreateButton && (
+                  <button
+                    type="button"
+                    tabIndex={-1}
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={() => {
+                      if (allowCreate && onCreate) {
+                        setCreateDraft(query.trim());
+                        setCreateOpen(true);
+                        setOpen(false);
+                      } else {
+                        addValue(query.trim());
+                      }
+                    }}
+                    className={cn(
+                      "mt-1 w-full rounded-xl px-3 py-2 text-left text-sm",
+                      "border border-dashed border-border hover:bg-primary/10",
+                      "flex items-center gap-2 text-primary"
+                    )}
+                  >
+                    <Plus className="h-4 w-4" />
+                    <span className="underline">Agregar</span>
+                    <span className="text-muted">"{query.trim()}"</span>
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+
+        {errMsg && <div className="mt-2 text-xs text-red-600">{errMsg}</div>}
+      </div>
+
+      <CreateModal
+        open={createOpen}
+        title="Agregar nuevo ítem"
+        loading={creating}
+        onClose={() => !creating && setCreateOpen(false)}
+        onConfirm={doCreate}
+      >
+        <div className="space-y-2">
+          <div className="text-sm text-muted">Tipo: {catTypeEs(type)}</div>
+          <input
+            ref={createInputRef}
+            value={createDraft}
+            onChange={(e) => setCreateDraft(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                void doCreate();
+              }
+              if (e.key === "Escape") {
+                e.preventDefault();
+                if (!creating) setCreateOpen(false);
+              }
+            }}
+            className={cn(TP_INPUT, "w-full")}
+            placeholder="Escribí el ítem…"
+          />
+        </div>
+      </CreateModal>
+    </>
+  );
+}
+
+/* =========================
+   Public export — dispatcher
+========================= */
+export default function TPComboCreatable(props: Props) {
+  if (props.multiple === true) {
+    return <MultiCombo {...props} />;
+  }
+  return <SingleCombo {...props} />;
 }

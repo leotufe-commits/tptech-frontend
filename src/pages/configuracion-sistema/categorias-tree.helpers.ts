@@ -126,6 +126,28 @@ export function getRootIds(nodes: CategoryNode[]): string[] {
 }
 
 /* ==========================================================
+   Devuelve los IDs de todos los descendientes de una categoría
+   (a partir de la lista plana de rows)
+========================================================== */
+export function getDescendantIds(rows: CategoryRow[], parentId: string): string[] {
+  const ids: string[] = [];
+  let queue = [parentId];
+  while (queue.length > 0) {
+    const nextQueue: string[] = [];
+    for (const pid of queue) {
+      for (const r of rows) {
+        if (r.parentId === pid) {
+          ids.push(r.id);
+          nextQueue.push(r.id);
+        }
+      }
+    }
+    queue = nextQueue;
+  }
+  return ids;
+}
+
+/* ==========================================================
    Devuelve todos los ids del árbol (útil para expandir/colapsar todo)
 ========================================================== */
 export function getAllIds(nodes: CategoryNode[]): string[] {

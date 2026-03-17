@@ -28,6 +28,8 @@ export type PaymentMethodRow = {
   name: string;
   code: string;
   type: PaymentMethodType;
+  /** Nombre personalizado visible para el tipo. Si está vacío, usar el label estándar del tipo. */
+  customTypeLabel: string;
   adjustmentType: PaymentAdjustmentType;
   adjustmentValue: string | null;
   isFavorite: boolean;
@@ -44,6 +46,8 @@ export type PaymentMethodPayload = {
   name: string;
   code?: string;
   type: PaymentMethodType;
+  /** Nombre visible personalizado para el tipo. Opcional, default vacío. */
+  customTypeLabel?: string;
   adjustmentType: PaymentAdjustmentType;
   adjustmentValue?: string | null;
   isFavorite?: boolean;

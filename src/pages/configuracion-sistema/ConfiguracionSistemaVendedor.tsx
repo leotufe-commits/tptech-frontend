@@ -8,6 +8,9 @@ import { toast } from "../../lib/toast";
 import { apiFetch } from "../../lib/api";
 import { sellersApi, type SellerRow } from "../../services/sellers";
 
+import { fetchUsers } from "../../services/users";
+import type { UserListItem } from "../../services/users";
+
 import { VendedoresTable } from "./vendedor/VendedoresTable";
 import { VendedorEditModal } from "./vendedor/VendedorEditModal";
 import { VendedorViewModal } from "./vendedor/VendedorViewModal";
@@ -15,11 +18,34 @@ import { EMPTY_DRAFT, COL_LS_KEY } from "./vendedor/vendedor.constants";
 import { loadColVis } from "./vendedor/vendedor.helpers";
 import type { SellerDraft, SortKey, WarehouseOption } from "./vendedor/vendedor.types";
 
+function splitPhone(phone: string) {
+  const parts = String(phone || "")
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+
+  const phoneCountry = parts[0]?.startsWith("+") ? parts[0] : "";
+  const phoneNumber = phoneCountry
+    ? parts.slice(1).join(" ")
+    : parts.join(" ");
+
+  return { phoneCountry, phoneNumber };
+}
+
+function buildPhone(phoneCountry: string, phoneNumber: string) {
+  return [phoneCountry, phoneNumber]
+    .map((v) => String(v || "").trim())
+    .filter(Boolean)
+    .join(" ")
+    .trim();
+}
+
 export default function ConfiguracionSistemaVendedor() {
   /* ---- datos ---- */
   const [rows, setRows] = useState<SellerRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [warehouses, setWarehouses] = useState<WarehouseOption[]>([]);
+  const [users, setUsers] = useState<UserListItem[]>([]);
 
   /* ---- tabla ---- */
   const [q, setQ] = useState("");
@@ -41,10 +67,12 @@ export default function ConfiguracionSistemaVendedor() {
   const [busyFavorite, setBusyFavorite] = useState<string | null>(null);
   const [busyAvatar, setBusyAvatar] = useState(false);
   const [deletingAttachmentId, setDeletingAttachmentId] = useState<string | null>(null);
+  const [pendingAvatarUrl, setPendingAvatarUrl] = useState<string | null>(null);
 
   /* ---- draft ---- */
   const [draft, setDraft] = useState<SellerDraft>(EMPTY_DRAFT);
   const [submitted, setSubmitted] = useState(false);
+  const [stagedFiles, setStagedFiles] = useState<File[]>([]);
   const firstInputRef = useRef<HTMLInputElement>(null);
 
   /* ---- carga ---- */
@@ -71,10 +99,29 @@ export default function ConfiguracionSistemaVendedor() {
     }
   }
 
+  async function loadUsers() {
+    try {
+      const resp = await fetchUsers({ limit: 200 });
+      const list = Array.isArray((resp as any).users) ? (resp as any).users : [];
+      setUsers(list.filter((u: UserListItem) => u.status === "ACTIVE"));
+    } catch {
+      setUsers([]);
+    }
+  }
+
   useEffect(() => {
     void load();
     void loadWarehouses();
+    void loadUsers();
   }, []);
+
+  /* ---- usuarios ya vinculados (excluye el vendedor en edición) ---- */
+  const usedUserIds = useMemo(() => {
+    const currentId = editTarget?.userId ?? null;
+    return rows
+      .filter((r) => r.userId && r.userId !== currentId)
+      .map((r) => r.userId as string);
+  }, [rows, editTarget]);
 
   /* ---- sort ---- */
   function toggleSort(key: SortKey) {
@@ -133,11 +180,15 @@ export default function ConfiguracionSistemaVendedor() {
     setEditTarget(null);
     setDraft({ ...EMPTY_DRAFT });
     setSubmitted(false);
+    setStagedFiles([]);
+    setPendingAvatarUrl(null);
     setEditOpen(true);
     setTimeout(() => firstInputRef.current?.focus(), 50);
   }
 
   function openEdit(row: SellerRow) {
+    const { phoneCountry, phoneNumber } = splitPhone(row.phone);
+
     setEditTarget(row);
     setDraft({
       firstName: row.firstName,
@@ -146,7 +197,8 @@ export default function ConfiguracionSistemaVendedor() {
       documentType: row.documentType,
       documentNumber: row.documentNumber,
       email: row.email,
-      phone: row.phone,
+      phoneCountry,
+      phoneNumber,
       street: row.street ?? "",
       streetNumber: row.streetNumber ?? "",
       city: row.city ?? "",
@@ -161,9 +213,10 @@ export default function ConfiguracionSistemaVendedor() {
       isFavorite: row.isFavorite,
       notes: row.notes,
       warehouseIds: row.warehouses.map((w) => w.warehouseId),
-      contactName: "",
-      contactPhone: "",
-      contactEmail: "",
+      userId: row.userId ?? null,
+      contactName: row.contactName ?? "",
+      contactPhone: row.contactPhone ?? "",
+      contactEmail: row.contactEmail ?? "",
     });
     setSubmitted(false);
     setEditOpen(true);
@@ -183,6 +236,8 @@ export default function ConfiguracionSistemaVendedor() {
       return;
     }
 
+    const phone = buildPhone(draft.phoneCountry, draft.phoneNumber);
+
     const payload = {
       firstName: draft.firstName.trim(),
       lastName: draft.lastName.trim(),
@@ -190,7 +245,7 @@ export default function ConfiguracionSistemaVendedor() {
       documentType: draft.documentType.trim() || undefined,
       documentNumber: draft.documentNumber.trim() || undefined,
       email: draft.email.trim() || undefined,
-      phone: draft.phone.trim() || undefined,
+      phone: phone || undefined,
       street: draft.street.trim() || undefined,
       streetNumber: draft.streetNumber.trim() || undefined,
       city: draft.city.trim() || undefined,
@@ -207,6 +262,10 @@ export default function ConfiguracionSistemaVendedor() {
       isFavorite: draft.isFavorite,
       notes: draft.notes.trim() || undefined,
       warehouseIds: draft.warehouseIds,
+      userId: draft.userId || null,
+      contactName: draft.contactName.trim() || undefined,
+      contactPhone: draft.contactPhone.trim() || undefined,
+      contactEmail: draft.contactEmail.trim() || undefined,
     };
 
     setBusySave(true);
@@ -216,7 +275,30 @@ export default function ConfiguracionSistemaVendedor() {
         setRows((prev) => prev.map((r) => (r.id === updated.id ? updated : r)));
         toast.success("Vendedor actualizado.");
       } else {
-        const created = await sellersApi.create(payload);
+        let created = await sellersApi.create(payload);
+
+        // Avatar del usuario vinculado (si se eligió aplicar)
+        if (pendingAvatarUrl) {
+          try {
+            const resp = await fetch(pendingAvatarUrl);
+            const blob = await resp.blob();
+            const file = new File([blob], "avatar.jpg", { type: blob.type || "image/jpeg" });
+            created = await sellersApi.uploadAvatar(created.id, file);
+          } catch {
+            /* ignora error de avatar */
+          }
+          setPendingAvatarUrl(null);
+        }
+
+        for (const f of stagedFiles) {
+          try {
+            const att = await sellersApi.addAttachment(created.id, f);
+            created = { ...created, attachments: [...(created.attachments ?? []), att] };
+          } catch {
+            /* ignora errores individuales de adjunto */
+          }
+        }
+        setStagedFiles([]);
         setRows((prev) => [created, ...prev]);
         toast.success("Vendedor creado.");
       }
@@ -240,6 +322,29 @@ export default function ConfiguracionSistemaVendedor() {
       toast.error(e?.data?.message ?? e?.message ?? "Error al subir imagen.");
     } finally {
       setBusyAvatar(false);
+    }
+  }
+
+  /* ---- aplicar avatar de usuario ---- */
+  async function handleApplyUserAvatar(url: string) {
+    if (editTarget) {
+      // Vendedor existente: fetch + upload inmediato
+      setBusyAvatar(true);
+      try {
+        const resp = await fetch(url);
+        const blob = await resp.blob();
+        const file = new File([blob], "avatar.jpg", { type: blob.type || "image/jpeg" });
+        const updated = await sellersApi.uploadAvatar(editTarget.id, file);
+        setRows((prev) => prev.map((r) => (r.id === updated.id ? updated : r)));
+        setEditTarget(updated);
+      } catch {
+        // ignora error silencioso — el usuario puede subir manualmente
+      } finally {
+        setBusyAvatar(false);
+      }
+    } else {
+      // Vendedor nuevo: guardar URL para aplicar después de crear
+      setPendingAvatarUrl(url);
     }
   }
 
@@ -270,6 +375,41 @@ export default function ConfiguracionSistemaVendedor() {
         attachments: (editTarget.attachments ?? []).filter((a) => a.id !== item.id),
       };
       setEditTarget(updated);
+      setRows((prev) => prev.map((r) => (r.id === updated.id ? updated : r)));
+    } catch (e: any) {
+      toast.error(e?.data?.message ?? e?.message ?? "Error al eliminar adjunto.");
+    } finally {
+      setDeletingAttachmentId(null);
+    }
+  }
+
+  /* ---- adjuntos desde view ---- */
+  async function handleAddAttachmentFromView(file: File) {
+    if (!viewTarget) return;
+    try {
+      const att = await sellersApi.addAttachment(viewTarget.id, file);
+      const updated: SellerRow = {
+        ...viewTarget,
+        attachments: [...(viewTarget.attachments ?? []), att],
+      };
+      setViewTarget(updated);
+      setRows((prev) => prev.map((r) => (r.id === updated.id ? updated : r)));
+      toast.success("Adjunto agregado.");
+    } catch (e: any) {
+      toast.error(e?.data?.message ?? e?.message ?? "Error al subir adjunto.");
+    }
+  }
+
+  async function handleDeleteAttachmentFromView(item: TPAttachmentItem) {
+    if (!viewTarget) return;
+    setDeletingAttachmentId(item.id);
+    try {
+      await sellersApi.deleteAttachment(viewTarget.id, item.id);
+      const updated: SellerRow = {
+        ...viewTarget,
+        attachments: (viewTarget.attachments ?? []).filter((a) => a.id !== item.id),
+      };
+      setViewTarget(updated);
       setRows((prev) => prev.map((r) => (r.id === updated.id ? updated : r)));
     } catch (e: any) {
       toast.error(e?.data?.message ?? e?.message ?? "Error al eliminar adjunto.");
@@ -372,8 +512,13 @@ export default function ConfiguracionSistemaVendedor() {
         busySave={busySave}
         busyAvatar={busyAvatar}
         warehouses={warehouses}
+        users={users}
+        usedUserIds={usedUserIds}
         deletingAttachmentId={deletingAttachmentId}
+        stagedFiles={stagedFiles}
+        onStagedFilesChange={setStagedFiles}
         onAvatarUpload={handleAvatarUpload}
+        onApplyUserAvatar={handleApplyUserAvatar}
         onAddAttachment={handleAddAttachment}
         onDeleteAttachment={handleDeleteAttachment}
         onSave={handleSave}
@@ -385,6 +530,9 @@ export default function ConfiguracionSistemaVendedor() {
         open={viewOpen}
         seller={viewTarget}
         onClose={() => setViewOpen(false)}
+        onAddAttachment={handleAddAttachmentFromView}
+        onDeleteAttachment={handleDeleteAttachmentFromView}
+        deletingAttachmentId={deletingAttachmentId}
       />
 
       <ConfirmDeleteDialog

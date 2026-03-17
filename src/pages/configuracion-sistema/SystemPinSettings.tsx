@@ -2,7 +2,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useAuth } from "../../context/AuthContext";
 import { KeyRound, Save, X, Users, ArrowRight, AlertTriangle } from "lucide-react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useLocation } from "react-router-dom";
 import { TPSegmentedPills } from "../../components/ui/TPBadges";
 
 // ✅ reutilizamos el modal de PIN (4 dígitos) sin navegar a Usuarios
@@ -29,6 +29,8 @@ const PINLOCK_PENDING_KEY = "tptech_pinlock_pending_enable_v1";
 export default function SystemPinSettings() {
   const auth = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
+  const returnTo: string | undefined = (location.state as any)?.returnTo;
 
   // ✅ Ruta real de Usuarios en TU app
   const USERS_ROUTE = "/configuracion/usuarios";
@@ -54,14 +56,12 @@ export default function SystemPinSettings() {
   const [saved, setSaved] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
 
-  // ✅ confirmación “salir a Usuarios con cambios”
-  const [showLeaveConfirm, setShowLeaveConfirm] = useState(false);
-  const [leaveBusy, setLeaveBusy] = useState(false);
-
   // ✅ modal: “no podés activar lock sin PIN”
   const [showNeedPinConfirm, setShowNeedPinConfirm] = useState(false);
 
   const savedTimerRef = useRef<number | null>(null);
+  // ✅ bloquea resetToServerValues() mientras el auto-guardado (pending enable) está en curso
+  const pendingEnableInProgressRef = useRef(false);
 
   // snapshot “server”
   const serverSnapRef = useRef<Snapshot>({
@@ -107,6 +107,9 @@ export default function SystemPinSettings() {
   const dirty = useMemo(() => computeDirty(), [enabled, timeoutMin, quickSwitchEnabled, requireOnSwitch]);
 
   function resetToServerValues() {
+    // ✅ no resetear mientras el auto-guardado del pending enable está en curso
+    if (pendingEnableInProgressRef.current) return;
+
     const snap = computeServerSnapshot();
     serverSnapRef.current = snap;
 
@@ -117,8 +120,6 @@ export default function SystemPinSettings() {
 
     setErr(null);
     setSaved(null);
-    setShowLeaveConfirm(false);
-    setLeaveBusy(false);
     setShowNeedPinConfirm(false);
   }
 
@@ -180,20 +181,6 @@ export default function SystemPinSettings() {
     setPinDraft("");
     setPinDraft2("");
     setPinFlowStep("NEW");
-  }
-
-  function goToMyUserPinSetup() {
-    // ✅ ruta: abrir edición + tab=config + abrir flujo PIN + volver
-    if (!meId) {
-      navigate(USERS_ROUTE);
-      return;
-    }
-    const qs = new URLSearchParams();
-    qs.set("edit", meId);
-    qs.set("tab", "config");
-    qs.set("pin", "setup");
-    qs.set("return", "/configuracion-sistema/pin");
-    navigate(`${USERS_ROUTE}?${qs.toString()}`);
   }
 
   function setPendingEnableSnapshot() {
@@ -285,21 +272,62 @@ export default function SystemPinSettings() {
     // aplicar y guardar una sola vez
     clearPendingEnable();
 
+    const safeMin = clamp(Number(raw.timeoutMinutes || 5), 1, 720);
+
+    // ✅ bloqueamos resetToServerValues() para evitar que refreshMe() revierta el estado
+    pendingEnableInProgressRef.current = true;
+
+    // ✅ actualizamos estado visual para que el pill muestre "Habilitado"
     setEnabled(true);
     setQuickSwitchEnabled(Boolean(raw.quickSwitchEnabled));
     setRequireOnSwitch(Boolean(raw.requireOnUserSwitch));
-    setTimeoutMin(clamp(Number(raw.timeoutMinutes || 5), 1, 720));
+    setTimeoutMin(safeMin);
 
+    // ✅ llamamos directo con los valores de raw (evita leer estado stale de React)
     void (async () => {
       try {
-        await onSave();
-      } catch {
-        // ignore
+        setBusy(true);
+        await auth.setPinLockSettingsForJewelry({
+          enabled: true,
+          timeoutMinutes: safeMin,
+          requireOnUserSwitch: Boolean(raw.requireOnUserSwitch),
+          quickSwitchEnabled: Boolean(raw.quickSwitchEnabled),
+        });
+        // ✅ actualizar serverSnapRef para que dirty quede en false
+        serverSnapRef.current = {
+          enabled: true,
+          timeoutMin: safeMin,
+          quickSwitchEnabled: Boolean(raw.quickSwitchEnabled),
+          requireOnSwitch: Boolean(raw.requireOnUserSwitch),
+        };
+        setSaved("Guardado.");
+        // ✅ si veníamos desde el modal de usuario, volver automáticamente
+        if (returnTo) {
+          setTimeout(() => navigate(returnTo), 1000);
+        }
+      } catch (e: any) {
+        setErr(e?.message || "No se pudo guardar.");
+        setEnabled(false); // revertir si falla
+      } finally {
+        pendingEnableInProgressRef.current = false;
+        setBusy(false);
       }
     })();
 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [meHasQuickPin, canEdit]);
+
+  // ✅ AUTO: si llegamos con returnTo y no tenemos PIN, ir directo al usuario a configurarlo
+  useEffect(() => {
+    if (!returnTo) return;
+    if (meHasQuickPin) return;
+    const t = setTimeout(() => {
+      setPendingEnableSnapshot();
+      goUsersNow();
+    }, 300);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   function onCancel() {
     if (busy) return;
@@ -309,46 +337,37 @@ export default function SystemPinSettings() {
   }
 
   function goUsersNow() {
-    // ✅ botón “Ir a Usuarios”: abrir mi usuario en Config (sin forzar pin setup)
+    // ✅ botón “Ir a Usuarios”: abrir mi usuario en Config y auto-abrir flujo PIN
     if (!meId) return navigate(USERS_ROUTE);
 
     const qs = new URLSearchParams();
     qs.set("edit", meId);
     qs.set("tab", "config");
+    qs.set("pin", "setup");
     qs.set("return", "/configuracion-sistema/pin");
     navigate(`${USERS_ROUTE}?${qs.toString()}`);
   }
 
-  function onGoUsers() {
+  async function onGoUsers() {
     if (busy) return;
 
-    if (dirty) {
-      setShowLeaveConfirm(true);
-      return;
-    }
-
-    goUsersNow();
-  }
-
-  async function onConfirmSaveAndGo() {
-    if (leaveBusy || busy) return;
-
-    if (!canEdit) {
-      setShowLeaveConfirm(false);
+    // ✅ caso especial: quiere habilitar pero no tiene PIN → navegar directo con pending
+    if (dirty && canEdit && Boolean(enabled) && !meHasQuickPin) {
+      setEnabled(false);
+      setQuickSwitchEnabled(false);
+      setRequireOnSwitch(false);
+      setPendingEnableSnapshot();
       goUsersNow();
       return;
     }
 
-    setLeaveBusy(true);
-    try {
+    // ✅ auto-guardar si hay cambios pendientes
+    if (dirty && canEdit) {
       const ok = await onSave();
-      if (ok) {
-        setShowLeaveConfirm(false);
-        goUsersNow();
-      }
-    } finally {
-      setLeaveBusy(false);
+      if (!ok) return;
     }
+
+    goUsersNow();
   }
 
   const disabledCardClass = !enabled ? "opacity-55 bg-surface2/80" : "";
@@ -450,9 +469,9 @@ export default function SystemPinSettings() {
                   // ✅ dejamos “pendiente” para auto-habilitar al terminar PIN
                   setPendingEnableSnapshot();
 
-                  // ✅ CERRAR confirm y abrir modal de PIN SOBRE ESTA pantalla
+                  // ✅ navegar al modal de edición del usuario (pestaña configuración)
                   setShowNeedPinConfirm(false);
-                  openPinFlow();
+                  goUsersNow();
                 }}
                 className="inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2 text-sm font-semibold text-white bg-primary hover:opacity-95 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-primary/20 disabled:opacity-60"
               >
@@ -468,8 +487,12 @@ export default function SystemPinSettings() {
                 type="button"
                 className="ml-2 underline hover:opacity-90"
                 onClick={() => {
+                  setEnabled(false);
+                  setQuickSwitchEnabled(false);
+                  setRequireOnSwitch(false);
+                  setPendingEnableSnapshot();
                   setShowNeedPinConfirm(false);
-                  goToMyUserPinSetup();
+                  goUsersNow();
                 }}
               >
                 Ir a Usuarios
@@ -479,72 +502,6 @@ export default function SystemPinSettings() {
         </div>
       )}
 
-      {/* ✅ Modal confirmación “cambios sin guardar” */}
-      {showLeaveConfirm && (
-        <div className="fixed inset-0 z-50">
-          <div className="absolute inset-0 bg-black/40" onClick={() => !leaveBusy && setShowLeaveConfirm(false)} />
-          <div className="absolute left-1/2 top-1/2 w-[92vw] max-w-lg -translate-x-1/2 -translate-y-1/2 rounded-2xl border border-border bg-card p-5 shadow-soft">
-            <div className="flex items-start gap-3">
-              <div className="grid h-10 w-10 place-items-center rounded-2xl border border-border bg-surface2 text-primary">
-                <AlertTriangle className="h-5 w-5" />
-              </div>
-
-              <div className="min-w-0">
-                <div className="text-base font-semibold text-text">Cambios sin guardar</div>
-                <div className="mt-1 text-sm text-muted">
-                  Tenés cambios en la configuración del PIN. ¿Querés guardarlos antes de ir a Usuarios?
-                </div>
-
-                {!canEdit && (
-                  <div className="mt-2 text-xs text-amber-700 rounded-xl border border-amber-500/20 bg-amber-500/10 px-3 py-2">
-                    No tenés permisos para guardar. Podés ir a Usuarios, pero tus cambios no se aplicarán.
-                  </div>
-                )}
-              </div>
-            </div>
-
-            <div className="mt-4 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
-              <button
-                type="button"
-                disabled={leaveBusy}
-                onClick={() => setShowLeaveConfirm(false)}
-                className="inline-flex items-center justify-center gap-2 rounded-xl border-2 border-border bg-transparent px-4 py-2 text-sm font-semibold text-text hover:bg-surface2 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-primary/20 disabled:opacity-60"
-              >
-                <X className="h-4 w-4" />
-                Cancelar
-              </button>
-
-              <button
-                type="button"
-                disabled={leaveBusy}
-                onClick={() => {
-                  setShowLeaveConfirm(false);
-                  goUsersNow();
-                }}
-                className="inline-flex items-center justify-center gap-2 rounded-xl border border-border bg-card px-4 py-2 text-sm font-semibold text-text hover:bg-surface2 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-primary/20 disabled:opacity-60"
-              >
-                Ir sin guardar
-                <ArrowRight className="h-4 w-4" />
-              </button>
-
-              <button
-                type="button"
-                disabled={leaveBusy || busy || !canEdit}
-                onClick={() => void onConfirmSaveAndGo()}
-                className={cn(
-                  "inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2 text-sm font-semibold text-white",
-                  "bg-primary hover:opacity-95 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-primary/20",
-                  (!canEdit || leaveBusy || busy) && "opacity-60 cursor-not-allowed"
-                )}
-                title={!canEdit ? "No tenés permisos para guardar" : "Guardar y ir"}
-              >
-                <Save className="h-4 w-4" />
-                {leaveBusy ? "Guardando…" : "Guardar e ir"}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
 
       <div className="flex items-center gap-3">
         <div className="h-10 w-10 rounded-2xl border border-border bg-card grid place-items-center">
@@ -720,7 +677,7 @@ export default function SystemPinSettings() {
               className="inline-flex shrink-0 items-center gap-2 rounded-xl border border-border bg-card px-3 py-2 text-sm font-semibold text-text hover:bg-surface2 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-primary/20 disabled:opacity-60"
               onClick={onGoUsers}
               disabled={busy}
-              title={dirty ? "Tenés cambios sin guardar" : "Ir a Usuarios"}
+              title={dirty && canEdit ? "Guardará los cambios antes de ir" : "Ir a Usuarios"}
             >
               <Users className="h-4 w-4" />
               Ir a Usuarios
@@ -737,6 +694,9 @@ export default function SystemPinSettings() {
             )}
           >
             {err || saved}
+            {saved && returnTo && (
+              <span className="ml-2 text-xs opacity-80">Volviendo…</span>
+            )}
           </div>
         )}
 
@@ -755,7 +715,12 @@ export default function SystemPinSettings() {
             type="button"
             className="tp-btn-primary inline-flex items-center justify-center gap-2"
             disabled={!canEdit || busy}
-            onClick={() => void onSave()}
+            onClick={async () => {
+              const ok = await onSave();
+              if (ok && returnTo) {
+                setTimeout(() => navigate(returnTo), 1200);
+              }
+            }}
             title={dirty ? "Guardar cambios" : "Guardar"}
           >
             <Save className="h-4 w-4" />

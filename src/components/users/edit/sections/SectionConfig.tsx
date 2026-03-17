@@ -6,7 +6,10 @@ import { TPSegmentedPills } from "../../../ui/TPBadges";
 import { cn, Section, effectLabel, permLabelByModuleAction } from "../../users.ui";
 
 import type { Override, OverrideEffect, Role } from "../../../../services/users";
+import { resetMyQuickPinWithPassword } from "../../../../services/users";
 import type { Permission } from "../../../../services/permissions";
+
+import { useAuth } from "../../../../context/AuthContext";
 
 import DeletePinConfirmModal from "../partials/DeletePinConfirmModal";
 import PinConfigSection from "../partials/PinConfigSection";
@@ -51,10 +54,6 @@ type Props = {
   pinMsg: string | null;
   showPinMessage: boolean;
 
-  // ✅ NUEVO: estado global del sistema y conteo
-  pinLockEnabled?: boolean;
-  usersWithPinCount?: number;
-
   // legacy compat (limpiamos cuando corresponde)
   pinNew: string;
   pinNew2: string;
@@ -64,6 +63,9 @@ type Props = {
   adminSetOrResetPin: (opts?: { currentPin?: string; pin?: string; pin2?: string }) => Promise<void>;
   adminTogglePinEnabled: (next: boolean, opts?: { confirmRemoveOverrides?: boolean }) => Promise<void>;
   adminRemovePin: (opts?: { confirmRemoveOverrides?: boolean; currentPin?: string }) => Promise<void>;
+
+  onAfterPinCreate?: () => Promise<void>;
+  isLastPinWithLock?: boolean;
 
   specialListSorted: Override[];
   setConfirmDisablePinClearsSpecialOpen: (v: boolean) => void;
@@ -138,16 +140,15 @@ export default function SectionConfig(props: Props) {
     pinMsg,
     showPinMessage,
 
-    // ✅ NUEVO
-    pinLockEnabled,
-    usersWithPinCount,
-
     setPinNew,
     setPinNew2,
 
     adminSetOrResetPin,
     adminTogglePinEnabled,
     adminRemovePin,
+
+    onAfterPinCreate,
+    isLastPinWithLock,
 
     specialListSorted,
     setConfirmDisablePinClearsSpecialOpen,
@@ -187,6 +188,8 @@ export default function SectionConfig(props: Props) {
     selfOwnerChecked,
   } = props;
 
+  const { refreshMe } = useAuth();
+
   // ✅ solo visual
   const [pinRemovedVisual, setPinRemovedVisual] = useState(false);
 
@@ -207,6 +210,7 @@ export default function SectionConfig(props: Props) {
   const [showDeletePinConfirm, setShowDeletePinConfirm] = useState(false);
   const [deletePinCurrent, setDeletePinCurrent] = useState("");
   const [deletePinErr, setDeletePinErr] = useState<string | null>(null);
+  const [forgotPinBusy, setForgotPinBusy] = useState(false);
 
   useEffect(() => {
     setPinRemovedVisual(false);
@@ -236,10 +240,15 @@ export default function SectionConfig(props: Props) {
 
       <PinFlowModal
         open={pinFlowOpen}
-        title={hasPin ? "Actualizar PIN" : "Crear PIN"}
+        title={
+          isSelf
+            ? hasPin ? "Actualizar PIN" : "Crear PIN"
+            : hasPin ? "Restablecer PIN" : "Asignar PIN"
+        }
         onClose={closePinFlow}
         overlayClassName={confirmOverlay}
-        hasPin={hasPin}
+        // ✅ Admin nunca debe ver el step "PIN actual" del usuario target (no lo conoce)
+        hasPin={isSelf ? hasPin : false}
         pinFlowStep={pinFlowStep}
         setPinFlowStep={setPinFlowStep}
         pinDraft={pinDraft}
@@ -255,11 +264,13 @@ export default function SectionConfig(props: Props) {
 
           // guardrails
           if (!isPin4(pin) || !isPin4(pin2) || pin !== pin2) return;
-          if (hasPin && !isPin4(currentPin || "")) return;
+          // ✅ Solo self necesita proveer el PIN actual
+          if (isSelf && hasPin && !isPin4(currentPin || "")) return;
 
           try {
             await adminSetOrResetPin({
-              currentPin: hasPin ? currentPin : undefined,
+              // ✅ currentPin solo se manda en flujo self (admin ignora este campo)
+              currentPin: isSelf && hasPin ? currentPin : undefined,
               pin,
               pin2,
             });
@@ -271,6 +282,9 @@ export default function SectionConfig(props: Props) {
             setPinRemovedVisual(false);
 
             flashPin("PIN guardado.", "ok");
+
+            // ✅ callback post-creación (ej: habilitar PIN lock desde Usuarios)
+            if (!hasPin) await onAfterPinCreate?.();
           } catch (e: any) {
             flashPin(e?.message || "No se pudo guardar el PIN.", "err", 3000);
             throw e;
@@ -285,8 +299,35 @@ export default function SectionConfig(props: Props) {
         setCurrent={setDeletePinCurrent}
         err={deletePinErr}
         setErr={setDeletePinErr}
+        forgotBusy={forgotPinBusy}
+        onConfirmWithPassword={(password) => {
+          setForgotPinBusy(true);
+          setDeletePinErr(null);
+
+          resetMyQuickPinWithPassword(password)
+            .then((resp) => {
+              setPinNew("");
+              setPinNew2("");
+              setPinRemovedVisual(true);
+              setShowDeletePinConfirm(false);
+              setDeletePinCurrent("");
+              setDeletePinErr(null);
+              if (resp.pinLockDisabled) {
+                flashPin("PIN eliminado. Bloqueo por PIN deshabilitado.", "ok", 3000);
+                void refreshMe({ silent: true });
+              } else {
+                flashPin("PIN eliminado.", "ok");
+              }
+            })
+            .catch((e: any) => {
+              setDeletePinErr(e?.message || "No se pudo restablecer el PIN.");
+            })
+            .finally(() => {
+              setForgotPinBusy(false);
+            });
+        }}
         onClose={() => {
-          if (busyDeleteSelf) return;
+          if (busyDeleteSelf || forgotPinBusy) return;
           setShowDeletePinConfirm(false);
           setDeletePinCurrent("");
           setDeletePinErr(null);
@@ -330,13 +371,11 @@ export default function SectionConfig(props: Props) {
         pinBusy={pinBusy}
         pinToggling={pinToggling}
         pinPillsDisabled={pinPillsDisabled}
-        // ✅ NUEVO: para regla “último PIN”
-        pinLockEnabled={pinLockEnabled}
-        usersWithPinCount={usersWithPinCount}
         pinMsg={pinMsg}
         showPinMessage={showPinMessage}
         adminTogglePinEnabled={adminTogglePinEnabled}
         adminRemovePin={adminRemovePin}
+        isLastPinWithLock={isLastPinWithLock}
         specialListSorted={specialListSorted}
         setConfirmDisablePinClearsSpecialOpen={setConfirmDisablePinClearsSpecialOpen}
         pinRemovedVisual={pinRemovedVisual}

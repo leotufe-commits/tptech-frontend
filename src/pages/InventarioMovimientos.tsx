@@ -2,26 +2,14 @@
 import React, { useEffect, useMemo, useState } from "react";
 
 import TPSectionShell from "../components/ui/TPSectionShell";
-import TPSearchInput from "../components/ui/TPSearchInput";
 import TPSelect from "../components/ui/TPSelect";
 import TPInput from "../components/ui/TPInput";
 import { TPButton } from "../components/ui/TPButton";
 import { TPBadge } from "../components/ui/TPBadges";
-import { TPColumnPicker, type ColPickerDef } from "../components/ui/TPColumnPicker";
-import { SortArrows, type SortDir } from "../components/ui/TPSort";
+import { type SortDir } from "../components/ui/TPSort";
 import TPDateRangeInline, { type TPDateRangeValue } from "../components/ui/TPDateRangeInline";
-import {
-  TPTableWrap,
-  TPTableHeader,
-  TPTableFooter,
-  TPTableXScroll,
-  TPTableElBase,
-  TPThead,
-  TPTbody,
-  TPTh,
-  TPTd,
-  TPEmptyRow,
-} from "../components/ui/TPTable";
+import { TPTd } from "../components/ui/TPTable";
+import { TPTableKit, type TPColDef } from "../components/ui/TPTableKit";
 
 import { cn } from "../components/ui/tp";
 import { apiFetch } from "../lib/api";
@@ -29,27 +17,19 @@ import { toast } from "../lib/toast";
 import { fmtNumberSmart } from "../lib/format";
 
 /* =========================================================
-   Column picker
+   Column definitions
 ========================================================= */
 const COL_KEY = "tptech_col_movimientos";
 
-const PICKABLE_COLS: ColPickerDef[] = [
-  { key: "date", label: "Fecha", canHide: false },
-  { key: "type", label: "Tipo" },
-  { key: "code", label: "Comprobante" },
-  { key: "user", label: "Usuario" },
+const MOV_COLS: TPColDef[] = [
+  { key: "date",      label: "Fecha",            canHide: false, sortKey: "date" },
+  { key: "type",      label: "Tipo",             sortKey: "type" },
+  { key: "code",      label: "Comprobante",      sortKey: "code" },
+  { key: "user",      label: "Usuario" },
   { key: "warehouse", label: "Origen / Destino" },
-  { key: "grams", label: "Gramos" },
-  { key: "note", label: "Nota" },
+  { key: "grams",     label: "Gramos",           align: "right" },
+  { key: "note",      label: "Nota" },
 ];
-
-function loadColVis(): Record<string, boolean> {
-  try {
-    const raw = localStorage.getItem(COL_KEY);
-    if (raw) return JSON.parse(raw);
-  } catch {}
-  return { date: true, type: true, code: true, user: true, warehouse: true, grams: true, note: true };
-}
 
 /* =========================================================
    Types
@@ -158,17 +138,6 @@ export default function InventarioMovimientos() {
   /* ---------- date range filter ---------- */
   const [dateRange, setDateRange] = useState<TPDateRangeValue>({ from: null, to: null });
 
-  /* ---------- column picker ---------- */
-  const [colVis, setColVis] = useState<Record<string, boolean>>(loadColVis);
-
-  function handleColChange(key: string, visible: boolean) {
-    setColVis((prev) => {
-      const next = { ...prev, [key]: visible };
-      try { localStorage.setItem(COL_KEY, JSON.stringify(next)); } catch {}
-      return next;
-    });
-  }
-
   /* ---------- sort ---------- */
   const [sortCol, setSortCol] = useState<SortCol>("date");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
@@ -250,192 +219,76 @@ export default function InventarioMovimientos() {
       title="Movimientos"
       subtitle="Entradas / salidas / transferencias / ajustes. (Historial + documento futuro)"
     >
-      <TPTableWrap>
-        {/* ---- header ---- */}
-        <TPTableHeader
-          left={
-            <div className="flex items-center gap-2 flex-wrap">
-              <TPColumnPicker
-                columns={PICKABLE_COLS}
-                visibility={colVis}
-                onChange={handleColChange}
-              />
-              <TPSearchInput
-                value={q}
-                onChange={setQ}
-                placeholder="Buscar por nota, comprobante, usuario…"
-                className="w-full md:w-64"
-              />
+      <TPTableKit
+        rows={sortedRows}
+        columns={MOV_COLS}
+        storageKey={COL_KEY}
+        search={q}
+        onSearchChange={setQ}
+        searchPlaceholder="Buscar por nota, comprobante, usuario…"
+        sortKey={sortCol}
+        sortDir={sortDir}
+        onSort={(key) => handleSort(key as SortCol)}
+        loading={loading}
+        emptyText="No hay movimientos."
+        countLabel={(n) => `${n} ${n === 1 ? "registro" : "registros"} en esta página${total > 0 ? ` · ${total} en total` : ""}`}
+        belowHeader={
+          <div className="px-4 pb-3">
+            <TPDateRangeInline
+              value={dateRange}
+              onChange={setDateRange}
+              showPresets
+              defaultPresetDays={30}
+              fromLabel="Desde"
+              toLabel="Hasta"
+              className="flex-wrap"
+            />
+          </div>
+        }
+        actions={
+          <div className="flex items-center gap-2 flex-wrap justify-end">
+            <TPSelect
+              value={kind}
+              onChange={(v) => setKind(v as MovementKind | "")}
+              options={[
+                { value: "", label: "Todos los tipos" },
+                { value: "IN", label: "Entrada" },
+                { value: "OUT", label: "Salida" },
+                { value: "TRANSFER", label: "Transferencia" },
+                { value: "ADJUST", label: "Ajuste" },
+              ]}
+            />
+            <TPInput
+              value={warehouseId}
+              onChange={setWarehouseId}
+              placeholder="ID de almacén (filtro)"
+              className="md:w-[200px]"
+            />
+            <div className="text-xs text-muted whitespace-nowrap">
+              {loading ? "Cargando…" : pageInfo}
             </div>
-          }
-          right={
-            <div className="flex items-center gap-2 flex-wrap justify-end">
-              {/* Filtro por tipo */}
-              <TPSelect
-                value={kind}
-                onChange={(v) => setKind(v as MovementKind | "")}
-                options={[
-                  { value: "", label: "Todos los tipos" },
-                  { value: "IN", label: "Entrada" },
-                  { value: "OUT", label: "Salida" },
-                  { value: "TRANSFER", label: "Transferencia" },
-                  { value: "ADJUST", label: "Ajuste" },
-                ]}
-              />
-
-              {/* Filtro por almacén (campo libre por ahora) */}
-              <TPInput
-                value={warehouseId}
-                onChange={setWarehouseId}
-                placeholder="ID de almacén (filtro)"
-                className="md:w-[200px]"
-              />
-
-              {/* Paginación info */}
-              <div className="text-xs text-muted whitespace-nowrap">
-                {loading ? "Cargando…" : pageInfo}
-              </div>
-            </div>
-          }
-        />
-
-        {/* ---- filtro de fechas ---- */}
-        <div className="px-4 pb-3">
-          <TPDateRangeInline
-            value={dateRange}
-            onChange={setDateRange}
-            showPresets
-            defaultPresetDays={30}
-            fromLabel="Desde"
-            toLabel="Hasta"
-            className="flex-wrap"
-          />
-        </div>
-
-        {/* ---- tabla ---- */}
-        <TPTableXScroll>
-          <TPTableElBase responsive="scroll">
-            <TPThead>
-              <tr>
-                {/* Fecha — siempre visible, sorteable */}
-                <TPTh>
-                  <button
-                    type="button"
-                    onClick={() => handleSort("date")}
-                    className="inline-flex items-center gap-1.5 hover:text-text transition-colors"
-                  >
-                    Fecha
-                    <SortArrows dir={sortDir} active={sortCol === "date"} />
-                  </button>
-                </TPTh>
-
-                {/* Tipo — sorteable */}
-                {colVis.type !== false && (
-                  <TPTh>
-                    <button
-                      type="button"
-                      onClick={() => handleSort("type")}
-                      className="inline-flex items-center gap-1.5 hover:text-text transition-colors"
-                    >
-                      Tipo
-                      <SortArrows dir={sortDir} active={sortCol === "type"} />
-                    </button>
-                  </TPTh>
-                )}
-
-                {/* Comprobante — sorteable */}
-                {colVis.code !== false && (
-                  <TPTh>
-                    <button
-                      type="button"
-                      onClick={() => handleSort("code")}
-                      className="inline-flex items-center gap-1.5 hover:text-text transition-colors"
-                    >
-                      Comprobante
-                      <SortArrows dir={sortDir} active={sortCol === "code"} />
-                    </button>
-                  </TPTh>
-                )}
-
-                {colVis.user !== false && <TPTh>Usuario</TPTh>}
-                {colVis.warehouse !== false && <TPTh>Origen / Destino</TPTh>}
-                {colVis.grams !== false && <TPTh className="text-right">Gramos</TPTh>}
-                {colVis.note !== false && <TPTh>Nota</TPTh>}
-              </tr>
-            </TPThead>
-
-            <TPTbody>
-              {sortedRows.map((m) => {
-                const who = s(m.createdBy?.name || m.createdBy?.email) || "—";
-
-                const wh =
-                  m.kind === "TRANSFER"
-                    ? `${s(m.fromWarehouse?.code || m.fromWarehouse?.name) || "—"} → ${
-                        s(m.toWarehouse?.code || m.toWarehouse?.name) || "—"
-                      }`
-                    : s(m.warehouse?.code || m.warehouse?.name) || "—";
-
-                const grams = gramsForMovement(m);
-
-                return (
-                  <tr
-                    key={m.id}
-                    className="border-b border-border cursor-pointer hover:bg-surface2/40 transition-colors"
-                  >
-                    {/* Fecha */}
-                    <TPTd className="text-muted">{fmtDateTime(m.effectiveAt)}</TPTd>
-
-                    {/* Tipo */}
-                    {colVis.type !== false && (
-                      <TPTd>
-                        <TPBadge tone={movementTone(m.kind)}>{m.kind}</TPBadge>
-                      </TPTd>
-                    )}
-
-                    {/* Comprobante */}
-                    {colVis.code !== false && (
-                      <TPTd className="text-muted">{s(m.code) || "—"}</TPTd>
-                    )}
-
-                    {/* Usuario */}
-                    {colVis.user !== false && <TPTd>{who}</TPTd>}
-
-                    {/* Origen / Destino */}
-                    {colVis.warehouse !== false && (
-                      <TPTd className="text-muted">{wh}</TPTd>
-                    )}
-
-                    {/* Gramos */}
-                    {colVis.grams !== false && (
-                      <TPTd className="text-right font-semibold text-text">
-                        {fmtNumberSmart(grams)}
-                      </TPTd>
-                    )}
-
-                    {/* Nota */}
-                    {colVis.note !== false && (
-                      <TPTd className="text-muted">{s(m.note) || "—"}</TPTd>
-                    )}
-                  </tr>
-                );
-              })}
-
-              {!loading && rows.length === 0 && (
-                <TPEmptyRow colSpan={7} text="No hay movimientos." />
-              )}
-            </TPTbody>
-          </TPTableElBase>
-        </TPTableXScroll>
-
-        {/* ---- footer con conteo ---- */}
-        <TPTableFooter>
-          <span>
-            {rows.length}{" "}
-            {rows.length === 1 ? "registro" : "registros"} en esta página
-            {total > 0 && ` · ${total} en total`}
-          </span>
-        </TPTableFooter>
-      </TPTableWrap>
+          </div>
+        }
+        renderRow={(m, vis) => {
+          const who = s(m.createdBy?.name || m.createdBy?.email) || "—";
+          const wh =
+            m.kind === "TRANSFER"
+              ? `${s(m.fromWarehouse?.code || m.fromWarehouse?.name) || "—"} → ${s(m.toWarehouse?.code || m.toWarehouse?.name) || "—"}`
+              : s(m.warehouse?.code || m.warehouse?.name) || "—";
+          const grams = gramsForMovement(m);
+          return (
+            <tr key={m.id} className="border-b border-border cursor-pointer hover:bg-surface2/40 transition-colors">
+              {vis.date     && <TPTd className="text-muted">{fmtDateTime(m.effectiveAt)}</TPTd>}
+              {vis.type     && <TPTd><TPBadge tone={movementTone(m.kind)}>{m.kind}</TPBadge></TPTd>}
+              {vis.code     && <TPTd className="text-muted">{s(m.code) || "—"}</TPTd>}
+              {vis.user     && <TPTd>{who}</TPTd>}
+              {vis.warehouse && <TPTd className="text-muted">{wh}</TPTd>}
+              {vis.grams    && <TPTd className="text-right font-semibold text-text">{fmtNumberSmart(grams)}</TPTd>}
+              {vis.note     && <TPTd className="text-muted">{s(m.note) || "—"}</TPTd>}
+            </tr>
+          );
+        }}
+      />
 
       {/* ---- paginación ---- */}
       <div className="mt-3 flex items-center justify-between">

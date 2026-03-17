@@ -783,7 +783,8 @@ export default function MetalsAndVariantsPanel({
                         "focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-primary/20",
                         active
                           ? "border-primary/50 bg-surface2 shadow-[0_0_0_1px_rgba(59,130,246,0.25)]"
-                          : "border-border bg-card hover:bg-surface2"
+                          : "border-border bg-card hover:bg-surface2",
+                        !isActive && "opacity-60"
                       )}
                       aria-current={active ? "page" : undefined}
                     >
@@ -948,7 +949,7 @@ export default function MetalsAndVariantsPanel({
                             const leyTxt = leyOf(v.purity);
 
                             return (
-                              <TPTr key={v.id}>
+                              <TPTr key={v.id} className={!isActive ? "opacity-60" : undefined} onClick={onOpenVariantView ? () => onOpenVariantView(v) : undefined}>
                                 <TPTd label="Variante" className="text-left">
                                   <div className="font-semibold text-text">{v.name}</div>
                                   <div className="text-xs text-muted">SKU: {v.sku}</div>

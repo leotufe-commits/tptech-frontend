@@ -2,7 +2,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { apiFetch } from "../lib/api";
 import { useMe } from "../hooks/useMe";
-import { useNavigate } from "react-router-dom";
 import TPInput from "../components/ui/TPInput";
 import { TPButton } from "../components/ui/TPButton";
 import { TPCard } from "../components/ui/TPCard";
@@ -36,7 +35,6 @@ function onlyPin4(v: string) {
    PAGE
 ========================= */
 export default function Cuenta() {
-  const navigate = useNavigate();
   const { me, loading, error, refresh } = useMe();
 
   const [form, setForm] = useState<AccountBody>({
@@ -47,6 +45,13 @@ export default function Cuenta() {
 
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
+
+  // 🔐 Cambiar contraseña
+  const [pwCurrent, setPwCurrent] = useState("");
+  const [pwNew, setPwNew] = useState("");
+  const [pwConfirm, setPwConfirm] = useState("");
+  const [pwBusy, setPwBusy] = useState(false);
+  const [pwMsg, setPwMsg] = useState<{ ok: boolean; text: string } | null>(null);
 
   // 🔐 PIN
   const [pinCurrent, setPinCurrent] = useState("");
@@ -119,8 +124,37 @@ export default function Cuenta() {
     }
   }
 
-  function onChangePassword() {
-    navigate("/forgot-password");
+  async function onChangePassword() {
+    setPwMsg(null);
+
+    if (!pwCurrent.trim()) {
+      setPwMsg({ ok: false, text: "Ingresá tu contraseña actual." });
+      return;
+    }
+    if (pwNew.trim().length < 6) {
+      setPwMsg({ ok: false, text: "La nueva contraseña debe tener al menos 6 caracteres." });
+      return;
+    }
+    if (pwNew !== pwConfirm) {
+      setPwMsg({ ok: false, text: "Las contraseñas no coinciden." });
+      return;
+    }
+
+    setPwBusy(true);
+    try {
+      await apiFetch("/auth/me/change-password", {
+        method: "PATCH",
+        body: { currentPassword: pwCurrent, newPassword: pwNew },
+      });
+      setPwCurrent("");
+      setPwNew("");
+      setPwConfirm("");
+      setPwMsg({ ok: true, text: "Contraseña actualizada correctamente ✅" });
+    } catch (e: any) {
+      setPwMsg({ ok: false, text: e?.message || "No se pudo cambiar la contraseña." });
+    } finally {
+      setPwBusy(false);
+    }
   }
 
   /* -------------------------
@@ -258,12 +292,62 @@ export default function Cuenta() {
 
       {/* SEGURIDAD */}
       <TPCard title="Seguridad">
-        <div className="flex justify-between items-start gap-4">
-          <p className="text-sm text-muted">La contraseña se gestiona desde recuperación.</p>
+        <div className="space-y-4">
+          <div className="text-sm font-semibold">Cambiar contraseña</div>
 
-          <TPButton variant="secondary" onClick={onChangePassword}>
-            Cambiar contraseña
-          </TPButton>
+          {pwMsg && (
+            <div
+              className={`rounded-xl border px-4 py-3 text-sm ${
+                pwMsg.ok
+                  ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
+                  : "border-red-500/30 bg-red-500/10 text-red-700 dark:text-red-300"
+              }`}
+            >
+              {pwMsg.text}
+            </div>
+          )}
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <TPField label="Contraseña actual">
+              <TPInput
+                type="password"
+                value={pwCurrent}
+                onChange={setPwCurrent}
+                placeholder="••••••"
+                disabled={pwBusy}
+              />
+            </TPField>
+
+            <TPField label="Nueva contraseña">
+              <TPInput
+                type="password"
+                value={pwNew}
+                onChange={setPwNew}
+                placeholder="Mínimo 6 caracteres"
+                disabled={pwBusy}
+              />
+            </TPField>
+
+            <TPField label="Confirmar nueva contraseña">
+              <TPInput
+                type="password"
+                value={pwConfirm}
+                onChange={setPwConfirm}
+                placeholder="Repetí la contraseña"
+                disabled={pwBusy}
+              />
+            </TPField>
+          </div>
+
+          <div className="flex justify-end">
+            <TPButton
+              variant="primary"
+              disabled={pwBusy || !pwCurrent || !pwNew || !pwConfirm}
+              onClick={onChangePassword}
+            >
+              {pwBusy ? "Guardando…" : "Cambiar contraseña"}
+            </TPButton>
+          </div>
         </div>
 
         {/* PIN */}

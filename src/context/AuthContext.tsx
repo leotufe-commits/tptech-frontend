@@ -738,7 +738,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const pinUnlock = useCallback(
     async (pin: PinArg) => {
       const p = normalizePinArg(pin);
-      await apiFetch("/auth/me/pin/unlock", { method: "POST", body: { pin: p } as any });
+      // on401: "throw" evita que un PIN incorrecto (401) dispare forceLogout()
+      // y limpie la sesión. El error se propaga al caller (LockScreen) para
+      // mostrar el mensaje de error sin desbloquear la pantalla.
+      await apiFetch("/auth/me/pin/unlock", { method: "POST", body: { pin: p } as any, on401: "throw" });
       setLocked(false);
       bumpActivity();
     },
@@ -801,10 +804,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       const maybePin = String(args.pin4 ?? args.pin ?? "").trim();
       if (maybePin) body.pin = assertPin4(maybePin);
 
-      const data = await apiFetch<MeResponse>("/auth/me/pin/switch", {
+      // on401: "throw" es CRÍTICO:
+    // sin él, un PIN incorrecto llama forceLogout() → borra SS_LOCKED → F5 saltea el lock
+    const data = await apiFetch<MeResponse>("/auth/me/pin/switch", {
         method: "POST",
         body,
         timeoutMs: 8000,
+        on401: "throw",
       });
 
       setSession({
@@ -842,7 +848,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         pinLockRequireOnUserSwitch: Boolean(args.requireOnUserSwitch),
       };
 
-      await apiFetch("/company/settings/security", {
+      await apiFetch("/auth/company/security/pin-lock", {
         method: "PATCH",
         body: payload as any,
         timeoutMs: 10_000,

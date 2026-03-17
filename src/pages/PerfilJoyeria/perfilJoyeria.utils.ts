@@ -1,6 +1,6 @@
 // src/pages/PerfilJoyeria/perfilJoyeria.utils.ts
 import type { CatalogItem } from "../../services/catalogs";
-import type { CompanyBody, ExistingBody, UpdatePayload } from "./perfilJoyeria.types";
+import type { CompanyBody, EmailConfigBody, ExistingBody, UpdatePayload } from "./perfilJoyeria.types";
 
 /* =========================
    Small helpers
@@ -91,7 +91,7 @@ export function absUrl(u: string) {
    Draft + payload
 ========================= */
 
-export function jewelryToDraft(j: any): { existing: ExistingBody; company: CompanyBody } {
+export function jewelryToDraft(j: any): { existing: ExistingBody; company: CompanyBody; emailConfig: EmailConfigBody } {
   return {
     existing: {
       name: s(j?.name),
@@ -113,19 +113,48 @@ export function jewelryToDraft(j: any): { existing: ExistingBody; company: Compa
       website: s(j?.website),
       notes: String(j?.notes ?? ""),
     },
+    emailConfig: {
+      emailEnabled:       Boolean(j?.emailEnabled ?? true),
+      emailSenderName:    s(j?.emailSenderName),
+      emailLogoUrl:       s(j?.emailLogoUrl),
+      emailSignature:     String(j?.emailSignature ?? ""),
+      emailReplyTo:       s(j?.emailReplyTo),
+      emailContact:       s(j?.emailContact),
+      emailPhone:         s(j?.emailPhone),
+      emailWhatsapp:      s(j?.emailWhatsapp),
+      emailAddressLine:   s(j?.emailAddressLine),
+      emailBusinessHours: s(j?.emailBusinessHours),
+      emailWebsite:       s(j?.emailWebsite),
+      emailInstagram:     s(j?.emailInstagram),
+      emailFooter:        String(j?.emailFooter ?? ""),
+    },
   };
 }
 
-export function buildPayload(existing: ExistingBody, company: CompanyBody): UpdatePayload {
+export function buildPayload(existing: ExistingBody, company: CompanyBody, emailConfig: EmailConfigBody): UpdatePayload {
   return {
     ...existing,
-    logoUrl: s(company.logoUrl),
-    legalName: s(company.legalName),
-    cuit: s(company.cuit),
+    logoUrl:      s(company.logoUrl),
+    legalName:    s(company.legalName),
+    cuit:         s(company.cuit),
     ivaCondition: s(company.ivaCondition),
-    email: s(company.email),
-    website: s(company.website),
-    notes: String(company.notes ?? ""),
+    email:        s(company.email),
+    website:      s(company.website),
+    notes:        String(company.notes ?? ""),
+    // Email branding
+    emailEnabled:       emailConfig.emailEnabled,
+    emailSenderName:    s(emailConfig.emailSenderName),
+    emailLogoUrl:       s(emailConfig.emailLogoUrl),
+    emailSignature:     String(emailConfig.emailSignature ?? ""),
+    emailReplyTo:       s(emailConfig.emailReplyTo),
+    emailContact:       s(emailConfig.emailContact),
+    emailPhone:         s(emailConfig.emailPhone),
+    emailWhatsapp:      s(emailConfig.emailWhatsapp),
+    emailAddressLine:   s(emailConfig.emailAddressLine),
+    emailBusinessHours: s(emailConfig.emailBusinessHours),
+    emailWebsite:       s(emailConfig.emailWebsite),
+    emailInstagram:     s(emailConfig.emailInstagram),
+    emailFooter:        String(emailConfig.emailFooter ?? ""),
   };
 }
 

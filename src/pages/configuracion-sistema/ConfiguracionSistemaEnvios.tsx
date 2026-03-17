@@ -1,11 +1,15 @@
-// src/pages/configuracion-sistema/ConfiguracionSistemaEnvios.tsx
 import React, { useEffect, useMemo, useState } from "react";
 import {
   Plus,
   Save,
   Truck,
-  Star,
+  Bookmark,
+  Trash,
+  Store,
   X,
+  Copy,
+  ShieldCheck,
+  ShieldBan,
 } from "lucide-react";
 
 import { cn } from "../../components/ui/tp";
@@ -23,23 +27,45 @@ import { TPStatusPill } from "../../components/ui/TPStatusPill";
 import { TPRowActions } from "../../components/ui/TPRowActions";
 import TPComboFixed from "../../components/ui/TPComboFixed";
 import TPNumberInput from "../../components/ui/TPNumberInput";
+import { TPCard } from "../../components/ui/TPCard";
 
+import { apiFetch } from "../../lib/api";
 import { toast } from "../../lib/toast";
+import TPComboCreatableMulti from "../../components/ui/TPComboCreatableMulti";
+import { useCatalog } from "../../hooks/useCatalog";
+import type { CatalogItem } from "../../services/catalogs";
 import {
   shippingApi,
   type ShippingCarrierRow,
   type ShippingCarrierPayload,
   type ShippingCalcMode,
+  type ShippingCarrierType,
 } from "../../services/shipping";
+
+/* =========================================================
+   Tipos
+========================================================= */
+type WarehouseOption = {
+  id: string;
+  name: string;
+  isActive: boolean;
+  street?: string;
+  number?: string;
+  city?: string;
+  province?: string;
+};
 
 /* =========================================================
    Label maps
 ========================================================= */
 const CALC_MODE_LABELS: Record<ShippingCalcMode, string> = {
   FIXED: "Precio fijo",
-  BY_WEIGHT: "Por peso ($/kg)",
   BY_ZONE: "Por zona",
+  BY_WEIGHT: "Por peso ($/kg)",
 };
+
+const CALC_MODE_ORDER: ShippingCalcMode[] = ["FIXED", "BY_ZONE", "BY_WEIGHT"];
+
 
 /* =========================================================
    Draft de tarifa
@@ -47,7 +73,9 @@ const CALC_MODE_LABELS: Record<ShippingCalcMode, string> = {
 type RateDraft = {
   id?: string;
   name: string;
-  zone: string;
+  zones: string[];
+  province: string[];
+  countries: string[];
   calculationMode: ShippingCalcMode;
   fixedPrice: string;
   pricePerKg: string;
@@ -58,7 +86,9 @@ type RateDraft = {
 
 const EMPTY_RATE: RateDraft = {
   name: "",
-  zone: "",
+  zones: [],
+  province: [],
+  countries: [],
   calculationMode: "FIXED",
   fixedPrice: "",
   pricePerKg: "",
@@ -71,6 +101,8 @@ const EMPTY_RATE: RateDraft = {
    Draft del transportista
 ========================================================= */
 type CarrierDraft = {
+  type: ShippingCarrierType;
+  warehouseId: string;
   name: string;
   code: string;
   trackingUrl: string;
@@ -83,6 +115,8 @@ type CarrierDraft = {
 };
 
 const EMPTY_DRAFT: CarrierDraft = {
+  type: "DELIVERY",
+  warehouseId: "",
   name: "",
   code: "",
   trackingUrl: "",
@@ -122,29 +156,16 @@ function formatDate(iso: string | null | undefined): string {
   }
 }
 
+function warehouseLabel(wh: WarehouseOption): string {
+  const parts = [wh.name];
+  if (wh.street) parts.push(wh.street + (wh.number ? ` ${wh.number}` : ""));
+  if (wh.city) parts.push(wh.city);
+  return parts.join(" · ");
+}
+
 /* =========================================================
    Componentes pequeños
 ========================================================= */
-function ModalSection({
-  title,
-  children,
-}: {
-  title: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <div className="space-y-3">
-      <div className="flex items-center gap-2">
-        <span className="text-xs font-semibold uppercase tracking-wide text-muted">
-          {title}
-        </span>
-        <div className="flex-1 border-t border-border" />
-      </div>
-      {children}
-    </div>
-  );
-}
-
 function DetailRow({
   label,
   children,
@@ -162,7 +183,9 @@ function DetailRow({
       )}
     >
       <span className="text-muted font-medium shrink-0">{label}</span>
-      <span className="text-text text-right break-words min-w-0">{children}</span>
+      <span className="text-text text-right break-words min-w-0">
+        {children}
+      </span>
     </div>
   );
 }
@@ -172,244 +195,406 @@ function DetailRow({
 ========================================================= */
 type FormErrors = {
   name?: string;
+  warehouseId?: string;
+  rateNames?: string;
 };
 
-function validate(draft: CarrierDraft): FormErrors {
+function validate(draft: CarrierDraft, rates: RateDraft[]): FormErrors {
   const errors: FormErrors = {};
+
   if (!draft.name.trim()) {
     errors.name = "El nombre es obligatorio.";
   }
+
+  if (draft.type === "PICKUP" && !draft.warehouseId) {
+    errors.warehouseId = "Seleccioná un almacén para retiro en sucursal.";
+  }
+
+  const rateNameList = rates
+    .map((r) => r.name.trim().toLowerCase())
+    .filter(Boolean);
+
+  if (rateNameList.some((n, i) => rateNameList.indexOf(n) !== i)) {
+    errors.rateNames =
+      "Hay tarifas con nombres duplicados. Cada nombre de envío debe ser único.";
+  }
+
   return errors;
 }
 
 /* =========================================================
-   Tabla inline de tarifas (dentro del modal)
+   Editor de tarifas (card por tarifa)
 ========================================================= */
 function RatesEditor({
   rates,
   onChange,
   disabled,
+  duplicateNames,
+  cityItems,
+  provinceItems,
+  countryItems,
+  onRefreshCity,
+  onRefreshProvince,
+  onRefreshCountry,
+  onCreateCity,
+  onCreateProvince,
+  onCreateCountry,
 }: {
   rates: RateDraft[];
   onChange: (rates: RateDraft[]) => void;
   disabled: boolean;
+  duplicateNames: Set<string>;
+  cityItems: CatalogItem[];
+  provinceItems: CatalogItem[];
+  countryItems: CatalogItem[];
+  onRefreshCity: () => void;
+  onRefreshProvince: () => void;
+  onRefreshCountry: () => void;
+  onCreateCity: (label: string) => Promise<void>;
+  onCreateProvince: (label: string) => Promise<void>;
+  onCreateCountry: (label: string) => Promise<void>;
 }) {
+  const newRateRef = React.useRef<HTMLDivElement | null>(null);
+
   function addRate() {
     onChange([...rates, { ...EMPTY_RATE }]);
+    setTimeout(() => {
+      newRateRef.current?.scrollIntoView({
+        behavior: "smooth",
+        block: "nearest",
+      });
+    }, 50);
   }
 
   function removeRate(index: number) {
     onChange(rates.filter((_, i) => i !== index));
   }
 
+  function cloneRate(index: number) {
+    const original = rates[index];
+    const baseName = original.name.trim() || "Tarifa";
+    const existingNames = rates.map((r) => r.name.trim().toLowerCase());
+
+    let candidateName = `${baseName} (copia)`;
+    let counter = 2;
+
+    while (existingNames.includes(candidateName.toLowerCase())) {
+      candidateName = `${baseName} (copia ${counter})`;
+      counter++;
+    }
+
+    const cloned: RateDraft = {
+      ...original,
+      id: undefined,
+      name: candidateName,
+    };
+
+    const next = [...rates];
+    next.splice(index + 1, 0, cloned);
+    onChange(next);
+
+    setTimeout(() => {
+      newRateRef.current?.scrollIntoView({
+        behavior: "smooth",
+        block: "nearest",
+      });
+    }, 50);
+  }
+
   function patchRate(index: number, patch: Partial<RateDraft>) {
-    onChange(
-      rates.map((r, i) => (i === index ? { ...r, ...patch } : r))
-    );
+    onChange(rates.map((r, i) => (i === index ? { ...r, ...patch } : r)));
   }
 
   return (
     <div className="space-y-3">
-      {rates.length > 0 && (
-        <div className="rounded-xl border border-border overflow-hidden">
-          {/* Cabecera tabla */}
-          <div className="hidden md:grid grid-cols-[1fr_1fr_160px_160px_60px_36px] gap-2 bg-surface2 px-3 py-2 text-xs font-semibold uppercase tracking-wide text-muted">
-            <div>Nombre</div>
-            <div>Zona</div>
-            <div>Modo</div>
-            <div>Precio / $/kg</div>
-            <div className="text-center">Activo</div>
-            <div />
-          </div>
+      {rates.map((rate, idx) => {
+        const normalizedName = rate.name.trim().toLowerCase();
+        const isDuplicate =
+          normalizedName !== "" && duplicateNames.has(normalizedName);
+        const isLast = idx === rates.length - 1;
 
-          <div className="divide-y divide-border">
-            {rates.map((rate, idx) => (
-              <div
-                key={idx}
-                className="flex flex-col gap-2 px-3 py-3 md:grid md:grid-cols-[1fr_1fr_160px_160px_60px_36px] md:items-center md:gap-2"
-              >
-                {/* Nombre */}
-                <div>
-                  <div className="mb-1 text-xs text-muted md:hidden">Nombre</div>
-                  <input
-                    type="text"
-                    value={rate.name}
-                    onChange={(e) => patchRate(idx, { name: e.target.value })}
-                    disabled={disabled}
-                    placeholder="Ej: Envío estándar"
-                    className="tp-input w-full text-sm"
-                  />
-                </div>
+        return (
+          <div
+            key={idx}
+            ref={isLast ? newRateRef : undefined}
+            className={cn(
+              "rounded-xl border overflow-hidden",
+              isDuplicate ? "border-red-400" : "border-border"
+            )}
+          >
+            <div className="flex items-center gap-2 bg-surface2/50 px-4 py-3">
+              <span className="text-xs font-bold text-muted w-5 shrink-0 select-none">
+                {idx + 1}
+              </span>
 
-                {/* Zona */}
-                <div>
-                  <div className="mb-1 text-xs text-muted md:hidden">Zona</div>
-                  <input
-                    type="text"
-                    value={rate.zone}
-                    onChange={(e) => patchRate(idx, { zone: e.target.value })}
-                    disabled={disabled}
-                    placeholder="Ej: CABA"
-                    className="tp-input w-full text-sm"
-                  />
-                </div>
+              <div className="flex-1 min-w-0">
+                <TPInput
+                  value={rate.name}
+                  onChange={(v) => patchRate(idx, { name: v })}
+                  disabled={disabled}
+                  placeholder="Nombre de envío"
+                  className="text-sm font-medium"
+                />
+                {isDuplicate && (
+                  <p className="mt-1 text-xs text-red-500">
+                    Ya existe una tarifa con ese nombre.
+                  </p>
+                )}
+              </div>
 
-                {/* Modo */}
-                <div>
-                  <div className="mb-1 text-xs text-muted md:hidden">Modo de cálculo</div>
-                  <TPComboFixed
-                    value={rate.calculationMode}
+              <div className="flex items-center gap-1.5 shrink-0">
+                <TPStatusPill active={rate.isActive} />
+                <button
+                  type="button"
+                  onClick={() => patchRate(idx, { isActive: !rate.isActive })}
+                  disabled={disabled}
+                  title={rate.isActive ? "Desactivar" : "Activar"}
+                  className="tp-btn-secondary h-8 w-8 !p-0 grid place-items-center shrink-0"
+                >
+                  {rate.isActive ? (
+                    <ShieldCheck size={15} className="text-muted" />
+                  ) : (
+                    <ShieldBan size={15} className="text-muted" />
+                  )}
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => cloneRate(idx)}
+                  disabled={disabled}
+                  title="Clonar tarifa"
+                  className="tp-btn-secondary h-8 w-8 !p-0 grid place-items-center shrink-0"
+                >
+                  <Copy size={14} />
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => removeRate(idx)}
+                  disabled={disabled}
+                  title="Eliminar tarifa"
+                  className="tp-btn-secondary h-8 w-8 !p-0 grid place-items-center shrink-0 text-red-500 hover:text-red-600"
+                >
+                  <Trash size={14} />
+                </button>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 px-4 py-3 border-t border-border/60">
+              <TPField label="Zonas / Ciudades">
+                <TPComboCreatableMulti
+                  type="CITY"
+                  items={cityItems}
+                  values={rate.zones}
+                  onChange={(v) => patchRate(idx, { zones: v })}
+                  disabled={disabled}
+                  placeholder="Ej: CABA, GBA Norte"
+                  mode="create"
+                  noLabelSpace
+                  onRefresh={onRefreshCity}
+                  allowCreate
+                  onCreate={onCreateCity}
+                />
+              </TPField>
+
+              <TPField label="Provincia">
+                <TPComboCreatableMulti
+                  type="PROVINCE"
+                  items={provinceItems}
+                  values={rate.province}
+                  onChange={(v) => patchRate(idx, { province: v })}
+                  placeholder="Ej: Buenos Aires"
+                  disabled={disabled}
+                  mode="create"
+                  noLabelSpace
+                  onRefresh={onRefreshProvince}
+                  allowCreate
+                  onCreate={onCreateProvince}
+                />
+              </TPField>
+
+              <TPField label="Países">
+                <TPComboCreatableMulti
+                  type="COUNTRY"
+                  items={countryItems}
+                  values={rate.countries}
+                  onChange={(v) => patchRate(idx, { countries: v })}
+                  disabled={disabled}
+                  placeholder="Ej: Argentina"
+                  mode="create"
+                  noLabelSpace
+                  onRefresh={onRefreshCountry}
+                  allowCreate
+                  onCreate={onCreateCountry}
+                />
+              </TPField>
+            </div>
+
+            <div className="flex flex-col sm:flex-row gap-3 px-4 py-3 border-t border-border/60">
+              <TPField label="Modo de cálculo" className="sm:w-[200px] shrink-0">
+                <TPComboFixed
+                  value={rate.calculationMode}
+                  onChange={(v) =>
+                    patchRate(idx, {
+                      calculationMode: v as ShippingCalcMode,
+                      fixedPrice: "",
+                      pricePerKg: "",
+                      minWeight: "",
+                      maxWeight: "",
+                    })
+                  }
+                  disabled={disabled}
+                  options={CALC_MODE_ORDER.map((k) => ({
+                    value: k,
+                    label: CALC_MODE_LABELS[k],
+                  }))}
+                  className="text-sm"
+                />
+              </TPField>
+
+              {rate.calculationMode === "FIXED" && (
+                <TPField label="Precio fijo" className="flex-1">
+                  <TPNumberInput
+                    value={rate.fixedPrice ? parseFloat(rate.fixedPrice) : null}
                     onChange={(v) =>
-                      patchRate(idx, {
-                        calculationMode: v as ShippingCalcMode,
-                        fixedPrice: "",
-                        pricePerKg: "",
-                        minWeight: "",
-                        maxWeight: "",
-                      })
+                      patchRate(idx, { fixedPrice: v != null ? String(v) : "" })
                     }
                     disabled={disabled}
-                    options={(Object.keys(CALC_MODE_LABELS) as ShippingCalcMode[]).map((k) => ({
-                      value: k,
-                      label: CALC_MODE_LABELS[k],
-                    }))}
+                    placeholder="0,00"
+                    decimals={2}
+                    step={1}
+                    min={0}
                     className="text-sm"
+                    leftIcon={<span className="text-xs font-semibold">$</span>}
                   />
-                </div>
+                </TPField>
+              )}
 
-                {/* Precio fijo / $/kg */}
-                <div>
-                  {rate.calculationMode === "FIXED" && (
-                    <>
-                      <div className="mb-1 text-xs text-muted md:hidden">Precio fijo ($)</div>
-                      <TPNumberInput
-                        value={rate.fixedPrice ? parseFloat(rate.fixedPrice) : null}
-                        onChange={(v) => patchRate(idx, { fixedPrice: v != null ? String(v) : "" })}
-                        disabled={disabled}
-                        placeholder="0,00"
-                        decimals={2}
-                        step={1}
-                        min={0}
-                        className="text-sm"
-                      />
-                    </>
-                  )}
-                  {rate.calculationMode === "BY_WEIGHT" && (
-                    <div className="space-y-1.5">
-                      <div>
-                        <div className="mb-1 text-xs text-muted md:hidden">$/kg</div>
-                        <TPNumberInput
-                          value={rate.pricePerKg ? parseFloat(rate.pricePerKg) : null}
-                          onChange={(v) => patchRate(idx, { pricePerKg: v != null ? String(v) : "" })}
-                          disabled={disabled}
-                          placeholder="$/kg"
-                          decimals={2}
-                          step={1}
-                          min={0}
-                          className="text-sm"
-                        />
-                      </div>
-                      <div className="flex gap-1.5">
-                        <TPNumberInput
-                          value={rate.minWeight ? parseFloat(rate.minWeight) : null}
-                          onChange={(v) => patchRate(idx, { minWeight: v != null ? String(v) : "" })}
-                          disabled={disabled}
-                          placeholder="Min kg"
-                          decimals={1}
-                          step={0.1}
-                          min={0}
-                          className="text-xs"
-                        />
-                        <TPNumberInput
-                          value={rate.maxWeight ? parseFloat(rate.maxWeight) : null}
-                          onChange={(v) => patchRate(idx, { maxWeight: v != null ? String(v) : "" })}
-                          disabled={disabled}
-                          placeholder="Max kg"
-                          decimals={1}
-                          step={0.1}
-                          min={0}
-                          className="text-xs"
-                        />
-                      </div>
-                    </div>
-                  )}
-                  {rate.calculationMode === "BY_ZONE" && (
-                    <span className="text-sm text-muted">—</span>
-                  )}
-                </div>
-
-                {/* Activo */}
-                <div className="flex items-center justify-start md:justify-center">
-                  <div className="flex items-center gap-2 md:gap-0">
-                    <span className="text-xs text-muted md:hidden">Activo:</span>
-                    <input
-                      type="checkbox"
-                      checked={rate.isActive}
-                      onChange={(e) => patchRate(idx, { isActive: e.target.checked })}
+              {rate.calculationMode === "BY_WEIGHT" && (
+                <div className="flex flex-1 flex-wrap gap-3">
+                  <TPField label="Por kg" className="w-[140px]">
+                    <TPNumberInput
+                      value={
+                        rate.pricePerKg ? parseFloat(rate.pricePerKg) : null
+                      }
+                      onChange={(v) =>
+                        patchRate(idx, {
+                          pricePerKg: v != null ? String(v) : "",
+                        })
+                      }
                       disabled={disabled}
-                      className="h-4 w-4 cursor-pointer accent-primary"
+                      placeholder="0,00"
+                      decimals={2}
+                      step={1}
+                      min={0}
+                      className="text-sm"
+                      leftIcon={<span className="text-xs font-semibold">$</span>}
                     />
-                  </div>
-                </div>
+                  </TPField>
 
-                {/* Eliminar */}
-                <div className="flex items-center justify-end md:justify-center">
-                  <button
-                    type="button"
-                    onClick={() => removeRate(idx)}
+                  <TPField label="Peso mín (kg)" className="w-[120px]">
+                    <TPNumberInput
+                      value={rate.minWeight ? parseFloat(rate.minWeight) : null}
+                      onChange={(v) =>
+                        patchRate(idx, {
+                          minWeight: v != null ? String(v) : "",
+                        })
+                      }
+                      disabled={disabled}
+                      placeholder="0"
+                      decimals={1}
+                      step={0.1}
+                      min={0}
+                      className="text-sm"
+                    />
+                  </TPField>
+
+                  <TPField label="Peso máx (kg)" className="w-[120px]">
+                    <TPNumberInput
+                      value={rate.maxWeight ? parseFloat(rate.maxWeight) : null}
+                      onChange={(v) =>
+                        patchRate(idx, {
+                          maxWeight: v != null ? String(v) : "",
+                        })
+                      }
+                      disabled={disabled}
+                      placeholder="∞"
+                      decimals={1}
+                      step={0.1}
+                      min={0}
+                      className="text-sm"
+                    />
+                  </TPField>
+                </div>
+              )}
+
+              {rate.calculationMode === "BY_ZONE" && (
+                <TPField label="Precio por zona" className="flex-1">
+                  <TPNumberInput
+                    value={rate.fixedPrice ? parseFloat(rate.fixedPrice) : null}
+                    onChange={(v) =>
+                      patchRate(idx, { fixedPrice: v != null ? String(v) : "" })
+                    }
                     disabled={disabled}
-                    title="Eliminar tarifa"
-                    className="grid h-8 w-8 place-items-center rounded-lg border border-border text-red-400 hover:bg-red-500/10 hover:text-red-500 disabled:opacity-40 transition"
-                  >
-                    <X size={14} />
-                  </button>
-                </div>
-              </div>
-            ))}
+                    placeholder="0,00"
+                    decimals={2}
+                    step={1}
+                    min={0}
+                    className="text-sm"
+                    leftIcon={<span className="text-xs font-semibold">$</span>}
+                  />
+                </TPField>
+              )}
+            </div>
           </div>
-        </div>
-      )}
+        );
+      })}
 
-      <button
-        type="button"
+      <TPButton
+        variant="secondary"
+        iconLeft={<Plus size={14} />}
         onClick={addRate}
         disabled={disabled}
-        className="tp-btn-secondary inline-flex items-center gap-1.5 text-sm disabled:opacity-50"
       >
-        <Plus size={14} />
         Agregar tarifa
-      </button>
+      </TPButton>
     </div>
   );
 }
 
 const ENV_COLS: TPColDef[] = [
-  { key: "name",        label: "Nombre / Código",  canHide: false, sortKey: "name" },
-  { key: "tarifas",     label: "Tarifas" },
-  { key: "enviogratis", label: "Envío gratis desde" },
-  { key: "estado",      label: "Estado" },
-  { key: "acciones",    label: "Acciones",          canHide: false, align: "right" },
+  { key: "name", label: "Nombre / Código", canHide: false, sortKey: "name" },
+  { key: "tipo", label: "Tipo", sortKey: "tipo" },
+  { key: "tarifas", label: "Tarifas", sortKey: "tarifas" },
+  { key: "enviogratis", label: "Envío gratis desde", sortKey: "enviogratis" },
+  { key: "estado", label: "Estado", sortKey: "estado" },
+  { key: "acciones", label: "Acciones", canHide: false, align: "right" },
 ];
 
 /* =========================================================
    Página principal
 ========================================================= */
 export default function ConfiguracionSistemaEnvios() {
-  /* ---- estado principal ---- */
   const [rows, setRows] = useState<ShippingCarrierRow[]>([]);
+  const [warehouses, setWarehouses] = useState<WarehouseOption[]>([]);
   const [loading, setLoading] = useState(false);
+
+  const cityCat = useCatalog("CITY");
+  const provinceCat = useCatalog("PROVINCE");
+  const countryCat = useCatalog("COUNTRY");
   const [q, setQ] = useState("");
 
-  /* ---- sort ---- */
   const [sortKey, setSortKey] = useState("name");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
 
   function toggleSort(key: string) {
     if (sortKey === key) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
-    else { setSortKey(key); setSortDir("asc"); }
+    else {
+      setSortKey(key);
+      setSortDir("asc");
+    }
   }
 
-  /* ---- modal editar/crear ---- */
   const [editOpen, setEditOpen] = useState(false);
   const [editTarget, setEditTarget] = useState<ShippingCarrierRow | null>(null);
   const [draft, setDraft] = useState<CarrierDraft>(EMPTY_DRAFT);
@@ -417,30 +602,34 @@ export default function ConfiguracionSistemaEnvios() {
   const [submitted, setSubmitted] = useState(false);
   const [formErrors, setFormErrors] = useState<FormErrors>({});
 
-  /* ---- numeric state para freeShippingThreshold ---- */
   const [freeShippingNum, setFreeShippingNum] = useState<number | null>(null);
 
-  /* ---- modal ver ---- */
   const [viewOpen, setViewOpen] = useState(false);
   const [viewTarget, setViewTarget] = useState<ShippingCarrierRow | null>(null);
 
-  /* ---- modal eliminar ---- */
   const [deleteOpen, setDeleteOpen] = useState(false);
-  const [deleteTarget, setDeleteTarget] = useState<ShippingCarrierRow | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<ShippingCarrierRow | null>(
+    null
+  );
 
-  /* ---- busy ---- */
   const [busySave, setBusySave] = useState(false);
   const [busyDelete, setBusyDelete] = useState(false);
   const [cloningId, setCloningId] = useState<string | null>(null);
   const [togglingId, setTogglingId] = useState<string | null>(null);
   const [favoritingId, setFavoritingId] = useState<string | null>(null);
 
-  /* ---- carga inicial ---- */
   async function load() {
     try {
       setLoading(true);
-      const data = await shippingApi.list();
+      const [data, whs] = await Promise.all([
+        shippingApi.list(),
+        apiFetch<WarehouseOption[]>("/warehouses", {
+          method: "GET",
+          on401: "throw",
+        }),
+      ]);
       setRows(data);
+      setWarehouses(whs.filter((w) => w.isActive));
     } catch (e: any) {
       toast.error(e?.message || "No se pudo cargar la lista de transportistas.");
     } finally {
@@ -449,12 +638,12 @@ export default function ConfiguracionSistemaEnvios() {
   }
 
   useEffect(() => {
-    load();
+    void load();
   }, []);
 
-  /* ---- filtrado y ordenamiento ---- */
   const filteredRows = useMemo(() => {
     const s = q.trim().toLowerCase();
+
     const filtered = s
       ? rows.filter(
           (r) =>
@@ -465,16 +654,33 @@ export default function ConfiguracionSistemaEnvios() {
 
     return [...filtered].sort((a, b) => {
       const mul = sortDir === "asc" ? 1 : -1;
-      return String(a.name ?? "").localeCompare(String(b.name ?? ""), "es") * mul;
+      switch (sortKey) {
+        case "tipo":
+          return a.type.localeCompare(b.type, "es") * mul;
+        case "tarifas":
+          return ((a.rates?.length ?? 0) - (b.rates?.length ?? 0)) * mul;
+        case "enviogratis": {
+          const fa = parseFloat(a.freeShippingThreshold ?? "") || 0;
+          const fb = parseFloat(b.freeShippingThreshold ?? "") || 0;
+          return (fa - fb) * mul;
+        }
+        case "estado":
+          return ((a.isActive ? 1 : 0) - (b.isActive ? 1 : 0)) * mul;
+        default:
+          return String(a.name ?? "").localeCompare(String(b.name ?? ""), "es") * mul;
+      }
     });
   }, [rows, q, sortKey, sortDir]);
 
-  /* ---- helpers draft ---- */
+  const warehouseOptions = useMemo(
+    () => warehouses.map((w) => ({ value: w.id, label: warehouseLabel(w) })),
+    [warehouses]
+  );
+
   function patchDraft(patch: Partial<CarrierDraft>) {
     setDraft((prev) => ({ ...prev, ...patch }));
   }
 
-  /* ---- abrir modal crear ---- */
   function openCreate() {
     setEditTarget(null);
     setDraft(EMPTY_DRAFT);
@@ -485,13 +691,17 @@ export default function ConfiguracionSistemaEnvios() {
     setEditOpen(true);
   }
 
-  /* ---- abrir modal editar ---- */
   function openEdit(row: ShippingCarrierRow) {
     setEditTarget(row);
-    const threshold = row.freeShippingThreshold != null
-      ? parseFloat(row.freeShippingThreshold)
-      : null;
+
+    const threshold =
+      row.freeShippingThreshold != null
+        ? parseFloat(row.freeShippingThreshold)
+        : null;
+
     setDraft({
+      type: row.type,
+      warehouseId: row.warehouseId ?? "",
       name: row.name,
       code: row.code ?? "",
       trackingUrl: row.trackingUrl ?? "",
@@ -505,82 +715,113 @@ export default function ConfiguracionSistemaEnvios() {
       isActive: row.isActive,
       notes: row.notes ?? "",
     });
+
     setFreeShippingNum(threshold && !isNaN(threshold) ? threshold : null);
+
     setRatesDraft(
       (row.rates ?? []).map((rate) => ({
         id: rate.id,
         name: rate.name,
-        zone: rate.zone,
+        zones: Array.isArray(rate.zones) ? rate.zones : [],
+        province: rate.province
+          ? rate.province
+              .split(",")
+              .map((s) => s.trim())
+              .filter(Boolean)
+          : [],
+        countries: Array.isArray(rate.countries) ? rate.countries : [],
         calculationMode: rate.calculationMode,
-        fixedPrice: rate.fixedPrice != null ? String(parseFloat(rate.fixedPrice)) : "",
-        pricePerKg: rate.pricePerKg != null ? String(parseFloat(rate.pricePerKg)) : "",
-        minWeight: rate.minWeight != null ? String(parseFloat(rate.minWeight)) : "",
-        maxWeight: rate.maxWeight != null ? String(parseFloat(rate.maxWeight)) : "",
+        fixedPrice:
+          rate.fixedPrice != null ? String(parseFloat(rate.fixedPrice)) : "",
+        pricePerKg:
+          rate.pricePerKg != null ? String(parseFloat(rate.pricePerKg)) : "",
+        minWeight:
+          rate.minWeight != null ? String(parseFloat(rate.minWeight)) : "",
+        maxWeight:
+          rate.maxWeight != null ? String(parseFloat(rate.maxWeight)) : "",
         isActive: rate.isActive,
       }))
     );
+
     setSubmitted(false);
     setFormErrors({});
     setEditOpen(true);
   }
 
-  /* ---- abrir modal ver ---- */
   function openView(row: ShippingCarrierRow) {
     setViewTarget(row);
     setViewOpen(true);
   }
 
-  /* ---- abrir modal eliminar ---- */
   function openDelete(row: ShippingCarrierRow) {
     setDeleteTarget(row);
     setDeleteOpen(true);
   }
 
-  /* ---- guardar ---- */
   async function handleSave() {
     setSubmitted(true);
-    const errors = validate(draft);
+    const errors = validate(draft, ratesDraft);
     setFormErrors(errors);
     if (Object.keys(errors).length > 0) return;
+
+    const isPickup = draft.type === "PICKUP";
 
     const payload: ShippingCarrierPayload = {
       name: draft.name.trim(),
       code: draft.code.trim() || undefined,
-      trackingUrl: draft.trackingUrl.trim() || undefined,
+      trackingUrl: isPickup
+        ? undefined
+        : draft.trackingUrl.trim() || undefined,
       logoUrl: draft.logoUrl.trim() || undefined,
-      freeShippingThreshold: draft.hasFreeShipping
-        ? freeShippingNum != null
-          ? freeShippingNum
-          : null
-        : null,
+      freeShippingThreshold:
+        !isPickup && draft.hasFreeShipping
+          ? freeShippingNum != null
+            ? freeShippingNum
+            : null
+          : null,
+      warehouseId: isPickup ? draft.warehouseId : undefined,
       isFavorite: draft.isFavorite,
       isActive: draft.isActive,
       notes: draft.notes.trim(),
-      rates: ratesDraft.map((r, idx) => ({
-        id: r.id,
-        name: r.name.trim(),
-        zone: r.zone.trim(),
-        calculationMode: r.calculationMode,
-        fixedPrice:
-          r.calculationMode === "FIXED" && r.fixedPrice
-            ? parseFloat(r.fixedPrice)
-            : null,
-        pricePerKg:
-          r.calculationMode === "BY_WEIGHT" && r.pricePerKg
-            ? parseFloat(r.pricePerKg)
-            : null,
-        minWeight:
-          r.calculationMode === "BY_WEIGHT" && r.minWeight
-            ? parseFloat(r.minWeight)
-            : null,
-        maxWeight:
-          r.calculationMode === "BY_WEIGHT" && r.maxWeight
-            ? parseFloat(r.maxWeight)
-            : null,
-        isActive: r.isActive,
-        sortOrder: idx,
-      })),
+      rates: isPickup
+        ? undefined
+        : ratesDraft.map((r, idx) => ({
+            id: r.id,
+            name: r.name.trim(),
+            zones: r.zones,
+            province:
+              r.province.length === 0
+                ? ""
+                : r.province.length === 1
+                ? r.province[0]
+                : r.province.join(", "),
+            countries: r.countries,
+            calculationMode: r.calculationMode,
+            fixedPrice:
+              (r.calculationMode === "FIXED" || r.calculationMode === "BY_ZONE") &&
+              r.fixedPrice
+                ? parseFloat(r.fixedPrice)
+                : null,
+            pricePerKg:
+              r.calculationMode === "BY_WEIGHT" && r.pricePerKg
+                ? parseFloat(r.pricePerKg)
+                : null,
+            minWeight:
+              r.calculationMode === "BY_WEIGHT" && r.minWeight
+                ? parseFloat(r.minWeight)
+                : null,
+            maxWeight:
+              r.calculationMode === "BY_WEIGHT" && r.maxWeight
+                ? parseFloat(r.maxWeight)
+                : null,
+            isActive: r.isActive,
+            sortOrder: idx,
+          })),
     };
+
+    if (!editTarget) {
+      payload.type = draft.type;
+    }
 
     try {
       setBusySave(true);
@@ -600,7 +841,6 @@ export default function ConfiguracionSistemaEnvios() {
     }
   }
 
-  /* ---- toggle activo/inactivo ---- */
   async function handleToggle(row: ShippingCarrierRow) {
     try {
       setTogglingId(row.id);
@@ -608,7 +848,11 @@ export default function ConfiguracionSistemaEnvios() {
         prev.map((r) => (r.id === row.id ? { ...r, isActive: !r.isActive } : r))
       );
       await shippingApi.toggle(row.id);
-      toast.success(row.isActive ? "Transportista desactivado." : "Transportista activado.");
+      toast.success(
+        row.isActive
+          ? "Transportista desactivado."
+          : "Transportista activado."
+      );
       await load();
     } catch (e: any) {
       setRows((prev) =>
@@ -620,21 +864,26 @@ export default function ConfiguracionSistemaEnvios() {
     }
   }
 
-  /* ---- favorito ---- */
   async function handleFavorite(row: ShippingCarrierRow) {
     try {
       setFavoritingId(row.id);
       setRows((prev) =>
-        prev.map((r) => (r.id === row.id ? { ...r, isFavorite: !r.isFavorite } : r))
+        prev.map((r) =>
+          r.id === row.id ? { ...r, isFavorite: !r.isFavorite } : r
+        )
       );
       await shippingApi.favorite(row.id);
       toast.success(
-        row.isFavorite ? "Transportista removido de favoritos." : "Transportista marcado como favorito."
+        row.isFavorite
+          ? "Transportista removido de favoritos."
+          : "Transportista marcado como favorito."
       );
       await load();
     } catch (e: any) {
       setRows((prev) =>
-        prev.map((r) => (r.id === row.id ? { ...r, isFavorite: row.isFavorite } : r))
+        prev.map((r) =>
+          r.id === row.id ? { ...r, isFavorite: row.isFavorite } : r
+        )
       );
       toast.error(e?.message || "No se pudo actualizar el favorito.");
     } finally {
@@ -642,7 +891,6 @@ export default function ConfiguracionSistemaEnvios() {
     }
   }
 
-  /* ---- clonar ---- */
   async function handleClone(row: ShippingCarrierRow) {
     try {
       setCloningId(row.id);
@@ -656,7 +904,6 @@ export default function ConfiguracionSistemaEnvios() {
     }
   }
 
-  /* ---- eliminar ---- */
   async function handleDelete() {
     if (!deleteTarget) return;
     try {
@@ -673,12 +920,21 @@ export default function ConfiguracionSistemaEnvios() {
     }
   }
 
-  /* ---- errores en tiempo real ---- */
   const errors = submitted ? formErrors : {};
+  const isPickupDraft = draft.type === "PICKUP";
 
-  /* =========================================================
-     RENDER
-  ========================================================= */
+  const duplicateRateNames = useMemo(() => {
+    const nameCount = new Map<string, number>();
+    ratesDraft.forEach((r) => {
+      const n = r.name.trim().toLowerCase();
+      if (n) nameCount.set(n, (nameCount.get(n) ?? 0) + 1);
+    });
+
+    return new Set(
+      [...nameCount.entries()].filter(([, c]) => c > 1).map(([n]) => n)
+    );
+  }, [ratesDraft]);
+
   return (
     <TPSectionShell
       title="Envíos y Logística"
@@ -688,7 +944,7 @@ export default function ConfiguracionSistemaEnvios() {
       <TPTableKit<ShippingCarrierRow>
         rows={filteredRows}
         columns={ENV_COLS}
-        storageKey="tptech_envios_colvis"
+        storageKey="tptech_envios_colvis_v3"
         search={q}
         onSearchChange={setQ}
         searchPlaceholder="Buscar..."
@@ -710,13 +966,12 @@ export default function ConfiguracionSistemaEnvios() {
             Nuevo transportista
           </TPButton>
         }
+        onRowClick={(row) => openView(row)}
         renderRow={(row, vis) => (
           <TPTr key={row.id} className={!row.isActive ? "opacity-60" : undefined}>
-            {/* Nombre / Código */}
             {vis.name && (
               <TPTd>
                 <div className="flex items-center gap-2 min-w-0">
-                  {/* Logo o ícono */}
                   <div className="grid h-9 w-9 shrink-0 place-items-center rounded-xl border border-border bg-surface2 text-muted overflow-hidden">
                     {row.logoUrl ? (
                       <img
@@ -724,25 +979,25 @@ export default function ConfiguracionSistemaEnvios() {
                         alt={row.name}
                         className="h-full w-full object-contain p-1"
                       />
+                    ) : row.type === "PICKUP" ? (
+                      <Store size={16} />
                     ) : (
                       <Truck size={16} />
                     )}
                   </div>
+
                   <div className="min-w-0">
                     <div className="flex items-center gap-1.5">
                       <span className="text-sm font-medium text-text truncate">
                         {row.name}
                       </span>
-                      {row.isFavorite && (
-                        <Star
-                          size={12}
-                          className="shrink-0 fill-yellow-400 text-yellow-400"
-                        />
-                      )}
                     </div>
-                    {row.code && (
-                      <div className="text-xs text-muted font-mono mt-0.5">
-                        {row.code}
+
+
+                    {row.type === "PICKUP" && row.warehouse && (
+                      <div className="text-xs text-muted mt-0.5 truncate">
+                        {row.warehouse.name}
+                        {row.warehouse.city ? ` · ${row.warehouse.city}` : ""}
                       </div>
                     )}
                   </div>
@@ -750,40 +1005,74 @@ export default function ConfiguracionSistemaEnvios() {
               </TPTd>
             )}
 
-            {/* Tarifas */}
-            {vis.tarifas && (
+            {vis.tipo && (
               <TPTd className="hidden md:table-cell">
                 <span className="text-sm text-muted">
-                  {row.rates && row.rates.length > 0
-                    ? `${row.rates.length} tarifa${row.rates.length !== 1 ? "s" : ""}`
-                    : "Sin tarifas"}
+                  {row.type === "PICKUP" ? "Retiro" : "Envío"}
                 </span>
               </TPTd>
             )}
 
-            {/* Envío gratis */}
+            {vis.tarifas && (
+              <TPTd className="hidden md:table-cell">
+                {row.type === "PICKUP" ? (
+                  <span className="text-sm text-muted">Gratis</span>
+                ) : row.rates && row.rates.length > 0 ? (
+                  <div className="space-y-0.5">
+                    {row.rates.map((r, i) => {
+                      const precio =
+                        r.calculationMode === "BY_WEIGHT"
+                          ? r.pricePerKg
+                            ? `${formatCurrency(r.pricePerKg)}/kg`
+                            : "—"
+                          : r.fixedPrice
+                          ? formatCurrency(r.fixedPrice)
+                          : "—";
+                      return (
+                        <div key={r.id ?? i} className="text-xs space-y-0.5">
+                          <div className="font-medium text-text truncate max-w-[200px]">{r.name}</div>
+                          <div className="text-muted flex flex-wrap gap-x-1.5">
+                            <span>{CALC_MODE_LABELS[r.calculationMode]}</span>
+                            <span>·</span>
+                            <span>{precio}</span>
+                            {Array.isArray(r.zones) && r.zones.length > 0 && (
+                              <>
+                                <span>·</span>
+                                <span className="truncate max-w-[120px]">{r.zones.join(", ")}</span>
+                              </>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <span className="text-sm text-muted">Sin tarifas</span>
+                )}
+              </TPTd>
+            )}
+
             {vis.enviogratis && (
               <TPTd className="hidden md:table-cell">
                 <span className="text-sm text-muted">
-                  {row.freeShippingThreshold
+                  {row.type === "PICKUP"
+                    ? "—"
+                    : row.freeShippingThreshold
                     ? formatCurrency(row.freeShippingThreshold)
                     : "No aplica"}
                 </span>
               </TPTd>
             )}
 
-            {/* Estado */}
             {vis.estado && (
               <TPTd className="hidden md:table-cell">
                 <TPStatusPill active={row.isActive} />
               </TPTd>
             )}
 
-            {/* Acciones */}
             {vis.acciones && (
               <TPTd className="text-right">
                 <div className="flex items-center justify-end gap-1.5 flex-wrap">
-                  {/* estado en mobile */}
                   <span className="md:hidden">
                     <TPStatusPill active={row.isActive} />
                   </span>
@@ -791,7 +1080,7 @@ export default function ConfiguracionSistemaEnvios() {
                   <TPRowActions
                     onFavorite={() => handleFavorite(row)}
                     isFavorite={row.isFavorite}
-                    busyFavorite={!row.isActive}
+                    busyFavorite={favoritingId === row.id}
                     onView={() => openView(row)}
                     onEdit={() => openEdit(row)}
                     onClone={() => handleClone(row)}
@@ -806,13 +1095,10 @@ export default function ConfiguracionSistemaEnvios() {
         )}
       />
 
-      {/* =========================================================
-          MODAL CREAR / EDITAR
-      ========================================================= */}
       <Modal
         open={editOpen}
         title={editTarget ? "Editar transportista" : "Nuevo transportista"}
-        maxWidth="2xl"
+        maxWidth="6xl"
         busy={busySave}
         onClose={() => !busySave && setEditOpen(false)}
         onEnter={handleSave}
@@ -820,180 +1106,143 @@ export default function ConfiguracionSistemaEnvios() {
           <>
             <TPButton
               variant="secondary"
+              iconLeft={<X size={16} />}
               onClick={() => setEditOpen(false)}
               disabled={busySave}
             >
               Cancelar
             </TPButton>
-            <TPButton variant="primary" onClick={handleSave} loading={busySave} iconLeft={<Save size={16} />}>
+
+            <TPButton
+              variant="primary"
+              onClick={handleSave}
+              loading={busySave}
+              iconLeft={<Save size={16} />}
+            >
               Guardar
             </TPButton>
           </>
         }
       >
-        <div className="space-y-6">
-          {/* ---- Sección: Transportista ---- */}
-          <ModalSection title="Transportista">
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-              {/* Nombre */}
-              <TPField
-                label="Nombre"
-                required
-                error={errors.name}
-                className="sm:col-span-2"
-              >
+        <div className="space-y-4">
+
+          {editTarget && draft.type === "PICKUP" && (
+            <TPCard title="Almacén de retiro">
+              <TPField label="Almacén" required error={errors.warehouseId}>
+                <TPComboFixed
+                  value={draft.warehouseId}
+                  onChange={(v) => patchDraft({ warehouseId: v })}
+                  options={[
+                    { value: "", label: "Seleccioná un almacén…" },
+                    ...warehouseOptions,
+                  ]}
+                  disabled={busySave}
+                />
+              </TPField>
+            </TPCard>
+          )}
+
+          <TPCard title="Transportista" collapsible>
+            <div className="space-y-4">
+              <TPField label="Nombre" required error={errors.name}>
                 <TPInput
                   value={draft.name}
                   onChange={(v) => patchDraft({ name: v })}
-                  placeholder="Ej: OCA, Andreani, Correo Argentino"
+                  placeholder={
+                    isPickupDraft
+                      ? "Ej: Retiro San Martín"
+                      : "Ej: OCA, Andreani, Correo Argentino"
+                  }
                   disabled={busySave}
                   data-tp-autofocus="1"
                 />
               </TPField>
-
-              {/* Código */}
-              <TPField
-                label="Código"
-                hint="Se genera automáticamente si lo dejás vacío."
-              >
-                <TPInput
-                  value={draft.code}
-                  onChange={(v) => patchDraft({ code: v })}
-                  placeholder="Ej: OCA"
-                  disabled={busySave}
-                />
-              </TPField>
-
-              {/* URL de seguimiento */}
-              <TPField
-                label="URL de seguimiento"
-                hint='Usá {CODIGO} como placeholder para el número de seguimiento.'
-              >
-                <TPInput
-                  value={draft.trackingUrl}
-                  onChange={(v) => patchDraft({ trackingUrl: v })}
-                  placeholder="https://..."
-                  disabled={busySave}
-                />
-              </TPField>
-
-              {/* Logo URL */}
-              <TPField
-                label="Logo URL"
-                className="sm:col-span-2"
-              >
-                <TPInput
-                  value={draft.logoUrl}
-                  onChange={(v) => patchDraft({ logoUrl: v })}
-                  placeholder="https://..."
-                  disabled={busySave}
-                />
-                {draft.logoUrl.trim() && (
-                  <div className="mt-2 flex items-center gap-2">
-                    <div className="grid h-10 w-10 place-items-center rounded-xl border border-border bg-surface2 overflow-hidden">
-                      <img
-                        src={draft.logoUrl.trim()}
-                        alt="Vista previa del logo"
-                        className="h-full w-full object-contain p-1"
-                        onError={(e) => {
-                          (e.currentTarget as HTMLImageElement).style.display = "none";
-                        }}
-                      />
-                    </div>
-                    <span className="text-xs text-muted">Vista previa</span>
-                  </div>
-                )}
-              </TPField>
             </div>
-          </ModalSection>
+          </TPCard>
 
-          {/* ---- Sección: Envío gratuito ---- */}
-          <ModalSection title="Envío gratuito">
-            <div className="space-y-3">
-              <TPCheckbox
-                checked={draft.hasFreeShipping}
-                onChange={(v) => {
-                  patchDraft({ hasFreeShipping: v, freeShippingThreshold: "" });
-                  if (!v) setFreeShippingNum(null);
-                }}
+          {!isPickupDraft && (
+            <TPCard title="Tarifas">
+              <RatesEditor
+                rates={ratesDraft}
+                onChange={setRatesDraft}
                 disabled={busySave}
-                label={
-                  <span className="text-sm text-text">
-                    ¿Tiene envío gratuito?
-                  </span>
-                }
+                duplicateNames={duplicateRateNames}
+                cityItems={cityCat.items}
+                provinceItems={provinceCat.items}
+                countryItems={countryCat.items}
+                onRefreshCity={() => void cityCat.refresh()}
+                onRefreshProvince={() => void provinceCat.refresh()}
+                onRefreshCountry={() => void countryCat.refresh()}
+                onCreateCity={cityCat.createItem}
+                onCreateProvince={provinceCat.createItem}
+                onCreateCountry={countryCat.createItem}
               />
 
-              {draft.hasFreeShipping && (
-                <TPField label="Envío gratis a partir de $">
-                  <TPNumberInput
-                    value={freeShippingNum}
-                    onChange={(v) => {
-                      setFreeShippingNum(v);
-                      patchDraft({ freeShippingThreshold: v != null ? String(v) : "" });
-                    }}
-                    decimals={2}
-                    step={1}
-                    min={0}
-                    placeholder="Ej: 5000"
-                    disabled={busySave}
-                  />
-                </TPField>
+              {errors.rateNames && (
+                <p className="mt-2 text-sm text-red-500">{errors.rateNames}</p>
               )}
-            </div>
-          </ModalSection>
+            </TPCard>
+          )}
 
-          {/* ---- Sección: Tarifas ---- */}
-          <ModalSection title="Tarifas">
-            <RatesEditor
-              rates={ratesDraft}
-              onChange={setRatesDraft}
-              disabled={busySave}
-            />
-          </ModalSection>
-
-          {/* ---- Sección: General (solo en edición) ---- */}
-          {editTarget && (
-            <ModalSection title="General">
+          {!isPickupDraft && (
+            <TPCard title="Envío gratuito">
               <div className="space-y-3">
                 <TPCheckbox
-                  checked={draft.isFavorite}
-                  onChange={(v) => patchDraft({ isFavorite: v })}
+                  checked={draft.hasFreeShipping}
+                  onChange={(v) => {
+                    patchDraft({
+                      hasFreeShipping: v,
+                      freeShippingThreshold: "",
+                    });
+                    if (!v) setFreeShippingNum(null);
+                  }}
                   disabled={busySave}
                   label={
-                    <span className="text-sm text-text">Favorito</span>
+                    <span className="text-sm text-text">
+                      ¿Tiene envío gratuito?
+                    </span>
                   }
                 />
-                <TPCheckbox
-                  checked={draft.isActive}
-                  onChange={(v) => patchDraft({ isActive: v })}
-                  disabled={busySave}
-                  label={
-                    <span className="text-sm text-text">Transportista activo</span>
-                  }
-                />
-                <TPField label="Notas">
-                  <TPTextarea
-                    value={draft.notes}
-                    onChange={(v) => patchDraft({ notes: v })}
-                    placeholder="Notas internas opcionales…"
-                    disabled={busySave}
-                    minH={80}
-                  />
-                </TPField>
+
+                {draft.hasFreeShipping && (
+                  <TPField label="Envío gratis a partir de">
+                    <TPNumberInput
+                      value={freeShippingNum}
+                      onChange={(v) => {
+                        setFreeShippingNum(v);
+                        patchDraft({
+                          freeShippingThreshold: v != null ? String(v) : "",
+                        });
+                      }}
+                      decimals={2}
+                      step={1}
+                      min={0}
+                      placeholder="Ej: 5000"
+                      disabled={busySave}
+                      leftIcon={<span className="text-xs font-semibold">$</span>}
+                    />
+                  </TPField>
+                )}
               </div>
-            </ModalSection>
+            </TPCard>
           )}
+
+          <TPCard title="Notas">
+            <TPTextarea
+              value={draft.notes}
+              onChange={(v) => patchDraft({ notes: v })}
+              placeholder="Notas internas opcionales…"
+              disabled={busySave}
+              minH={80}
+            />
+          </TPCard>
         </div>
       </Modal>
 
-      {/* =========================================================
-          MODAL VER DETALLE
-      ========================================================= */}
       <Modal
         open={viewOpen}
         title={viewTarget?.name ?? "Detalle de transportista"}
-        maxWidth="lg"
+        maxWidth="4xl"
         onClose={() => setViewOpen(false)}
         footer={
           <TPButton variant="secondary" onClick={() => setViewOpen(false)}>
@@ -1005,123 +1254,183 @@ export default function ConfiguracionSistemaEnvios() {
           <div className="space-y-1 text-sm">
             <DetailRow label="Nombre">{viewTarget.name}</DetailRow>
 
-            <DetailRow label="Código">
-              {viewTarget.code ? (
-                <span className="font-mono">{viewTarget.code}</span>
-              ) : (
-                <span className="text-muted italic">Sin código</span>
-              )}
+            {viewTarget.code && (
+              <DetailRow label="Código">
+                <span className="font-mono text-sm">{viewTarget.code}</span>
+              </DetailRow>
+            )}
+
+            <DetailRow label="Favorito">
+              {viewTarget.isFavorite ? "Sí ⭐" : "No"}
             </DetailRow>
 
-            <DetailRow label="URL de seguimiento">
-              {viewTarget.trackingUrl ? (
-                <a
-                  href={viewTarget.trackingUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-primary underline underline-offset-2 break-all"
-                >
-                  {viewTarget.trackingUrl}
-                </a>
-              ) : (
-                <span className="text-muted italic">Sin URL</span>
-              )}
+            <DetailRow label="Tipo">
+              {viewTarget.type === "PICKUP"
+                ? "Retiro en sucursal"
+                : "Envío a domicilio"}
             </DetailRow>
 
-            <DetailRow label="Envío gratis desde">
-              {viewTarget.freeShippingThreshold
-                ? formatCurrency(viewTarget.freeShippingThreshold)
-                : "No aplica"}
-            </DetailRow>
+
+            {viewTarget.type === "PICKUP" ? (
+              <DetailRow label="Almacén de retiro">
+                {viewTarget.warehouse ? (
+                  <div className="text-right">
+                    <div className="font-medium">{viewTarget.warehouse.name}</div>
+                    {(viewTarget.warehouse.street || viewTarget.warehouse.city) && (
+                      <div className="text-xs text-muted mt-0.5">
+                        {[
+                          viewTarget.warehouse.street
+                            ? `${viewTarget.warehouse.street}${
+                                viewTarget.warehouse.number
+                                  ? ` ${viewTarget.warehouse.number}`
+                                  : ""
+                              }`
+                            : null,
+                          viewTarget.warehouse.city,
+                          viewTarget.warehouse.province,
+                        ]
+                          .filter(Boolean)
+                          .join(", ")}
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <span className="text-muted italic">
+                    Sin almacén asignado
+                  </span>
+                )}
+              </DetailRow>
+            ) : (
+              <>
+                <DetailRow label="Envío gratis desde">
+                  {viewTarget.freeShippingThreshold
+                    ? formatCurrency(viewTarget.freeShippingThreshold)
+                    : "No aplica"}
+                </DetailRow>
+              </>
+            )}
 
             <DetailRow label="Estado">
               <TPStatusPill active={viewTarget.isActive} />
             </DetailRow>
 
-            <DetailRow label="Favorito">
-              {viewTarget.isFavorite ? "Sí" : "No"}
-            </DetailRow>
 
-            {/* Tabla de tarifas */}
-            {viewTarget.rates && viewTarget.rates.length > 0 ? (
-              <div className="py-2 border-b border-border">
-                <div className="text-muted font-medium mb-2">
-                  Tarifas ({viewTarget.rates.length})
-                </div>
-                <div className="rounded-xl border border-border overflow-hidden">
-                  <div className="hidden md:grid grid-cols-[1fr_1fr_160px_160px_60px] gap-2 bg-surface2 px-3 py-2 text-xs font-semibold uppercase tracking-wide text-muted">
-                    <div>Nombre</div>
-                    <div>Zona</div>
-                    <div>Modo</div>
-                    <div>Precio</div>
-                    <div className="text-center">Activo</div>
+            {viewTarget.type !== "PICKUP" &&
+              (viewTarget.rates && viewTarget.rates.length > 0 ? (
+                <div className="py-2 border-b border-border">
+                  <div className="text-muted font-medium mb-2">
+                    Tarifas ({viewTarget.rates.length})
                   </div>
-                  <div className="divide-y divide-border">
-                    {viewTarget.rates.map((rate, idx) => (
-                      <div
-                        key={rate.id ?? idx}
-                        className="flex flex-col gap-1 px-3 py-2.5 md:grid md:grid-cols-[1fr_1fr_160px_160px_60px] md:items-center md:gap-2"
-                      >
-                        <div className="text-sm font-medium text-text">
-                          {rate.name || <span className="text-muted italic">Sin nombre</span>}
-                        </div>
-                        <div className="text-sm text-muted">
-                          {rate.zone || "—"}
-                        </div>
-                        <div className="text-xs text-muted">
-                          {CALC_MODE_LABELS[rate.calculationMode]}
-                        </div>
-                        <div className="text-sm text-text">
-                          {rate.calculationMode === "FIXED" &&
-                            (rate.fixedPrice
-                              ? formatCurrency(rate.fixedPrice)
-                              : "—")}
-                          {rate.calculationMode === "BY_WEIGHT" && (
-                            <div>
-                              {rate.pricePerKg
-                                ? `${formatCurrency(rate.pricePerKg)}/kg`
-                                : "—"}
-                              {(rate.minWeight || rate.maxWeight) && (
-                                <div className="text-xs text-muted mt-0.5">
-                                  {rate.minWeight
-                                    ? `Min: ${parseFloat(rate.minWeight)} kg`
-                                    : ""}
-                                  {rate.minWeight && rate.maxWeight ? " / " : ""}
-                                  {rate.maxWeight
-                                    ? `Max: ${parseFloat(rate.maxWeight)} kg`
-                                    : ""}
-                                </div>
-                              )}
-                            </div>
-                          )}
-                          {rate.calculationMode === "BY_ZONE" && "—"}
-                        </div>
-                        <div className="flex items-center gap-1.5 md:justify-center">
-                          <span className="text-xs text-muted md:hidden">Activo:</span>
-                          <span
-                            className={cn(
-                              "inline-flex h-2 w-2 rounded-full",
-                              rate.isActive ? "bg-green-500" : "bg-surface2"
+
+                  <div className="rounded-xl border border-border overflow-hidden">
+                    <div className="hidden md:grid grid-cols-[1fr_1fr_1fr_140px_140px_50px] gap-2 bg-surface2 px-3 py-2 text-xs font-semibold uppercase tracking-wide text-muted">
+                      <div>Nombre</div>
+                      <div>Zonas</div>
+                      <div>Provincia / Países</div>
+                      <div>Modo</div>
+                      <div>Precio</div>
+                      <div className="text-center">Activo</div>
+                    </div>
+
+                    <div className="divide-y divide-border">
+                      {viewTarget.rates.map((rate, idx) => (
+                        <div
+                          key={rate.id ?? idx}
+                          className="flex flex-col gap-1 px-3 py-2.5 md:grid md:grid-cols-[1fr_1fr_1fr_140px_140px_50px] md:items-center md:gap-2"
+                        >
+                          <div className="text-sm font-medium text-text">
+                            {rate.name || (
+                              <span className="text-muted italic">
+                                Sin nombre
+                              </span>
                             )}
-                          />
+                          </div>
+
+                          <div className="text-sm text-muted">
+                            {Array.isArray(rate.zones) && rate.zones.length > 0
+                              ? rate.zones.join(", ")
+                              : "—"}
+                          </div>
+
+                          <div className="text-sm text-muted">
+                            {rate.province ? <div>{rate.province}</div> : null}
+
+                            {Array.isArray(rate.countries) &&
+                            rate.countries.length > 0 ? (
+                              <div
+                                className={cn(
+                                  "text-xs",
+                                  rate.province ? "mt-0.5" : ""
+                                )}
+                              >
+                                {rate.countries.join(", ")}
+                              </div>
+                            ) : null}
+
+                            {!rate.province &&
+                              (!Array.isArray(rate.countries) ||
+                                rate.countries.length === 0) &&
+                              "—"}
+                          </div>
+
+                          <div className="text-xs text-muted">
+                            {CALC_MODE_LABELS[rate.calculationMode]}
+                          </div>
+
+                          <div className="text-sm text-text">
+                            {rate.calculationMode === "FIXED" &&
+                              (rate.fixedPrice
+                                ? formatCurrency(rate.fixedPrice)
+                                : "—")}
+
+                            {rate.calculationMode === "BY_WEIGHT" && (
+                              <div>
+                                {rate.pricePerKg
+                                  ? `${formatCurrency(rate.pricePerKg)}/kg`
+                                  : "—"}
+                                {(rate.minWeight || rate.maxWeight) && (
+                                  <div className="text-xs text-muted mt-0.5">
+                                    {rate.minWeight
+                                      ? `Min: ${parseFloat(rate.minWeight)} kg`
+                                      : ""}
+                                    {rate.minWeight && rate.maxWeight ? " / " : ""}
+                                    {rate.maxWeight
+                                      ? `Max: ${parseFloat(rate.maxWeight)} kg`
+                                      : ""}
+                                  </div>
+                                )}
+                              </div>
+                            )}
+
+                            {rate.calculationMode === "BY_ZONE" &&
+                              (rate.fixedPrice
+                                ? formatCurrency(rate.fixedPrice)
+                                : "—")}
+                          </div>
+
+                          <div className="flex items-center md:justify-center">
+                            <TPStatusPill active={rate.isActive} />
+                          </div>
                         </div>
-                      </div>
-                    ))}
+                      ))}
+                    </div>
                   </div>
                 </div>
-              </div>
-            ) : (
-              <DetailRow label="Tarifas">
-                <span className="text-muted italic">Sin tarifas configuradas</span>
-              </DetailRow>
-            )}
+              ) : (
+                <DetailRow label="Tarifas">
+                  <span className="text-muted italic">
+                    Sin tarifas configuradas
+                  </span>
+                </DetailRow>
+              ))}
 
-            {viewTarget.notes && (
-              <div className="flex flex-col gap-1 py-2 border-b border-border">
-                <span className="text-muted font-medium">Notas</span>
-                <span className="text-text whitespace-pre-wrap">{viewTarget.notes}</span>
-              </div>
-            )}
+            <DetailRow label="Notas">
+              {viewTarget.notes ? (
+                <span className="whitespace-pre-wrap text-right">{viewTarget.notes}</span>
+              ) : (
+                <span className="text-muted italic">Sin notas</span>
+              )}
+            </DetailRow>
 
             <DetailRow label="Fecha de creación" borderBottom={false}>
               {formatDate(viewTarget.createdAt)}
@@ -1130,9 +1439,6 @@ export default function ConfiguracionSistemaEnvios() {
         )}
       </Modal>
 
-      {/* =========================================================
-          CONFIRM DELETE
-      ========================================================= */}
       <ConfirmDeleteDialog
         open={deleteOpen}
         title={`Eliminar "${deleteTarget?.name ?? ""}"`}

@@ -5,6 +5,7 @@ import {
   Save,
   Receipt,
   AlertTriangle,
+  X,
 } from "lucide-react";
 
 import { cn } from "../../components/ui/tp";
@@ -25,6 +26,7 @@ import { TPStatusPill } from "../../components/ui/TPStatusPill";
 import { TPRowActions } from "../../components/ui/TPRowActions";
 import TPComboFixed from "../../components/ui/TPComboFixed";
 import TPNumberInput from "../../components/ui/TPNumberInput";
+import TPDateRangeInline from "../../components/ui/TPDateRangeInline";
 
 import { toast } from "../../lib/toast";
 import {
@@ -326,6 +328,7 @@ export default function ConfiguracionSistemaImpuestos() {
   const [busySave, setBusySave] = useState(false);
   const [busyDelete, setBusyDelete] = useState(false);
   const [cloningId, setCloningId] = useState<string | null>(null);
+  const [favoritingId, setFavoritingId] = useState<string | null>(null);
 
   /* ---- carga inicial ---- */
   async function load() {
@@ -501,6 +504,25 @@ export default function ConfiguracionSistemaImpuestos() {
     }
   }
 
+  /* ---- favorito ---- */
+  async function handleFavorite(row: TaxRow) {
+    try {
+      setFavoritingId(row.id);
+      setRows((prev) =>
+        prev.map((r) => ({ ...r, isFavorite: r.id === row.id ? !r.isFavorite : false }))
+      );
+      await taxesApi.favorite(row.id);
+      await load();
+    } catch (e: any) {
+      setRows((prev) =>
+        prev.map((r) => (r.id === row.id ? { ...r, isFavorite: row.isFavorite } : r))
+      );
+      toast.error(e?.message || "No se pudo cambiar el favorito.");
+    } finally {
+      setFavoritingId(null);
+    }
+  }
+
   /* ---- clonar ---- */
   async function handleClone(row: TaxRow) {
     try {
@@ -590,15 +612,13 @@ export default function ConfiguracionSistemaImpuestos() {
             Nuevo impuesto
           </TPButton>
         }
+        onRowClick={(row) => openView(row)}
         renderRow={(row, vis) => (
           <TPTr key={row.id} className={!row.isActive ? "opacity-60" : undefined}>
             {vis.name && (
               <TPTd>
                 <div className="min-w-0">
                   <div className="text-sm font-medium text-text truncate">{row.name}</div>
-                  {row.code && (
-                    <div className="text-xs text-muted font-mono mt-0.5">{row.code}</div>
-                  )}
                 </div>
               </TPTd>
             )}
@@ -655,6 +675,9 @@ export default function ConfiguracionSistemaImpuestos() {
                     <TaxTypeBadge taxType={row.taxType} />
                   </span>
                   <TPRowActions
+                    onFavorite={() => handleFavorite(row)}
+                    isFavorite={row.isFavorite}
+                    busyFavorite={favoritingId === row.id}
                     onView={() => openView(row)}
                     onEdit={() => openEdit(row)}
                     onClone={() => handleClone(row)}
@@ -685,6 +708,7 @@ export default function ConfiguracionSistemaImpuestos() {
               variant="secondary"
               onClick={() => setEditOpen(false)}
               disabled={busySave}
+              iconLeft={<X size={16} />}
             >
               Cancelar
             </TPButton>
@@ -720,7 +744,7 @@ export default function ConfiguracionSistemaImpuestos() {
               </TPField>
 
               {/* Tipo de tributo */}
-              <TPField label="Tipo de tributo" required>
+              <TPField label="Tipo de tributo" required className="sm:col-span-2">
                 <TPComboFixed
                   value={draft.taxType}
                   onChange={(v) => patchDraft({ taxType: v as TaxType })}
@@ -732,18 +756,6 @@ export default function ConfiguracionSistemaImpuestos() {
                 />
               </TPField>
 
-              {/* Código */}
-              <TPField
-                label="Código"
-                hint="Se genera automáticamente si lo dejás vacío."
-              >
-                <TPInput
-                  value={draft.code}
-                  onChange={(v) => patchDraft({ code: v })}
-                  placeholder="Ej: IVA21"
-                  disabled={busySave}
-                />
-              </TPField>
             </div>
           </ModalSection>
 
@@ -771,7 +783,7 @@ export default function ConfiguracionSistemaImpuestos() {
               {/* Porcentaje — solo si aplica */}
               {(draft.calculationType === "PERCENTAGE" ||
                 draft.calculationType === "PERCENTAGE_PLUS_FIXED") && (
-                <TPField label="Porcentaje (%)" required error={errors.rate}>
+                <TPField label="Porcentaje" required error={errors.rate}>
                   <TPNumberInput
                     value={rateNum}
                     onChange={(v) => {
@@ -783,6 +795,7 @@ export default function ConfiguracionSistemaImpuestos() {
                     min={0}
                     placeholder="Ej: 21"
                     disabled={busySave}
+                    suffix="%"
                   />
                 </TPField>
               )}
@@ -790,7 +803,7 @@ export default function ConfiguracionSistemaImpuestos() {
               {/* Monto fijo — solo si aplica */}
               {(draft.calculationType === "FIXED_AMOUNT" ||
                 draft.calculationType === "PERCENTAGE_PLUS_FIXED") && (
-                <TPField label="Monto fijo ($)" required error={errors.fixedAmount}>
+                <TPField label="Monto fijo" required error={errors.fixedAmount}>
                   <TPNumberInput
                     value={fixedAmountNum}
                     onChange={(v) => {
@@ -802,6 +815,7 @@ export default function ConfiguracionSistemaImpuestos() {
                     min={0}
                     placeholder="Ej: 100"
                     disabled={busySave}
+                    leftIcon="$"
                   />
                 </TPField>
               )}
@@ -845,24 +859,23 @@ export default function ConfiguracionSistemaImpuestos() {
 
           {/* ---- Sección: Vigencia ---- */}
           <ModalSection title="Vigencia">
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-              <TPField label="Válido desde">
-                <TPInput
-                  type="date"
-                  value={draft.validFrom}
-                  onChange={(v) => patchDraft({ validFrom: v })}
-                  disabled={busySave}
-                />
-              </TPField>
-              <TPField label="Válido hasta">
-                <TPInput
-                  type="date"
-                  value={draft.validTo}
-                  onChange={(v) => patchDraft({ validTo: v })}
-                  disabled={busySave}
-                />
-              </TPField>
-            </div>
+            <TPDateRangeInline
+              showPresets={false}
+              fromLabel="Válido desde"
+              toLabel="Válido hasta"
+              disabled={busySave}
+              value={{
+                from: draft.validFrom ? new Date(draft.validFrom + "T00:00:00") : null,
+                to: draft.validTo ? new Date(draft.validTo + "T00:00:00") : null,
+              }}
+              onChange={(v) => {
+                const fmt = (d: Date | null) =>
+                  d
+                    ? `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`
+                    : "";
+                patchDraft({ validFrom: fmt(v.from), validTo: fmt(v.to) });
+              }}
+            />
           </ModalSection>
 
           {/* ---- Sección: General (solo en edición) ---- */}

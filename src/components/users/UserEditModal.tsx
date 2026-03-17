@@ -3,6 +3,7 @@ import React, { type FormEvent, useEffect, useMemo, useRef, useState } from "rea
 import { AlertTriangle, ArrowRight, Loader2, Mail, X } from "lucide-react";
 
 import { Modal } from "../ui/Modal";
+import { TPButton } from "../ui/TPButton";
 import UserEditFooter from "./edit/UserEditFooter";
 
 import SectionData from "./edit/sections/SectionData";
@@ -21,6 +22,7 @@ import UserAvatarCard from "./edit/partials/UserAvatarCard";
 
 // ✅ API (cookie httpOnly)
 import { apiFetch } from "../../lib/api";
+import { sendResetLinkForUser } from "../../services/users";
 
 /* =========================
    PROPS
@@ -54,8 +56,10 @@ type Props = {
   // fields
   fEmail: string;
   setFEmail: (v: string) => void;
-  fName: string;
-  setFName: (v: string) => void;
+  fFirstName: string;
+  setFFirstName: (v: string) => void;
+  fLastName: string;
+  setFLastName: (v: string) => void;
   fPassword: string;
   setFPassword: (v: string) => void;
 
@@ -124,6 +128,9 @@ type Props = {
   adminSetOrResetPin: (opts?: { currentPin?: string; pin?: string; pin2?: string }) => Promise<void>;
 
   adminRemovePin: (opts?: { confirmRemoveOverrides?: boolean; currentPin?: string }) => Promise<void>;
+
+  // ✅ callback para habilitar PIN lock tras crear PIN desde Usuarios
+  onRequestEnablePinLock?: () => Promise<void>;
 
   // warehouse
   fFavWarehouseId: string;
@@ -200,8 +207,10 @@ export default function UserEditModal(props: Props) {
 
     fEmail,
     setFEmail,
-    fName,
-    setFName,
+    fFirstName,
+    setFFirstName,
+    fLastName,
+    setFLastName,
     fPassword,
     setFPassword,
 
@@ -260,6 +269,7 @@ export default function UserEditModal(props: Props) {
     adminTogglePinEnabled,
     adminSetOrResetPin,
     adminRemovePin,
+    onRequestEnablePinLock,
 
     fFavWarehouseId,
     setFFavWarehouseId,
@@ -312,14 +322,29 @@ export default function UserEditModal(props: Props) {
   const inviteCooldownRef = useRef<number | null>(null);
   const inviteFlashTimerRef = useRef<number | null>(null);
 
+  // ✅ Estado para el modal de confirmación de reenvío
+  const [confirmResendInviteOpen, setConfirmResendInviteOpen] = useState(false);
+
+  // ✅ Estado para "Enviar reset de contraseña" (ACTIVE)
+  const [resetBusy, setResetBusy] = useState(false);
+  const resetCooldownRef = useRef<number | null>(null);
+
   const detailStatus = String((detail as any)?.status || "").toUpperCase();
   const isPending = detailStatus === "PENDING";
+  const isActive = detailStatus === "ACTIVE";
 
   const canInviteHere =
     modalMode === "EDIT" &&
     canAdmin &&
     !isSelf &&
     isPending &&
+    Boolean(String((detail as any)?.id || "").trim());
+
+  const canSendResetHere =
+    modalMode === "EDIT" &&
+    canAdmin &&
+    !isSelf &&
+    isActive &&
     Boolean(String((detail as any)?.id || "").trim());
 
   function flashInvite(msg: string, type: "ok" | "err", ms: number) {
@@ -343,8 +368,9 @@ export default function UserEditModal(props: Props) {
     setInviteFlash(null);
 
     try {
+      const email = String((detail as any)?.email || "usuario");
       await apiFetch<{ ok: boolean }>(`/users/${encodeURIComponent(id)}/invite`, { method: "POST" });
-      flashInvite(`Invitación enviada a ${String((detail as any)?.email || "usuario")}.`, "ok", 2500);
+      flashInvite(`Invitación enviada a ${email}. El link es válido por 7 días.`, "ok", 4000);
     } catch (e: any) {
       flashInvite(e?.message || "No se pudo enviar la invitación.", "err", 3500);
     } finally {
@@ -357,6 +383,41 @@ export default function UserEditModal(props: Props) {
     }
   }
 
+  async function sendResetFromModal() {
+    if (!canSendResetHere) return;
+    if (resetBusy) return;
+    if (resetCooldownRef.current) return;
+
+    const id = String((detail as any)?.id || "").trim();
+    const email = String((detail as any)?.email || "usuario");
+    if (!id) return;
+
+    setResetBusy(true);
+    setInviteFlash(null);
+
+    try {
+      const resp = await sendResetLinkForUser(id);
+
+      if (resp.devLink) {
+        // MAIL_MODE=preview o console: el mail NO llegó al destinatario real
+        flashInvite(
+          `⚠️ MODO PREVIEW: el mail no se envió a ${email}. El link es válido 30 min solo en este servidor.`,
+          "err",
+          8000
+        );
+      } else {
+        flashInvite(`Link de recuperación enviado a ${email}. Vence en 30 minutos.`, "ok", 5000);
+      }
+    } catch (e: any) {
+      flashInvite(e?.message || "No se pudo enviar el link de recuperación.", "err", 4000);
+    } finally {
+      setResetBusy(false);
+      resetCooldownRef.current = window.setTimeout(() => {
+        resetCooldownRef.current = null;
+      }, 1200);
+    }
+  }
+
   useEffect(() => {
     return () => {
       if (inviteFlashTimerRef.current) window.clearTimeout(inviteFlashTimerRef.current);
@@ -364,6 +425,9 @@ export default function UserEditModal(props: Props) {
 
       if (inviteCooldownRef.current) window.clearTimeout(inviteCooldownRef.current);
       inviteCooldownRef.current = null;
+
+      if (resetCooldownRef.current) window.clearTimeout(resetCooldownRef.current);
+      resetCooldownRef.current = null;
     };
   }, []);
 
@@ -428,6 +492,11 @@ export default function UserEditModal(props: Props) {
 
   const pinOnlyMode = open && modalMode === "EDIT" && Boolean(pinOnly) && !detailHasQuickPin;
 
+  const isLastPinWithLock = useMemo(
+    () => Boolean(pinLockEnabled) && Boolean(detailHasQuickPin) && Number(usersWithPinCount) <= 1,
+    [pinLockEnabled, detailHasQuickPin, usersWithPinCount]
+  );
+
   function openPinFlow() {
     setPinDraft("");
     setPinDraft2("");
@@ -438,6 +507,21 @@ export default function UserEditModal(props: Props) {
     setPinNew2("");
   }
 
+  // ✅ Modal de confirmación: "Al crear el PIN, el Bloqueo por PIN quedará habilitado"
+  const [showPinLockWillEnableConfirm, setShowPinLockWillEnableConfirm] = useState(false);
+  const pendingAutoEnableLockRef = useRef(false);
+
+  // ✅ Wrapper: muestra confirm solo cuando el PIN lock está deshabilitado
+  function openPinFlowMaybeConfirm() {
+    if (!hasPin && !pinLockEnabled) {
+      setShowPinLockWillEnableConfirm(true);
+      return;
+    }
+    // Limpiar cualquier pending key obsoleto
+    try { sessionStorage.removeItem("tptech_pinlock_pending_enable_v1"); } catch {}
+    openPinFlow();
+  }
+
   function closePinFlow() {
     if (pinBusy || pinToggling) return;
     setPinFlowOpen(false);
@@ -445,6 +529,43 @@ export default function UserEditModal(props: Props) {
     setPinDraft2("");
     setPinFlowStep("NEW");
   }
+
+  /* ============================================================
+     ✅ RESET UI STATE on open / user change
+     IMPORTANT: must run BEFORE the auto-open effects below so that
+     setPinFlowOpen(false) does not override setPinFlowOpen(true) set
+     by the auto-open effect (effects run in definition order).
+  ============================================================ */
+  useEffect(() => {
+    if (!open) return;
+
+    setHiddenSavedAttIds(new Set());
+    setForceHideDetailAvatar(false);
+
+    setConfirmDisableSpecialOpen(false);
+    setSpecialClearing(false);
+
+    setConfirmDisablePinClearsSpecialOpen(false);
+    setPinToggling(false);
+
+    setShowPassword(false);
+
+    setPinFlowOpen(false);
+    setPinFlowStep("NEW");
+    setPinDraft("");
+    setPinDraft2("");
+    setPinNew("");
+    setPinNew2("");
+
+    setInviteBusy(false);
+    setInviteFlash(null);
+    setConfirmResendInviteOpen(false);
+    setResetBusy(false);
+
+    // ✅ reset de banderas de confirmación al abrir
+    setPinChangedThisEdit(false);
+    setShowLeavePinConfirm(false);
+  }, [open, detail?.id, setPinNew, setPinNew2]);
 
   /* ============================================================
      ✅ AUTO OPEN PIN FLOW (desde Users.tsx)
@@ -470,7 +591,7 @@ export default function UserEditModal(props: Props) {
     }
 
     if (!pinFlowOpen && !pinBusy && !pinToggling) {
-      openPinFlow();
+      openPinFlowMaybeConfirm();
       onAutoOpenPinFlowConsumed?.();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -548,35 +669,6 @@ export default function UserEditModal(props: Props) {
 
   const [confirmDisableSpecialOpen, setConfirmDisableSpecialOpen] = useState(false);
   const [specialClearing, setSpecialClearing] = useState(false);
-
-  useEffect(() => {
-    if (!open) return;
-
-    setHiddenSavedAttIds(new Set());
-    setForceHideDetailAvatar(false);
-
-    setConfirmDisableSpecialOpen(false);
-    setSpecialClearing(false);
-
-    setConfirmDisablePinClearsSpecialOpen(false);
-    setPinToggling(false);
-
-    setShowPassword(false);
-
-    setPinFlowOpen(false);
-    setPinFlowStep("NEW");
-    setPinDraft("");
-    setPinDraft2("");
-    setPinNew("");
-    setPinNew2("");
-
-    setInviteBusy(false);
-    setInviteFlash(null);
-
-    // ✅ reset de banderas de confirmación al abrir
-    setPinChangedThisEdit(false);
-    setShowLeavePinConfirm(false);
-  }, [open, detail?.id, setPinNew, setPinNew2]);
 
   function safeClose() {
     // ✅ Si el PIN ya se guardó en esta edición, avisamos antes de cerrar
@@ -725,7 +817,8 @@ export default function UserEditModal(props: Props) {
 
     const changed =
       norm(fEmail) !== norm(d.email) ||
-      norm(fName) !== norm(d.name) ||
+      norm(fFirstName) !== norm(d.firstName) ||
+      norm(fLastName) !== norm(d.lastName) ||
       norm(fPassword) !== "" ||
       norm(fPhoneCountry) !== norm(d.phoneCountry) ||
       norm(fPhoneNumber) !== norm(d.phoneNumber) ||
@@ -748,7 +841,8 @@ export default function UserEditModal(props: Props) {
     modalMode,
     detail,
     fEmail,
-    fName,
+    fFirstName,
+    fLastName,
     fPassword,
     fPhoneCountry,
     fPhoneNumber,
@@ -829,7 +923,47 @@ export default function UserEditModal(props: Props) {
         confirmDisableSpecialOpen={confirmDisableSpecialOpen}
         setConfirmDisableSpecialOpen={setConfirmDisableSpecialOpen}
         onConfirmDisableSpecialAndClear={() => void confirmDisableSpecialAndClear()}
+        confirmResendInviteOpen={confirmResendInviteOpen}
+        setConfirmResendInviteOpen={setConfirmResendInviteOpen}
+        resendInviteEmail={String((detail as any)?.email || "")}
+        resendInviteBusy={inviteBusy}
+        onConfirmResendInvite={() => void sendInviteFromModal()}
       />
+
+      {/* ✅ Modal informativo: al crear el PIN, el Bloqueo por PIN quedará habilitado */}
+      <Modal
+        open={showPinLockWillEnableConfirm}
+        title="Crear PIN"
+        maxWidth="sm"
+        onClose={() => setShowPinLockWillEnableConfirm(false)}
+        footer={
+          <div className="flex gap-2 justify-end">
+            <TPButton variant="secondary" onClick={() => setShowPinLockWillEnableConfirm(false)}>
+              Cancelar
+            </TPButton>
+            <TPButton
+              variant="primary"
+              onClick={() => {
+                pendingAutoEnableLockRef.current = true;
+                setShowPinLockWillEnableConfirm(false);
+                openPinFlow();
+              }}
+            >
+              Continuar
+            </TPButton>
+          </div>
+        }
+      >
+        <div className="space-y-3 text-sm text-text">
+          <p>
+            Al crear el PIN de 4 dígitos, el <b>Bloqueo por PIN</b> del sistema quedará{" "}
+            <b>habilitado automáticamente</b>.
+          </p>
+          <p className="text-muted text-xs">
+            Una vez habilitado, los usuarios deberán ingresar su PIN para desbloquear la sesión o cambiar de usuario rápidamente.
+          </p>
+        </div>
+      </Modal>
 
       <Modal open={open} wide={wide} title={title} onClose={safeClose} busy={modalBusy} footer={null as any}>
         {modalLoading ? (
@@ -882,8 +1016,10 @@ export default function UserEditModal(props: Props) {
                 setFPassword={setFPassword}
                 showPassword={showPassword}
                 setShowPassword={setShowPassword}
-                fName={fName}
-                setFName={setFName}
+                fFirstName={fFirstName}
+                setFFirstName={setFFirstName}
+                fLastName={fLastName}
+                setFLastName={setFLastName}
                 fDocType={fDocType}
                 setFDocType={setFDocType}
                 fDocNumber={fDocNumber}
@@ -920,7 +1056,7 @@ export default function UserEditModal(props: Props) {
                 draftKey={draftKeyOfFile}
                 draftPreviewByKey={draftPreviewByKey}
                 initialsFrom={(s: string) => initialsFrom(s)}
-                avatarInitialsBase={fName || fEmail || "U"}
+                avatarInitialsBase={fFirstName || fLastName || fEmail || "U"}
               />
             ) : null}
 
@@ -934,7 +1070,7 @@ export default function UserEditModal(props: Props) {
                 detailHasQuickPin={detailHasQuickPin}
                 detailPinEnabled={detailPinEnabled}
                 pinFlowOpen={pinFlowOpen}
-                openPinFlow={openPinFlow}
+                openPinFlow={openPinFlowMaybeConfirm}
                 closePinFlow={closePinFlow}
                 hasPin={hasPin}
                 pinFlowStep={pinFlowStep}
@@ -984,9 +1120,12 @@ export default function UserEditModal(props: Props) {
                 isSelf={isSelf}
                 ownerRoleId={ownerRoleId}
                 selfOwnerChecked={selfOwnerChecked}
-                // ✅ NUEVO: para PinConfigSection (último PIN)
-                pinLockEnabled={pinLockEnabled}
-                usersWithPinCount={usersWithPinCount}
+                isLastPinWithLock={isLastPinWithLock}
+                onAfterPinCreate={async () => {
+                  if (!pendingAutoEnableLockRef.current) return;
+                  pendingAutoEnableLockRef.current = false;
+                  await onRequestEnablePinLock?.();
+                }}
               />
             ) : null}
 
@@ -999,7 +1138,7 @@ export default function UserEditModal(props: Props) {
                     type="button"
                     className={cn("tp-btn-secondary", (inviteBusy || busyClose) && "opacity-60")}
                     disabled={inviteBusy || busyClose}
-                    onClick={() => void sendInviteFromModal()}
+                    onClick={() => setConfirmResendInviteOpen(true)}
                     title={inviteBusy ? "Enviando…" : "Enviar invitación"}
                   >
                     {inviteBusy ? (
@@ -1011,6 +1150,28 @@ export default function UserEditModal(props: Props) {
                       <span className="inline-flex items-center gap-2">
                         <Mail className="h-4 w-4" />
                         Enviar invitación
+                      </span>
+                    )}
+                  </button>
+                ) : null}
+
+                {canSendResetHere ? (
+                  <button
+                    type="button"
+                    className={cn("tp-btn-secondary", (resetBusy || busyClose) && "opacity-60")}
+                    disabled={resetBusy || busyClose}
+                    onClick={() => void sendResetFromModal()}
+                    title={resetBusy ? "Enviando…" : "Enviar link de recuperación de contraseña al usuario"}
+                  >
+                    {resetBusy ? (
+                      <span className="inline-flex items-center gap-2">
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                        Enviando…
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center gap-2">
+                        <Mail className="h-4 w-4" />
+                        Enviar reset de contraseña
                       </span>
                     )}
                   </button>

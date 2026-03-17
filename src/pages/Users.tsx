@@ -1,16 +1,14 @@
 // tptech-frontend/src/pages/Users.tsx
-import React, { useState } from "react";
+import React from "react";
 import { Plus, Trash2, ArrowLeft } from "lucide-react";
 
 import { Modal } from "../components/ui/Modal";
 import ConfirmUnsavedChangesDialog from "../components/ui/ConfirmUnsavedChangesDialog";
-import TPSearchInput from "../components/ui/TPSearchInput";
 import { TPButton } from "../components/ui/TPButton";
 import TPAlert from "../components/ui/TPAlert";
 
-import UsersTable, { USERS_COLUMNS, USERS_COL_LS_KEY } from "../components/users/UsersTable";
+import UsersTable from "../components/users/UsersTable";
 import UserEditModal from "../components/users/UserEditModal";
-import { TPColumnPicker } from "../components/ui/TPColumnPicker";
 
 import { useUsersPage } from "../hooks/useUsersPage";
 
@@ -19,21 +17,6 @@ import { prefetchUserDetail as prefetchUserDetailFn } from "../components/users/
 
 export default function UsersPage() {
   const p = useUsersPage();
-
-  const [userColVis, setUserColVis] = useState<Record<string, boolean>>(() => {
-    try {
-      const saved = localStorage.getItem(USERS_COL_LS_KEY);
-      if (saved) return JSON.parse(saved);
-    } catch {}
-    return Object.fromEntries(USERS_COLUMNS.map((c) => [c.key, c.visible]));
-  });
-  function toggleUserCol(key: string, visible: boolean) {
-    setUserColVis((prev) => {
-      const next = { ...prev, [key]: visible };
-      try { localStorage.setItem(USERS_COL_LS_KEY, JSON.stringify(next)); } catch {}
-      return next;
-    });
-  }
 
   // ✅ FIX TS: pinOnly puede existir en runtime pero no está tipado en el return del hook
   const pinOnly = Boolean((p as any)?.pinOnly);
@@ -85,31 +68,6 @@ export default function UsersPage() {
             </TPButton>
           )}
         </div>
-
-        <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
-          <div className="flex-1 min-w-0 flex items-center gap-2 md:max-w-md">
-            <div className="flex-1 min-w-0">
-              <TPSearchInput
-                placeholder="Buscar por email / nombre…"
-                value={p.qUI}
-                onChange={p.setQUI}
-              />
-            </div>
-            <div className="hidden sm:flex">
-              <TPColumnPicker
-                columns={USERS_COLUMNS.map((c) => ({ key: c.key, label: c.label, canHide: c.canHide }))}
-                visibility={userColVis}
-                onChange={toggleUserCol}
-              />
-            </div>
-          </div>
-
-          {p.canAdmin && (
-            <TPButton onClick={p.openCreate} iconLeft={<Plus className="h-4 w-4" />}>
-              Nuevo usuario
-            </TPButton>
-          )}
-        </div>
       </div>
 
       {p.err && <TPAlert tone="danger">{p.err}</TPAlert>}
@@ -117,7 +75,15 @@ export default function UsersPage() {
       <UsersTable
         loading={p.loading}
         users={p.users}
-        colVis={userColVis}
+        search={p.qUI}
+        onSearchChange={p.setQUI}
+        actions={
+          p.canAdmin ? (
+            <TPButton onClick={p.openCreate} iconLeft={<Plus className="h-4 w-4" />}>
+              Nuevo usuario
+            </TPButton>
+          ) : undefined
+        }
         totalLabel={p.totalLabel}
         page={p.page}
         totalPages={p.totalPages}
@@ -152,8 +118,10 @@ export default function UsersPage() {
         setTab={p.setTab}
         fEmail={p.fEmail}
         setFEmail={p.setFEmail}
-        fName={p.fName}
-        setFName={p.setFName}
+        fFirstName={p.fFirstName}
+        setFFirstName={p.setFFirstName}
+        fLastName={p.fLastName}
+        setFLastName={p.setFLastName}
         fPassword={p.fPassword}
         setFPassword={p.setFPassword}
         fPhoneCountry={p.fPhoneCountry}
@@ -239,6 +207,7 @@ export default function UsersPage() {
         removeSpecial={p.removeSpecial}
         autoOpenPinFlow={p.autoOpenPinFlow}
         onAutoOpenPinFlowConsumed={() => p.setAutoOpenPinFlow(false)}
+        onRequestEnablePinLock={p.handleRequestEnablePinLock}
       />
 
       <Modal

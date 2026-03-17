@@ -25,6 +25,7 @@ export type TaxRow = {
   validFrom: string | null;
   validTo: string | null;
   isActive: boolean;
+  isFavorite: boolean;
   sortOrder: number;
   notes: string;
   deletedAt: string | null;
@@ -66,4 +67,7 @@ export const taxesApi = {
 
   remove: (id: string) =>
     apiFetch<{ id: string }>(`/taxes/${id}`, { method: "DELETE", on401: "throw" }),
+
+  favorite: (id: string) =>
+    apiFetch<TaxRow>(`/taxes/${id}/favorite`, { method: "PATCH", on401: "throw" }),
 };

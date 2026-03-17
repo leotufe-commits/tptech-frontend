@@ -4,9 +4,8 @@ import { useNavigate } from "react-router-dom";
 
 import { cn, Section } from "../../users.ui";
 import type { Override } from "../../../../services/users";
-
-// ✅ NUEVO: para saber si el bloqueo por PIN del sistema está activo (Opción C)
-import { useAuth } from "../../../../context/AuthContext";
+import { Modal } from "../../../ui/Modal";
+import { TPButton } from "../../../ui/TPButton";
 
 type Props = {
   modalMode: "CREATE" | "EDIT";
@@ -24,12 +23,10 @@ type Props = {
   pinBusy: boolean;
   pinToggling: boolean;
 
-  // ✅ “sistema PIN apagado / no editable”
   pinPillsDisabled: boolean;
 
-  // ✅ NUEVO: estado global del sistema y conteo
-  pinLockEnabled?: boolean; // viene del hook (config del sistema)
-  usersWithPinCount?: number; // viene del hook (conteo en la lista)
+  // true cuando este es el ultimo PIN y el Bloqueo por PIN del sistema esta activo
+  isLastPinWithLock?: boolean;
 
   pinMsg: string | null;
   showPinMessage: boolean;
@@ -49,7 +46,6 @@ type Props = {
 
 export default function PinConfigSection(props: Props) {
   const navigate = useNavigate();
-  const auth = useAuth();
 
   const {
     modalMode,
@@ -61,11 +57,8 @@ export default function PinConfigSection(props: Props) {
 
     pinBusy,
     pinToggling,
-    pinPillsDisabled,
 
-    // ✅ NUEVO
-    pinLockEnabled,
-    usersWithPinCount,
+    isLastPinWithLock,
 
     pinMsg,
     showPinMessage,
@@ -88,10 +81,8 @@ export default function PinConfigSection(props: Props) {
 
   const canEditPin = isSelf || canAdmin;
 
-  // ✅ “sistema apagado” lo tratamos como bloqueo para crear/editar/eliminar desde acá
-  const disabled = !canEditPin || busy || pinPillsDisabled;
+  const disabled = !canEditPin || busy;
 
-  // ✅ importante: si marcamos removedVisual, se considera “sin pin” aunque detail diga que sí
   const effectiveHasPin = useMemo(
     () => Boolean(detailHasQuickPin) && !pinRemovedVisual,
     [detailHasQuickPin, pinRemovedVisual]
@@ -102,46 +93,21 @@ export default function PinConfigSection(props: Props) {
     [detailPinEnabled, effectiveHasPin]
   );
 
-  /**
-   * ✅ NUEVO:
-   * - "Pendiente de configurar" cuando existe PIN (hasQuickPin) pero está deshabilitado.
-   *   Esto ocurre cuando el admin “preparó” el PIN pero el usuario todavía no lo activó/configuró.
-   */
   const pendingSetup = useMemo(() => effectiveHasPin && !effectiveEnabled, [effectiveHasPin, effectiveEnabled]);
 
-  /**
-   * ✅ Regla correcta:
-   * - Si el “Bloqueo por PIN” del sistema está activo, debe existir AL MENOS 1 usuario con PIN.
-   * - Por lo tanto, NO podés eliminar este PIN si:
-   *   - este usuario tiene PIN (effectiveHasPin)
-   *   - y el conteo total de usuarios con PIN es <= 1
-   *
-   * Ojo: esto aplica tanto a SELF como a ADMIN (porque sería el ÚLTIMO PIN).
-   */
-  const systemPinLockEnabled =
-    typeof pinLockEnabled === "boolean" ? pinLockEnabled : Boolean((auth as any)?.pinLockEnabled);
-
-  const totalPins = typeof usersWithPinCount === "number" ? usersWithPinCount : NaN;
-  const isLastPin = effectiveHasPin && Number.isFinite(totalPins) ? totalPins <= 1 : false;
-
-  const blockDeleteBySystemLock = Boolean(systemPinLockEnabled && isLastPin);
-
-  // ✅ mensaje específico cuando el backend bloquea por “último PIN habilitado”
   const [lastPinLockError, setLastPinLockError] = useState<string | null>(null);
 
+  // Modal informativo: "Al eliminar el PIN, el Bloqueo por PIN quedara deshabilitado"
+  const [showDisableLockConfirm, setShowDisableLockConfirm] = useState(false);
+
   useEffect(() => {
-    // cada vez que cambia el detalle o el modo, limpiamos estado visual
     setPinRemovedVisual(false);
     setLastPinLockError(null);
+    setShowDisableLockConfirm(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [detailHasQuickPin, modalMode]);
 
-  async function onDeleteClick() {
-    // ✅ no hacemos nada (botón ya está disabled, pero por si acaso)
-    if (disabled) return;
-    if (blockDeleteBySystemLock) return;
-
-    // self: ya tenés modal que pide current pin
+  async function proceedWithDelete() {
     if (isSelf) {
       onAskDeleteSelf();
       return;
@@ -151,11 +117,8 @@ export default function PinConfigSection(props: Props) {
 
     try {
       await adminRemovePin({ confirmRemoveOverrides: hasSpecial });
-
-      // ✅ recién ahora marcamos visualmente “sin pin”
       setPinRemovedVisual(true);
     } catch (e: any) {
-      // ✅ ApiError: e.status / e.data.code gracias a tu api.ts
       const status = Number(e?.status ?? NaN);
       const code = String(e?.data?.code ?? "");
 
@@ -163,92 +126,54 @@ export default function PinConfigSection(props: Props) {
         setLastPinLockError(
           String(
             e?.data?.message ||
-              "No podés eliminar o deshabilitar el último PIN mientras el bloqueo por PIN del sistema esté activo."
+              "No se puede eliminar el PIN mientras el Bloqueo por PIN del sistema este activo."
           )
         );
         return;
       }
 
-      // fallback
       throw e;
     }
   }
 
-  const deleteDisabled = disabled || blockDeleteBySystemLock;
+  function onDeleteClick() {
+    if (disabled) return;
 
-  const deleteTitle = pinPillsDisabled
-    ? "El PIN está deshabilitado en Configuración del sistema"
-    : blockDeleteBySystemLock
-    ? "No podés eliminar el último PIN mientras el Bloqueo por PIN del sistema esté activo"
+    // Si es el ultimo PIN con lock activo, mostrar aviso antes de continuar
+    if (isLastPinWithLock) {
+      setShowDisableLockConfirm(true);
+      return;
+    }
+
+    void proceedWithDelete();
+  }
+
+  const deleteDisabled = disabled;
+
+  const deleteTitle = isSelf ? "Requiere tu PIN actual" : "Eliminar PIN";
+
+  const primaryLabel = busy
+    ? ""
+    : pendingSetup
+    ? "Configurar PIN"
     : isSelf
-    ? "Requiere tu PIN actual"
-    : "Eliminar PIN";
-
-  // ✅ Label del botón principal
-  const primaryLabel = busy ? "" : pendingSetup ? "Configurar PIN" : effectiveHasPin ? "Actualizar PIN" : "Crear PIN";
+    ? effectiveHasPin ? "Actualizar PIN" : "Crear PIN"
+    : effectiveHasPin ? "Restablecer PIN" : "Asignar PIN";
 
   return (
-    <Section title="Clave rápida (PIN)" desc="PIN de 4 dígitos para desbloqueo/cambio rápido.">
-      {/* ✅ Nota cuando el sistema PIN está apagado */}
-      {pinPillsDisabled ? (
-        <div className="mb-3 rounded-xl border border-amber-500/20 bg-amber-500/10 px-3 py-2 text-sm text-amber-800">
-          <div className="font-semibold">El PIN está deshabilitado en la configuración del sistema.</div>
-          <div className="mt-1 text-xs text-amber-800/80">
-            Activá la opción en <b>Configuración del sistema → PIN</b> para poder crear/editar/eliminar PINs de usuarios.
-          </div>
-
-          <div className="mt-2">
-            <button
-              type="button"
-              className={cn(
-                "inline-flex items-center gap-2 rounded-xl border border-amber-500/30 bg-card px-3 py-2 text-xs font-semibold",
-                "text-amber-900 hover:bg-amber-500/10 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-amber-500/20"
-              )}
-              onClick={() => navigate(SYSTEM_PIN_ROUTE)}
-            >
-              Ir a Configuración PIN
-              <ArrowRight className="h-4 w-4" />
-            </button>
-          </div>
-        </div>
-      ) : null}
-
-      {/* ✅ Aviso: no se puede eliminar el ÚLTIMO PIN con lock activo */}
-      {blockDeleteBySystemLock ? (
-        <div className="mb-3 rounded-xl border border-amber-500/20 bg-amber-500/10 px-3 py-2 text-sm text-amber-900">
-          <div className="font-semibold">No se puede eliminar el último PIN</div>
-          <div className="mt-1 text-xs text-amber-900/80">
-            El <b>Bloqueo por PIN</b> del sistema está activo y este es el <b>único PIN</b> existente. Para eliminarlo,
-            primero deshabilitá el bloqueo en <b>Configuración del sistema → PIN</b>.
-          </div>
-
-          <div className="mt-2">
-            <button
-              type="button"
-              className={cn(
-                "inline-flex items-center gap-2 rounded-xl border border-amber-500/30 bg-card px-3 py-2 text-xs font-semibold",
-                "hover:bg-amber-500/10 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-amber-500/20"
-              )}
-              onClick={() => navigate(SYSTEM_PIN_ROUTE)}
-            >
-              Ir a Configuración PIN
-              <ArrowRight className="h-4 w-4" />
-            </button>
-          </div>
-        </div>
-      ) : null}
+    <>
+    <Section title="Clave rapida (PIN)" desc="PIN de 4 digitos para desbloqueo/cambio rapido.">
 
       {/* mensaje backend general */}
       {showPinMessage && pinMsg ? (
         <div className="mb-3 rounded-xl border border-border bg-bg px-3 py-2 text-sm text-muted">{pinMsg}</div>
       ) : null}
 
-      {/* ✅ error específico (último PIN con lock activo) */}
+      {/* error especifico (backend bloqueo) */}
       {lastPinLockError ? (
         <div className="mb-3 rounded-xl border border-red-500/20 bg-red-500/10 px-3 py-2 text-sm text-red-200">
           <div className="font-semibold">No se puede eliminar el PIN</div>
           <div className="mt-1 text-xs text-red-200/90">{lastPinLockError}</div>
-
           <div className="mt-2">
             <button
               type="button"
@@ -258,14 +183,14 @@ export default function PinConfigSection(props: Props) {
               )}
               onClick={() => navigate(SYSTEM_PIN_ROUTE)}
             >
-              Ir a Configuración PIN
+              Ir a Configuracion PIN
               <ArrowRight className="h-4 w-4" />
             </button>
           </div>
         </div>
       ) : null}
 
-      {/* ✅ Estado */}
+      {/* Estado */}
       {effectiveHasPin ? (
         pendingSetup ? (
           <div className="mb-2 text-xs text-muted">
@@ -295,12 +220,12 @@ export default function PinConfigSection(props: Props) {
             setPinRemovedVisual(false);
             openPinFlow();
           }}
-          title={pinPillsDisabled ? "El PIN está deshabilitado en Configuración del sistema" : undefined}
+          title={undefined}
         >
           {busy ? (
             <span className="inline-flex items-center gap-2">
               <Loader2 className="h-4 w-4 animate-spin" />
-              Procesando…
+              Procesando...
             </span>
           ) : (
             primaryLabel
@@ -313,11 +238,10 @@ export default function PinConfigSection(props: Props) {
             className={cn(
               "tp-btn-secondary",
               "h-[42px] px-4 py-2 text-sm",
-              "text-red-600 border-red-600/40 hover:border-red-600/70",
               deleteDisabled && "opacity-60"
             )}
             disabled={deleteDisabled}
-            onClick={() => void onDeleteClick()}
+            onClick={onDeleteClick}
             title={deleteTitle}
           >
             Eliminar
@@ -325,5 +249,40 @@ export default function PinConfigSection(props: Props) {
         ) : null}
       </div>
     </Section>
+
+    {/* Modal informativo: ultimo PIN — el lock quedara deshabilitado */}
+    <Modal
+      open={showDisableLockConfirm}
+      title="Eliminar PIN"
+      maxWidth="sm"
+      onClose={() => setShowDisableLockConfirm(false)}
+      footer={
+        <div className="flex gap-2 justify-end">
+          <TPButton variant="secondary" onClick={() => setShowDisableLockConfirm(false)}>
+            Cancelar
+          </TPButton>
+          <TPButton
+            variant="danger"
+            onClick={() => {
+              setShowDisableLockConfirm(false);
+              void proceedWithDelete();
+            }}
+          >
+            Eliminar PIN
+          </TPButton>
+        </div>
+      }
+    >
+      <div className="space-y-3 text-sm text-text">
+        <p>
+          Al eliminar este PIN, el <b>Bloqueo por PIN</b> del sistema quedara{" "}
+          <b>deshabilitado automaticamente</b>, ya que es el ultimo PIN existente.
+        </p>
+        <p className="text-muted text-xs">
+          Los usuarios podran cambiar de cuenta sin necesidad de ingresar un PIN hasta que se configure uno nuevo.
+        </p>
+      </div>
+    </Modal>
+    </>
   );
 }

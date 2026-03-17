@@ -4,6 +4,7 @@ import { Modal } from "../../../components/ui/Modal";
 import { TPButton } from "../../../components/ui/TPButton";
 import type { TPAttachmentItem } from "../../../components/ui/TPAttachmentList";
 import type { SellerRow } from "../../../services/sellers";
+import type { UserListItem } from "../../../services/users";
 import type { SellerDraft, WarehouseOption } from "./vendedor.types";
 import { VendedorForm } from "./VendedorForm";
 
@@ -17,8 +18,13 @@ interface Props {
   busySave: boolean;
   busyAvatar: boolean;
   warehouses: WarehouseOption[];
+  users: UserListItem[];
+  usedUserIds: string[];
   deletingAttachmentId: string | null;
+  stagedFiles: File[];
+  onStagedFilesChange: (files: File[]) => void;
   onAvatarUpload: (file: File) => void;
+  onApplyUserAvatar: (url: string) => void;
   onAddAttachment: (file: File) => void;
   onDeleteAttachment: (item: TPAttachmentItem) => void;
   onSave: () => void;
@@ -36,8 +42,13 @@ export function VendedorEditModal({
   busySave,
   busyAvatar,
   warehouses,
+  users,
+  usedUserIds,
   deletingAttachmentId,
+  stagedFiles,
+  onStagedFilesChange,
   onAvatarUpload,
+  onApplyUserAvatar,
   onAddAttachment,
   onDeleteAttachment,
   onSave,
@@ -70,9 +81,14 @@ export function VendedorEditModal({
         busySave={busySave}
         editTarget={editTarget}
         warehouses={warehouses}
+        users={users}
+        usedUserIds={usedUserIds}
         busyAvatar={busyAvatar}
         onAvatarUpload={onAvatarUpload}
+        onApplyUserAvatar={onApplyUserAvatar}
         deletingAttachmentId={deletingAttachmentId}
+        stagedFiles={stagedFiles}
+        onStagedFilesChange={onStagedFilesChange}
         onAddAttachment={onAddAttachment}
         onDeleteAttachment={onDeleteAttachment}
         firstInputRef={firstInputRef}

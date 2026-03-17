@@ -97,13 +97,13 @@ export default function UserPinSettings() {
     setLoading(true);
 
     try {
-      const data = await apiFetch<{ security: SecuritySettings }>("/company/settings/security", {
+      const data = await apiFetch<{ user: any; jewelry: SecuritySettings }>("/auth/me", {
         method: "GET",
         cache: "no-store",
         timeoutMs: 12000,
       });
 
-      const s = data.security;
+      const s = data.jewelry;
       const sec = clamp(Math.trunc(Number(s.pinLockTimeoutSec ?? 300)), 10, 60 * 60 * 12);
 
       const snap: Snapshot = {
@@ -152,7 +152,7 @@ export default function UserPinSettings() {
         pinLockTimeoutSec: safeTimeoutMin * 60,
       };
 
-      await apiFetch("/company/settings/security", {
+      await apiFetch("/auth/company/security/pin-lock", {
         method: "PATCH",
         body,
         timeoutMs: 12000,

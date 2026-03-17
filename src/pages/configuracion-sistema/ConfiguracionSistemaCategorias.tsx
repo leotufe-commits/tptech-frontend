@@ -60,6 +60,7 @@ import {
   searchCategoryTree,
   getRootIds,
   getAllIds,
+  getDescendantIds,
   type CategoryNode,
 } from "./categorias-tree.helpers";
 
@@ -71,6 +72,7 @@ const COL_DEFS: ColPickerDef[] = [
   { key: "attributes", label: "Atributos" },
   { key: "pricelist", label: "Lista de precios" },
   { key: "subcategories", label: "Sub-categorías" },
+  { key: "description", label: "Descripción" },
   { key: "status", label: "Estado" },
   { key: "acciones", label: "Acciones", canHide: false },
 ];
@@ -261,6 +263,24 @@ export default function ConfiguracionSistemaCategorias() {
     });
   }, [rows, editTarget]);
 
+  /* ---------- opciones de padre como árbol con indentación ---------- */
+  const parentTreeOptions = useMemo(() => {
+    const result: { value: string; label: string }[] = [];
+    function traverse(nodes: CategoryNode[]) {
+      for (const node of nodes) {
+        if (node.isActive && !node.deletedAt && node.id !== editTarget?.id) {
+          result.push({
+            value: node.id,
+            label: "— ".repeat(node.level) + node.name,
+          });
+        }
+        traverse(node.children);
+      }
+    }
+    traverse(tree);
+    return result;
+  }, [tree, editTarget]);
+
   /* ---------- abrir modales ---------- */
   function openCreate(defaultParentId?: string) {
     setEditTarget(null);
@@ -335,18 +355,19 @@ export default function ConfiguracionSistemaCategorias() {
 
   /* ---------- toggle activo/inactivo ---------- */
   async function handleToggle(row: CategoryRow) {
+    const nextActive = !row.isActive;
+    // Al desactivar, marcar visualmente toda la descendencia de inmediato
+    const affectedIds = new Set([row.id, ...(!nextActive ? getDescendantIds(rows, row.id) : [])]);
     try {
       setRows((prev) =>
-        prev.map((r) => (r.id === row.id ? { ...r, isActive: !r.isActive } : r))
+        prev.map((r) => affectedIds.has(r.id) ? { ...r, isActive: nextActive } : r)
       );
       await categoriesApi.toggle(row.id);
       toast.success(row.isActive ? "Categoría desactivada." : "Categoría activada.");
-      await load();
     } catch (e: any) {
-      setRows((prev) =>
-        prev.map((r) => (r.id === row.id ? { ...r, isActive: row.isActive } : r))
-      );
       toast.error(e?.message || "Ocurrió un error.");
+    } finally {
+      await load();
     }
   }
 
@@ -562,6 +583,20 @@ export default function ConfiguracionSistemaCategorias() {
       },
     },
     {
+      key: "description",
+      visible: v(colVis, "description"),
+      header: "Descripción",
+      className: "hidden lg:table-cell",
+      renderCell: (raw) => {
+        const node = raw as CategoryNode;
+        return node.description ? (
+          <span className="text-sm text-muted truncate block max-w-[200px]">{node.description}</span>
+        ) : (
+          <span className="text-sm text-muted">—</span>
+        );
+      },
+    },
+    {
       key: "status",
       visible: v(colVis, "status"),
       header: "Estado",
@@ -681,6 +716,7 @@ export default function ConfiguracionSistemaCategorias() {
           <TPTreeTable
             nodes={visibleRows as TreeNodeBase[]}
             columns={treeColumns}
+            onRowClick={(node) => openView(node as CategoryNode)}
             renderActions={renderActions}
             expanded={expanded}
             onToggleExpand={toggleExpand}
@@ -773,12 +809,7 @@ export default function ConfiguracionSistemaCategorias() {
                 searchPlaceholder="Buscar categoría…"
                 options={[
                   { value: "", label: "Sin padre (categoría raíz)" },
-                  ...parentOptions.map((opt) => ({
-                    value: opt.id,
-                    label: opt.parent
-                      ? `${opt.parent.name} › ${opt.name}`
-                      : opt.name,
-                  })),
+                  ...parentTreeOptions,
                 ]}
               />
             </TPField>

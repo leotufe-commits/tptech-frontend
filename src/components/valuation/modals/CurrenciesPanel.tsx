@@ -357,7 +357,7 @@ export default function CurrenciesPanel({
                       const lockActions = saving || deleteBusy;
 
                       return (
-                        <TPTr key={row.id}>
+                        <TPTr key={row.id} className={!isActive ? "opacity-60" : undefined} onClick={() => openView(row.id)}>
                           {visibleCurrCols.map((col) => {
                             switch (col.key) {
                               case "currency":
@@ -388,16 +388,18 @@ export default function CurrenciesPanel({
 
                               case "actions":
                                 return (
-                                  <TPTd key="actions" className="text-right">
+                                  <TPTd key="actions" className="text-right" onClick={(e) => e.stopPropagation()}>
                                     <TPRowActions
                                       onFavorite={() => { if (!lockActions && !isBase) void onSetBaseClick(row); }}
                                       isFavorite={isBase}
                                       busyFavorite={lockActions || isBase}
                                       onView={() => openView(row.id)}
                                       onEdit={() => onOpenRates(row)}
-                                      onToggle={!isBase ? () => { if (!lockActions) void onToggle(row); } : undefined}
+                                      onToggle={() => { if (!lockActions && !isBase) void onToggle(row); }}
+                                      busyToggle={lockActions || isBase}
                                       isActive={isActive}
-                                      onDelete={(!isBase && !!onDelete) ? () => { if (!lockActions) onAskDelete(row); } : undefined}
+                                      onDelete={() => { if (!lockActions && !isBase && onDelete) onAskDelete(row); }}
+                                      busyDelete={lockActions || isBase || !onDelete}
                                     />
                                   </TPTd>
                                 );
@@ -443,7 +445,7 @@ export default function CurrenciesPanel({
               return (
                 <TPCard
                   key={row.id}
-                  className={cn("rounded-2xl border border-border bg-card p-4", isBase ? "shadow-[0_0_0_1px_rgba(250,204,21,0.22)]" : "")}
+                  className={cn("rounded-2xl border border-border bg-card p-4", isBase ? "shadow-[0_0_0_1px_rgba(250,204,21,0.22)]" : "", !isActive && "opacity-60")}
                   title={
                     <div className="flex items-start justify-between gap-3">
                       <div className="min-w-0">
@@ -480,9 +482,11 @@ export default function CurrenciesPanel({
                       busyFavorite={lockActions || isBase}
                       onView={() => openView(row.id)}
                       onEdit={() => onOpenRates(row)}
-                      onToggle={!isBase ? () => { if (!lockActions) void onToggle(row); } : undefined}
+                      onToggle={() => { if (!lockActions && !isBase) void onToggle(row); }}
+                      busyToggle={lockActions || isBase}
                       isActive={isActive}
-                      onDelete={(!isBase && !!onDelete) ? () => { if (!lockActions) onAskDelete(row); } : undefined}
+                      onDelete={() => { if (!lockActions && !isBase && onDelete) onAskDelete(row); }}
+                      busyDelete={lockActions || isBase || !onDelete}
                     />
                   </div>
                 </TPCard>

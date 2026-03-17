@@ -25,10 +25,7 @@ export default function ForgotPassword() {
 
       await apiFetch<{ ok: boolean }>("/auth/forgot-password", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ email: v }),
+        body: { email: v },
       });
 
       setSent(true);

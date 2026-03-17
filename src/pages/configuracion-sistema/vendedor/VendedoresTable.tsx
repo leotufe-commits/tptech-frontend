@@ -14,6 +14,7 @@ const VENDOR_COLS: TPColDef[] = [
   { key: "nombre",    label: "Nombre",           canHide: false, sortKey: "displayName" },
   { key: "documento", label: "Documento" },
   { key: "contacto",  label: "Email / Teléfono", sortKey: "email" },
+  { key: "ubicacion", label: "Ciudad / Provincia", visible: false },
   { key: "comision",  label: "Comisión" },
   { key: "almacenes", label: "Almacenes" },
   { key: "estado",    label: "Estado" },
@@ -80,6 +81,7 @@ export function VendedoresTable({
           Nuevo vendedor
         </TPButton>
       }
+      onRowClick={(row) => onView(row)}
       renderRow={(row, vis) => (
         <TPTr key={row.id} className={!row.isActive ? "opacity-60" : undefined}>
           {vis.nombre && (
@@ -127,6 +129,15 @@ export function VendedoresTable({
                 {row.phone && (
                   <div className="text-muted text-xs">{row.phone}</div>
                 )}
+              </div>
+            </TPTd>
+          )}
+          {vis.ubicacion && (
+            <TPTd className="hidden lg:table-cell">
+              <div className="text-sm space-y-0.5">
+                {row.city && <div className="text-text">{row.city}</div>}
+                {row.province && <div className="text-xs text-muted">{row.province}</div>}
+                {!row.city && !row.province && <span className="text-muted">—</span>}
               </div>
             </TPTd>
           )}

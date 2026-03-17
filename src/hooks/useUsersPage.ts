@@ -171,6 +171,8 @@ export function useUsersPage() {
     return true;
   }
 
+  const PINLOCK_PENDING_KEY = "tptech_pinlock_pending_enable_v1";
+
   const auth = useAuth();
   const me = (auth.user ?? null) as { id: string } | null;
   const permissions: string[] = (auth.permissions ?? []) as string[];
@@ -192,13 +194,14 @@ export function useUsersPage() {
    */
   const pinLockEnabled = useMemo(() => {
     const v =
+      (auth as any)?.pinLockEnabled ??
       (inv as any)?.joyeria?.pinLockEnabled ??
       (inv as any)?.jewelry?.pinLockEnabled ??
       (inv as any)?.config?.pinLockEnabled ??
       (inv as any)?.pinLockEnabled ??
       false;
     return Boolean(v);
-  }, [inv]);
+  }, [auth, inv]);
 
   const almacenes = (inv?.almacenes ?? []) as Array<{
     id: string;
@@ -328,7 +331,8 @@ export function useUsersPage() {
 
   // form fields
   const [fEmail, setFEmail] = useState("");
-  const [fName, setFName] = useState("");
+  const [fFirstName, setFFirstName] = useState("");
+  const [fLastName, setFLastName] = useState("");
   const [fPassword, setFPassword] = useState("");
   const [fRoleIds, setFRoleIds] = useState<string[]>([]);
   const [fFavWarehouseId, setFFavWarehouseId] = useState<string>("");
@@ -460,7 +464,8 @@ export function useUsersPage() {
     return {
       modalMode,
       fEmail: String(fEmail ?? ""),
-      fName: String(fName ?? ""),
+      fFirstName: String(fFirstName ?? ""),
+      fLastName: String(fLastName ?? ""),
       fPassword: String(fPassword ?? ""),
       fPhoneCountry: String(fPhoneCountry ?? ""),
       fPhoneNumber: String(fPhoneNumber ?? ""),
@@ -622,7 +627,8 @@ export function useUsersPage() {
     setTargetId("");
 
     setFEmail("");
-    setFName("");
+    setFFirstName("");
+    setFLastName("");
     setFPassword("");
     setFRoleIds([]);
     setFFavWarehouseId("");
@@ -685,7 +691,8 @@ export function useUsersPage() {
     setDetail(d);
 
     setFEmail((d as any).email ?? "");
-    setFName((d as any).name ?? "");
+    setFFirstName((d as any).firstName ?? "");
+    setFLastName((d as any).lastName ?? "");
     setFPassword("");
 
     const roleIds = Array.isArray((d as any).roles)
@@ -918,8 +925,29 @@ export function useUsersPage() {
 
     if (modalMode !== "EDIT" || !targetId) return;
 
+    // ✅ Capturar ANTES de la eliminación si era el último PIN con lock activo
+    const wasLastPinWithLock =
+      Boolean(auth.pinLockEnabled) &&
+      Boolean((detail as any)?.hasQuickPin) &&
+      Number(usersWithPinCount) <= 1;
+
     setPinBusy(true);
     setPinMsg(null);
+
+    // ✅ Si es el último PIN con lock activo, deshabilitar el lock PRIMERO para
+    // evitar que el backend bloquee la eliminación con 409 LAST_PIN_LOCK_ACTIVE
+    if (wasLastPinWithLock) {
+      try {
+        await auth.setPinLockSettingsForJewelry({
+          enabled: false,
+          timeoutMinutes: Math.max(1, Number(auth.pinLockTimeoutMinutes || 5)),
+          requireOnUserSwitch: Boolean(auth.pinLockRequireOnUserSwitch),
+          quickSwitchEnabled: Boolean(auth.quickSwitchEnabled),
+        });
+      } catch {
+        // Si falla deshabilitar el lock, continuamos igual e intentamos eliminar
+      }
+    }
 
     try {
       if (isSelfEditing) {
@@ -958,7 +986,11 @@ export function useUsersPage() {
 
       resetPinForm();
       setPinClearOverridesOnSave(false);
-      flashPinMsg("PIN eliminado.", 2000);
+
+      flashPinMsg(
+        wasLastPinWithLock ? "PIN eliminado. Bloqueo por PIN deshabilitado." : "PIN eliminado.",
+        wasLastPinWithLock ? 3000 : 2000
+      );
     } catch (e: any) {
       flashPinMsg(getErrorMessage(e, "Error eliminando PIN"), 3500);
     } finally {
@@ -1097,6 +1129,13 @@ export function useUsersPage() {
     setModalOpen(true);
     setModalLoading(true);
 
+    // ✅ FIX: set tab and autoOpenPinFlow BEFORE any await so they land in the
+    // same render batch as the modal open. If deferred to after await, React can
+    // render detail loaded but autoOpenPinFlow=false, causing the auto-open effect
+    // to skip the trigger (intermittent: PIN modal opens late or not at all).
+    if (opts?.tab) setTab(opts.tab);
+    if (opts?.pinAction === "create") setAutoOpenPinFlow(true);
+
     try {
       await ensureRolesLoaded();
       const perms = await ensurePermsLoaded();
@@ -1106,9 +1145,6 @@ export function useUsersPage() {
 
       setSpecialPermPick(perms[0]?.id || "");
       setSpecialEffectPick("ALLOW");
-
-      setTab(opts?.tab ?? "DATA");
-      setAutoOpenPinFlow(opts?.pinAction === "create");
     } catch (e: unknown) {
       setErr(getErrorMessage(e, "Error cargando usuario"));
       setModalOpen(false);
@@ -1189,15 +1225,21 @@ export function useUsersPage() {
     setErr(null);
 
     const cleanEmail = fEmail.trim();
-    const cleanName = fName.trim();
+    const cleanFirstName = fFirstName.trim();
+    const cleanLastName = fLastName.trim();
 
     if (!cleanEmail) {
       setErr("Completá el email.");
       setTab("DATA");
       return;
     }
-    if (!cleanName) {
-      setErr("Nombre y apellido es obligatorio.");
+    if (!cleanFirstName) {
+      setErr("El nombre es obligatorio.");
+      setTab("DATA");
+      return;
+    }
+    if (!cleanLastName) {
+      setErr("El apellido es obligatorio.");
       setTab("DATA");
       return;
     }
@@ -1209,7 +1251,8 @@ export function useUsersPage() {
       if (modalMode === "CREATE") {
         const created = await createUser({
           email: cleanEmail,
-          name: cleanName,
+          firstName: cleanFirstName,
+          lastName: cleanLastName,
           password: fPassword.trim() || undefined,
           roleIds: fRoleIds,
         } as any);
@@ -1229,7 +1272,8 @@ export function useUsersPage() {
 
         await safe("No se pudo guardar el perfil del usuario.", async () => {
           await updateUserProfile(createdUserId, {
-            name: cleanName,
+            firstName: cleanFirstName,
+            lastName: cleanLastName,
             phoneCountry: fPhoneCountry,
             phoneNumber: fPhoneNumber,
             documentType: fDocType,
@@ -1306,7 +1350,8 @@ export function useUsersPage() {
       if (!targetId) throw new Error("Falta ID de usuario.");
 
       await updateUserProfile(targetId, {
-        name: cleanName,
+        firstName: cleanFirstName,
+        lastName: cleanLastName,
         phoneCountry: fPhoneCountry,
         phoneNumber: fPhoneNumber,
         documentType: fDocType,
@@ -1379,6 +1424,9 @@ export function useUsersPage() {
       setErr("No podés cambiar tu propio estado.");
       return;
     }
+
+    // PENDING no se puede activar/inactivar vía toggle: solo se activa por invitación
+    if (u.status === "PENDING") return;
 
     const next = u.status === "ACTIVE" ? "BLOCKED" : "ACTIVE";
     try {
@@ -1611,6 +1659,41 @@ export function useUsersPage() {
     Boolean(deletingAttId) ||
     pinBusy;
 
+  /* ============================================================
+     ✅ Habilitar PIN lock tras crear PIN desde Usuarios
+  ============================================================ */
+  async function handleRequestEnablePinLock() {
+    // Leer snapshot del pending (si existe) antes de limpiarlo
+    let settings = {
+      enabled: true as const,
+      timeoutMinutes: Math.max(1, Number(auth.pinLockTimeoutMinutes || 5)),
+      requireOnUserSwitch: Boolean(auth.pinLockRequireOnUserSwitch),
+      quickSwitchEnabled: Boolean(auth.quickSwitchEnabled),
+    };
+    try {
+      const raw = sessionStorage.getItem(PINLOCK_PENDING_KEY);
+      if (raw) {
+        const snap = JSON.parse(raw);
+        settings = {
+          enabled: true,
+          timeoutMinutes: Math.max(1, Number(snap.timeoutMinutes || snap.timeoutMin || 5)),
+          requireOnUserSwitch: Boolean(snap.requireOnUserSwitch),
+          quickSwitchEnabled: Boolean(snap.quickSwitchEnabled),
+        };
+      }
+    } catch {}
+
+    // Limpiar pending + returnTo para quedarnos en la tabla de usuarios
+    try { sessionStorage.removeItem(PINLOCK_PENDING_KEY); } catch {}
+    returnToRef.current = null;
+
+    try {
+      await auth.setPinLockSettingsForJewelry(settings);
+    } catch {
+      // Silent fail: el PIN fue creado, solo falló habilitar el lock
+    }
+  }
+
   return {
     // utils
     cn,
@@ -1682,8 +1765,10 @@ export function useUsersPage() {
     // fields
     fEmail,
     setFEmail,
-    fName,
-    setFName,
+    fFirstName,
+    setFFirstName,
+    fLastName,
+    setFLastName,
     fPassword,
     setFPassword,
     fPhoneCountry,
@@ -1763,6 +1848,7 @@ export function useUsersPage() {
     adminTogglePinEnabled,
     adminSetOrResetPin,
     adminRemovePin,
+    handleRequestEnablePinLock,
     autoOpenPinFlow,
     setAutoOpenPinFlow,
 

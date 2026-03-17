@@ -43,6 +43,9 @@ type Props = {
 
   /** ✅ compat: onKeyDown externo */
   onKeyDown?: React.KeyboardEventHandler<HTMLInputElement>;
+
+  /** Símbolo que se muestra a la derecha dentro del campo, ej: "%" */
+  suffix?: React.ReactNode;
 };
 
 function isIntermediate(raw: string) {
@@ -129,6 +132,7 @@ export default function TPNumberInput({
   autoSelect,
   showArrows = true,
   onKeyDown,
+  suffix,
 }: Props) {
   const innerRef = useRef<HTMLInputElement | null>(null);
 
@@ -236,6 +240,7 @@ export default function TPNumberInput({
 
   const hasLeft = Boolean(leftIcon);
   const hasRight = Boolean(rightAddon);
+  const hasSuffix = Boolean(suffix);
   const wantSelectAll = Boolean(selectAllOnFocus || autoSelect);
 
   return (
@@ -264,7 +269,9 @@ export default function TPNumberInput({
             "tp-input",
             "tp-number-no-spin",
             "text-center",
-            showArrows ? "pr-12" : "pr-4",
+            showArrows
+              ? hasSuffix ? "pr-16" : "pr-12"
+              : hasSuffix ? "pr-8" : "pr-4",
             hasLeft && "pl-16",
             error && "border-red-500/60 focus-visible:ring-red-500/20",
             className
@@ -350,6 +357,15 @@ export default function TPNumberInput({
             {rightAddon}
           </div>
         ) : null}
+
+        {hasSuffix && (
+          <div className={cn(
+            "absolute top-1/2 -translate-y-1/2 text-sm font-semibold text-muted pointer-events-none select-none",
+            showArrows ? "right-11" : "right-3"
+          )}>
+            {suffix}
+          </div>
+        )}
 
         {showArrows ? (
           <div className="absolute right-2 top-1/2 -translate-y-1/2 flex flex-col">

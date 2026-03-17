@@ -234,6 +234,9 @@ export function Modal({
       const active = document.activeElement as HTMLElement | null;
       if (active && root.contains(active)) return;
 
+      // ✅ si el foco está en un modal anidado (ej. TPComboCreatable), no interferir
+      if (active && active.closest?.('[role="dialog"][aria-modal="true"]')) return;
+
       const best = pickBest(root);
       if (best) {
         try {
@@ -382,6 +385,10 @@ export function Modal({
 
     const active = document.activeElement as HTMLElement | null;
     if (active && root.contains(active)) return;
+
+    // ✅ si el foco fue a un modal anidado (ej. "Agregar nuevo ítem" de TPComboCreatable),
+    // no robarlo — los portales React propagan eventos por el árbol React aunque estén en body
+    if (active && active.closest?.('[role="dialog"][aria-modal="true"]')) return;
 
     const best = pickBest(root);
     (best ?? headerRef.current)?.focus?.();

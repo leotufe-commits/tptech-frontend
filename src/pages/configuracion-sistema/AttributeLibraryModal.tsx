@@ -27,20 +27,9 @@ import ConfirmDeleteDialog from "../../components/ui/ConfirmDeleteDialog";
 import { TPSearchInput } from "../../components/ui/TPSearchInput";
 import { TPStatusPill } from "../../components/ui/TPStatusPill";
 import { TPRowActions } from "../../components/ui/TPRowActions";
-import {
-  TPTableWrap,
-  TPTableHeader,
-  TPTableXScroll,
-  TPTableElBase,
-  TPThead,
-  TPTh,
-  TPTbody,
-  TPTr,
-  TPTd,
-  TPEmptyRow,
-  TPTableFooter,
-} from "../../components/ui/TPTable";
-import { SortArrows, type SortDir } from "../../components/ui/TPSort";
+import { TPTr, TPTd } from "../../components/ui/TPTable";
+import { TPTableKit, type TPColDef } from "../../components/ui/TPTableKit";
+import { type SortDir } from "../../components/ui/TPSort";
 
 import { toast } from "../../lib/toast";
 import {
@@ -781,134 +770,99 @@ export function AttributeLibraryModal({ open, onClose }: Props) {
   }
 
   /* =========================================================
+     Columnas
+  ========================================================= */
+  const ATTR_LIB_COLS: TPColDef[] = [
+    { key: "name", label: "Nombre", canHide: false, sortKey: "name" },
+    { key: "inputType", label: "Tipo", sortKey: "inputType" },
+    { key: "isActive", label: "Estado", sortKey: "isActive" },
+    { key: "assignmentCount", label: "Usado en", sortKey: "assignmentCount" },
+    { key: "acciones", label: "Acciones", canHide: false, align: "right" },
+  ];
+
+  /* =========================================================
      Vista lista
   ========================================================= */
   const listView = (
-    <TPTableWrap>
-      <TPTableHeader
-        left={
-          <TPSearchInput
-            value={q}
-            onChange={setQ}
-            placeholder="Buscar por nombre, código o tipo…"
-            className="h-9 w-full md:w-72"
-          />
-        }
-      />
-
-      <TPTableXScroll>
-        <TPTableElBase>
-          <TPThead>
-            <tr>
-              <TPTh>
-                <button type="button" className="flex items-center gap-1" onClick={() => toggleSort("name")}>
-                  Nombre <SortArrows dir={sortDir} active={sortKey === "name"} />
-                </button>
-              </TPTh>
-              <TPTh className="hidden sm:table-cell">
-                <button type="button" className="flex items-center gap-1" onClick={() => toggleSort("inputType")}>
-                  Tipo <SortArrows dir={sortDir} active={sortKey === "inputType"} />
-                </button>
-              </TPTh>
-              <TPTh className="hidden sm:table-cell">
-                <button type="button" className="flex items-center gap-1" onClick={() => toggleSort("isActive")}>
-                  Estado <SortArrows dir={sortDir} active={sortKey === "isActive"} />
-                </button>
-              </TPTh>
-              <TPTh className="hidden md:table-cell">
-                <button type="button" className="flex items-center gap-1" onClick={() => toggleSort("assignmentCount")}>
-                  Usado en <SortArrows dir={sortDir} active={sortKey === "assignmentCount"} />
-                </button>
-              </TPTh>
-              <TPTh className="text-right">Acciones</TPTh>
-            </tr>
-          </TPThead>
-          <TPTbody>
-            {loading ? (
-              <tr>
-                <td colSpan={5} className="px-5 py-10 text-center">
-                  <Loader2 className="h-6 w-6 animate-spin text-muted mx-auto" />
-                </td>
-              </tr>
-            ) : sorted.length === 0 ? (
-              <tr>
-                <td colSpan={5} className="px-5 py-10 text-center text-sm text-muted">
-                  {q ? "Sin resultados para esa búsqueda." : "No hay atributos en la biblioteca todavía."}
-                  {!q && (
-                    <div className="mt-3">
-                      <TPButton variant="linkPrimary" onClick={openCreate}>
-                        Crear el primer atributo
-                      </TPButton>
-                    </div>
+    <TPTableKit
+      rows={sorted}
+      columns={ATTR_LIB_COLS}
+      storageKey="tptech_col_attr_library"
+      search={q}
+      onSearchChange={setQ}
+      searchPlaceholder="Buscar por nombre, código o tipo…"
+      sortKey={sortKey}
+      sortDir={sortDir}
+      onSort={(key) => toggleSort(key as typeof sortKey)}
+      loading={loading}
+      emptyText={q ? "Sin resultados para esa búsqueda." : "No hay atributos en la biblioteca todavía."}
+      countLabel={(n) => `${n} atributo${n !== 1 ? "s" : ""} en total`}
+      renderRow={(def, vis) => {
+        const hasOptions = HAS_OPTIONS.includes(def.inputType);
+        const isBusy = busyId === def.id;
+        return (
+          <TPTr key={def.id} className={cn(!def.isActive && "opacity-60")}>
+            {vis.name && (
+              <TPTd label="Nombre">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="font-medium text-text">{def.name}</span>
+                  {hasOptions && def.options.length > 0 && (
+                    <span className="inline-flex items-center gap-1 rounded-full bg-surface2 px-2 py-0.5 text-xs text-muted">
+                      <Tags size={10} />
+                      {def.options.length}
+                    </span>
                   )}
-                </td>
-              </tr>
-            ) : (
-              sorted.map((def) => {
-                const hasOptions = HAS_OPTIONS.includes(def.inputType);
-                const isBusy = busyId === def.id;
-                return (
-                  <TPTr key={def.id} className={cn(!def.isActive && "opacity-60")}>
-                    <TPTd label="Nombre">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <span className="font-medium text-text">{def.name}</span>
-                        {hasOptions && def.options.length > 0 && (
-                          <span className="inline-flex items-center gap-1 rounded-full bg-surface2 px-2 py-0.5 text-xs text-muted">
-                            <Tags size={10} />
-                            {def.options.length}
-                          </span>
-                        )}
-                      </div>
-                    </TPTd>
-                    <TPTd label="Tipo" className="hidden sm:table-cell">
-                      <TypePill inputType={def.inputType} />
-                    </TPTd>
-                    <TPTd label="Estado" className="hidden sm:table-cell">
-                      <TPStatusPill active={def.isActive} activeLabel="Activo" inactiveLabel="Inactivo" />
-                    </TPTd>
-                    <TPTd label="Usado en" className="hidden md:table-cell">
-                      {def.assignmentCount === 0 ? (
-                        <span className="text-muted">—</span>
-                      ) : (
-                        <div className="flex flex-wrap gap-1">
-                          {def.assignedCategories.slice(0, 3).map((cat) => (
-                            <span
-                              key={cat.id}
-                              className="inline-flex items-center rounded-full bg-surface2 px-2 py-0.5 text-xs text-text"
-                            >
-                              {cat.name}
-                            </span>
-                          ))}
-                          {def.assignmentCount > 3 && (
-                            <span className="inline-flex items-center rounded-full bg-surface2 px-2 py-0.5 text-xs text-muted">
-                              +{def.assignmentCount - 3} más
-                            </span>
-                          )}
-                        </div>
-                      )}
-                    </TPTd>
-                    <TPTd>
-                      <TPRowActions
-                        className="flex-nowrap"
-                        onView={() => openView(def)}
-                        onEdit={() => openEdit(def)}
-                        onToggle={isBusy ? undefined : () => void handleToggle(def)}
-                        isActive={def.isActive}
-                        onDelete={() => setDeleteDef(def)}
-                      />
-                    </TPTd>
-                  </TPTr>
-                );
-              })
+                </div>
+              </TPTd>
             )}
-          </TPTbody>
-        </TPTableElBase>
-      </TPTableXScroll>
-
-      <TPTableFooter>
-        {defs.length} atributo{defs.length !== 1 ? "s" : ""} en total
-      </TPTableFooter>
-    </TPTableWrap>
+            {vis.inputType && (
+              <TPTd label="Tipo">
+                <TypePill inputType={def.inputType} />
+              </TPTd>
+            )}
+            {vis.isActive && (
+              <TPTd label="Estado">
+                <TPStatusPill active={def.isActive} activeLabel="Activo" inactiveLabel="Inactivo" />
+              </TPTd>
+            )}
+            {vis.assignmentCount && (
+              <TPTd label="Usado en">
+                {def.assignmentCount === 0 ? (
+                  <span className="text-muted">—</span>
+                ) : (
+                  <div className="flex flex-wrap gap-1">
+                    {def.assignedCategories.slice(0, 3).map((cat) => (
+                      <span
+                        key={cat.id}
+                        className="inline-flex items-center rounded-full bg-surface2 px-2 py-0.5 text-xs text-text"
+                      >
+                        {cat.name}
+                      </span>
+                    ))}
+                    {def.assignmentCount > 3 && (
+                      <span className="inline-flex items-center rounded-full bg-surface2 px-2 py-0.5 text-xs text-muted">
+                        +{def.assignmentCount - 3} más
+                      </span>
+                    )}
+                  </div>
+                )}
+              </TPTd>
+            )}
+            {vis.acciones && (
+              <TPTd>
+                <TPRowActions
+                  onView={() => openView(def)}
+                  onEdit={() => openEdit(def)}
+                  onToggle={isBusy ? undefined : () => void handleToggle(def)}
+                  isActive={def.isActive}
+                  onDelete={() => setDeleteDef(def)}
+                />
+              </TPTd>
+            )}
+          </TPTr>
+        );
+      }}
+    />
   );
 
   /* =========================================================

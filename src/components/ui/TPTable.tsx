@@ -1,5 +1,5 @@
 // src/components/ui/TPTable.tsx
-import type { ReactNode } from "react";
+import React, { type ReactNode } from "react";
 import { cn } from "./tp";
 
 /* =========================================================
@@ -53,11 +53,24 @@ export function TPTableHeader({
 export function TPTr({
   children,
   className,
+  onClick,
 }: {
   children: ReactNode;
   className?: string;
+  onClick?: React.MouseEventHandler<HTMLTableRowElement>;
 }) {
-  return <tr className={cn("transition hover:bg-surface2/40", className)}>{children}</tr>;
+  return (
+    <tr
+      onClick={onClick}
+      className={cn(
+        "transition hover:bg-surface2/40",
+        onClick && "cursor-pointer hover:bg-primary/5 active:bg-primary/10",
+        className
+      )}
+    >
+      {children}
+    </tr>
+  );
 }
 
 /* =========================================================
@@ -141,14 +154,16 @@ export function TPTd({
   className,
   colSpan,
   label,
+  onClick,
 }: {
   children: ReactNode;
   className?: string;
   colSpan?: number;
   label?: string;
+  onClick?: React.MouseEventHandler<HTMLTableCellElement>;
 }) {
   return (
-    <td colSpan={colSpan} data-label={label || undefined} className={cn("px-3 py-3 align-middle md:px-5", className)}>
+    <td colSpan={colSpan} data-label={label || undefined} onClick={onClick} className={cn("px-3 py-3 align-middle md:px-5", className)}>
       {children}
     </td>
   );

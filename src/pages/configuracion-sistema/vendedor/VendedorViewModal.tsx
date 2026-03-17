@@ -2,7 +2,7 @@ import React from "react";
 import { Modal } from "../../../components/ui/Modal";
 import { TPButton } from "../../../components/ui/TPButton";
 import TPAvatarUploader from "../../../components/ui/TPAvatarUploader";
-import { TPAttachmentList } from "../../../components/ui/TPAttachmentList";
+import TPAttachmentManager from "../../../components/ui/TPAttachmentManager";
 import type { SellerRow } from "../../../services/sellers";
 import { formatDate, formatCommission, attachmentToTP } from "./vendedor.helpers";
 
@@ -10,9 +10,12 @@ interface Props {
   open: boolean;
   seller: SellerRow | null;
   onClose: () => void;
+  onAddAttachment?: (file: File) => void;
+  onDeleteAttachment?: (item: import("../../../components/ui/TPAttachmentList").TPAttachmentItem) => void;
+  deletingAttachmentId?: string | null;
 }
 
-export function VendedorViewModal({ open, seller, onClose }: Props) {
+export function VendedorViewModal({ open, seller, onClose, onAddAttachment, onDeleteAttachment, deletingAttachmentId }: Props) {
   return (
     <Modal
       open={open}
@@ -60,11 +63,13 @@ export function VendedorViewModal({ open, seller, onClose }: Props) {
                     seller.city,
                     seller.province,
                     seller.country,
+                    seller.postalCode,
                   ]
                     .filter(Boolean)
                     .join(", ") || "—",
                 ],
                 ["Comisión", formatCommission(seller)],
+                ["Favorito", seller.isFavorite ? "Sí ⭐" : "No"],
                 [
                   "Almacenes",
                   seller.warehouses.length === 0
@@ -92,17 +97,19 @@ export function VendedorViewModal({ open, seller, onClose }: Props) {
             )}
           </div>
 
-          {(seller.attachments ?? []).length > 0 && (
-            <div>
-              <div className="text-xs font-semibold uppercase tracking-wide text-muted mb-2">
-                Archivos adjuntos
-              </div>
-              <TPAttachmentList
-                items={(seller.attachments ?? []).map(attachmentToTP)}
-                onView={(item) => item.url && window.open(item.url, "_blank")}
-              />
+          <div>
+            <div className="text-xs font-semibold uppercase tracking-wide text-muted mb-2">
+              Archivos adjuntos
             </div>
-          )}
+            <TPAttachmentManager
+              items={(seller.attachments ?? []).map(attachmentToTP)}
+              onUpload={onAddAttachment ? (files) => { for (const f of files) onAddAttachment(f); } : undefined}
+              uploadVariant="button"
+              onDelete={onDeleteAttachment}
+              deletingId={deletingAttachmentId}
+              emptyText="Sin adjuntos."
+            />
+          </div>
         </div>
       )}
     </Modal>

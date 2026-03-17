@@ -108,6 +108,9 @@ export type TPTreeTableProps = {
 
   /** Clase CSS extra por fila (ej: "opacity-60" para inactivos). */
   rowClassName?: (node: TreeNodeBase) => string | undefined;
+
+  /** Si se pasa, la fila entera es clickeable y llama a esta función. */
+  onRowClick?: (node: TreeNodeBase) => void;
 };
 
 /* =========================================================
@@ -119,6 +122,7 @@ type RowInnerProps = {
   renderActions?: (node: TreeNodeBase) => ReactNode;
   expanded: Set<string>;
   onToggleExpand: (id: string) => void;
+  onRowClick?: (node: TreeNodeBase) => void;
   isSearching: boolean;
   indentPx: number;
   rowClassName?: (node: TreeNodeBase) => string | undefined;
@@ -134,6 +138,7 @@ function RowInner({
   renderActions,
   expanded,
   onToggleExpand,
+  onRowClick,
   isSearching,
   indentPx,
   rowClassName,
@@ -148,9 +153,11 @@ function RowInner({
     <tr
       ref={trRef}
       style={trStyle}
+      onClick={onRowClick ? () => onRowClick(node) : undefined}
       className={cn(
         "border-b border-border",
         node.level > 0 && "bg-surface/40",
+        onRowClick && "cursor-pointer hover:bg-primary/5 active:bg-primary/10 transition-colors",
         rowClassName?.(node)
       )}
     >
@@ -179,7 +186,7 @@ function RowInner({
               {!isSearching ? (
                 <button
                   type="button"
-                  onClick={() => hasChildren && onToggleExpand(node.id)}
+                  onClick={(e) => { e.stopPropagation(); hasChildren && onToggleExpand(node.id); }}
                   className={cn(
                     "h-6 w-6 shrink-0 flex items-center justify-center rounded",
                     hasChildren
@@ -212,7 +219,9 @@ function RowInner({
 
       {/* Acciones */}
       {renderActions && (
-        <TPTd className="text-right">{renderActions(node)}</TPTd>
+        <TPTd className="text-right" onClick={(e) => e.stopPropagation()}>
+          {renderActions(node)}
+        </TPTd>
       )}
     </tr>
   );
@@ -240,7 +249,7 @@ function SortableRow(props: PlainRowProps) {
       trStyle={{
         transform: CSS.Transform.toString(transform),
         transition,
-        opacity: isDragging ? 0.45 : 1,
+        opacity: isDragging ? 0.45 : undefined,
         zIndex: isDragging ? 10 : undefined,
         position: isDragging ? "relative" : undefined,
         boxShadow: isDragging
@@ -263,6 +272,7 @@ export function TPTreeTable({
   renderActions,
   expanded,
   onToggleExpand,
+  onRowClick,
   draggable = false,
   isSearching = false,
   loading = false,
@@ -286,6 +296,7 @@ export function TPTreeTable({
     renderActions,
     expanded,
     onToggleExpand,
+    onRowClick,
     isSearching,
     indentPx,
     rowClassName,

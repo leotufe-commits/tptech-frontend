@@ -1,15 +1,17 @@
-// src/services/shipping.ts
 import { apiFetch } from "../lib/api";
 
 /* =========================================================
    Tipos
 ========================================================= */
 export type ShippingCalcMode = "FIXED" | "BY_WEIGHT" | "BY_ZONE";
+export type ShippingCarrierType = "DELIVERY" | "PICKUP";
 
 export type ShippingRate = {
   id?: string;
   name: string;
-  zone: string;
+  zones: string[];
+  province: string;
+  countries: string[];
   calculationMode: ShippingCalcMode;
   fixedPrice: string | null;
   pricePerKg: string | null;
@@ -17,6 +19,19 @@ export type ShippingRate = {
   maxWeight: string | null;
   isActive: boolean;
   sortOrder: number;
+};
+
+export type ShippingCarrierWarehouse = {
+  id: string;
+  name: string;
+  code: string;
+  street: string;
+  number: string;
+  city: string;
+  province: string;
+  country: string;
+  postalCode: string;
+  isActive: boolean;
 };
 
 export type ShippingCarrierRow = {
@@ -27,6 +42,12 @@ export type ShippingCarrierRow = {
   logoUrl: string;
   trackingUrl: string;
   freeShippingThreshold: string | null;
+  type: ShippingCarrierType;
+  warehouseId: string | null;
+  provider: string | null;
+  city: string;
+  province: string;
+  country: string;
   isFavorite: boolean;
   isActive: boolean;
   sortOrder: number;
@@ -34,6 +55,8 @@ export type ShippingCarrierRow = {
   deletedAt: string | null;
   createdAt: string;
   updatedAt: string;
+  providerConfig?: Record<string, unknown> | null;
+  warehouse: ShippingCarrierWarehouse | null;
   rates: ShippingRate[];
 };
 
@@ -43,6 +66,13 @@ export type ShippingCarrierPayload = {
   logoUrl?: string;
   trackingUrl?: string;
   freeShippingThreshold?: number | null;
+  type?: ShippingCarrierType;
+  warehouseId?: string | null;
+  provider?: string | null;
+  providerConfig?: Record<string, unknown> | null;
+  city?: string;
+  province?: string;
+  country?: string;
   isFavorite?: boolean;
   isActive?: boolean;
   sortOrder?: number;
@@ -50,7 +80,9 @@ export type ShippingCarrierPayload = {
   rates?: Array<{
     id?: string;
     name: string;
-    zone: string;
+    zones: string[];
+    province?: string;
+    countries?: string[];
     calculationMode: ShippingCalcMode;
     fixedPrice?: number | null;
     pricePerKg?: number | null;
@@ -66,7 +98,10 @@ export type ShippingCarrierPayload = {
 ========================================================= */
 export const shippingApi = {
   list: () =>
-    apiFetch<ShippingCarrierRow[]>("/shipping", { method: "GET", on401: "throw" }),
+    apiFetch<ShippingCarrierRow[]>("/shipping", {
+      method: "GET",
+      on401: "throw",
+    }),
 
   create: (data: ShippingCarrierPayload) =>
     apiFetch<ShippingCarrierRow>("/shipping", {

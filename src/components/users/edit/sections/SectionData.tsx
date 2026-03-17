@@ -30,8 +30,10 @@ type Props = {
   showPassword: boolean;
   setShowPassword: (v: boolean) => void;
 
-  fName: string;
-  setFName: (v: string) => void;
+  fFirstName: string;
+  setFFirstName: (v: string) => void;
+  fLastName: string;
+  setFLastName: (v: string) => void;
 
   fDocType: string;
   setFDocType: (v: string) => void;
@@ -114,8 +116,10 @@ export default function SectionData(props: Props) {
     showPassword,
     setShowPassword,
 
-    fName,
-    setFName,
+    fFirstName,
+    setFFirstName,
+    fLastName,
+    setFLastName,
 
     fDocType,
     setFDocType,
@@ -264,37 +268,41 @@ export default function SectionData(props: Props) {
           />
 
           <div>
-            <TPInput
-              label={isCreate ? "Contraseña (opcional)" : "Nueva contraseña (opcional)"}
-              value={fPassword}
-              onChange={setFPassword}
-              placeholder={isCreate ? "Si la dejás vacía, queda Inactivo" : "Dejar vacía para no cambiar"}
-              disabled={modalBusy}
-              autoComplete="new-password"
-              type={showPassword ? "text" : "password"}
-              rightIcon={
-                <button
-                  type="button"
-                  className="inline-flex items-center justify-center"
-                  onClick={() => setShowPassword(!showPassword)}
-                  aria-label={showPassword ? "Ocultar contraseña" : "Mostrar contraseña"}
-                  disabled={modalBusy}
-                >
-                  {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                </button>
-              }
-            />
-
             {isCreate ? (
-              <p className="mt-1 text-[11px] text-muted">
-                Si la contraseña está vacía, el usuario queda <b>Inactivo</b>.
-              </p>
+              <>
+                <TPInput
+                  label="Contraseña (opcional)"
+                  value={fPassword}
+                  onChange={setFPassword}
+                  placeholder="Si la dejás vacía, queda Pendiente"
+                  disabled={modalBusy}
+                  autoComplete="new-password"
+                  type={showPassword ? "text" : "password"}
+                  rightIcon={
+                    <button
+                      type="button"
+                      className="inline-flex items-center justify-center"
+                      onClick={() => setShowPassword(!showPassword)}
+                      aria-label={showPassword ? "Ocultar contraseña" : "Mostrar contraseña"}
+                      disabled={modalBusy}
+                    >
+                      {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                    </button>
+                  }
+                />
+                <p className="mt-1 text-[11px] text-muted">
+                  Si la contraseña está vacía, el usuario queda <b>Pendiente</b> y se activa por invitación.
+                </p>
+              </>
             ) : (
-              <p className="mt-1 text-[11px] text-muted">(Solo se cambia si escribís una nueva)</p>
-            )}
-
-            {modalMode === "EDIT" && (
-              <p className="mt-1 text-[11px] text-muted">(El email no se edita desde aquí)</p>
+              <div className="flex h-full flex-col justify-center rounded-xl border border-border bg-surface px-3 py-3 text-[12px] text-muted space-y-1">
+                <p className="font-medium text-text text-[13px]">Contraseña</p>
+                <p>El admin no puede cambiar la contraseña directamente.</p>
+                <p>
+                  Usá el botón <b>"Enviar reset de contraseña"</b> en el pie del formulario para enviarle un link al usuario.
+                </p>
+                <p className="text-[11px]">(El email tampoco se puede editar desde aquí)</p>
+              </div>
             )}
           </div>
         </div>
@@ -302,12 +310,22 @@ export default function SectionData(props: Props) {
 
       <Section title="Datos personales" desc="Nombre, documento y dirección.">
         <div className="grid grid-cols-1 md:grid-cols-12 gap-3">
-          <div className="md:col-span-12">
+          <div className="md:col-span-6">
             <TPInput
-              label="Nombre y apellido *"
-              value={fName}
-              onChange={setFName}
-              placeholder="Nombre Apellido"
+              label="Nombre *"
+              value={fFirstName}
+              onChange={setFFirstName}
+              placeholder="Ej: Juan"
+              disabled={modalBusy}
+            />
+          </div>
+
+          <div className="md:col-span-6">
+            <TPInput
+              label="Apellido *"
+              value={fLastName}
+              onChange={setFLastName}
+              placeholder="Ej: Pérez"
               disabled={modalBusy}
             />
           </div>

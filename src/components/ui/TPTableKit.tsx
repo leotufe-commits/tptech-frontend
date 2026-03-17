@@ -1,5 +1,5 @@
 // src/components/ui/TPTableKit.tsx
-import React, { useState, type ReactNode, type CSSProperties } from "react";
+import React, { useMemo, useState, type ReactNode, type CSSProperties, isValidElement, cloneElement } from "react";
 import {
   TPTableWrap,
   TPTableHeader,
@@ -65,6 +65,8 @@ type Props<T> = {
   actions?: ReactNode;
   /** Nodo adicional a la izquierda del header, después del search. */
   headerLeft?: ReactNode;
+  /** Nodo renderizado entre el header y la tabla (ej: filtros de fecha). */
+  belowHeader?: ReactNode;
 
   // ---- Selección masiva ----
   /**
@@ -127,6 +129,12 @@ type Props<T> = {
   /** Modo responsivo. Default: "scroll" (scroll horizontal en mobile). */
   responsive?: "scroll" | "stack";
   className?: string;
+
+  /**
+   * Si se pasa, al hacer click en una fila se llama esta función.
+   * Los clics dentro de [data-tp-actions] (TPRowActions) se ignoran automáticamente.
+   */
+  onRowClick?: (row: T) => void;
 };
 
 /* =========================================================
@@ -158,6 +166,27 @@ function saveVis(key: string, vis: Record<string, boolean>) {
   } catch {}
 }
 
+function loadOrder(key: string | undefined, cols: TPColDef[]): string[] {
+  const hideableKeys = cols.filter((c) => c.canHide !== false).map((c) => c.key);
+  if (!key) return hideableKeys;
+  try {
+    const stored = localStorage.getItem(`${key}_order`);
+    if (!stored) return hideableKeys;
+    const parsed = JSON.parse(stored) as string[];
+    const valid = parsed.filter((k) => hideableKeys.includes(k));
+    const missing = hideableKeys.filter((k) => !valid.includes(k));
+    return [...valid, ...missing];
+  } catch {
+    return hideableKeys;
+  }
+}
+
+function saveOrder(key: string, order: string[]) {
+  try {
+    localStorage.setItem(`${key}_order`, JSON.stringify(order));
+  } catch {}
+}
+
 /* =========================================================
    COMPONENT
 ========================================================= */
@@ -173,6 +202,7 @@ export function TPTableKit<T>({
   onSort,
   actions,
   headerLeft,
+  belowHeader,
   selectable = false,
   getRowId,
   onSelectionChange,
@@ -183,10 +213,16 @@ export function TPTableKit<T>({
   countLabel,
   responsive = "scroll",
   className,
+  onRowClick,
 }: Props<T>) {
   // ---- column visibility ----
   const [vis, setVis] = useState<Record<string, boolean>>(() =>
     loadVis(storageKey, columns)
+  );
+
+  // ---- column order (hideable columns only) ----
+  const [colOrder, setColOrder] = useState<string[]>(() =>
+    loadOrder(storageKey, columns)
   );
 
   // ---- bulk selection ----
@@ -218,13 +254,30 @@ export function TPTableKit<T>({
     if (storageKey) saveVis(storageKey, next);
   }
 
+  function handleOrderChange(nextOrder: string[]) {
+    setColOrder(nextOrder);
+    if (storageKey) saveOrder(storageKey, nextOrder);
+  }
+
   const pickerCols: ColPickerDef[] = columns
     .filter((c) => c.canHide !== false)
     .map((c) => ({ key: c.key, label: c.label }));
 
-  const visibleCols = columns.filter(
-    (c) => c.canHide === false || vis[c.key] !== false
-  );
+  // Compute visible columns respecting user-defined order.
+  // Fixed columns (canHide=false) keep their original relative positions;
+  // hideable columns are sorted by colOrder among themselves, then merged in.
+  const visibleCols = useMemo(() => {
+    const hideableCols = columns.filter((c) => c.canHide !== false);
+    const sortedHideable = [...hideableCols].sort((a, b) => {
+      const ai = colOrder.indexOf(a.key);
+      const bi = colOrder.indexOf(b.key);
+      return (ai === -1 ? Infinity : ai) - (bi === -1 ? Infinity : bi);
+    });
+    let hideableIdx = 0;
+    return columns
+      .map((c) => (c.canHide === false ? c : sortedHideable[hideableIdx++]))
+      .filter((c) => c.canHide === false || vis[c.key] !== false);
+  }, [columns, colOrder, vis]);
 
   // +1 para la columna de checkbox cuando selectable
   const colSpan = visibleCols.length + (selectable ? 1 : 0);
@@ -255,6 +308,8 @@ export function TPTableKit<T>({
                 columns={pickerCols}
                 visibility={vis}
                 onChange={handleVisChange}
+                order={colOrder}
+                onOrderChange={handleOrderChange}
               />
             )}
             {onSearchChange && (
@@ -270,6 +325,9 @@ export function TPTableKit<T>({
         }
         right={actions}
       />
+
+      {/* ---- Sección extra bajo el header (ej: filtros de fecha) ---- */}
+      {belowHeader}
 
       {/* ---- Barra de acciones masivas (cuando hay selección) ---- */}
       {selectable && nSelected > 0 && bulkActions && (
@@ -342,7 +400,16 @@ export function TPTableKit<T>({
                     selectable && id !== undefined
                       ? { checked: selectedIds.has(id), onCheck: () => toggleRow(id) }
                       : undefined;
-                  return renderRow(row, vis, sel);
+                  const element = renderRow(row, vis, sel);
+                  if (onRowClick && isValidElement(element)) {
+                    return cloneElement(element as React.ReactElement<any>, {
+                      onClick: (e: React.MouseEvent) => {
+                        if ((e.target as HTMLElement).closest("[data-tp-actions]")) return;
+                        onRowClick(row);
+                      },
+                    });
+                  }
+                  return element;
                 })
               )}
             </TPTbody>

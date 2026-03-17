@@ -14,26 +14,14 @@ import {
 import { cn } from "../../components/ui/tp";
 import { TPSectionShell } from "../../components/ui/TPSectionShell";
 import { TPButton } from "../../components/ui/TPButton";
-import { TPSearchInput } from "../../components/ui/TPSearchInput";
 import { TPStatusPill } from "../../components/ui/TPStatusPill";
 import { TPRowActions } from "../../components/ui/TPRowActions";
 import { TPField } from "../../components/ui/TPField";
 import TPInput from "../../components/ui/TPInput";
 import TPSelect from "../../components/ui/TPSelect";
 import { Modal } from "../../components/ui/Modal";
-import { SortArrows } from "../../components/ui/TPSort";
-import {
-  TPTableWrap,
-  TPTableHeader,
-  TPTableFooter,
-  TPTableXScroll,
-  TPTableElBase,
-  TPThead,
-  TPTbody,
-  TPTh,
-  TPTd,
-  TPEmptyRow,
-} from "../../components/ui/TPTable";
+import { TPTd } from "../../components/ui/TPTable";
+import { TPTableKit, type TPColDef } from "../../components/ui/TPTableKit";
 
 import {
   listCatalog,
@@ -449,112 +437,62 @@ export default function ConfiguracionSistemaItems() {
           {err && <div className="text-sm text-red-600">{err}</div>}
 
           {/* Tabla */}
-          <TPTableWrap>
-            <TPTableHeader
-              left={
-                <TPSearchInput
-                  value={q}
-                  onChange={setQ}
-                  placeholder="Buscar por nombre…"
-                  className="w-full md:w-64"
-                />
-              }
-              right={
-                <TPButton
-                  variant="primary"
-                  onClick={openCreate}
-                  disabled={savingBusy}
-                  iconLeft={<Plus size={15} />}
-                >
-                  Nuevo ítem
-                </TPButton>
-              }
-            />
-
-            <TPTableXScroll>
-              <TPTableElBase responsive="scroll">
-                <TPThead>
-                  <tr>
-                    <TPTh>
-                      <button
-                        type="button"
-                        onClick={() => toggleSort("LABEL")}
-                        className="inline-flex items-center gap-1.5 hover:text-text transition-colors"
-                      >
-                        Ítem
-                        <SortArrows dir={sortDir} active={sortBy === "LABEL"} />
-                      </button>
-                    </TPTh>
-                    <TPTh className="hidden md:table-cell">
-                      <button
-                        type="button"
-                        onClick={() => toggleSort("STATUS")}
-                        className="inline-flex items-center gap-1.5 hover:text-text transition-colors"
-                      >
-                        Estado
-                        <SortArrows dir={sortDir} active={sortBy === "STATUS"} />
-                      </button>
-                    </TPTh>
-                    <TPTh className="text-right">Acciones</TPTh>
-                  </tr>
-                </TPThead>
-
-                <TPTbody>
-                  {loading ? (
-                    <tr>
-                      <td colSpan={3} className="px-5 py-10 text-center text-sm text-muted">
-                        <Loader2 className="mx-auto mb-2 h-6 w-6 animate-spin" />
-                        Cargando…
-                      </td>
-                    </tr>
-                  ) : visibleRows.length === 0 ? (
-                    <TPEmptyRow
-                      colSpan={3}
-                      text="No se encontraron ítems con ese filtro."
-                    />
-                  ) : (
-                    visibleRows.map((r) => (
-                      <tr
-                        key={r.id}
-                        className="border-b border-border hover:bg-surface2/40 transition-colors"
-                      >
-                        <TPTd>
-                          <span className="font-medium text-text">{r.label}</span>
-                        </TPTd>
-                        <TPTd className="hidden md:table-cell">
-                          <TPStatusPill
-                            active={r.status === "Activo"}
-                            activeLabel="Activo"
-                            inactiveLabel="Inactivo"
-                          />
-                        </TPTd>
-                        <TPTd className="text-right">
-                          <div
-                            className={cn(
-                              savingBusy && "pointer-events-none opacity-50"
-                            )}
-                          >
-                            <TPRowActions
-                              onFavorite={() => setFavorite(r)}
-                              isFavorite={Boolean(r.favorite)}
-                              onEdit={() => openEdit(r)}
-                              onToggle={() => toggleActive(r)}
-                              isActive={r.status === "Activo"}
-                              onDelete={() => removeRow(r)}
-                            />
-                          </div>
-                        </TPTd>
-                      </tr>
-                    ))
-                  )}
-                </TPTbody>
-              </TPTableElBase>
-            </TPTableXScroll>
-
-            <TPTableFooter>
-              {visibleRows.length} ítem{visibleRows.length === 1 ? "" : "s"}
-            </TPTableFooter>
-          </TPTableWrap>
+          <TPTableKit
+            rows={visibleRows}
+            columns={[
+              { key: "label",   label: "Ítem",    canHide: false, sortKey: "LABEL" },
+              { key: "status",  label: "Estado",  sortKey: "STATUS" },
+              { key: "acciones", label: "Acciones", canHide: false, align: "right" },
+            ]}
+            storageKey={`tptech_col_items_${selected}`}
+            search={q}
+            onSearchChange={setQ}
+            searchPlaceholder="Buscar por nombre…"
+            sortKey={sortBy}
+            sortDir={sortDir}
+            onSort={(key) => toggleSort(key as SortCol)}
+            loading={loading}
+            emptyText="No se encontraron ítems con ese filtro."
+            countLabel={(n) => `${n} ítem${n === 1 ? "" : "s"}`}
+            actions={
+              <TPButton
+                variant="primary"
+                onClick={openCreate}
+                disabled={savingBusy}
+                iconLeft={<Plus size={15} />}
+              >
+                Nuevo ítem
+              </TPButton>
+            }
+            renderRow={(r, vis) => (
+              <tr key={r.id} className="border-b border-border hover:bg-surface2/40 transition-colors">
+                {vis.label && (
+                  <TPTd>
+                    <span className="font-medium text-text">{r.label}</span>
+                  </TPTd>
+                )}
+                {vis.status && (
+                  <TPTd>
+                    <TPStatusPill active={r.status === "Activo"} activeLabel="Activo" inactiveLabel="Inactivo" />
+                  </TPTd>
+                )}
+                {vis.acciones && (
+                  <TPTd className="text-right">
+                    <div className={cn(savingBusy && "pointer-events-none opacity-50")}>
+                      <TPRowActions
+                        onFavorite={() => setFavorite(r)}
+                        isFavorite={Boolean(r.favorite)}
+                        onEdit={() => openEdit(r)}
+                        onToggle={() => toggleActive(r)}
+                        isActive={r.status === "Activo"}
+                        onDelete={() => removeRow(r)}
+                      />
+                    </div>
+                  </TPTd>
+                )}
+              </tr>
+            )}
+          />
         </section>
       </div>
 

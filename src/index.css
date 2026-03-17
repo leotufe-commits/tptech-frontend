@@ -167,6 +167,50 @@ textarea.tp-input:hover {
 }
 
 /* =====================================
+   TPComboCreatableMulti — div container con clase tp-input
+   Idéntico visual a input.tp-input pero en div flex (multi-tag).
+===================================== */
+div.tp-input {
+  border: 1px solid var(--border);
+  border-radius: 0.75rem;
+  background-color: var(--card) !important;
+  color: var(--text);
+  transition: box-shadow 180ms ease, border-color 180ms ease, opacity 180ms ease, background 180ms ease;
+}
+
+div.tp-input:hover {
+  border-color: color-mix(in oklab, var(--border) 65%, var(--primary));
+  box-shadow: 0 6px 18px color-mix(in oklab, var(--primary) 10%, transparent);
+}
+
+div.tp-input:focus-within {
+  border-color: color-mix(in oklab, var(--primary) 55%, var(--border));
+  box-shadow: 0 0 0 4px color-mix(in oklab, var(--primary) 28%, transparent);
+}
+
+div.tp-input input:focus,
+div.tp-input input:focus-visible {
+  outline: none !important;
+  box-shadow: none !important;
+}
+
+[data-theme="dark"] div.tp-input {
+  background-color: color-mix(in oklab, var(--card) 82%, #000) !important;
+  border-color: rgba(255, 255, 255, 0.22);
+}
+
+[data-theme="dark"] div.tp-input:hover {
+  border-color: rgba(255, 255, 255, 0.3);
+}
+
+[data-theme="dark"] div.tp-input:focus-within {
+  border-color: color-mix(in oklab, var(--primary) 60%, rgba(255, 255, 255, 0.22));
+  box-shadow:
+    0 0 0 4px color-mix(in oklab, var(--primary) 26%, transparent),
+    0 10px 26px rgba(0, 0, 0, 0.35);
+}
+
+/* =====================================
    TPNumberInput — flex wrapper (número + unidad + flechas)
    Misma apariencia visual que tp-input pero como div flex
    para que los elementos no se superpongan.

@@ -6,6 +6,9 @@ import {
   Star,
   CreditCard,
   Trash2,
+  X,
+  ShieldCheck,
+  ShieldBan,
 } from "lucide-react";
 
 import { cn } from "../../components/ui/tp";
@@ -67,12 +70,15 @@ type DraftInstallmentPlan = {
   installments: string;
   interestRate: string;
   isActive: boolean;
+  /** Solo frontend — no se envía al backend. Marca el plan principal. */
+  isFavorite: boolean;
 };
 
 const EMPTY_DRAFT = {
   name: "",
   code: "",
   type: "CASH" as PaymentMethodType,
+  customTypeLabel: "",
   adjustmentType: "NONE" as PaymentAdjustmentType,
   adjustmentValue: "",
   isFavorite: false,
@@ -143,8 +149,17 @@ function formatAdjustment(
 
 /* =========================================================
    TYPE BADGE
+   - Muestra customTypeLabel si está definido, sino el label estándar.
+   - El color siempre corresponde al tipo base.
 ========================================================= */
-function TypeBadge({ type }: { type: PaymentMethodType }) {
+function TypeBadge({
+  type,
+  customTypeLabel,
+}: {
+  type: PaymentMethodType;
+  customTypeLabel?: string;
+}) {
+  const label = customTypeLabel?.trim() || PM_TYPE_LABELS[type];
   return (
     <span
       className={cn(
@@ -152,7 +167,7 @@ function TypeBadge({ type }: { type: PaymentMethodType }) {
         PM_TYPE_COLORS[type]
       )}
     >
-      {PM_TYPE_LABELS[type]}
+      {label}
     </span>
   );
 }
@@ -244,7 +259,8 @@ export default function ConfiguracionSistemaPagos() {
           (r) =>
             r.name.toLowerCase().includes(s) ||
             r.code.toLowerCase().includes(s) ||
-            PM_TYPE_LABELS[r.type].toLowerCase().includes(s)
+            PM_TYPE_LABELS[r.type].toLowerCase().includes(s) ||
+            r.customTypeLabel.toLowerCase().includes(s)
         )
       : rows;
 
@@ -281,11 +297,13 @@ export default function ConfiguracionSistemaPagos() {
       installments: String(p.installments),
       interestRate: p.interestRate,
       isActive: p.isActive,
+      isFavorite: false,
     }));
     setDraft({
       name: row.name,
       code: row.code,
       type: row.type,
+      customTypeLabel: row.customTypeLabel ?? "",
       adjustmentType: row.adjustmentType,
       adjustmentValue: row.adjustmentValue ?? "",
       isFavorite: row.isFavorite,
@@ -348,6 +366,7 @@ export default function ConfiguracionSistemaPagos() {
       name: draft.name.trim(),
       code: draft.code.trim() || undefined,
       type: draft.type,
+      customTypeLabel: draft.customTypeLabel.trim(),
       adjustmentType: draft.adjustmentType,
       adjustmentValue:
         draft.adjustmentType !== "NONE" ? draft.adjustmentValue.trim() || null : null,
@@ -447,9 +466,19 @@ export default function ConfiguracionSistemaPagos() {
   function addInstallmentPlan() {
     setDraftField("installmentPlans", [
       ...draft.installmentPlans,
-      { installments: "3", interestRate: "0", isActive: true },
+      { installments: "3", interestRate: "0", isActive: true, isFavorite: false },
     ]);
     setInterestRateNums((prev) => [...prev, 0]);
+  }
+
+  function toggleFavoritePlan(index: number) {
+    setDraftField(
+      "installmentPlans",
+      draft.installmentPlans.map((p, i) => ({
+        ...p,
+        isFavorite: i === index ? !p.isFavorite : false,
+      }))
+    );
   }
 
   function updateInstallmentPlan(
@@ -515,6 +544,7 @@ export default function ConfiguracionSistemaPagos() {
             Nuevo método
           </TPButton>
         }
+        onRowClick={(row) => openView(row)}
         renderRow={(row: PaymentMethodRow, vis) => {
           const activePlans = row.installmentPlans?.filter((p: any) => p.isActive) ?? [];
 
@@ -523,18 +553,10 @@ export default function ConfiguracionSistemaPagos() {
               {vis.name && (
                 <TPTd>
                   <div className="flex items-center gap-2 min-w-0">
-                    {row.isFavorite && (
-                      <Star size={13} className="shrink-0 fill-amber-400 text-amber-400" />
-                    )}
                     <div className="min-w-0">
                       <span className="block text-sm font-medium text-text truncate">
                         {row.name}
                       </span>
-                      {row.code && (
-                        <span className="block text-xs text-muted font-mono">
-                          {row.code}
-                        </span>
-                      )}
                     </div>
                   </div>
                 </TPTd>
@@ -542,7 +564,7 @@ export default function ConfiguracionSistemaPagos() {
 
               {vis.tipo && (
                 <TPTd className="hidden md:table-cell">
-                  <TypeBadge type={row.type} />
+                  <TypeBadge type={row.type} customTypeLabel={row.customTypeLabel} />
                 </TPTd>
               )}
 
@@ -582,7 +604,7 @@ export default function ConfiguracionSistemaPagos() {
                 <TPTd className="text-right">
                   <div className="flex items-center justify-end gap-1.5 flex-wrap">
                     <span className="md:hidden">
-                      <TypeBadge type={row.type} />
+                      <TypeBadge type={row.type} customTypeLabel={row.customTypeLabel} />
                     </span>
                     <span className="md:hidden">
                       <TPStatusPill active={row.isActive} />
@@ -622,6 +644,7 @@ export default function ConfiguracionSistemaPagos() {
               variant="secondary"
               onClick={() => setEditOpen(false)}
               disabled={busySave}
+              iconLeft={<X size={16} />}
             >
               Cancelar
             </TPButton>
@@ -660,7 +683,7 @@ export default function ConfiguracionSistemaPagos() {
               </TPField>
 
               {/* Tipo */}
-              <TPField label="Tipo" required>
+              <TPField label="Tipo base" required>
                 <TPComboFixed
                   value={draft.type}
                   onChange={(v) => {
@@ -679,18 +702,6 @@ export default function ConfiguracionSistemaPagos() {
                 />
               </TPField>
 
-              {/* Código */}
-              <TPField
-                label="Código"
-                hint="Opcional. Si no lo completás, se genera automáticamente."
-              >
-                <TPInput
-                  value={draft.code}
-                  onChange={(v) => setDraftField("code", v)}
-                  placeholder="Ej: VISA_CRED"
-                  disabled={busySave}
-                />
-              </TPField>
             </div>
           </div>
 
@@ -728,8 +739,8 @@ export default function ConfiguracionSistemaPagos() {
                 <TPField
                   label={
                     draft.adjustmentType === "PERCENTAGE"
-                      ? "Porcentaje (%)"
-                      : "Monto fijo ($)"
+                      ? "Porcentaje"
+                      : "Monto fijo"
                   }
                   hint="Positivo = recargo, negativo = descuento"
                   error={adjValueError}
@@ -744,6 +755,8 @@ export default function ConfiguracionSistemaPagos() {
                     step={0.01}
                     placeholder={draft.adjustmentType === "PERCENTAGE" ? "Ej: 5 o -3" : "Ej: 100 o -50"}
                     disabled={busySave}
+                    suffix={draft.adjustmentType === "PERCENTAGE" ? "%" : undefined}
+                    leftIcon={draft.adjustmentType === "FIXED_AMOUNT" ? <span>$</span> : undefined}
                   />
                 </TPField>
               )}
@@ -772,7 +785,7 @@ export default function ConfiguracionSistemaPagos() {
                     }}
                     disabled={busySave}
                     label={
-                      <span className="text-sm text-text">¿Permite cuotas?</span>
+                      <span className="text-sm text-text flex items-center gap-1.5"><CreditCard size={14} />¿Permite cuotas?</span>
                     }
                   />
                 </TPField>
@@ -786,9 +799,8 @@ export default function ConfiguracionSistemaPagos() {
                             <tr>
                               <th className="px-3 py-2 text-left font-semibold">Cuotas</th>
                               <th className="px-3 py-2 text-left font-semibold">Interés %</th>
-                              <th className="px-3 py-2 text-left font-semibold">Activo</th>
                               <th className="px-3 py-2 text-right font-semibold">
-                                <span className="sr-only">Eliminar</span>
+                                <span className="sr-only">Acciones</span>
                               </th>
                             </tr>
                           </thead>
@@ -796,16 +808,16 @@ export default function ConfiguracionSistemaPagos() {
                             {draft.installmentPlans.map((plan, i) => (
                               <tr key={i} className="hover:bg-surface2/30 transition">
                                 <td className="px-3 py-2">
-                                  <input
-                                    type="number"
+                                  <TPNumberInput
+                                    value={plan.installments ? parseInt(plan.installments, 10) : null}
+                                    onChange={(v) =>
+                                      updateInstallmentPlan(i, "installments", v != null ? String(Math.round(v)) : "1")
+                                    }
                                     min={1}
                                     step={1}
-                                    value={plan.installments}
-                                    onChange={(e) =>
-                                      updateInstallmentPlan(i, "installments", e.target.value)
-                                    }
+                                    decimals={0}
                                     disabled={busySave}
-                                    className="tp-input w-20 text-sm"
+                                    className="w-20 text-sm"
                                   />
                                 </td>
                                 <td className="px-3 py-2">
@@ -822,25 +834,34 @@ export default function ConfiguracionSistemaPagos() {
                                     min={0}
                                     disabled={busySave}
                                     className="w-24 text-sm"
+                                    suffix="%"
                                   />
                                 </td>
                                 <td className="px-3 py-2">
-                                  <TPCheckbox
-                                    checked={plan.isActive}
-                                    onChange={(v) => updateInstallmentPlan(i, "isActive", v)}
-                                    disabled={busySave}
-                                  />
-                                </td>
-                                <td className="px-3 py-2 text-right">
-                                  <button
-                                    type="button"
-                                    onClick={() => removeInstallmentPlan(i)}
-                                    disabled={busySave}
-                                    className="text-red-400 hover:text-red-500 disabled:opacity-50 transition"
-                                    title="Eliminar plan"
-                                  >
-                                    <Trash2 size={14} />
-                                  </button>
+                                  <div className="flex items-center justify-end gap-1">
+                                    {/* Activo / Inactivo */}
+                                    <button
+                                      type="button"
+                                      title={plan.isActive ? "Desactivar" : "Activar"}
+                                      onClick={() => updateInstallmentPlan(i, "isActive", !plan.isActive)}
+                                      disabled={busySave}
+                                      className="tp-btn-secondary h-7 w-7 !p-0 grid place-items-center shrink-0"
+                                    >
+                                      {plan.isActive
+                                        ? <ShieldCheck size={13} className="text-muted" />
+                                        : <ShieldBan size={13} className="text-muted" />}
+                                    </button>
+                                    {/* Eliminar */}
+                                    <button
+                                      type="button"
+                                      title="Eliminar plan"
+                                      onClick={() => removeInstallmentPlan(i)}
+                                      disabled={busySave}
+                                      className="tp-btn-secondary h-7 w-7 !p-0 grid place-items-center shrink-0"
+                                    >
+                                      <Trash2 size={13} className="text-muted" />
+                                    </button>
+                                  </div>
                                 </td>
                               </tr>
                             ))}
@@ -878,28 +899,6 @@ export default function ConfiguracionSistemaPagos() {
                 <div className="flex-1 border-t border-border" />
               </div>
               <div className="space-y-4">
-                <TPField label="">
-                  <TPCheckbox
-                    checked={draft.isFavorite}
-                    onChange={(v) => setDraftField("isFavorite", v)}
-                    disabled={busySave}
-                    label={
-                      <span className="text-sm text-text">Marcar como favorito</span>
-                    }
-                  />
-                </TPField>
-
-                <TPField label="">
-                  <TPCheckbox
-                    checked={draft.isActive}
-                    onChange={(v) => setDraftField("isActive", v)}
-                    disabled={busySave}
-                    label={
-                      <span className="text-sm text-text">Medio de pago activo</span>
-                    }
-                  />
-                </TPField>
-
                 <TPField label="Notas">
                   <TPTextarea
                     value={draft.notes}
@@ -947,7 +946,14 @@ export default function ConfiguracionSistemaPagos() {
 
             <div className="flex justify-between gap-4 py-2 border-b border-border">
               <span className="text-muted font-medium">Tipo</span>
-              <TypeBadge type={viewTarget.type} />
+              <div className="flex flex-col items-end gap-0.5">
+                <TypeBadge type={viewTarget.type} customTypeLabel={viewTarget.customTypeLabel} />
+                {viewTarget.customTypeLabel?.trim() && (
+                  <span className="text-[11px] text-muted">
+                    base: {PM_TYPE_LABELS[viewTarget.type]}
+                  </span>
+                )}
+              </div>
             </div>
 
             <div className="flex justify-between gap-4 py-2 border-b border-border">

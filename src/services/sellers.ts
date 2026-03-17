@@ -38,6 +38,9 @@ export type SellerRow = {
   commissionValue: string | null;
   commissionBase: CommissionBase;
   userId: string | null;
+  contactName: string;
+  contactPhone: string;
+  contactEmail: string;
   isFavorite: boolean;
   isActive: boolean;
   sortOrder: number;
@@ -66,10 +69,14 @@ export type SellerPayload = {
   commissionType?: CommissionType;
   commissionValue?: string | null;
   commissionBase?: CommissionBase;
+  contactName?: string;
+  contactPhone?: string;
+  contactEmail?: string;
   isActive?: boolean;
   isFavorite?: boolean;
   notes?: string;
   warehouseIds?: string[];
+  userId?: string | null;
 };
 
 function normalizePayload(data: SellerPayload): SellerPayload {

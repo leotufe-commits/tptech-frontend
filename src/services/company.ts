@@ -9,21 +9,22 @@ export type CompanySecuritySettings = {
 };
 
 export async function fetchCompanySecuritySettings(): Promise<CompanySecuritySettings> {
-  const data = await apiFetch<{ security: CompanySecuritySettings }>("/company/settings/security", {
+  const data = await apiFetch<{ jewelry: CompanySecuritySettings }>("/auth/me", {
     method: "GET",
+    cache: "no-store",
   });
-  return data.security;
+  return data.jewelry;
 }
 
 export async function updateCompanySecuritySettings(
   patch: Partial<CompanySecuritySettings>
 ): Promise<CompanySecuritySettings> {
-  const data = await apiFetch<{ ok: boolean; security: CompanySecuritySettings }>(
-    "/company/settings/security",
+  const data = await apiFetch<{ ok: boolean } & CompanySecuritySettings>(
+    "/auth/company/security/pin-lock",
     {
       method: "PATCH",
       body: patch,
     }
   );
-  return data.security;
+  return data;
 }

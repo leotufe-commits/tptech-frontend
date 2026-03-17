@@ -30,6 +30,8 @@ export type PriceListRow = {
   roundingTarget: RoundingTarget;
   roundingMode: RoundingMode;
   roundingDirection: RoundingDirection;
+  roundingModeHechura?: RoundingMode;
+  roundingDirectionHechura?: RoundingDirection;
   roundingValueMetal: string | null;
   roundingValueHechura: string | null;
   validFrom: string | null;
@@ -60,6 +62,8 @@ export type PriceListPayload = {
   roundingTarget?: RoundingTarget;
   roundingMode?: RoundingMode;
   roundingDirection?: RoundingDirection;
+  roundingModeHechura?: RoundingMode;
+  roundingDirectionHechura?: RoundingDirection;
   roundingValueMetal?: string | null;
   roundingValueHechura?: string | null;
   validFrom?: string | null;

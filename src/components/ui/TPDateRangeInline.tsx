@@ -292,21 +292,19 @@ export default function TPDateRangeInline({
           title={fromLabel}
         />
 
-        {fromInput ? (
-          <button
-            type="button"
-            onClick={clearFromOnly}
-            disabled={disabled}
-            className={cn(
-              "absolute right-2 top-1/2 -translate-y-1/2 h-7 w-7 grid place-items-center rounded-lg",
-              "text-muted hover:text-text hover:bg-surface2 transition",
-              "disabled:opacity-60 disabled:pointer-events-none"
-            )}
-            title="Limpiar desde"
-          >
-            <X size={16} />
-          </button>
-        ) : null}
+        <button
+          type="button"
+          onClick={clearFromOnly}
+          disabled={disabled || !fromInput}
+          className={cn(
+            "absolute right-2 top-1/2 -translate-y-1/2 h-7 w-7 grid place-items-center rounded-lg",
+            "text-muted hover:text-text hover:bg-surface2 transition",
+            "disabled:opacity-30 disabled:pointer-events-none"
+          )}
+          title="Limpiar desde"
+        >
+          <X size={16} />
+        </button>
       </div>
 
       {/* hasta */}
@@ -336,21 +334,19 @@ export default function TPDateRangeInline({
           title={toLabel}
         />
 
-        {hasValue ? (
-          <button
-            type="button"
-            onClick={clearAll}
-            disabled={disabled}
-            className={cn(
-              "absolute right-2 top-1/2 -translate-y-1/2 h-7 w-7 grid place-items-center rounded-lg",
-              "text-muted hover:text-text hover:bg-surface2 transition",
-              "disabled:opacity-60 disabled:pointer-events-none"
-            )}
-            title="Limpiar filtro"
-          >
-            <X size={16} />
-          </button>
-        ) : null}
+        <button
+          type="button"
+          onClick={clearAll}
+          disabled={disabled || !hasValue}
+          className={cn(
+            "absolute right-2 top-1/2 -translate-y-1/2 h-7 w-7 grid place-items-center rounded-lg",
+            "text-muted hover:text-text hover:bg-surface2 transition",
+            "disabled:opacity-30 disabled:pointer-events-none"
+          )}
+          title="Limpiar filtro"
+        >
+          <X size={16} />
+        </button>
       </div>
 
       {/* ✅ SWAP: primero hamburguesa */}
@@ -413,23 +409,21 @@ export default function TPDateRangeInline({
       ) : null}
 
       {/* ✅ SWAP: ahora la X queda última */}
-      {hasValue ? (
-        <button
-          type="button"
-          onClick={clearAll}
-          disabled={disabled}
-          className={cn(
-            "h-10 w-10 grid place-items-center rounded-xl border border-border bg-bg",
-            "text-muted hover:text-text hover:bg-surface2 transition",
-            "focus:outline-none focus:ring-4 focus:ring-primary/20",
-            "disabled:opacity-60 disabled:pointer-events-none"
-          )}
-          title="Limpiar filtro"
-          aria-label="Limpiar filtro"
-        >
-          <X size={18} />
-        </button>
-      ) : null}
+      <button
+        type="button"
+        onClick={clearAll}
+        disabled={disabled || !hasValue}
+        className={cn(
+          "h-10 w-10 grid place-items-center rounded-xl border border-border bg-bg",
+          "text-muted hover:text-text hover:bg-surface2 transition",
+          "focus:outline-none focus:ring-4 focus:ring-primary/20",
+          "disabled:opacity-30 disabled:pointer-events-none"
+        )}
+        title="Limpiar filtro"
+        aria-label="Limpiar filtro"
+      >
+        <X size={18} />
+      </button>
     </div>
   );
 }
