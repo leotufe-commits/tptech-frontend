@@ -8,6 +8,7 @@ import Login from "./pages/Login";
 import Register from "./pages/Register";
 import ForgotPassword from "./pages/ForgotPassword";
 import AcceptInvite from "./pages/AcceptInvite";
+import ResetPassword from "./pages/ResetPassword";
 
 import Dashboard from "./pages/Dashboard";
 import MainLayout from "./layouts/MainLayout";
@@ -45,6 +46,11 @@ import ConfiguracionSistemaImpuestos from "./pages/configuracion-sistema/Configu
 import ConfiguracionSistemaPagos from "./pages/configuracion-sistema/ConfiguracionSistemaPagos";
 import ConfiguracionSistemaEnvios from "./pages/configuracion-sistema/ConfiguracionSistemaEnvios";
 import ConfiguracionSistemaListasPrecios from "./pages/configuracion-sistema/ConfiguracionSistemaListasPrecios";
+import ConfiguracionSistemaClientes from "./pages/configuracion-sistema/ConfiguracionSistemaClientes";
+import ConfiguracionSistemaProveedores from "./pages/configuracion-sistema/ConfiguracionSistemaProveedores";
+import ConfiguracionSistemaCorreos from "./pages/configuracion-sistema/ConfiguracionSistemaCorreos";
+import EntityDetail from "./pages/entity-detail/EntityDetail";
+import ArticleDetail from "./pages/article-detail/ArticleDetail";
 
 import ProtectedRoute from "./components/ProtectedRoute";
 
@@ -102,6 +108,12 @@ const router = createBrowserRouter([
     path: "/accept-invite",
     element: <AcceptInvite />,
   },
+  {
+    // Ruta pública sin PublicOnly: el usuario podría estar logueado
+    // y aun así necesita poder resetear su contraseña con el token del mail
+    path: "/reset-password",
+    element: <ResetPassword />,
+  },
 
   /* =====================
      PRIVATE
@@ -121,6 +133,8 @@ const router = createBrowserRouter([
 
           // ===== ARTÍCULOS =====
           { path: "articulos/articulos", element: <InventarioArticulos /> },
+          { path: "articulos/nuevo",     element: <ArticleDetail /> },
+          { path: "articulos/:id",       element: <ArticleDetail /> },
           { path: "articulos/compuestos", element: <Placeholder title="Artículos compuestos" /> },
           { path: "articulos/grupos", element: <Placeholder title="Grupos de artículos" /> },
 
@@ -178,12 +192,21 @@ const router = createBrowserRouter([
           // ✅ NUEVO: VENDEDOR (placeholder por ahora)
           { path: "configuracion-sistema/vendedor", element: <ConfiguracionSistemaVendedor /> },
 
+          // ✅ ENTIDADES COMERCIALES — listados
+          { path: "configuracion-sistema/clientes", element: <ConfiguracionSistemaClientes /> },
+          { path: "configuracion-sistema/proveedores", element: <ConfiguracionSistemaProveedores /> },
+
+          // ✅ ENTIDADES COMERCIALES — detalle/edición
+          { path: "clientes/:id", element: <EntityDetail /> },
+          { path: "proveedores/:id", element: <EntityDetail /> },
+
           // ✅ NUEVAS SECCIONES (placeholders por ahora)
           { path: "configuracion-sistema/impuestos", element: <ConfiguracionSistemaImpuestos /> },
           { path: "configuracion-sistema/pagos", element: <ConfiguracionSistemaPagos /> },
           { path: "configuracion-sistema/envios", element: <ConfiguracionSistemaEnvios /> },
           { path: "configuracion-sistema/listas-precios", element: <ConfiguracionSistemaListasPrecios /> },
           { path: "configuracion-sistema/categorias", element: <ConfiguracionSistemaCategorias /> },
+          { path: "configuracion-sistema/correos", element: <ConfiguracionSistemaCorreos /> },
           { path: "configuracion-sistema/numeracion", element: <Placeholder title="Numeración de comprobantes" /> },
           { path: "configuracion-sistema/etiquetas", element: <Placeholder title="Impresión de etiquetas" /> },
 

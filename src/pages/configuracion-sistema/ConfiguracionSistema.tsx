@@ -21,6 +21,7 @@ import {
   Database,
   BarChart3,
   LayoutGrid,
+  Mail,
 } from "lucide-react";
 
 function cn(...classes: Array<string | false | null | undefined>) {
@@ -146,6 +147,12 @@ export default function ConfiguracionSistema() {
             title: "Divisas",
             desc: "Monedas y tipos de cambio para operar en multi-moneda.",
             icon: <Landmark size={20} />,
+          },
+          {
+            to: "/configuracion-sistema/correos",
+            title: "Correos del sistema",
+            desc: "Remitente, firma, logo y datos de contacto para emails.",
+            icon: <Mail size={20} />,
           },
         ],
       },

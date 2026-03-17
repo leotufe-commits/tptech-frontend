@@ -68,7 +68,7 @@ export default function PerfilJoyeriaPage() {
     );
   }
 
-  if (!p.serverJewelry || !p.existing || !p.company) {
+  if (!p.serverJewelry || !p.existing || !p.company || !p.emailConfig) {
     return (
       <Shell>
         <StatusLine>Cargando datos de la empresa...</StatusLine>
@@ -186,21 +186,23 @@ export default function PerfilJoyeriaPage() {
 
       {/* Body */}
       {!p.isEditMode ? (
-        <PerfilJoyeriaView
-          existingName={p.existing.name}
-          company={p.company}
-          phone={p.phone}
-          addressLine={p.addressLine}
-          addressMeta={p.addressMeta}
-          savedAttachments={p.savedAttachments}
-          onUploadAttachments={p.uploadAttachmentsInstant}
-          uploadingAttachments={p.uploadingAttachments}
-          onDeleteAttachment={async (id) => setConfirmDeleteAttId(id)}
-          deletingAttId={p.deletingAttId}
-        />
+        <>
+          <PerfilJoyeriaView
+            existingName={p.existing.name}
+            company={p.company}
+            phone={p.phone}
+            addressLine={p.addressLine}
+            addressMeta={p.addressMeta}
+            savedAttachments={p.savedAttachments}
+            onUploadAttachments={p.uploadAttachmentsInstant}
+            uploadingAttachments={p.uploadingAttachments}
+            onDeleteAttachment={async (id) => setConfirmDeleteAttId(id)}
+            deletingAttId={p.deletingAttId}
+          />
+        </>
       ) : (
         <TPFocusTrap active={p.isEditMode}>
-          <div>
+          <div className="space-y-4">
             <PerfilJoyeriaEdit
               existing={p.existing}
               company={p.company}
@@ -250,6 +252,7 @@ export default function PerfilJoyeriaPage() {
           </div>
         </TPFocusTrap>
       )}
+
     </div>
   );
 }

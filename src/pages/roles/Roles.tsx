@@ -70,7 +70,7 @@ const RoleRow = React.memo(function RoleRow({
   onOpenEdit: (r: RoleLite) => void;
   onDelete: (r: RoleLite) => void;
 }) {
-  const deleteDisabled = Boolean(r.isSystem);
+  const isSystem     = Boolean(r.isSystem);
   const isEditingThis = editingRoleId === r.id;
 
   return (
@@ -82,7 +82,9 @@ const RoleRow = React.memo(function RoleRow({
       <td className="px-3 py-2 text-right">
         <TPRowActions
           onEdit={canAdmin && !isEditingThis ? () => onOpenEdit(r) : undefined}
-          onDelete={!deleteDisabled && !isEditingThis ? () => onDelete(r) : undefined}
+          onDelete={canAdmin && !isEditingThis ? () => onDelete(r) : () => {}}
+          deleteDisabled={isSystem || isEditingThis}
+          deleteTitle={isSystem ? "No podés eliminar roles del sistema" : "Eliminar"}
         />
       </td>
     </TPTr>
@@ -105,6 +107,7 @@ export default function RolesPage() {
   const [pageErr, setPageErr] = useState<string | null>(null);
   const [modalErr, setModalErr] = useState<string | null>(null);
 
+  const [q, setQ] = useState("");
   const [sortBy, setSortBy] = useState<"ROLE" | "TYPE">("ROLE");
   const [sortDir, setSortDir] = useState<"ASC" | "DESC">("ASC");
 
@@ -150,6 +153,14 @@ export default function RolesPage() {
     if (createOpen || editOpen) setModalErr(null);
   }, [createOpen, editOpen]);
 
+  const filteredRoles = useMemo(() => {
+    if (!q.trim()) return roles;
+    const needle = q.trim().toLowerCase();
+    return roles.filter((r) =>
+      roleLabel(r).toLowerCase().includes(needle)
+    );
+  }, [roles, q]);
+
   const sortedRoles = useMemo(() => {
     const dir = sortDir === "ASC" ? 1 : -1;
 
@@ -157,7 +168,7 @@ export default function RolesPage() {
       return r.isSystem ? "Sistema" : "Personalizado";
     }
 
-    const arr = [...roles];
+    const arr = [...filteredRoles];
     arr.sort((a, b) => {
       if (sortBy === "ROLE") {
         return roleLabel(a).localeCompare(roleLabel(b), "es", { sensitivity: "base" }) * dir;
@@ -173,7 +184,7 @@ export default function RolesPage() {
     });
 
     return arr;
-  }, [roles, sortBy, sortDir]);
+  }, [filteredRoles, sortBy, sortDir]);
 
   const loadRoles = useCallback(async () => {
     const reqId = ++loadReqRef.current;
@@ -400,25 +411,29 @@ export default function RolesPage() {
     <TPSectionShell
       title="Roles"
       subtitle="Gestión de roles y permisos."
-      right={
-        canAdmin ? (
-          <TPButton
-            variant="primary"
-            onClick={openCreateModal}
-            disabled={creatingOpenLoading}
-            loading={creatingOpenLoading}
-            iconLeft={!creatingOpenLoading ? <Plus className="h-4 w-4" /> : undefined}
-          >
-            Nuevo Rol
-          </TPButton>
-        ) : undefined
-      }
     >
       {pageErr ? <TPAlert tone="danger">{pageErr}</TPAlert> : null}
 
       <TPTableKit
         rows={sortedRoles}
         columns={ROLE_COLS}
+        storageKey="tptech_col_roles"
+        search={q}
+        onSearchChange={setQ}
+        searchPlaceholder="Buscar por nombre…"
+        actions={
+          canAdmin ? (
+            <TPButton
+              variant="primary"
+              onClick={openCreateModal}
+              disabled={creatingOpenLoading}
+              loading={creatingOpenLoading}
+              iconLeft={!creatingOpenLoading ? <Plus className="h-4 w-4" /> : undefined}
+            >
+              Nuevo Rol
+            </TPButton>
+          ) : undefined
+        }
         sortKey={sortBy}
         sortDir={sortDirForArrows}
         onSort={(key) => toggleSort(key as "ROLE" | "TYPE")}
