@@ -35,5 +35,8 @@ export default function ProtectedRoute({ children }: Props) {
     return <Navigate to="/login" replace state={{ from: location.pathname }} />;
   }
 
+  // ✅ NO bloquear el render por locked — LockScreen está dentro de MainLayout
+  // y se encarga del overlay (z-9999). Si bloqueamos acá, LockScreen nunca aparece
+  // y el usuario queda atrapado sin poder ingresar el PIN.
   return <>{children ?? <Outlet />}</>;
 }

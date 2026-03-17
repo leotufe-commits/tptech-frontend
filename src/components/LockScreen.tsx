@@ -55,17 +55,14 @@ export default function LockScreen() {
 
   const [pinFocused, setPinFocused] = useState(false);
 
-  /**
-   * ✅ Si la joyería permite switch SIN PIN, no pedimos PIN para desbloquear.
-   * PERO: seguimos permitiendo "Continuar" sin seleccionar usuario (desbloqueo actual).
-   */
-  const switchingWithoutPin = useMemo(
-    () => Boolean(quickSwitchEnabled && !pinLockRequireOnUserSwitch),
-    [quickSwitchEnabled, pinLockRequireOnUserSwitch]
-  );
-
-  const mustEnterPin = !switchingWithoutPin;
   const currentUserId = useMemo(() => String((user as any)?.id ?? ""), [user]);
+
+  /**
+   * Cuando quickSwitch está habilitado y NO se requiere PIN al cambiar usuario,
+   * el teclado numérico NO se muestra en ningún caso (nadie necesita PIN).
+   * Si quickSwitch está deshabilitado o se requiere PIN, siempre se muestra.
+   */
+  const mustEnterPin = !quickSwitchEnabled || Boolean(pinLockRequireOnUserSwitch);
 
   const lastDeviceUserKey = useMemo(() => {
     const jId = (jewelry as any)?.id ? String((jewelry as any).id) : "no-jewelry";
@@ -164,25 +161,12 @@ export default function LockScreen() {
   async function handleUnlock() {
     if (busy) return;
 
-    // ✅ Si NO pide PIN: permitir desbloquear sin seleccionar usuario.
+    // Cuando no se requiere PIN, usar doSwitchNoPin con el usuario seleccionado o el actual
     if (!mustEnterPin) {
-      setError(null);
-
-      // si seleccionó otro usuario, switch sin PIN
-      if (targetUserId && targetUserId !== currentUserId && quickSwitchEnabled) {
-        await doSwitchNoPin(targetUserId);
-        return;
-      }
-
-      // si no seleccionó (o seleccionó el mismo), simplemente desbloquear
-      setLocked(false);
-      setPin("");
-      setTargetUserId(null);
-      setShowPin(false);
+      void doSwitchNoPin(targetUserId ?? currentUserId);
       return;
     }
 
-    // ✅ pide PIN
     if (pin.length !== 4) return;
 
     setError(null);
@@ -447,17 +431,13 @@ export default function LockScreen() {
 
   if (!locked || !pinLockEnabled || !user || bypass) return null;
 
-  const allowContinue = (() => {
-    if (busy) return false;
-    if (!mustEnterPin) return true; // ✅ siempre se puede “continuar” sin PIN
-    return pin.length === 4;
-  })();
+  const allowContinue = !busy && (mustEnterPin ? pin.length === 4 : true);
 
-  const continueLabel = (() => {
-    if (busy) return "Verificando…";
-    if (!mustEnterPin) return targetUserId && targetUserId !== currentUserId ? "Cambiar y continuar" : "Continuar";
-    return targetUserId ? "Continuar" : "Desbloquear";
-  })();
+  const continueLabel = busy
+    ? "Verificando…"
+    : targetUserId && targetUserId !== currentUserId
+      ? "Continuar"
+      : "Desbloquear";
 
   return (
     <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4">
@@ -791,23 +771,27 @@ export default function LockScreen() {
             </>
           )}
 
-          <button
-            type="button"
-            className={cn(
-              "w-full rounded-2xl h-12 px-4",
-              "inline-flex items-center justify-center gap-2",
-              "border border-border",
-              allowContinue ? "bg-primary text-primary-foreground" : "bg-surface text-muted",
-              "transition",
-              allowContinue && "hover:brightness-110 active:scale-[0.99]",
-              "focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-primary/20"
-            )}
-            onClick={() => void handleUnlock()}
-            disabled={!allowContinue}
-          >
-            {allowContinue && !busy ? <Check className="h-4 w-4" /> : null}
-            {continueLabel}
-          </button>
+          {/* Botón Continuar/Desbloquear: solo cuando se requiere PIN.
+              En el flujo sin PIN, el switch ya ocurre al clickear la tarjeta de usuario. */}
+          {mustEnterPin && (
+            <button
+              type="button"
+              className={cn(
+                "w-full rounded-2xl h-12 px-4",
+                "inline-flex items-center justify-center gap-2",
+                "border border-border",
+                allowContinue ? "bg-primary text-primary-foreground" : "bg-surface text-muted",
+                "transition",
+                allowContinue && "hover:brightness-110 active:scale-[0.99]",
+                "focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-primary/20"
+              )}
+              onClick={() => void handleUnlock()}
+              disabled={!allowContinue}
+            >
+              {allowContinue && !busy ? <Check className="h-4 w-4" /> : null}
+              {continueLabel}
+            </button>
+          )}
 
           {error && <div className="text-sm text-red-500 bg-red-500/10 rounded-xl px-3 py-2">{error}</div>}
         </div>

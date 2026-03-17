@@ -1,30 +1,30 @@
-import React, { useRef } from "react";
-import { Paperclip } from "lucide-react";
+import React, { useMemo, useState } from "react";
 
 import TPInput from "../../../components/ui/TPInput";
 import { TPField } from "../../../components/ui/TPField";
 import TPComboCreatable from "../../../components/ui/TPComboCreatable";
+import TPComboCreatableMulti from "../../../components/ui/TPComboCreatableMulti";
 import { useCatalog } from "../../../hooks/useCatalog";
 import type { CatalogType } from "../../../services/catalogs";
-import { TPCheckbox } from "../../../components/ui/TPCheckbox";
 import TPTextarea from "../../../components/ui/TPTextarea";
 import TPComboFixed from "../../../components/ui/TPComboFixed";
 import TPNumberInput from "../../../components/ui/TPNumberInput";
 import { TPCard } from "../../../components/ui/TPCard";
 import TPAvatarUploader from "../../../components/ui/TPAvatarUploader";
-import {
-  TPAttachmentList,
-  type TPAttachmentItem,
-} from "../../../components/ui/TPAttachmentList";
+import type { TPAttachmentItem } from "../../../components/ui/TPAttachmentList";
+import TPAttachmentManager from "../../../components/ui/TPAttachmentManager";
+import { TPButton } from "../../../components/ui/TPButton";
 
 import type {
   SellerRow,
   CommissionBase,
   CommissionType,
 } from "../../../services/sellers";
+import type { UserListItem } from "../../../services/users";
 
 import type { SellerDraft, WarehouseOption } from "./vendedor.types";
 import { attachmentToTP } from "./vendedor.helpers";
+import { useValuation } from "../../../hooks/useValuation";
 
 function asCatalogType(t: CatalogType): CatalogType {
   return t;
@@ -38,12 +38,74 @@ interface Props {
   busySave: boolean;
   editTarget: SellerRow | null;
   warehouses: WarehouseOption[];
+  users: UserListItem[];
+  usedUserIds: string[];
   busyAvatar: boolean;
   onAvatarUpload: (file: File) => void;
+  onApplyUserAvatar: (url: string) => void;
   deletingAttachmentId: string | null;
   onAddAttachment: (file: File) => void;
   onDeleteAttachment: (item: TPAttachmentItem) => void;
+  stagedFiles: File[];
+  onStagedFilesChange: (files: File[]) => void;
   firstInputRef: React.RefObject<HTMLInputElement | null>;
+}
+
+function applyFields(
+  user: UserListItem,
+  draft: SellerDraft,
+  set: <K extends keyof SellerDraft>(key: K, value: SellerDraft[K]) => void,
+  overwrite: boolean
+) {
+  const fill = <K extends keyof SellerDraft>(
+    key: K,
+    value: SellerDraft[K] | undefined
+  ) => {
+    if (!value) return;
+    if (!overwrite && String(draft[key] ?? "").trim()) return;
+    set(key, value);
+  };
+
+  fill("firstName", user.firstName as any);
+  fill("lastName", user.lastName as any);
+  fill("email", user.email as any);
+
+  const fullName = user.name || [user.firstName, user.lastName].filter(Boolean).join(" ");
+  fill("displayName", fullName as any);
+
+  fill("documentType", user.documentType as any);
+  fill("documentNumber", user.documentNumber as any);
+  fill("phoneCountry", user.phoneCountry as any);
+  fill("phoneNumber", user.phoneNumber as any);
+  fill("street", user.street as any);
+  fill("streetNumber", user.number as any);
+  fill("city", user.city as any);
+  fill("province", user.province as any);
+  fill("postalCode", user.postalCode as any);
+  fill("country", user.country as any);
+}
+
+function hasConflict(user: UserListItem, draft: SellerDraft): boolean {
+  const pairs: [string | undefined, string][] = [
+    [user.firstName, draft.firstName],
+    [user.lastName, draft.lastName],
+    [user.email, draft.email],
+    [user.documentType, draft.documentType],
+    [user.documentNumber, draft.documentNumber],
+    [user.phoneCountry, draft.phoneCountry],
+    [user.phoneNumber, draft.phoneNumber],
+    [user.street, draft.street],
+    [user.number, draft.streetNumber],
+    [user.city, draft.city],
+    [user.province, draft.province],
+    [user.postalCode, draft.postalCode],
+    [user.country, draft.country],
+  ];
+  return pairs.some(([uVal, dVal]) => {
+    const u = uVal?.trim() || "";
+    const d = dVal?.trim() || "";
+    return u && d && u !== d;
+  });
 }
 
 export function VendedorForm({
@@ -54,20 +116,47 @@ export function VendedorForm({
   busySave,
   editTarget,
   warehouses,
+  users,
+  usedUserIds,
   busyAvatar,
   onAvatarUpload,
+  onApplyUserAvatar,
   deletingAttachmentId,
   onAddAttachment,
   onDeleteAttachment,
+  stagedFiles,
+  onStagedFilesChange,
   firstInputRef,
 }: Props) {
+  const [pendingUser, setPendingUser] = useState<UserListItem | null>(null);
+
+  const { baseCurrency } = useValuation();
+  const currencySymbol = (baseCurrency as any)?.symbol || "$";
+
+  const userOptions = useMemo(() => {
+    // usedUserIds ya excluye el userId del vendedor que se está editando
+    const usedSet = new Set(usedUserIds);
+    const opts = users.map((u) => {
+      const alreadyUsed = usedSet.has(u.id);
+      const name = [u.firstName, u.lastName].filter(Boolean).join(" ");
+      return {
+        value: u.id,
+        label: alreadyUsed
+          ? `${name || u.email} (ya vinculado)`
+          : name
+            ? `${name} (${u.email})`
+            : u.email,
+        disabled: alreadyUsed,
+      };
+    });
+    return [{ value: "", label: "Sin usuario vinculado" }, ...opts];
+  }, [users, usedUserIds]);
+
   const docTypeCat = useCatalog(asCatalogType("DOCUMENT_TYPE"));
   const prefixCat = useCatalog(asCatalogType("PHONE_PREFIX"));
   const cityCat = useCatalog(asCatalogType("CITY"));
   const provCat = useCatalog(asCatalogType("PROVINCE"));
   const countryCat = useCatalog(asCatalogType("COUNTRY"));
-
-  const attachmentInputRef = useRef<HTMLInputElement>(null);
 
   const firstNameError =
     submitted && !draft.firstName.trim()
@@ -86,28 +175,96 @@ export function VendedorForm({
       ? "El valor debe ser mayor a 0."
       : null;
 
-  const phoneParts = String(draft.phone || "")
-    .trim()
-    .split(/\s+/)
-    .filter(Boolean);
+  const warehouseMultiItems = useMemo(
+    () =>
+      warehouses.map((wh) => ({
+        id: wh.id,
+        label: wh.isActive ? wh.name : `${wh.name} (inactivo)`,
+        value: wh.id,
+        isActive: true,
+        isFavorite: false,
+      })),
+    [warehouses]
+  );
 
-  const phoneCountry = phoneParts[0]?.startsWith("+") ? phoneParts[0] : "";
-  const phoneNumber = phoneCountry
-    ? phoneParts.slice(1).join(" ")
-    : phoneParts.join(" ");
+  function handleUserChange(v: string) {
+    const uid = v || null;
+    set("userId", uid);
 
-  function setPhoneCountry(v: string) {
-    const next = [v.trim(), phoneNumber].filter(Boolean).join(" ").trim();
-    set("phone", next);
+    if (!uid) return;
+
+    const user = users.find((u) => u.id === uid);
+    if (!user) return;
+
+    if (hasConflict(user, draft)) {
+      setPendingUser(user);
+      return;
+    }
+
+    applyFields(user, draft, set, false);
+    if (user.avatarUrl) onApplyUserAvatar(user.avatarUrl);
   }
 
-  function setPhoneNumber(v: string) {
-    const next = [phoneCountry, v.trim()].filter(Boolean).join(" ").trim();
-    set("phone", next);
+  function handleApplyOverwrite() {
+    if (!pendingUser) return;
+    applyFields(pendingUser, draft, set, true);
+    if (pendingUser.avatarUrl) onApplyUserAvatar(pendingUser.avatarUrl);
+    setPendingUser(null);
+  }
+
+  function handleApplyEmptyOnly() {
+    if (!pendingUser) return;
+    applyFields(pendingUser, draft, set, false);
+    if (pendingUser.avatarUrl && !editTarget?.avatarUrl) onApplyUserAvatar(pendingUser.avatarUrl);
+    setPendingUser(null);
   }
 
   return (
     <div className="space-y-4">
+      {/* Diálogo de confirmación */}
+      {pendingUser && (
+        <div className="fixed inset-0 z-[200] flex items-center justify-center">
+          <div
+            className="absolute inset-0 bg-black/50"
+            onClick={() => setPendingUser(null)}
+          />
+          <div className="relative z-10 w-[92vw] max-w-md rounded-2xl border border-border bg-card p-5 shadow-soft">
+            <div className="text-base font-semibold text-text mb-1">
+              El vendedor ya tiene datos cargados
+            </div>
+            <div className="text-sm text-muted mb-4">
+              ¿Querés sobreescribir todos los campos con los datos de{" "}
+              <b>
+                {[pendingUser.firstName, pendingUser.lastName]
+                  .filter(Boolean)
+                  .join(" ") || pendingUser.email}
+              </b>
+              , o solo completar los que están vacíos?
+            </div>
+            <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+              <TPButton
+                variant="secondary"
+                onClick={() => setPendingUser(null)}
+              >
+                Cancelar
+              </TPButton>
+              <TPButton
+                variant="secondary"
+                onClick={handleApplyEmptyOnly}
+              >
+                Solo completar vacíos
+              </TPButton>
+              <TPButton
+                variant="primary"
+                onClick={handleApplyOverwrite}
+              >
+                Sobreescribir todo
+              </TPButton>
+            </div>
+          </div>
+        </div>
+      )}
+
       <TPCard className="p-4">
         <div className="flex items-center gap-4">
           <TPAvatarUploader
@@ -130,6 +287,23 @@ export function VendedorForm({
           </div>
         </div>
       </TPCard>
+
+      {!editTarget && (
+        <TPCard className="p-4 space-y-4">
+          <div className="text-sm font-semibold">Acceso al sistema</div>
+          <TPField
+            label="Usuario vinculado"
+            hint="Opcional. Permite que este vendedor opere en el sistema con su cuenta."
+          >
+            <TPComboFixed
+              value={draft.userId ?? ""}
+              onChange={handleUserChange}
+              disabled={busySave}
+              options={userOptions}
+            />
+          </TPField>
+        </TPCard>
+      )}
 
       <TPCard className="p-4 space-y-4">
         <div className="text-sm font-semibold">Datos personales</div>
@@ -165,7 +339,7 @@ export function VendedorForm({
         </TPField>
 
         <div className="grid grid-cols-1 md:grid-cols-12 gap-3">
-          <div className="md:col-span-3">
+          <div className="md:col-span-2">
             <TPComboCreatable
               label="Tipo doc."
               type="DOCUMENT_TYPE"
@@ -185,7 +359,7 @@ export function VendedorForm({
             />
           </div>
 
-          <div className="md:col-span-3">
+          <div className="md:col-span-4">
             <TPInput
               label="Nro. doc."
               value={draft.documentNumber}
@@ -201,15 +375,15 @@ export function VendedorForm({
               type="PHONE_PREFIX"
               items={prefixCat.items}
               loading={prefixCat.loading}
-              value={phoneCountry}
-              onChange={setPhoneCountry}
+              value={draft.phoneCountry}
+              onChange={(v) => set("phoneCountry", v)}
               placeholder="+54"
               disabled={busySave}
               allowCreate
               onRefresh={() => void prefixCat.refresh()}
               onCreate={async (label) => {
                 await prefixCat.createItem(label);
-                setPhoneCountry(label);
+                set("phoneCountry", label);
               }}
               mode={editTarget ? "edit" : "create"}
             />
@@ -218,8 +392,8 @@ export function VendedorForm({
           <div className="md:col-span-4">
             <TPInput
               label="Teléfono"
-              value={phoneNumber}
-              onChange={setPhoneNumber}
+              value={draft.phoneNumber}
+              onChange={(v) => set("phoneNumber", v)}
               placeholder="11 1234 5678"
               disabled={busySave}
             />
@@ -351,6 +525,8 @@ export function VendedorForm({
                 decimals={2}
                 min={0}
                 disabled={busySave}
+                suffix={draft.commissionType === "PERCENTAGE" ? "%" : undefined}
+                leftIcon={draft.commissionType === "FIXED_AMOUNT" ? <span className="text-sm font-semibold">{currencySymbol}</span> : undefined}
               />
             </TPField>
 
@@ -371,8 +547,27 @@ export function VendedorForm({
       </TPCard>
 
       <TPCard className="p-4 space-y-4">
-        <div className="text-sm font-semibold">Persona de contacto</div>
+        <div className="text-sm font-semibold">Almacenes asignados</div>
 
+        {warehouses.length === 0 ? (
+          <div className="text-sm italic text-muted">No hay almacenes disponibles.</div>
+        ) : (
+          <TPComboCreatableMulti
+            label="Almacenes"
+            type="CITY"
+            items={warehouseMultiItems}
+            values={draft.warehouseIds}
+            onChange={(ids) => set("warehouseIds", ids)}
+            placeholder="Seleccionar almacenes..."
+            disabled={busySave}
+            mode={editTarget ? "edit" : "create"}
+            noLabelSpace
+          />
+        )}
+      </TPCard>
+
+      <TPCard className="p-4 space-y-4">
+        <div className="text-sm font-semibold">Persona de contacto</div>
         <TPField label="Nombre">
           <TPInput
             value={draft.contactName}
@@ -381,115 +576,65 @@ export function VendedorForm({
             disabled={busySave}
           />
         </TPField>
-
-        <TPField label="Teléfono">
-          <TPInput
-            value={draft.contactPhone}
-            onChange={(v) => set("contactPhone", v)}
-            placeholder="Ej: +54 11 1234 5678"
-            disabled={busySave}
-          />
-        </TPField>
-
-        <TPField label="Email">
-          <TPInput
-            value={draft.contactEmail}
-            onChange={(v) => set("contactEmail", v)}
-            placeholder="contacto@email.com"
-            disabled={busySave}
-          />
-        </TPField>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <TPField label="Teléfono">
+            <TPInput
+              value={draft.contactPhone}
+              onChange={(v) => set("contactPhone", v)}
+              placeholder="Ej: +54 11 1234 5678"
+              disabled={busySave}
+            />
+          </TPField>
+          <TPField label="Email">
+            <TPInput
+              value={draft.contactEmail}
+              onChange={(v) => set("contactEmail", v)}
+              placeholder="contacto@email.com"
+              disabled={busySave}
+            />
+          </TPField>
+        </div>
       </TPCard>
 
-      <TPCard className="p-4">
-        <div className="text-sm font-semibold mb-3">Almacenes asignados</div>
+      <TPCard className="p-4 space-y-3">
+        <div className="text-sm font-semibold">Notas</div>
+        <TPTextarea
+          value={draft.notes}
+          onChange={(v) => set("notes", v)}
+          minH={80}
+          disabled={busySave}
+          placeholder="Observaciones internas..."
+        />
+      </TPCard>
 
-        {warehouses.length === 0 ? (
-          <div className="text-sm italic text-muted">No hay almacenes disponibles.</div>
+      <TPCard className="p-4 space-y-3">
+        <div className="text-sm font-semibold">Archivos adjuntos</div>
+
+        {editTarget ? (
+          <TPAttachmentManager
+            items={(editTarget.attachments ?? []).map(attachmentToTP)}
+            onUpload={(files) => { for (const f of files) onAddAttachment(f); }}
+            onDelete={onDeleteAttachment}
+            deletingId={deletingAttachmentId}
+            disabled={busySave}
+          />
         ) : (
-          <div className="space-y-2 max-h-44 overflow-y-auto">
-            {warehouses.map((wh) => (
-              <TPCheckbox
-                key={wh.id}
-                checked={draft.warehouseIds.includes(wh.id)}
-                onChange={() => toggleWarehouse(wh.id)}
-                disabled={busySave}
-                label={
-                  <span className="text-sm text-text">
-                    {wh.name}
-                    {!wh.isActive && (
-                      <span className="ml-1 text-xs text-muted">(inactivo)</span>
-                    )}
-                  </span>
-                }
-              />
-            ))}
-          </div>
+          <TPAttachmentManager
+            items={stagedFiles.map((f, i) => ({
+              id: `staged-${i}`,
+              name: f.name,
+              size: f.size,
+              mimeType: f.type,
+            }))}
+            onUpload={(files) => onStagedFilesChange([...stagedFiles, ...files])}
+            onDelete={(item) => {
+              const idx = parseInt(item.id.replace("staged-", ""), 10);
+              onStagedFilesChange(stagedFiles.filter((_, i) => i !== idx));
+            }}
+            disabled={busySave}
+          />
         )}
       </TPCard>
-
-      {editTarget && (
-        <TPCard className="p-4">
-          <div className="flex justify-between items-center mb-3">
-            <div className="text-sm font-semibold">Archivos adjuntos</div>
-
-            <button
-              type="button"
-              onClick={() => attachmentInputRef.current?.click()}
-              className="text-xs text-primary flex items-center gap-1"
-            >
-              <Paperclip size={13} />
-              Agregar
-            </button>
-          </div>
-
-          <input
-            ref={attachmentInputRef}
-            type="file"
-            hidden
-            onChange={(e) => {
-              const f = e.target.files?.[0];
-              if (f) void onAddAttachment(f);
-              e.currentTarget.value = "";
-            }}
-          />
-
-          <TPAttachmentList
-            items={(editTarget.attachments ?? []).map(attachmentToTP)}
-            deletingId={deletingAttachmentId}
-            onView={(item) => item.url && window.open(item.url, "_blank")}
-            onDelete={onDeleteAttachment}
-          />
-        </TPCard>
-      )}
-
-      {editTarget && (
-        <TPCard className="p-4 space-y-3">
-          <div className="text-sm font-semibold">General</div>
-
-          <TPCheckbox
-            checked={draft.isFavorite}
-            onChange={(v) => set("isFavorite", v)}
-            disabled={busySave}
-            label="Marcar como favorito"
-          />
-
-          <TPCheckbox
-            checked={draft.isActive}
-            onChange={(v) => set("isActive", v)}
-            disabled={busySave}
-            label="Vendedor activo"
-          />
-
-          <TPTextarea
-            label="Notas"
-            value={draft.notes}
-            onChange={(v) => set("notes", v)}
-            minH={80}
-            disabled={busySave}
-          />
-        </TPCard>
-      )}
     </div>
   );
 }
