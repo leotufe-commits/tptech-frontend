@@ -2,7 +2,7 @@
 // Renderiza una etiqueta individual a partir de una plantilla y datos de artículo.
 // Usa posicionamiento absoluto en px convertidos desde mm.
 // Válido tanto para preview en pantalla como referencia visual del layout.
-import React, { useRef, useEffect, CSSProperties } from "react";
+import React, { CSSProperties } from "react";
 
 import { mmToPx }              from "../../utils/units";
 import { resolveField }        from "../../utils/labelResolver";
@@ -12,6 +12,7 @@ import type {
   LabelElementRow,
   LabelElementType,
 } from "../../services/label-templates";
+import BarcodeElement          from "./BarcodeElement";
 
 // ─── Props ────────────────────────────────────────────────────────────────────
 
@@ -94,44 +95,31 @@ function LineElement({ hpx, debug }: Pick<ElemProps, "hpx" | "debug">) {
   );
 }
 
-// -- BARCODE (preview visual) ---------------------------------------------------
-// JsBarcode no es NPM en este proyecto; se usa CDN en la ventana de impresión.
-// Aquí mostramos un patrón visual fiel que indica la posición y tamaño.
-const BARCODE_PATTERN = "repeating-linear-gradient(90deg, #111 0, #111 2px, #fff 2px, #fff 5px)";
-const QR_PATTERN      = "repeating-linear-gradient(0deg, #111 0, #111 3px, transparent 3px, transparent 6px), repeating-linear-gradient(90deg, #111 0, #111 3px, transparent 3px, transparent 6px)";
-
-function BarcodeElement({ el, item, wpx, hpx, debug }: ElemProps) {
+// -- BARCODE -------------------------------------------------------------------
+function BarcodeElementWrapper({ el, item, wpx, hpx, debug }: ElemProps) {
   const value = resolveField(item, el.fieldKey);
+  let cfg: Record<string, unknown> = {};
+  try { cfg = JSON.parse(el.configJson || "{}"); } catch { /* ok */ }
+
+  const format = (cfg["barcodeType"] as string) || "CODE128";
+  const displayValue = cfg["displayValue"] !== false;
 
   return (
-    <div
-      style={{
-        width:   "100%",
-        height:  "100%",
-        display: "flex",
-        flexDirection: "column",
-        alignItems: "center",
-        justifyContent: "center",
-        gap: 2,
-        outline: debug ? "1px dashed #10b981" : undefined,
-      }}
-    >
-      <div
-        style={{
-          width:      "90%",
-          height:     hpx * 0.78,
-          background: BARCODE_PATTERN,
-          opacity:    value ? 1 : 0.25,
-        }}
-      />
-      {value && (
-        <div style={{ fontSize: Math.max(el.fontSize * 0.8, 5), fontFamily: "monospace", color: "#111" }}>
-          {value}
-        </div>
-      )}
-    </div>
+    <BarcodeElement
+      value={value}
+      format={format as any}
+      containerWpx={wpx}
+      containerHpx={hpx}
+      displayValue={displayValue}
+      fontSize={el.fontSize || 8}
+      editorMode={true}
+      debug={debug}
+    />
   );
 }
+
+// -- QR (placeholder — QRCode real requeriría otra librería) -------------------
+const QR_PATTERN = "repeating-linear-gradient(0deg, #111 0, #111 3px, transparent 3px, transparent 6px), repeating-linear-gradient(90deg, #111 0, #111 3px, transparent 3px, transparent 6px)";
 
 function QRElement({ el, item, wpx, hpx, debug }: ElemProps) {
   const value = resolveField(item, el.fieldKey);
@@ -203,7 +191,7 @@ function ImageElement({ el, item, wpx, hpx, debug }: ElemProps) {
 function ElementSwitch(props: ElemProps) {
   switch (props.el.type as LabelElementType) {
     case "TEXT":    return <TextElement    {...props} />;
-    case "BARCODE": return <BarcodeElement {...props} />;
+    case "BARCODE": return <BarcodeElementWrapper {...props} />;
     case "QR":      return <QRElement      {...props} />;
     case "IMAGE":   return <ImageElement   {...props} />;
     case "LINE":    return <LineElement hpx={props.hpx} debug={props.debug} />;

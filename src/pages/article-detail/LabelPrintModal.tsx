@@ -1,8 +1,9 @@
 // src/pages/article-detail/LabelPrintModal.tsx
 // Modal de impresión de etiquetas.
 // Preview: usa LabelSheet + LabelRenderer (React, mm→px exacto).
-// Impresión: abre ventana con HTML+JsBarcode CDN, layout calculado con buildPrintPages.
+// Impresión: genera HTML con SVGs de barcode serializados inline (sin CDN externo).
 import React, { useState, useEffect, useRef } from "react";
+import JsBarcode from "jsbarcode";
 import { Printer, Plus, Minus, Tag, LayoutTemplate } from "lucide-react";
 
 import { Modal }       from "../../components/ui/Modal";
@@ -99,6 +100,47 @@ function resolveForHtml(fieldKey: string, item: LabelItem, staticLabel = ""): st
   return resolved;
 }
 
+// ─── Serialización de barcode a SVG inline ────────────────────────────────────
+
+/**
+ * Genera un SVG de código de barras real usando JsBarcode y lo serializa como
+ * string HTML incrustable. Corre de forma síncrona en el browser.
+ * Retorna "" si el valor está vacío o el formato falla.
+ */
+function barcodeSvgString(
+  value:        string,
+  format:       string,
+  wMm:          number,
+  hMm:          number,
+  displayValue: boolean,
+  fontSize:     number,
+): string {
+  if (!value.trim()) return "";
+  try {
+    const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    JsBarcode(svg as unknown as HTMLElement, value, {
+      format,
+      width:        1,
+      height:       Math.max(hMm * 3.78 * (displayValue ? 0.78 : 0.92), 10),
+      displayValue,
+      fontSize,
+      margin:       0,
+      background:   "#ffffff",
+      lineColor:    "#000000",
+      textMargin:   2,
+      font:         "Arial",
+    });
+    const serialized = new XMLSerializer().serializeToString(svg);
+    // Embeber con ancho/alto explícito en mm para que la impresora respete el tamaño
+    return serialized.replace(
+      /^<svg/,
+      `<svg style="max-width:${wMm}mm; max-height:${hMm}mm; display:block;"`,
+    );
+  } catch {
+    return "";
+  }
+}
+
 // ─── Renderizado de elemento en HTML de impresión ────────────────────────────
 
 function elementToHtml(el: LabelElementRow, item: LabelItem): string {
@@ -121,12 +163,15 @@ function elementToHtml(el: LabelElementRow, item: LabelItem): string {
     if (!rawValue && el.fieldKey !== "static") return "";
     let cfg: Record<string, unknown> = {};
     try { cfg = JSON.parse(el.configJson || "{}"); } catch { /* ok */ }
-    const fmt = el.type === "QR"
-      ? "qrcode"
-      : (cfg["barcodeType"] === "EAN13" ? "EAN13" : "CODE128");
-    return `<div style="${base} display:flex; align-items:center; justify-content:center;">
-      <svg class="bc" data-v="${rawValue}" data-f="${fmt}" style="max-width:${w}mm; max-height:${h}mm;"></svg>
-    </div>`;
+    if (el.type === "QR") {
+      // QR real requeriría librería adicional; usar placeholder de texto
+      return `<div style="${base} display:flex; align-items:center; justify-content:center; font-size:${Math.max(el.fontSize * 0.7, 5)}pt; font-family:monospace;">${rawValue}</div>`;
+    }
+    const fmt          = (cfg["barcodeType"] as string) || "CODE128";
+    const showText     = cfg["displayValue"] !== false;
+    const svgHtml      = barcodeSvgString(rawValue, fmt, w, h, showText, el.fontSize || 8);
+    if (!svgHtml) return "";
+    return `<div style="${base} display:flex; align-items:center; justify-content:center;">${svgHtml}</div>`;
   }
 
   if (el.type === "IMAGE") {
@@ -209,12 +254,12 @@ function buildTemplateHtml(
     ? `@page { size: A4; margin: ${mTop}mm ${mRight}mm ${mBottom}mm ${mLeft}mm; }`
     : `@page { size: ${lw}mm ${lh}mm; margin: 0; }`;
 
+  // Los SVGs de barcode ya están serializados inline — no se necesita CDN ni script externo
   return `<!DOCTYPE html>
 <html>
 <head>
   <meta charset="utf-8">
   <title>Etiquetas TPTech</title>
-  <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.5/dist/JsBarcode.all.min.js"></script>
   <style>
     * { margin:0; padding:0; box-sizing:border-box; }
     body { font-family: Arial, sans-serif; background:#fff; }
@@ -226,18 +271,7 @@ function buildTemplateHtml(
 </head>
 <body>
 ${pagesHtml}
-  <script>
-    window.onload = function() {
-      document.querySelectorAll('svg.bc').forEach(function(svg) {
-        var v = svg.getAttribute('data-v');
-        var f = svg.getAttribute('data-f') || 'CODE128';
-        if (!v) return;
-        try { JsBarcode(svg, v, { format: f, displayValue: false, margin: 0, height: 30 }); }
-        catch(e) { svg.style.display='none'; }
-      });
-      setTimeout(function() { window.print(); }, 400);
-    };
-  </script>
+  <script>window.onload = function() { window.print(); };</script>
 </body>
 </html>`;
 }
@@ -264,17 +298,20 @@ function buildManualHtml(
     for (let i = 0; i < n; i++) expanded.push(item);
   }
 
+  const bcH = h > 35 ? 18 : 14;
   const labelsHtml = expanded.map((item) => {
     const hasBC  = showBarcode && item.barcode;
     const name   = item.variantName ? `${item.name} · ${item.variantName}` : item.name;
     const brk    = isA4 ? "" : "page-break-after:always;";
+    const fmt    = item.barcodeType === "EAN13" ? "EAN13" : "CODE128";
+    const bcSvg  = hasBC ? barcodeSvgString(item.barcode!, fmt, w - 6, bcH, false, 6) : "";
     return `<div class="label" style="width:${w}mm; height:${h}mm; ${brk}">
-      ${showName   ? `<div class="ln">${name}</div>` : ""}
-      ${showCode   ? `<div class="lc">${item.code}</div>` : ""}
-      ${hasBC      ? `<svg class="bc" data-v="${item.barcode}" data-f="${item.barcodeType}" style="max-width:${w - 6}mm; max-height:${h > 35 ? 18 : 14}mm;"></svg>` : ""}
-      ${hasBC      ? `<div class="lb">${item.barcode}</div>` : ""}
-      ${showPrice  ? `<div class="lp">${formatMoney(item.salePrice)}</div>` : ""}
-      ${showCost   ? `<div class="lx">Costo: ${formatMoney(item.costPrice)}</div>` : ""}
+      ${showName  ? `<div class="ln">${name}</div>` : ""}
+      ${showCode  ? `<div class="lc">${item.code}</div>` : ""}
+      ${bcSvg     ? `<div class="bc">${bcSvg}</div>` : ""}
+      ${hasBC     ? `<div class="lb">${item.barcode}</div>` : ""}
+      ${showPrice ? `<div class="lp">${formatMoney(item.salePrice)}</div>` : ""}
+      ${showCost  ? `<div class="lx">Costo: ${formatMoney(item.costPrice)}</div>` : ""}
     </div>`;
   }).join("\n");
 
@@ -283,7 +320,6 @@ function buildManualHtml(
 <head>
   <meta charset="utf-8">
   <title>Etiquetas TPTech</title>
-  <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.5/dist/JsBarcode.all.min.js"></script>
   <style>
     * { margin:0; padding:0; box-sizing:border-box; }
     body { font-family:Arial,sans-serif; background:#fff; }
@@ -293,7 +329,7 @@ function buildManualHtml(
     .label { display:flex; flex-direction:column; align-items:center; justify-content:center; padding:2mm; gap:0.5mm; border:${isA4 ? "0.3mm solid #ccc" : "none"}; overflow:hidden; }
     .ln { font-size:${h > 35 ? "7pt" : "6pt"}; font-weight:bold; text-align:center; overflow:hidden; line-height:1.2; }
     .lc { font-size:6pt; color:#666; font-family:monospace; }
-    .bc { display:block; }
+    .bc { display:flex; align-items:center; justify-content:center; }
     .lb { font-size:5.5pt; color:#444; font-family:monospace; letter-spacing:0.5px; }
     .lp { font-size:${h > 35 ? "10pt" : "8pt"}; font-weight:bold; }
     .lx { font-size:5.5pt; color:#888; }
@@ -302,20 +338,7 @@ function buildManualHtml(
 </head>
 <body>
   <div class="wrap">${labelsHtml}</div>
-  <script>
-    window.onload = function() {
-      document.querySelectorAll('svg.bc').forEach(function(svg) {
-        var v = svg.getAttribute('data-v');
-        var f = svg.getAttribute('data-f') || 'CODE128';
-        if (!v) return;
-        try {
-          var jf = f === 'EAN13' ? 'EAN13' : f === 'QR' ? 'qrcode' : 'CODE128';
-          JsBarcode(svg, v, { format: jf, displayValue: false, margin: 0, height: 30 });
-        } catch(e) { svg.style.display='none'; }
-      });
-      setTimeout(function() { window.print(); }, 400);
-    };
-  </script>
+  <script>window.onload = function() { window.print(); };</script>
 </body>
 </html>`;
 }
