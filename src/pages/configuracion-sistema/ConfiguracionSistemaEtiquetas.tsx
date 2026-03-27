@@ -672,6 +672,13 @@ function PreviewModal({
         <p className="text-xs text-muted tabular-nums">
           {template.widthMm}×{template.heightMm}mm · {elements.length} elementos
         </p>
+        {/* ── Separación plantilla / impresora ── */}
+        <div className="w-full rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-[11px] text-blue-700 leading-relaxed">
+          <span className="font-semibold">Solo diseño de etiqueta.</span>{" "}
+          Los márgenes de página, columnas, gaps y offset de impresora{" "}
+          <span className="font-medium">no se aplican aquí</span> — se aplican al momento
+          de imprimir según el perfil de impresora seleccionado.
+        </div>
       </div>
     </Modal>
   );
@@ -873,7 +880,12 @@ function TemplateEditor({
         <div className="w-px h-5 bg-border" />
 
         {/* Preview */}
-        <TPButton variant="ghost" onClick={() => setPreviewOpen(true)} className="gap-1 px-2">
+        <TPButton
+          variant="ghost"
+          onClick={() => setPreviewOpen(true)}
+          className="gap-1 px-2"
+          title="Vista previa del diseño base (sin ajustes de impresora)"
+        >
           <Eye size={13} />
           <span className="text-xs hidden sm:inline">Preview</span>
         </TPButton>
@@ -1010,6 +1022,13 @@ function TemplateEditor({
                 <div className="flex justify-between"><span>Snap activo</span><span className="font-mono">{snapMm}mm</span></div>
               </>
             )}
+          </div>
+
+          {/* Nota: separación plantilla / impresora */}
+          <div className="px-3 pb-3 text-[10px] text-blue-600/80 leading-snug border-t border-blue-100 bg-blue-50/60 flex-shrink-0 pt-2">
+            <span className="font-semibold">Este editor diseña la etiqueta.</span><br />
+            Márgenes, columnas, offset y gaps de impresora se configuran en la pestaña{" "}
+            <span className="font-medium">Impresoras</span> y se aplican al imprimir.
           </div>
         </div>
       </div>
