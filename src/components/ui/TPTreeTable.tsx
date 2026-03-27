@@ -311,11 +311,12 @@ export function TPTreeTable({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [totalPages]);
 
+  const _pagPageSize = pag.enabled ? pag.pageSize : 0;
   const pageNodes = useMemo(() => {
     if (!pag.enabled) return nodes;
-    const start = (currentPage - 1) * pag.pageSize;
-    return nodes.slice(start, start + pag.pageSize);
-  }, [nodes, pag.enabled, currentPage, pag.pageSize]);
+    const start = (currentPage - 1) * _pagPageSize;
+    return nodes.slice(start, start + _pagPageSize);
+  }, [nodes, pag.enabled, currentPage, _pagPageSize]);
 
   // ── Props comunes de fila ────────────────────────────────────────────────
   const rowProps: PlainRowProps = {

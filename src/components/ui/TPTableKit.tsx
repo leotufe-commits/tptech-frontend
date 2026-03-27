@@ -265,12 +265,14 @@ export function TPTableKit<T>({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [totalPages]);
 
+  const _pagTotalItems = pag.enabled ? pag.totalItems : undefined;
+  const _pagPageSize   = pag.enabled ? pag.pageSize   : 0;
   const pageRows = useMemo(() => {
     if (!pag.enabled) return rows;
-    if (pag.totalItems !== undefined) return rows;
-    const start = (currentPage - 1) * pag.pageSize;
-    return rows.slice(start, start + pag.pageSize);
-  }, [rows, pag.enabled, pag.totalItems, currentPage, pag.pageSize]);
+    if (_pagTotalItems !== undefined) return rows;
+    const start = (currentPage - 1) * _pagPageSize;
+    return rows.slice(start, start + _pagPageSize);
+  }, [rows, pag.enabled, _pagTotalItems, currentPage, _pagPageSize]);
 
   // ── Selección ────────────────────────────────────────────────────────────
   function toggleRow(id: string) {

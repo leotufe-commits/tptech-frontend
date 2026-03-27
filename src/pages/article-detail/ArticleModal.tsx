@@ -1323,7 +1323,7 @@ export default function ArticleModal({
         if (compositions.length > 0) {
           for (const comp of compositions) {
             try {
-              await articlesApi.compositions.put(saved.id, {
+              await articlesApi.compositions.upsert(saved.id, {
                 variantId: comp.variantId,
                 grams:     parseFloat(comp.grams),
                 isBase:    comp.isBase,
