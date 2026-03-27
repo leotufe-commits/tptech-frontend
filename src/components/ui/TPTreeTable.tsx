@@ -8,9 +8,10 @@
  * - Drag & drop opcional (requiere DndContext en el padre)
  * - Columnas configurables con visibilidad
  * - Celda de acciones opcional (renderActions)
+ * - Paginación opcional (prop `pagination`)
  * - Estados loading / empty
  */
-import React, { type ReactNode } from "react";
+import React, { useMemo, useEffect, type ReactNode } from "react";
 import { ChevronDown, ChevronRight, GripVertical, Loader2 } from "lucide-react";
 import {
   SortableContext,
@@ -29,6 +30,8 @@ import {
   TPTd,
   TPEmptyRow,
 } from "./TPTable";
+import { TPPagination } from "./TPPagination";
+import { usePagination, type PaginationConfig } from "../../hooks/usePagination";
 
 /* =========================================================
    Tipos públicos
@@ -111,6 +114,14 @@ export type TPTreeTableProps = {
 
   /** Si se pasa, la fila entera es clickeable y llama a esta función. */
   onRowClick?: (node: TreeNodeBase) => void;
+
+  /**
+   * Activa paginación local sobre los nodos visibles.
+   * - `true`            → pageSize=25 por defecto
+   * - `false`/undefined → sin paginación (comportamiento anterior)
+   * - `PaginationConfig`→ configuración personalizada o modo controlado
+   */
+  pagination?: boolean | PaginationConfig;
 };
 
 /* =========================================================
@@ -147,7 +158,7 @@ function RowInner({
   trStyle,
 }: RowInnerProps) {
   const hasChildren = node.children.length > 0;
-  const isExpanded = expanded.has(node.id);
+  const isExpanded  = expanded.has(node.id);
 
   return (
     <tr
@@ -197,11 +208,9 @@ function RowInner({
                   aria-label={isExpanded ? "Colapsar" : "Expandir"}
                 >
                   {hasChildren ? (
-                    isExpanded ? (
-                      <ChevronDown size={13} className="text-muted" />
-                    ) : (
-                      <ChevronRight size={13} className="text-muted" />
-                    )
+                    isExpanded
+                      ? <ChevronDown  size={13} className="text-muted" />
+                      : <ChevronRight size={13} className="text-muted" />
                   ) : (
                     <span className="block w-[13px]" />
                   )}
@@ -247,14 +256,12 @@ function SortableRow(props: PlainRowProps) {
       {...props}
       trRef={setNodeRef}
       trStyle={{
-        transform: CSS.Transform.toString(transform),
+        transform:  CSS.Transform.toString(transform),
         transition,
-        opacity: isDragging ? 0.45 : undefined,
-        zIndex: isDragging ? 10 : undefined,
-        position: isDragging ? "relative" : undefined,
-        boxShadow: isDragging
-          ? "0 4px 16px 0 rgba(0,0,0,0.12)"
-          : undefined,
+        opacity:    isDragging ? 0.45       : undefined,
+        zIndex:     isDragging ? 10         : undefined,
+        position:   isDragging ? "relative" : undefined,
+        boxShadow:  isDragging ? "0 4px 16px 0 rgba(0,0,0,0.12)" : undefined,
       }}
       dragHandleProps={
         { ...attributes, ...listeners } as React.HTMLAttributes<HTMLDivElement>
@@ -273,24 +280,44 @@ export function TPTreeTable({
   expanded,
   onToggleExpand,
   onRowClick,
-  draggable = false,
-  isSearching = false,
-  loading = false,
+  draggable    = false,
+  isSearching  = false,
+  loading      = false,
   loadingElement,
-  emptyText = "No hay resultados.",
-  indentPx = 24,
+  emptyText    = "No hay resultados.",
+  indentPx     = 24,
   rowClassName,
+  pagination,
 }: TPTreeTableProps) {
   const visibleCols = columns.filter((c) => c.visible !== false);
+  const useDnd      = draggable && !isSearching;
 
-  const useDnd = draggable && !isSearching;
-
-  /* colSpan para filas de loading/empty */
   const colCount =
     (useDnd ? 1 : 0) +
     visibleCols.length +
     (renderActions ? 1 : 0);
 
+  // ── Paginación ───────────────────────────────────────────────────────────
+  const pag = usePagination(pagination);
+
+  const totalPages  = pag.enabled ? Math.max(1, Math.ceil(nodes.length / pag.pageSize)) : 1;
+  const currentPage = pag.enabled ? Math.min(pag.page, totalPages) : 1;
+
+  // Sincronizar estado de página cuando totalPages cambia
+  useEffect(() => {
+    if (pag.enabled && pag.page > totalPages) {
+      pag.setPage(1);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [totalPages]);
+
+  const pageNodes = useMemo(() => {
+    if (!pag.enabled) return nodes;
+    const start = (currentPage - 1) * pag.pageSize;
+    return nodes.slice(start, start + pag.pageSize);
+  }, [nodes, pag.enabled, currentPage, pag.pageSize]);
+
+  // ── Props comunes de fila ────────────────────────────────────────────────
   const rowProps: PlainRowProps = {
     visibleCols,
     renderActions,
@@ -300,66 +327,73 @@ export function TPTreeTable({
     isSearching,
     indentPx,
     rowClassName,
-    // node se sobreescribe en cada render
     node: { id: "", level: 0, children: [] },
   };
 
-  /* ---- Cuerpo de la tabla ---- */
+  // ── Cuerpo de la tabla ───────────────────────────────────────────────────
   let body: ReactNode;
 
   if (loading) {
     body = (
       <tr>
-        <td
-          colSpan={colCount}
-          className="px-5 py-12 text-center text-sm text-muted"
-        >
+        <td colSpan={colCount} className="px-5 py-12 text-center text-sm text-muted">
           <div className="flex flex-col items-center gap-2">
-            {loadingElement ?? (
-              <Loader2 size={28} className="animate-spin text-muted" />
-            )}
+            {loadingElement ?? <Loader2 size={28} className="animate-spin text-muted" />}
             Cargando…
           </div>
         </td>
       </tr>
     );
-  } else if (nodes.length === 0) {
+  } else if (pageNodes.length === 0) {
     body = <TPEmptyRow colSpan={colCount} text={emptyText} />;
   } else if (useDnd) {
     body = (
       <SortableContext
-        items={nodes.map((n) => n.id)}
+        items={pageNodes.map((n) => n.id)}
         strategy={verticalListSortingStrategy}
       >
-        {nodes.map((node) => (
+        {pageNodes.map((node) => (
           <SortableRow key={node.id} {...rowProps} node={node} />
         ))}
       </SortableContext>
     );
   } else {
-    body = nodes.map((node) => (
+    body = pageNodes.map((node) => (
       <RowInner key={node.id} {...rowProps} node={node} />
     ));
   }
 
   return (
-    <TPTableXScroll>
-      <TPTableElBase responsive="stack">
-        <TPThead>
-          <tr>
-            {useDnd && <th className="w-6" />}
-            {visibleCols.map((col) => (
-              <TPTh key={col.key} className={col.className}>
-                {col.header}
-              </TPTh>
-            ))}
-            {renderActions && (
-              <TPTh className="text-right">Acciones</TPTh>
-            )}
-          </tr>
-        </TPThead>
-        <TPTbody>{body}</TPTbody>
-      </TPTableElBase>
-    </TPTableXScroll>
+    <>
+      <TPTableXScroll>
+        <TPTableElBase responsive="stack">
+          <TPThead>
+            <tr>
+              {useDnd && <th className="w-6" />}
+              {visibleCols.map((col) => (
+                <TPTh key={col.key} className={col.className}>
+                  {col.header}
+                </TPTh>
+              ))}
+              {renderActions && (
+                <TPTh className="text-right">Acciones</TPTh>
+              )}
+            </tr>
+          </TPThead>
+          <TPTbody>{body}</TPTbody>
+        </TPTableElBase>
+      </TPTableXScroll>
+
+      {pag.enabled && (
+        <TPPagination
+          page={currentPage}
+          pageSize={pag.pageSize}
+          total={nodes.length}
+          onPageChange={pag.setPage}
+          onPageSizeChange={pag.setPageSize}
+          pageSizeOptions={pag.pageSizeOptions}
+        />
+      )}
+    </>
   );
 }

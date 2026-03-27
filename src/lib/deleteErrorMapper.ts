@@ -64,6 +64,14 @@ export function mapDeleteError(err: ApiErrorLike): DeleteErrorResult {
     };
   }
 
+  if (status === 409) {
+    return {
+      title: "No se puede eliminar",
+      message: rawMessage || "Este elemento es del sistema y no puede eliminarse.",
+      variant: "warning",
+    };
+  }
+
   if (status === 403 || c.includes("forbidden")) {
     return {
       title: "Acceso denegado",

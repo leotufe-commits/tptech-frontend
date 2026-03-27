@@ -1,5 +1,18 @@
 // src/components/ui/TPTableKit.tsx
-import React, { useMemo, useState, type ReactNode, type CSSProperties, isValidElement, cloneElement } from "react";
+import React, {
+  useMemo,
+  useEffect,
+  useState,
+  type ReactNode,
+  type CSSProperties,
+  isValidElement,
+  cloneElement,
+} from "react";
+import { Check, ArrowUpDown, CheckSquare, XSquare } from "lucide-react";
+import { TPCheckbox } from "./TPCheckbox";
+import { TPBadge } from "./TPBadges";
+import { TPButton } from "./TPButton";
+import { TPActionsMenu, type TPActionsMenuItem } from "./TPActionsMenu";
 import {
   TPTableWrap,
   TPTableHeader,
@@ -15,6 +28,8 @@ import {
 import { TPColumnPicker, type ColPickerDef } from "./TPColumnPicker";
 import { TPSearchInput } from "./TPSearchInput";
 import { SortArrows, type SortDir } from "./TPSort";
+import { TPPagination } from "./TPPagination";
+import { usePagination, type PaginationConfig } from "../../hooks/usePagination";
 import { cn } from "./tp";
 
 /* =========================================================
@@ -39,6 +54,13 @@ export type TPColDef = {
 export type TPRowSel = {
   checked: boolean;
   onCheck: () => void;
+};
+
+/** Ítem para el sort submenu del menú integrado */
+export type TPSortMenuItem = {
+  key: string;
+  label: string;
+  icon?: ReactNode;
 };
 
 type Props<T> = {
@@ -68,47 +90,42 @@ type Props<T> = {
   /** Nodo renderizado entre el header y la tabla (ej: filtros de fecha). */
   belowHeader?: ReactNode;
 
+  // ---- Menú integrado ----
+  /**
+   * Opciones de ordenamiento para el submenú "Ordenar por" del menú integrado.
+   * Requiere que `onSort` esté presente.
+   */
+  sortMenuItems?: TPSortMenuItem[];
+  /**
+   * Si se provee, agrega "Selección masiva" / "Cancelar selección" al menú integrado.
+   * El padre sigue controlando `selectable` — este callback solo notifica el toggle.
+   */
+  onToggleSelectable?: () => void;
+  /**
+   * Ítems adicionales que se agregan al final del menú integrado
+   * (ej: Combinar, Relacionar, Importar).
+   */
+  menuItems?: TPActionsMenuItem[];
+
   // ---- Selección masiva ----
-  /**
-   * Activa checkboxes de selección masiva. Requiere `getRowId`.
-   * El 3er parámetro de renderRow tendrá { checked, onCheck }.
-   */
   selectable?: boolean;
-  /**
-   * Función para obtener el ID único de cada fila.
-   * Requerido cuando selectable=true.
-   */
   getRowId?: (row: T) => string;
-  /**
-   * Se llama cada vez que cambia la selección.
-   * Recibe el Set de IDs seleccionados.
-   */
   onSelectionChange?: (ids: Set<string>) => void;
   /**
-   * Contenido que aparece en la barra de acciones masivas (debajo del header)
-   * cuando al menos una fila está seleccionada.
-   * Ejemplo: <TPButton variant="danger" onClick={handleBulkDelete}>Eliminar</TPButton>
+   * Acciones del bulk bar (ej: botón "Eliminar").
+   * El badge de conteo y el botón "Limpiar" son renderizados automáticamente por TPTableKit.
    */
   bulkActions?: ReactNode;
+  /**
+   * Llamado cuando el usuario hace clic en "Limpiar" (además de limpiar la selección interna).
+   */
+  onClearSelection?: () => void;
 
   // ---- Filas ----
   /**
    * Renderiza cada fila.
-   * - `vis`: qué columnas están visibles (vis[colKey] === true)
-   * - `sel`: solo presente cuando selectable=true → { checked, onCheck }
-   *
-   * Ejemplo:
-   * ```tsx
-   * renderRow={(row, vis, sel) => (
-   *   <TPTr key={row.id}>
-   *     {sel && (
-   *       <TPTd><input type="checkbox" checked={sel.checked} onChange={sel.onCheck} /></TPTd>
-   *     )}
-   *     {vis.nombre && <TPTd>{row.name}</TPTd>}
-   *     {vis.acciones && <TPTd className="text-right"><TPRowActions .../></TPTd>}
-   *   </TPTr>
-   * )}
-   * ```
+   * - `vis`: columnas visibles (vis[colKey] === true)
+   * - `sel`: solo presente cuando selectable=true
    */
   renderRow: (row: T, vis: Record<string, boolean>, sel?: TPRowSel) => ReactNode;
 
@@ -116,7 +133,7 @@ type Props<T> = {
   emptyText?: string;
   loading?: boolean;
 
-  // ---- Footer ----
+  // ---- Footer / count ----
   /**
    * Texto del footer.
    * - String: se prefija con el conteo  →  "3 vendedores"
@@ -125,16 +142,21 @@ type Props<T> = {
    */
   countLabel?: string | ((n: number) => string);
 
+  // ---- Paginación ----
+  /**
+   * Activa paginación.
+   * - `true`            → modo local con pageSize=25 por defecto
+   * - `false`/undefined → sin paginación (comportamiento anterior)
+   * - `PaginationConfig`→ modo local con config o modo controlado (server-side)
+   */
+  pagination?: boolean | PaginationConfig;
+
   // ---- Opcionales ----
-  /** Modo responsivo. Default: "scroll" (scroll horizontal en mobile). */
   responsive?: "scroll" | "stack";
   className?: string;
-
-  /**
-   * Si se pasa, al hacer click en una fila se llama esta función.
-   * Los clics dentro de [data-tp-actions] (TPRowActions) se ignoran automáticamente.
-   */
   onRowClick?: (row: T) => void;
+  /** Oculta el botón de mostrar/ocultar columnas. Default: false */
+  hideColumnPicker?: boolean;
 };
 
 /* =========================================================
@@ -142,28 +164,20 @@ type Props<T> = {
 ========================================================= */
 function loadVis(key: string | undefined, cols: TPColDef[]): Record<string, boolean> {
   const defaults: Record<string, boolean> = {};
-  cols.forEach((c) => {
-    defaults[c.key] = c.visible !== false;
-  });
+  cols.forEach((c) => { defaults[c.key] = c.visible !== false; });
   if (!key) return defaults;
   try {
     const stored = localStorage.getItem(key);
     if (!stored) return defaults;
     const parsed = JSON.parse(stored) as Record<string, boolean>;
     const result = { ...defaults };
-    Object.keys(parsed).forEach((k) => {
-      if (k in result) result[k] = parsed[k];
-    });
+    Object.keys(parsed).forEach((k) => { if (k in result) result[k] = parsed[k]; });
     return result;
-  } catch {
-    return defaults;
-  }
+  } catch { return defaults; }
 }
 
 function saveVis(key: string, vis: Record<string, boolean>) {
-  try {
-    localStorage.setItem(key, JSON.stringify(vis));
-  } catch {}
+  try { localStorage.setItem(key, JSON.stringify(vis)); } catch {}
 }
 
 function loadOrder(key: string | undefined, cols: TPColDef[]): string[] {
@@ -173,18 +187,14 @@ function loadOrder(key: string | undefined, cols: TPColDef[]): string[] {
     const stored = localStorage.getItem(`${key}_order`);
     if (!stored) return hideableKeys;
     const parsed = JSON.parse(stored) as string[];
-    const valid = parsed.filter((k) => hideableKeys.includes(k));
+    const valid   = parsed.filter((k) => hideableKeys.includes(k));
     const missing = hideableKeys.filter((k) => !valid.includes(k));
     return [...valid, ...missing];
-  } catch {
-    return hideableKeys;
-  }
+  } catch { return hideableKeys; }
 }
 
 function saveOrder(key: string, order: string[]) {
-  try {
-    localStorage.setItem(`${key}_order`, JSON.stringify(order));
-  } catch {}
+  try { localStorage.setItem(`${key}_order`, JSON.stringify(order)); } catch {}
 }
 
 /* =========================================================
@@ -203,31 +213,66 @@ export function TPTableKit<T>({
   actions,
   headerLeft,
   belowHeader,
+  sortMenuItems,
+  onToggleSelectable,
+  menuItems,
   selectable = false,
   getRowId,
   onSelectionChange,
   bulkActions,
+  onClearSelection,
   renderRow,
   emptyText = "No hay resultados.",
   loading = false,
   countLabel,
+  pagination,
   responsive = "scroll",
   className,
   onRowClick,
+  hideColumnPicker = false,
 }: Props<T>) {
-  // ---- column visibility ----
+  // ── Visibilidad de columnas ──────────────────────────────────────────────
   const [vis, setVis] = useState<Record<string, boolean>>(() =>
     loadVis(storageKey, columns)
   );
 
-  // ---- column order (hideable columns only) ----
+  // ── Orden de columnas (solo las ocultables) ──────────────────────────────
   const [colOrder, setColOrder] = useState<string[]>(() =>
     loadOrder(storageKey, columns)
   );
 
-  // ---- bulk selection ----
+  // ── Selección masiva ─────────────────────────────────────────────────────
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
 
+  // Limpiar selección cuando el padre desactiva el modo (ej: después de bulk delete)
+  useEffect(() => {
+    if (!selectable) {
+      setSelectedIds(new Set());
+    }
+  }, [selectable]);
+
+  // ── Paginación ───────────────────────────────────────────────────────────
+  const pag = usePagination(pagination);
+
+  const totalItems  = pag.enabled ? (pag.totalItems ?? rows.length) : rows.length;
+  const totalPages  = pag.enabled ? Math.max(1, Math.ceil(totalItems / pag.pageSize)) : 1;
+  const currentPage = pag.enabled ? Math.min(pag.page, totalPages) : 1;
+
+  useEffect(() => {
+    if (pag.enabled && pag.page > totalPages) {
+      pag.setPage(1);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [totalPages]);
+
+  const pageRows = useMemo(() => {
+    if (!pag.enabled) return rows;
+    if (pag.totalItems !== undefined) return rows;
+    const start = (currentPage - 1) * pag.pageSize;
+    return rows.slice(start, start + pag.pageSize);
+  }, [rows, pag.enabled, pag.totalItems, currentPage, pag.pageSize]);
+
+  // ── Selección ────────────────────────────────────────────────────────────
   function toggleRow(id: string) {
     setSelectedIds((prev) => {
       const next = new Set(prev);
@@ -240,14 +285,24 @@ export function TPTableKit<T>({
 
   function toggleAll() {
     if (!getRowId) return;
-    const allIds = rows.map(getRowId);
-    const allSelected = allIds.every((id) => selectedIds.has(id));
-    const next = allSelected ? new Set<string>() : new Set(allIds);
-    setSelectedIds(next);
-    onSelectionChange?.(next);
+    const pageIds = pageRows.map((r) => getRowId!(r));
+    const allSelected = pageIds.every((id) => selectedIds.has(id));
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (allSelected) pageIds.forEach((id) => next.delete(id));
+      else             pageIds.forEach((id) => next.add(id));
+      onSelectionChange?.(next);
+      return next;
+    });
   }
 
-  // ---- column helpers ----
+  function clearSelection() {
+    setSelectedIds(new Set());
+    onSelectionChange?.(new Set());
+    onClearSelection?.();
+  }
+
+  // ── Columnas ─────────────────────────────────────────────────────────────
   function handleVisChange(key: string, visible: boolean) {
     const next = { ...vis, [key]: visible };
     setVis(next);
@@ -263,11 +318,8 @@ export function TPTableKit<T>({
     .filter((c) => c.canHide !== false)
     .map((c) => ({ key: c.key, label: c.label }));
 
-  // Compute visible columns respecting user-defined order.
-  // Fixed columns (canHide=false) keep their original relative positions;
-  // hideable columns are sorted by colOrder among themselves, then merged in.
   const visibleCols = useMemo(() => {
-    const hideableCols = columns.filter((c) => c.canHide !== false);
+    const hideableCols   = columns.filter((c) => c.canHide !== false);
     const sortedHideable = [...hideableCols].sort((a, b) => {
       const ai = colOrder.indexOf(a.key);
       const bi = colOrder.indexOf(b.key);
@@ -279,11 +331,10 @@ export function TPTableKit<T>({
       .filter((c) => c.canHide === false || vis[c.key] !== false);
   }, [columns, colOrder, vis]);
 
-  // +1 para la columna de checkbox cuando selectable
   const colSpan = visibleCols.length + (selectable ? 1 : 0);
 
-  // ---- footer ----
-  const count = rows.length;
+  // ── Footer count ─────────────────────────────────────────────────────────
+  const count = pag.enabled && pag.totalItems !== undefined ? pag.totalItems : rows.length;
   const countStr =
     typeof countLabel === "function"
       ? countLabel(count)
@@ -291,19 +342,53 @@ export function TPTableKit<T>({
       ? `${count} ${countLabel}`
       : `${count} ${count === 1 ? "registro" : "registros"}`;
 
-  // ---- selection state summary ----
-  const allIds = selectable && getRowId ? rows.map(getRowId) : [];
-  const allChecked = allIds.length > 0 && allIds.every((id) => selectedIds.has(id));
-  const someChecked = allIds.some((id) => selectedIds.has(id));
-  const nSelected = selectedIds.size;
+  // ── Estado del checkbox de cabecera ──────────────────────────────────────
+  const pageIds     = selectable && getRowId ? pageRows.map(getRowId) : [];
+  const allChecked  = pageIds.length > 0 && pageIds.every((id) => selectedIds.has(id));
+  const someChecked = pageIds.some((id) => selectedIds.has(id));
+  const nSelected   = selectedIds.size;
+
+  // ── Menú integrado ───────────────────────────────────────────────────────
+  const builtInItems: TPActionsMenuItem[] = [];
+
+  if (sortMenuItems?.length && onSort) {
+    builtInItems.push({
+      type: "submenu",
+      label: "Ordenar por",
+      icon: <ArrowUpDown size={14} />,
+      children: sortMenuItems.map((item) => ({
+        label: item.label,
+        icon: sortKey === item.key
+          ? <Check size={14} className="text-primary" />
+          : (item.icon ?? <ArrowUpDown size={14} />),
+        onClick: () => onSort(item.key),
+      })),
+    });
+  }
+
+  if (onToggleSelectable) {
+    if (builtInItems.length) builtInItems.push({ type: "separator" });
+    builtInItems.push({
+      label: selectable ? "Cancelar selección" : "Selección masiva",
+      icon:  selectable ? <XSquare size={14} /> : <CheckSquare size={14} />,
+      onClick: onToggleSelectable,
+    });
+  }
+
+  if (menuItems?.length) {
+    if (builtInItems.length) builtInItems.push({ type: "separator" });
+    builtInItems.push(...menuItems);
+  }
+
+  const hasBuiltInMenu = builtInItems.length > 0;
 
   return (
     <TPTableWrap className={className}>
-      {/* ---- Header principal ---- */}
+      {/* ── Header principal ── */}
       <TPTableHeader
         left={
           <div className="flex items-center gap-2">
-            {pickerCols.length > 0 && (
+            {!hideColumnPicker && pickerCols.length > 0 && (
               <TPColumnPicker
                 columns={pickerCols}
                 visibility={vis}
@@ -323,51 +408,57 @@ export function TPTableKit<T>({
             {headerLeft}
           </div>
         }
-        right={actions}
+        right={
+          <div className={cn("flex items-center gap-2", !hasBuiltInMenu && !actions && "hidden")}>
+            {actions}
+            {hasBuiltInMenu && (
+              <TPActionsMenu items={builtInItems} title="Más opciones" />
+            )}
+          </div>
+        }
       />
 
-      {/* ---- Sección extra bajo el header (ej: filtros de fecha) ---- */}
       {belowHeader}
 
-      {/* ---- Barra de acciones masivas (cuando hay selección) ---- */}
-      {selectable && nSelected > 0 && bulkActions && (
-        <div className="flex items-center gap-3 border-b border-border bg-primary/5 px-4 py-2.5">
-          <span className="text-xs font-medium text-primary">
+      {/* ── Barra de acciones masivas ── */}
+      {selectable && nSelected > 0 && (
+        <div className="flex items-center gap-3 border-b border-border px-4 py-2">
+          <TPBadge tone="neutral" size="sm">
             {nSelected} seleccionado{nSelected !== 1 ? "s" : ""}
-          </span>
-          <div className="flex items-center gap-2">{bulkActions}</div>
+          </TPBadge>
+          <div className="flex-1" />
+          <TPButton
+            variant="secondary"
+            onClick={clearSelection}
+            className="h-8 text-sm"
+          >
+            Limpiar
+          </TPButton>
+          {bulkActions}
         </div>
       )}
 
-      {/* ---- Tabla ---- */}
+      {/* ── Tabla ── */}
       <TPTable>
         <TPTableXScroll>
           <TPTableElBase responsive={responsive}>
             <TPThead>
               <tr>
-                {/* Columna checkbox (select all) */}
                 {selectable && (
                   <TPTh style={{ width: "40px" }} className="px-3">
-                    <input
-                      type="checkbox"
+                    <TPCheckbox
                       checked={allChecked}
-                      ref={(el) => {
-                        if (el) el.indeterminate = someChecked && !allChecked;
-                      }}
-                      onChange={toggleAll}
-                      className="h-4 w-4 cursor-pointer rounded border-border accent-primary"
+                      indeterminate={someChecked && !allChecked}
+                      onChange={() => toggleAll()}
                       aria-label="Seleccionar todos"
                     />
                   </TPTh>
                 )}
-
-                {/* Columnas de datos */}
                 {visibleCols.map((col) => {
                   const thStyle: CSSProperties | undefined = col.width
                     ? { width: col.width }
                     : undefined;
                   const thClass = col.align === "right" ? "text-right" : undefined;
-
                   return (
                     <TPTh key={col.key} style={thStyle} className={thClass}>
                       {col.sortKey && onSort ? (
@@ -391,10 +482,10 @@ export function TPTableKit<T>({
             <TPTbody>
               {loading ? (
                 <TPEmptyRow colSpan={colSpan} text="Cargando…" />
-              ) : rows.length === 0 ? (
+              ) : pageRows.length === 0 ? (
                 <TPEmptyRow colSpan={colSpan} text={emptyText} />
               ) : (
-                rows.map((row) => {
+                pageRows.map((row) => {
                   const id = selectable && getRowId ? getRowId(row) : undefined;
                   const sel: TPRowSel | undefined =
                     selectable && id !== undefined
@@ -417,15 +508,22 @@ export function TPTableKit<T>({
         </TPTableXScroll>
       </TPTable>
 
-      {/* ---- Footer ---- */}
-      <TPTableFooter>
-        <span>{countStr}</span>
-        {selectable && nSelected > 0 && (
-          <span className="ml-3 text-primary font-medium">
-            · {nSelected} seleccionado{nSelected !== 1 ? "s" : ""}
-          </span>
-        )}
-      </TPTableFooter>
+      {/* ── Footer ── */}
+      {pag.enabled ? (
+        <TPPagination
+          page={currentPage}
+          pageSize={pag.pageSize}
+          total={totalItems}
+          onPageChange={pag.setPage}
+          onPageSizeChange={pag.setPageSize}
+          pageSizeOptions={pag.pageSizeOptions}
+          countLabel={countStr}
+        />
+      ) : (
+        <TPTableFooter>
+          <span>{countStr}</span>
+        </TPTableFooter>
+      )}
     </TPTableWrap>
   );
 }

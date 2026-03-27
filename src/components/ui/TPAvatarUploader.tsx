@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 
 import Avatar from "./Avatar";
 import TPImageActionOverlay from "./TPImageActionOverlay";
@@ -49,6 +49,9 @@ type Props = {
 
   /** cache-bust opcional */
   bust?: string | number;
+
+  /** Ícono/nodo a mostrar cuando no hay imagen (reemplaza las iniciales) */
+  fallbackIcon?: ReactNode;
 };
 
 export default function TPAvatarUploader({
@@ -80,6 +83,7 @@ export default function TPAvatarUploader({
   frameStyle,
 
   bust,
+  fallbackIcon,
 }: Props) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [preview, setPreview] = useState<string>(""); // blob url
@@ -181,6 +185,7 @@ export default function TPAvatarUploader({
         rounded={rounded}
         imgClassName={imgClassName}
         bust={bust}
+        fallbackIcon={fallbackIcon}
       />
 
       {loading ? (

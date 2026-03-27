@@ -56,6 +56,10 @@ function catTypeEs(t: CatalogType) {
     CITY: "Ciudad",
     PROVINCE: "Provincia",
     COUNTRY: "País",
+    PAYMENT_TERM: "Plazo de pago",
+    ARTICLE_BRAND: "Marca",
+    ARTICLE_MANUFACTURER: "Fabricante",
+    UNIT_OF_MEASURE: "Unidad de medida",
   };
   return map[String(t)] || String(t);
 }
@@ -118,6 +122,7 @@ function CreateModal({
         <div
           role="dialog"
           aria-modal="true"
+          data-tp-enter="ignore"
           className="w-full max-w-[420px] rounded-2xl border border-border bg-card shadow-soft"
           onMouseDown={(e) => e.stopPropagation()}
         >
@@ -170,6 +175,7 @@ function SingleCombo({
   noLabelSpace = false,
 }: PropsSingle) {
   const wrapRef = useRef<HTMLDivElement | null>(null);
+  const dropdownRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
   const createInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -178,12 +184,27 @@ function SingleCombo({
   const [createDraft, setCreateDraft] = useState("");
   const [creating, setCreating] = useState(false);
   const [errMsg, setErrMsg] = useState<string | null>(null);
+  const [dropdownStyle, setDropdownStyle] = useState<React.CSSProperties>({});
+
+  function calcDropdownStyle(): React.CSSProperties {
+    const rect = inputRef.current?.getBoundingClientRect();
+    if (!rect) return {};
+    const maxH = 280;
+    const spaceBelow = window.innerHeight - rect.bottom - 4;
+    const spaceAbove = rect.top - 4;
+    if (spaceBelow >= maxH || spaceBelow >= spaceAbove) {
+      return { top: rect.bottom + 4, left: rect.left, width: rect.width };
+    }
+    return { bottom: window.innerHeight - rect.top + 4, left: rect.left, width: rect.width };
+  }
 
   const safeItems = useMemo(() => (Array.isArray(items) ? items : []), [items]);
   const activeItems = useMemo(
     () => safeItems.filter((i) => i.isActive !== false),
     [safeItems]
   );
+
+  const filteredItems = activeItems;
 
   const didAutoPickRef = useRef(false);
   const refocusAfterCreateRef = useRef(false);
@@ -209,7 +230,8 @@ function SingleCombo({
 
   useEffect(() => {
     function onDoc(e: MouseEvent) {
-      if (!wrapRef.current?.contains(e.target as any)) setOpen(false);
+      const target = e.target as Node;
+      if (!wrapRef.current?.contains(target) && !dropdownRef.current?.contains(target)) setOpen(false);
     }
     document.addEventListener("mousedown", onDoc);
     return () => document.removeEventListener("mousedown", onDoc);
@@ -222,11 +244,17 @@ function SingleCombo({
       return;
     }
     const v = norm(value).toLowerCase();
-    const idx = v
-      ? activeItems.findIndex((it) => norm(it.label).toLowerCase() === v)
-      : -1;
-    setActiveIndex(activeItems.length ? (idx >= 0 ? idx : 0) : -1);
-  }, [open, activeItems, value]);
+    let idx = -1;
+    if (v) {
+      idx = filteredItems.findIndex((it) => norm(it.label).toLowerCase().startsWith(v));
+      if (idx === -1) idx = filteredItems.findIndex((it) => norm(it.label).toLowerCase().includes(v));
+    }
+    const newIdx = filteredItems.length ? (idx >= 0 ? idx : 0) : -1;
+    setActiveIndex(newIdx);
+    if (newIdx >= 0 && v) {
+      setTimeout(() => itemRefs.current[newIdx]?.scrollIntoView({ block: "nearest" }), 0);
+    }
+  }, [open, filteredItems, value]);
 
   useEffect(() => {
     if (createOpen) {
@@ -243,16 +271,31 @@ function SingleCombo({
     }
   }, [createOpen]);
 
+  useEffect(() => {
+    if (!open) return;
+    function update() { setDropdownStyle(calcDropdownStyle()); }
+    window.addEventListener("scroll", update, true);
+    window.addEventListener("resize", update);
+    return () => {
+      window.removeEventListener("scroll", update, true);
+      window.removeEventListener("resize", update);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
+
   function openDropdown() {
     if (disabled || creating) return;
     setErrMsg(null);
+    setDropdownStyle(calcDropdownStyle());
     setOpen(true);
     onRefresh?.();
     const v = norm(value).toLowerCase();
-    const idx = v
-      ? activeItems.findIndex((it) => norm(it.label).toLowerCase() === v)
-      : -1;
-    setActiveIndex(activeItems.length ? (idx >= 0 ? idx : 0) : -1);
+    let idx = -1;
+    if (v) {
+      idx = filteredItems.findIndex((it) => norm(it.label).toLowerCase().startsWith(v));
+      if (idx === -1) idx = filteredItems.findIndex((it) => norm(it.label).toLowerCase().includes(v));
+    }
+    setActiveIndex(filteredItems.length ? (idx >= 0 ? idx : 0) : -1);
     setTimeout(() => inputRef.current?.focus(), 0);
   }
 
@@ -299,7 +342,7 @@ function SingleCombo({
       e.preventDefault();
       if (!open) openDropdown();
       setActiveIndex((prev) => {
-        const next = prev < 0 ? 0 : Math.min(prev + 1, activeItems.length - 1);
+        const next = prev < 0 ? 0 : Math.min(prev + 1, filteredItems.length - 1);
         itemRefs.current[next]?.scrollIntoView({ block: "nearest" });
         return next;
       });
@@ -323,9 +366,9 @@ function SingleCombo({
         openDropdown();
         return;
       }
-      if (activeIndex >= 0 && activeIndex < activeItems.length) {
+      if (activeIndex >= 0 && activeIndex < filteredItems.length) {
         e.preventDefault();
-        pick(activeItems[activeIndex].label);
+        pick(filteredItems[activeIndex].label);
       }
       return;
     }
@@ -347,6 +390,7 @@ function SingleCombo({
     <>
       <div
         ref={wrapRef}
+        data-tp-enter="ignore"
         className={cn("w-full", !noLabelSpace && "space-y-1")}
         onBlurCapture={onWrapBlurCapture}
       >
@@ -394,10 +438,20 @@ function SingleCombo({
             <ChevronDown size={16} />
           </button>
 
-          {open && !disabled && !creating && (
-            <div className="absolute z-40 mt-2 w-full rounded-2xl border border-border bg-card shadow-soft">
+          {open && !disabled && !creating && createPortal(
+            <div
+              ref={dropdownRef}
+              data-tp-portal
+              style={{ ...dropdownStyle, position: "fixed", zIndex: 9999 }}
+              className="rounded-2xl border border-border bg-card shadow-soft"
+              onMouseDown={(e) => e.preventDefault()}
+            >
               <div className="max-h-64 overflow-auto p-2">
-                {activeItems.map((it, idx) => (
+                {filteredItems.length === 0 && !allowCreate && (
+                  <div className="px-3 py-2 text-sm text-muted">Sin opciones disponibles</div>
+                )}
+
+                {filteredItems.map((it, idx) => (
                   <button
                     key={it.id}
                     ref={(el) => {
@@ -438,7 +492,8 @@ function SingleCombo({
                   </button>
                 )}
               </div>
-            </div>
+            </div>,
+            document.body
           )}
         </div>
 
@@ -497,6 +552,7 @@ function MultiCombo({
   const wrapRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
   const createInputRef = useRef<HTMLInputElement | null>(null);
+  const dropdownRef = useRef<HTMLDivElement | null>(null);
 
   const [query, setQuery] = useState("");
   const [open, setOpen] = useState(false);
@@ -505,6 +561,19 @@ function MultiCombo({
   const [createDraft, setCreateDraft] = useState("");
   const [creating, setCreating] = useState(false);
   const [errMsg, setErrMsg] = useState<string | null>(null);
+  const [dropdownStyle, setDropdownStyle] = useState<React.CSSProperties>({});
+
+  function calcDropdownStyle(): React.CSSProperties {
+    const rect = wrapRef.current?.getBoundingClientRect();
+    if (!rect) return {};
+    const maxH = 240;
+    const spaceBelow = window.innerHeight - rect.bottom - 4;
+    const spaceAbove = rect.top - 4;
+    if (spaceBelow >= maxH || spaceBelow >= spaceAbove) {
+      return { top: rect.bottom + 4, left: rect.left, width: rect.width };
+    }
+    return { bottom: window.innerHeight - rect.top + 4, left: rect.left, width: rect.width };
+  }
 
   const safeItems = useMemo(() => (Array.isArray(items) ? items : []), [items]);
   const activeItems = useMemo(
@@ -514,19 +583,15 @@ function MultiCombo({
 
   const suggestions = useMemo(() => {
     const lowerValues = values.map((v) => norm(v).toLowerCase());
-    const available = activeItems.filter(
+    return activeItems.filter(
       (it) => !lowerValues.includes(norm(it.label).toLowerCase())
     );
-    if (!query.trim()) return available;
-    const q = query.trim().toLowerCase();
-    return available.filter((it) =>
-      norm(it.label).toLowerCase().includes(q)
-    );
-  }, [activeItems, values, query]);
+  }, [activeItems, values]);
 
   useEffect(() => {
     function onDoc(e: MouseEvent) {
-      if (!wrapRef.current?.contains(e.target as any)) setOpen(false);
+      const target = e.target as Node;
+      if (!wrapRef.current?.contains(target) && !dropdownRef.current?.contains(target)) setOpen(false);
     }
     document.addEventListener("mousedown", onDoc);
     return () => document.removeEventListener("mousedown", onDoc);
@@ -538,10 +603,30 @@ function MultiCombo({
   }, [open, suggestions.length]);
 
   useEffect(() => {
+    if (!open || !query.trim()) return;
+    const q = query.trim().toLowerCase();
+    let idx = suggestions.findIndex((it) => norm(it.label).toLowerCase().startsWith(q));
+    if (idx === -1) idx = suggestions.findIndex((it) => norm(it.label).toLowerCase().includes(q));
+    if (idx >= 0) setActiveIndex(idx);
+  }, [query, open, suggestions]);
+
+  useEffect(() => {
     if (createOpen) {
       setTimeout(() => createInputRef.current?.select(), 50);
     }
   }, [createOpen]);
+
+  useEffect(() => {
+    if (!open) return;
+    function update() { setDropdownStyle(calcDropdownStyle()); }
+    window.addEventListener("scroll", update, true);
+    window.addEventListener("resize", update);
+    return () => {
+      window.removeEventListener("scroll", update, true);
+      window.removeEventListener("resize", update);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
 
   function addValue(val: string) {
     const clean = norm(val);
@@ -562,6 +647,7 @@ function MultiCombo({
 
   function openDropdown() {
     if (disabled) return;
+    setDropdownStyle(calcDropdownStyle());
     setOpen(true);
     onRefresh?.();
   }
@@ -646,6 +732,7 @@ function MultiCombo({
     <>
       <div
         ref={wrapRef}
+        data-tp-enter="ignore"
         className={cn("w-full", !noLabelSpace && "space-y-1")}
         onBlurCapture={onWrapBlur}
       >
@@ -710,23 +797,16 @@ function MultiCombo({
             <ChevronDown size={16} className="text-muted shrink-0 ml-auto" />
           </div>
 
-          {open && !disabled && (
-            <div className="absolute z-40 mt-2 w-full rounded-2xl border border-border bg-card shadow-soft">
+          {open && !disabled && createPortal(
+            <div
+              ref={dropdownRef}
+              data-tp-portal
+              style={{ ...dropdownStyle, position: "fixed", zIndex: 9999 }}
+              className="rounded-2xl border border-border bg-card shadow-soft"
+            >
               <div className="max-h-56 overflow-auto p-2">
                 {suggestions.length === 0 && !showCreateButton && (
-                  <div className="px-3 py-2 text-sm text-muted">
-                    {query.trim() ? (
-                      <span>
-                        Presioná{" "}
-                        <kbd className="rounded bg-surface2 px-1 text-xs font-mono">
-                          Enter
-                        </kbd>{" "}
-                        para agregar "{query.trim()}"
-                      </span>
-                    ) : (
-                      "Sin opciones disponibles"
-                    )}
-                  </div>
+                  <div className="px-3 py-2 text-sm text-muted">Sin opciones disponibles</div>
                 )}
 
                 {suggestions.map((it, idx) => (
@@ -772,7 +852,8 @@ function MultiCombo({
                   </button>
                 )}
               </div>
-            </div>
+            </div>,
+            document.body
           )}
         </div>
 

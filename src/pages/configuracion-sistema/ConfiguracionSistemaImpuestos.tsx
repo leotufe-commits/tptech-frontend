@@ -1,5 +1,6 @@
 // src/pages/configuracion-sistema/ConfiguracionSistemaImpuestos.tsx
 import React, { useEffect, useMemo, useState } from "react";
+import { useConfirmDelete } from "../../hooks/useConfirmDelete";
 import {
   Plus,
   Save,
@@ -132,6 +133,14 @@ const TAX_TYPE_COLORS: Record<TaxType, string> = {
   RETENTION: "bg-yellow-500/15 text-yellow-700 dark:text-yellow-400",
   OTHER: "bg-surface2 text-muted",
 };
+
+function SystemBadge() {
+  return (
+    <span className="inline-flex items-center rounded-full bg-violet-500/15 px-2 py-0.5 text-[11px] font-medium text-violet-600 dark:text-violet-400 whitespace-nowrap">
+      Sistema
+    </span>
+  );
+}
 
 function TaxTypeBadge({ taxType }: { taxType: TaxType }) {
   return (
@@ -320,13 +329,10 @@ export default function ConfiguracionSistemaImpuestos() {
   const [viewOpen, setViewOpen] = useState(false);
   const [viewTarget, setViewTarget] = useState<TaxRow | null>(null);
 
-  /* ---- modal eliminar ---- */
-  const [deleteOpen, setDeleteOpen] = useState(false);
-  const [deleteTarget, setDeleteTarget] = useState<TaxRow | null>(null);
+  const { askDelete, dialogProps: deleteDialogProps } = useConfirmDelete();
 
   /* ---- busy ---- */
   const [busySave, setBusySave] = useState(false);
-  const [busyDelete, setBusyDelete] = useState(false);
   const [cloningId, setCloningId] = useState<string | null>(null);
   const [favoritingId, setFavoritingId] = useState<string | null>(null);
 
@@ -423,12 +429,6 @@ export default function ConfiguracionSistemaImpuestos() {
   function openView(row: TaxRow) {
     setViewTarget(row);
     setViewOpen(true);
-  }
-
-  /* ---- abrir modal eliminar ---- */
-  function openDelete(row: TaxRow) {
-    setDeleteTarget(row);
-    setDeleteOpen(true);
   }
 
   /* ---- guardar ---- */
@@ -537,23 +537,6 @@ export default function ConfiguracionSistemaImpuestos() {
     }
   }
 
-  /* ---- eliminar ---- */
-  async function handleDelete() {
-    if (!deleteTarget) return;
-    try {
-      setBusyDelete(true);
-      await taxesApi.remove(deleteTarget.id);
-      toast.success("Impuesto eliminado.");
-      setDeleteOpen(false);
-      setDeleteTarget(null);
-      await load();
-    } catch (e: any) {
-      toast.error(e?.message || "No se pudo eliminar el impuesto.");
-    } finally {
-      setBusyDelete(false);
-    }
-  }
-
   /* ---- mostrar tasa/monto en vista ---- */
   function rateDisplay(row: TaxRow): string {
     const parts: string[] = [];
@@ -601,6 +584,7 @@ export default function ConfiguracionSistemaImpuestos() {
         onSort={(key) => toggleSort(key as SortKey)}
         loading={loading}
         emptyText={q ? "No hay resultados para esa búsqueda." : "Todavía no hay impuestos configurados. Creá el primero."}
+        pagination
         countLabel={(n) => `${n} ${n === 1 ? "impuesto" : "impuestos"}`}
         responsive="stack"
         actions={
@@ -617,8 +601,9 @@ export default function ConfiguracionSistemaImpuestos() {
           <TPTr key={row.id} className={!row.isActive ? "opacity-60" : undefined}>
             {vis.name && (
               <TPTd>
-                <div className="min-w-0">
+                <div className="flex items-center gap-2 min-w-0">
                   <div className="text-sm font-medium text-text truncate">{row.name}</div>
+                  {row.isSystem && <SystemBadge />}
                 </div>
               </TPTd>
             )}
@@ -683,7 +668,12 @@ export default function ConfiguracionSistemaImpuestos() {
                     onClone={() => handleClone(row)}
                     onToggle={() => handleToggle(row)}
                     isActive={row.isActive}
-                    onDelete={() => openDelete(row)}
+                    onDelete={() => askDelete({
+                      entityName: "impuesto",
+                      entityLabel: row.name,
+                      onDelete: () => taxesApi.remove(row.id),
+                      onAfterSuccess: load,
+                    })}
                   />
                 </div>
               </TPTd>
@@ -882,14 +872,6 @@ export default function ConfiguracionSistemaImpuestos() {
           {editTarget && (
             <ModalSection title="General">
               <div className="space-y-3">
-                <TPCheckbox
-                  checked={draft.isActive}
-                  onChange={(v) => patchDraft({ isActive: v })}
-                  disabled={busySave}
-                  label={
-                    <span className="text-sm text-text">Impuesto activo</span>
-                  }
-                />
                 <TPField label="Notas">
                   <TPTextarea
                     value={draft.notes}
@@ -974,23 +956,7 @@ export default function ConfiguracionSistemaImpuestos() {
         )}
       </Modal>
 
-      {/* =========================================================
-          CONFIRM DELETE
-      ========================================================= */}
-      <ConfirmDeleteDialog
-        open={deleteOpen}
-        title={`Eliminar "${deleteTarget?.name ?? ""}"`}
-        description="¿Estás seguro que querés eliminar este impuesto? Esta acción no se puede deshacer."
-        confirmText="Eliminar"
-        busy={busyDelete}
-        onClose={() => {
-          if (!busyDelete) {
-            setDeleteOpen(false);
-            setDeleteTarget(null);
-          }
-        }}
-        onConfirm={handleDelete}
-      />
+      <ConfirmDeleteDialog {...deleteDialogProps} />
     </TPSectionShell>
   );
 }

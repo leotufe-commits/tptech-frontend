@@ -254,54 +254,50 @@ export default function CurrenciesPanel({
   return (
     <section className="space-y-3">
       <div className="rounded-2xl border border-border bg-card p-4" style={{ boxShadow: "var(--shadow)" }}>
-        <div className="flex flex-col gap-3 sm:flex-row sm:justify-between sm:items-center">
-          <div className="min-w-0">
-            <div className="text-lg font-bold text-text">Monedas</div>
-            <div className="text-sm text-muted">Definí la moneda base y cargá tipos de cambio para las demás.</div>
-          </div>
-
-          <div className="flex gap-2 sm:w-auto w-full">
-            <TPColumnPicker
-              columns={CURR_COLUMNS.map((c) => ({ key: c.key, label: c.label, canHide: c.canHide }))}
-              visibility={colVis}
-              onChange={toggleCol}
-            />
-            <button
-              type="button"
-              className="tp-btn-primary h-10 inline-flex items-center justify-center gap-2 flex-1 sm:flex-none"
-              onClick={onOpenCreate}
-              disabled={saving}
-              title="Nueva moneda"
-            >
-              <Plus size={16} />
-              Nueva
-            </button>
-          </div>
+        <div className="min-w-0 mb-3">
+          <div className="text-lg font-bold text-text">Monedas</div>
+          <div className="text-sm text-muted">Definí la moneda base y cargá tipos de cambio para las demás.</div>
         </div>
 
         {panelErr ? (
-          <div className="mt-3 rounded-2xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-text">{panelErr}</div>
+          <div className="mb-3 rounded-2xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-text">{panelErr}</div>
         ) : null}
 
-        <div className="mt-4 relative">
-          <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted" />
-          <input
-            value={q}
-            onChange={(e) => setQ(e.target.value)}
-            placeholder="Buscar (código / nombre / símbolo)…"
-            className="w-full h-10 rounded-xl border border-border bg-bg text-text pl-9 pr-9 text-sm focus:outline-none focus:ring-4 focus:ring-primary/20"
+        <div className="flex gap-2 items-center">
+          <TPColumnPicker
+            columns={CURR_COLUMNS.map((c) => ({ key: c.key, label: c.label, canHide: c.canHide }))}
+            visibility={colVis}
+            onChange={toggleCol}
           />
-
-          {q ? (
-            <button
-              type="button"
-              onClick={() => setQ("")}
-              className="absolute right-2 top-1/2 -translate-y-1/2 h-7 w-7 grid place-items-center rounded-lg text-muted hover:text-text hover:bg-surface2 transition"
-              title="Limpiar"
-            >
-              <X size={16} />
-            </button>
-          ) : null}
+          <div className="relative flex-1">
+            <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted" />
+            <input
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+              placeholder="Buscar (código / nombre / símbolo)…"
+              className="w-full h-10 rounded-xl border border-border bg-bg text-text pl-9 pr-9 text-sm focus:outline-none focus:ring-4 focus:ring-primary/20"
+            />
+            {q ? (
+              <button
+                type="button"
+                onClick={() => setQ("")}
+                className="absolute right-2 top-1/2 -translate-y-1/2 h-7 w-7 grid place-items-center rounded-lg text-muted hover:text-text hover:bg-surface2 transition"
+                title="Limpiar"
+              >
+                <X size={16} />
+              </button>
+            ) : null}
+          </div>
+          <button
+            type="button"
+            className="tp-btn-primary h-10 inline-flex items-center justify-center gap-2 shrink-0"
+            onClick={onOpenCreate}
+            disabled={saving}
+            title="Nueva moneda"
+          >
+            <Plus size={16} />
+            Nueva
+          </button>
         </div>
 
         {baseCurrency ? (

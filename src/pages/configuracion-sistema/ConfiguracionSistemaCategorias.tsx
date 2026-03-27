@@ -9,6 +9,7 @@ import {
   ChevronsUpDown,
   SlidersHorizontal,
   Tags,
+  Tag,
 } from "lucide-react";
 
 import {
@@ -209,6 +210,7 @@ export default function ConfiguracionSistemaCategorias() {
 
   /* ---------- modal biblioteca de atributos ---------- */
   const [libOpen, setLibOpen] = useState(false);
+  const [libInitialView, setLibInitialView] = useState<"list" | "form">("list");
 
   /* ---------- busy ---------- */
   const [busySave, setBusySave] = useState(false);
@@ -691,9 +693,17 @@ export default function ConfiguracionSistemaCategorias() {
                 variant="secondary"
                 onClick={() => setLibOpen(true)}
                 iconLeft={<SlidersHorizontal size={15} />}
+                className="h-9 whitespace-nowrap hidden sm:flex"
+              >
+                Biblioteca
+              </TPButton>
+              <TPButton
+                variant="secondary"
+                onClick={() => { setLibInitialView("form"); setLibOpen(true); }}
+                iconLeft={<Tag size={15} />}
                 className="h-9 whitespace-nowrap"
               >
-                Biblioteca de atributos
+                Nuevo atributo
               </TPButton>
               <TPButton
                 variant="primary"
@@ -714,9 +724,10 @@ export default function ConfiguracionSistemaCategorias() {
           modifiers={[restrictToVerticalAxis]}
         >
           <TPTreeTable
+            pagination
             nodes={visibleRows as TreeNodeBase[]}
             columns={treeColumns}
-            onRowClick={(node) => openView(node as CategoryNode)}
+            onRowClick={(node) => openAttributes(node as CategoryNode)}
             renderActions={renderActions}
             expanded={expanded}
             onToggleExpand={toggleExpand}
@@ -983,13 +994,16 @@ export default function ConfiguracionSistemaCategorias() {
       <ConfirmDeleteDialog
         open={deleteOpen}
         title={`Eliminar "${deleteTarget?.name ?? ""}"`}
-        description={
-          deleteTarget && deleteTarget.childrenCount > 0
-            ? `Esta categoría tiene ${deleteTarget.childrenCount} sub-categoría${deleteTarget.childrenCount > 1 ? "s" : ""} y no se puede eliminar directamente.`
-            : "¿Estás seguro que querés eliminar esta categoría? Esta acción no se puede deshacer."
-        }
+        description={(() => {
+          if (!deleteTarget) return "¿Estás seguro que querés eliminar esta categoría? Esta acción no se puede deshacer.";
+          if (deleteTarget.childrenCount > 0)
+            return `Esta categoría tiene ${deleteTarget.childrenCount} sub-categoría${deleteTarget.childrenCount > 1 ? "s" : ""} y no se puede eliminar directamente.`;
+          if (deleteTarget.attributeCount > 0)
+            return `Esta categoría tiene ${deleteTarget.attributeCount} atributo${deleteTarget.attributeCount > 1 ? "s" : ""} asignado${deleteTarget.attributeCount > 1 ? "s" : ""}. Quitá los atributos antes de eliminarla.`;
+          return "¿Estás seguro que querés eliminar esta categoría? Esta acción no se puede deshacer.";
+        })()}
         confirmText={
-          deleteTarget && deleteTarget.childrenCount > 0
+          deleteTarget && (deleteTarget.childrenCount > 0 || deleteTarget.attributeCount > 0)
             ? "Entendido"
             : "Eliminar"
         }
@@ -1001,7 +1015,7 @@ export default function ConfiguracionSistemaCategorias() {
           }
         }}
         onConfirm={
-          deleteTarget && deleteTarget.childrenCount > 0
+          deleteTarget && (deleteTarget.childrenCount > 0 || deleteTarget.attributeCount > 0)
             ? () => {
                 setDeleteOpen(false);
                 setDeleteTarget(null);
@@ -1020,7 +1034,8 @@ export default function ConfiguracionSistemaCategorias() {
 
       <AttributeLibraryModal
         open={libOpen}
-        onClose={() => setLibOpen(false)}
+        initialView={libInitialView}
+        onClose={() => { setLibOpen(false); setLibInitialView("list"); }}
       />
     </TPSectionShell>
   );

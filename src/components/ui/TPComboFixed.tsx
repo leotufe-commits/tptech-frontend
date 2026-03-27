@@ -4,7 +4,7 @@ import ReactDOM from "react-dom";
 import { ChevronDown, Check, Search } from "lucide-react";
 import { cn, TP_INPUT } from "./tp";
 
-type Option = { value: string; label: string; disabled?: boolean };
+type Option = { value: string; label: string; disabled?: boolean; isHeader?: boolean };
 
 type Props = {
   value: string;
@@ -45,7 +45,7 @@ export default function TPComboFixed({
   /* Opciones filtradas (solo cuando searchable) */
   const filteredOptions = searchable && searchText.trim()
     ? options.filter((o) =>
-        o.label.toLowerCase().includes(searchText.trim().toLowerCase())
+        !o.isHeader && o.label.toLowerCase().includes(searchText.trim().toLowerCase())
       )
     : options;
 
@@ -109,6 +109,22 @@ export default function TPComboFixed({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
+  /* Encuentra el próximo índice seleccionable (no-header) en una dirección */
+  function nextSelectable(arr: Option[], from: number, dir: 1 | -1): number {
+    let idx = from;
+    while (idx >= 0 && idx < arr.length) {
+      if (!arr[idx].isHeader) return idx;
+      idx += dir;
+    }
+    // Si no hay hacia adelante, buscar hacia el otro lado
+    idx = from - dir;
+    while (idx >= 0 && idx < arr.length) {
+      if (!arr[idx].isHeader) return idx;
+      idx -= dir;
+    }
+    return -1;
+  }
+
   /* Al abrir/cerrar: resetear activeIndex */
   useEffect(() => {
     if (!open) {
@@ -117,8 +133,8 @@ export default function TPComboFixed({
       return;
     }
     setDropdownStyle(calcDropdownStyle());
-    const idx = filteredOptions.findIndex((o) => o.value === value);
-    setActiveIndex(idx >= 0 ? idx : 0);
+    const idx = filteredOptions.findIndex((o) => o.value === value && !o.isHeader);
+    setActiveIndex(idx >= 0 ? idx : nextSelectable(filteredOptions, 0, 1));
 
     /* En modo searchable enfocar el input de búsqueda */
     if (searchable) {
@@ -130,8 +146,8 @@ export default function TPComboFixed({
   /* Al filtrar, resetear activeIndex al primer resultado */
   useEffect(() => {
     if (!open) return;
-    const idx = filteredOptions.findIndex((o) => o.value === value);
-    setActiveIndex(idx >= 0 ? idx : filteredOptions.length > 0 ? 0 : -1);
+    const idx = filteredOptions.findIndex((o) => o.value === value && !o.isHeader);
+    setActiveIndex(idx >= 0 ? idx : nextSelectable(filteredOptions, 0, 1));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchText]);
 
@@ -164,26 +180,27 @@ export default function TPComboFixed({
     if (e.key === "ArrowDown") {
       e.preventDefault();
       setActiveIndex((prev) => {
-        const next = prev < 0 ? 0 : Math.min(prev + 1, filteredOptions.length - 1);
-        itemRefs.current[next]?.scrollIntoView({ block: "nearest" });
-        return next;
+        const candidate = prev < 0 ? 0 : Math.min(prev + 1, filteredOptions.length - 1);
+        const next = nextSelectable(filteredOptions, candidate, 1);
+        if (next >= 0) itemRefs.current[next]?.scrollIntoView({ block: "nearest" });
+        return next >= 0 ? next : prev;
       });
       return;
     }
     if (e.key === "ArrowUp") {
       e.preventDefault();
       setActiveIndex((prev) => {
-        const next = prev <= 0 ? 0 : prev - 1;
-        itemRefs.current[next]?.scrollIntoView({ block: "nearest" });
-        return next;
+        const candidate = prev <= 0 ? 0 : prev - 1;
+        const next = nextSelectable(filteredOptions, candidate, -1);
+        if (next >= 0) itemRefs.current[next]?.scrollIntoView({ block: "nearest" });
+        return next >= 0 ? next : prev;
       });
       return;
     }
     if (e.key === "Enter") {
       e.preventDefault();
-      if (activeIndex >= 0 && activeIndex < filteredOptions.length) {
-        pick(filteredOptions[activeIndex].value);
-      }
+      const opt = activeIndex >= 0 ? filteredOptions[activeIndex] : undefined;
+      if (opt && !opt.isHeader) pick(opt.value);
       return;
     }
     if (e.key === "Escape") {
@@ -198,9 +215,10 @@ export default function TPComboFixed({
       e.preventDefault();
       if (!open) { setOpen(true); return; }
       setActiveIndex((prev) => {
-        const next = prev < 0 ? 0 : Math.min(prev + 1, options.length - 1);
-        itemRefs.current[next]?.scrollIntoView({ block: "nearest" });
-        return next;
+        const candidate = prev < 0 ? 0 : Math.min(prev + 1, options.length - 1);
+        const next = nextSelectable(options, candidate, 1);
+        if (next >= 0) itemRefs.current[next]?.scrollIntoView({ block: "nearest" });
+        return next >= 0 ? next : prev;
       });
       return;
     }
@@ -208,18 +226,18 @@ export default function TPComboFixed({
       e.preventDefault();
       if (!open) { setOpen(true); return; }
       setActiveIndex((prev) => {
-        const next = prev <= 0 ? 0 : prev - 1;
-        itemRefs.current[next]?.scrollIntoView({ block: "nearest" });
-        return next;
+        const candidate = prev <= 0 ? 0 : prev - 1;
+        const next = nextSelectable(options, candidate, -1);
+        if (next >= 0) itemRefs.current[next]?.scrollIntoView({ block: "nearest" });
+        return next >= 0 ? next : prev;
       });
       return;
     }
     if (e.key === "Enter") {
       e.preventDefault();
       if (!open) { setOpen(true); return; }
-      if (activeIndex >= 0 && activeIndex < options.length) {
-        pick(options[activeIndex].value);
-      }
+      const opt = activeIndex >= 0 ? options[activeIndex] : undefined;
+      if (opt && !opt.isHeader) pick(opt.value);
       return;
     }
     if (e.key === "Escape" && open) {
@@ -231,6 +249,7 @@ export default function TPComboFixed({
   const dropdown = open && !disabled && ReactDOM.createPortal(
     <div
       id="tp-combo-fixed-portal"
+      data-tp-portal
       style={dropdownStyle}
       className="rounded-2xl border border-border bg-card shadow-soft"
       role="listbox"
@@ -252,7 +271,7 @@ export default function TPComboFixed({
               placeholder={searchPlaceholder}
               className={cn(
                 TP_INPUT,
-                "w-full pl-8 py-1.5 text-sm h-8"
+                "w-full !pl-8 py-1.5 text-sm h-8"
               )}
             />
           </div>
@@ -266,6 +285,16 @@ export default function TPComboFixed({
           </p>
         ) : (
           filteredOptions.map((opt, idx) => {
+            if (opt.isHeader) {
+              return (
+                <div
+                  key={opt.value}
+                  className="px-3 pt-2 pb-1 text-xs font-semibold uppercase tracking-wide text-muted select-none"
+                >
+                  {opt.label}
+                </div>
+              );
+            }
             const isSelected = opt.value === value;
             const isActive = idx === activeIndex;
             const isOptDisabled = !!opt.disabled;
@@ -301,18 +330,18 @@ export default function TPComboFixed({
   );
 
   return (
-    <div ref={wrapRef} className={cn("relative w-full", className)}>
+    <div ref={wrapRef} className={cn("relative w-full", disabled && "opacity-[0.65] pointer-events-none", className)}>
       {/* Trigger */}
       <input
         ref={triggerRef}
         readOnly
-        tabIndex={tabIndex}
+        tabIndex={disabled ? -1 : tabIndex}
         disabled={disabled}
         value={selectedLabel}
         placeholder={placeholder}
         onClick={() => !disabled && setOpen((v) => !v)}
         onKeyDown={searchable ? onTriggerKeyDown : onNonSearchKeyDown}
-        className={cn(TP_INPUT, "w-full cursor-pointer pr-9")}
+        className={cn(TP_INPUT, "w-full cursor-pointer pr-9", disabled && "!opacity-100")}
         aria-haspopup="listbox"
         aria-expanded={open}
       />

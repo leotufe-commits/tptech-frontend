@@ -732,7 +732,11 @@ export function useUsersPage() {
   async function refreshDetailOnly(userId: string, opts?: { hydrate?: boolean }) {
     invalidateUserDetail(userId);
     const refreshedRaw = await prefetchUserDetail(userId);
-    if (!refreshedRaw) return refreshedRaw;
+    if (!refreshedRaw) {
+      const err: any = new Error("No se pudo cargar el usuario.");
+      err.status = 404;
+      throw err;
+    }
 
     const refreshed = normalizeUserDetail(refreshedRaw);
 
@@ -1068,7 +1072,13 @@ export function useUsersPage() {
   }
 
   async function openEdit(u: UserListItem) {
-    if (!canAdmin) return;
+    if (!canAdmin) {
+      // Non-admin puede editar su propio perfil usando openEditById (que sí lo permite)
+      if (me?.id && String(u.id) === String(me.id)) {
+        return openEditById(String(u.id));
+      }
+      return;
+    }
 
     setErr(null);
     resetForm();

@@ -1,5 +1,6 @@
 // src/pages/configuracion-sistema/ConfiguracionSistemaPagos.tsx
 import React, { useEffect, useMemo, useState } from "react";
+import { useConfirmDelete } from "../../hooks/useConfirmDelete";
 import {
   Plus,
   Save,
@@ -24,6 +25,14 @@ import { TPTr, TPTd } from "../../components/ui/TPTable";
 import { TPTableKit, type TPColDef } from "../../components/ui/TPTableKit";
 import { TPStatusPill } from "../../components/ui/TPStatusPill";
 import { TPRowActions } from "../../components/ui/TPRowActions";
+
+function SystemBadge() {
+  return (
+    <span className="inline-flex items-center rounded-full bg-violet-500/15 px-2 py-0.5 text-[11px] font-medium text-violet-600 dark:text-violet-400 whitespace-nowrap">
+      Sistema
+    </span>
+  );
+}
 import TPComboFixed from "../../components/ui/TPComboFixed";
 import TPNumberInput from "../../components/ui/TPNumberInput";
 
@@ -212,13 +221,10 @@ export default function ConfiguracionSistemaPagos() {
   const [viewOpen, setViewOpen] = useState(false);
   const [viewTarget, setViewTarget] = useState<PaymentMethodRow | null>(null);
 
-  /* ---------- modal eliminar ---------- */
-  const [deleteOpen, setDeleteOpen] = useState(false);
-  const [deleteTarget, setDeleteTarget] = useState<PaymentMethodRow | null>(null);
+  const { askDelete, dialogProps: deleteDialogProps } = useConfirmDelete();
 
   /* ---------- busy ---------- */
   const [busySave, setBusySave] = useState(false);
-  const [busyDelete, setBusyDelete] = useState(false);
   const [busyCloningId, setBusyCloningId] = useState<string | null>(null);
 
   /* ---------- validación ---------- */
@@ -326,12 +332,6 @@ export default function ConfiguracionSistemaPagos() {
   function openView(row: PaymentMethodRow) {
     setViewTarget(row);
     setViewOpen(true);
-  }
-
-  /* ---------- abrir modal eliminar ---------- */
-  function openDelete(row: PaymentMethodRow) {
-    setDeleteTarget(row);
-    setDeleteOpen(true);
   }
 
   /* ---------- validación ---------- */
@@ -445,22 +445,6 @@ export default function ConfiguracionSistemaPagos() {
     }
   }
 
-  /* ---------- eliminar ---------- */
-  async function handleDelete() {
-    if (!deleteTarget) return;
-    try {
-      setBusyDelete(true);
-      await paymentsApi.remove(deleteTarget.id);
-      toast.success("Medio de pago eliminado.");
-      setDeleteOpen(false);
-      setDeleteTarget(null);
-      await load();
-    } catch (e: any) {
-      toast.error(e?.message || "Ocurrió un error al eliminar.");
-    } finally {
-      setBusyDelete(false);
-    }
-  }
 
   /* ---------- planes de cuotas ---------- */
   function addInstallmentPlan() {
@@ -533,6 +517,7 @@ export default function ConfiguracionSistemaPagos() {
         sortDir={sortDir}
         onSort={toggleSort}
         emptyText={q ? "No hay resultados para esa búsqueda." : "Todavía no hay medios de pago. Creá el primero."}
+        pagination
         countLabel={(n) => `${n} ${n === 1 ? "medio" : "medios"}`}
         responsive="stack"
         actions={
@@ -554,9 +539,12 @@ export default function ConfiguracionSistemaPagos() {
                 <TPTd>
                   <div className="flex items-center gap-2 min-w-0">
                     <div className="min-w-0">
-                      <span className="block text-sm font-medium text-text truncate">
-                        {row.name}
-                      </span>
+                      <div className="flex items-center gap-2">
+                        <span className="block text-sm font-medium text-text truncate">
+                          {row.name}
+                        </span>
+                        {row.isSystem && <SystemBadge />}
+                      </div>
                     </div>
                   </div>
                 </TPTd>
@@ -618,7 +606,12 @@ export default function ConfiguracionSistemaPagos() {
                       onClone={() => handleClone(row)}
                       onToggle={() => handleToggle(row)}
                       isActive={row.isActive}
-                      onDelete={() => openDelete(row)}
+                      onDelete={() => askDelete({
+                        entityName: "medio de pago",
+                        entityLabel: row.name,
+                        onDelete: () => paymentsApi.remove(row.id),
+                        onAfterSuccess: load,
+                      })}
                     />
                   </div>
                 </TPTd>
@@ -1026,20 +1019,7 @@ export default function ConfiguracionSistemaPagos() {
       {/* =========================================================
           CONFIRM DELETE
       ========================================================= */}
-      <ConfirmDeleteDialog
-        open={deleteOpen}
-        title={`Eliminar "${deleteTarget?.name ?? ""}"`}
-        description="¿Estás seguro que querés eliminar este medio de pago? Esta acción no se puede deshacer."
-        confirmText="Eliminar"
-        busy={busyDelete}
-        onClose={() => {
-          if (!busyDelete) {
-            setDeleteOpen(false);
-            setDeleteTarget(null);
-          }
-        }}
-        onConfirm={handleDelete}
-      />
+      <ConfirmDeleteDialog {...deleteDialogProps} />
     </TPSectionShell>
   );
 }

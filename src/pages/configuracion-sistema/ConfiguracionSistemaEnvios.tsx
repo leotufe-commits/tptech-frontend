@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
+import { useConfirmDelete } from "../../hooks/useConfirmDelete";
 import {
   Plus,
   Save,
@@ -25,6 +26,14 @@ import { TPTr, TPTd } from "../../components/ui/TPTable";
 import { TPTableKit, type TPColDef } from "../../components/ui/TPTableKit";
 import { TPStatusPill } from "../../components/ui/TPStatusPill";
 import { TPRowActions } from "../../components/ui/TPRowActions";
+
+function SystemBadge() {
+  return (
+    <span className="inline-flex items-center rounded-full bg-violet-500/15 px-2 py-0.5 text-[11px] font-medium text-violet-600 dark:text-violet-400 whitespace-nowrap">
+      Sistema
+    </span>
+  );
+}
 import TPComboFixed from "../../components/ui/TPComboFixed";
 import TPNumberInput from "../../components/ui/TPNumberInput";
 import { TPCard } from "../../components/ui/TPCard";
@@ -607,13 +616,9 @@ export default function ConfiguracionSistemaEnvios() {
   const [viewOpen, setViewOpen] = useState(false);
   const [viewTarget, setViewTarget] = useState<ShippingCarrierRow | null>(null);
 
-  const [deleteOpen, setDeleteOpen] = useState(false);
-  const [deleteTarget, setDeleteTarget] = useState<ShippingCarrierRow | null>(
-    null
-  );
+  const { askDelete, dialogProps: deleteDialogProps } = useConfirmDelete();
 
   const [busySave, setBusySave] = useState(false);
-  const [busyDelete, setBusyDelete] = useState(false);
   const [cloningId, setCloningId] = useState<string | null>(null);
   const [togglingId, setTogglingId] = useState<string | null>(null);
   const [favoritingId, setFavoritingId] = useState<string | null>(null);
@@ -753,10 +758,6 @@ export default function ConfiguracionSistemaEnvios() {
     setViewOpen(true);
   }
 
-  function openDelete(row: ShippingCarrierRow) {
-    setDeleteTarget(row);
-    setDeleteOpen(true);
-  }
 
   async function handleSave() {
     setSubmitted(true);
@@ -904,21 +905,6 @@ export default function ConfiguracionSistemaEnvios() {
     }
   }
 
-  async function handleDelete() {
-    if (!deleteTarget) return;
-    try {
-      setBusyDelete(true);
-      await shippingApi.remove(deleteTarget.id);
-      toast.success("Transportista eliminado.");
-      setDeleteOpen(false);
-      setDeleteTarget(null);
-      await load();
-    } catch (e: any) {
-      toast.error(e?.message || "No se pudo eliminar el transportista.");
-    } finally {
-      setBusyDelete(false);
-    }
-  }
 
   const errors = submitted ? formErrors : {};
   const isPickupDraft = draft.type === "PICKUP";
@@ -942,6 +928,7 @@ export default function ConfiguracionSistemaEnvios() {
       icon={<Truck size={22} />}
     >
       <TPTableKit<ShippingCarrierRow>
+        pagination
         rows={filteredRows}
         columns={ENV_COLS}
         storageKey="tptech_envios_colvis_v3"
@@ -991,6 +978,7 @@ export default function ConfiguracionSistemaEnvios() {
                       <span className="text-sm font-medium text-text truncate">
                         {row.name}
                       </span>
+                      {row.isSystem && <SystemBadge />}
                     </div>
 
 
@@ -1086,7 +1074,12 @@ export default function ConfiguracionSistemaEnvios() {
                     onClone={() => handleClone(row)}
                     onToggle={() => handleToggle(row)}
                     isActive={row.isActive}
-                    onDelete={() => openDelete(row)}
+                    onDelete={() => askDelete({
+                      entityName: "transportista",
+                      entityLabel: row.name,
+                      onDelete: () => shippingApi.remove(row.id),
+                      onAfterSuccess: load,
+                    })}
                   />
                 </div>
               </TPTd>
@@ -1439,20 +1432,7 @@ export default function ConfiguracionSistemaEnvios() {
         )}
       </Modal>
 
-      <ConfirmDeleteDialog
-        open={deleteOpen}
-        title={`Eliminar "${deleteTarget?.name ?? ""}"`}
-        description="¿Estás seguro que querés eliminar este transportista? Esta acción no se puede deshacer."
-        confirmText="Eliminar"
-        busy={busyDelete}
-        onClose={() => {
-          if (!busyDelete) {
-            setDeleteOpen(false);
-            setDeleteTarget(null);
-          }
-        }}
-        onConfirm={handleDelete}
-      />
+      <ConfirmDeleteDialog {...deleteDialogProps} />
     </TPSectionShell>
   );
 }

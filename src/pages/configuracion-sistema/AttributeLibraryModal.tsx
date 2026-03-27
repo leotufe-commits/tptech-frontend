@@ -3,7 +3,6 @@ import React, { useEffect, useRef, useState } from "react";
 import {
   Plus,
   Loader2,
-  ArrowLeft,
   X,
   Check,
   Tags,
@@ -50,6 +49,8 @@ import {
 interface Props {
   open: boolean;
   onClose: () => void;
+  /** Abre el modal directamente en modo formulario para crear (default: "list") */
+  initialView?: "list" | "form";
 }
 
 type View = "list" | "form";
@@ -81,7 +82,7 @@ function TypePill({ inputType }: { inputType: AttributeInputType }) {
 /* =========================================================
    Componente principal
 ========================================================= */
-export function AttributeLibraryModal({ open, onClose }: Props) {
+export function AttributeLibraryModal({ open, onClose, initialView = "list" }: Props) {
   const [defs, setDefs] = useState<AttributeDefRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [q, setQ] = useState("");
@@ -96,15 +97,24 @@ export function AttributeLibraryModal({ open, onClose }: Props) {
   const nameRef = useRef<HTMLInputElement>(null);
 
   const [pendingOptions, setPendingOptions] = useState<
-    { label: string; colorHex: string; isActive: boolean }[]
+    { label: string; colorHex: string; codeExtension: string; isActive: boolean }[]
   >([]);
   const [favOptIdx, setFavOptIdx] = useState<number | null>(null);
-  const [editingOptIdx, setEditingOptIdx] = useState<number | null>(null);
-  const [editingOptLabel, setEditingOptLabel] = useState("");
+
+  // Edit mode (opciones ya guardadas) — edición unificada label + code
+  const [editingOptId, setEditingOptId] = useState<string | null>(null);
+  const [editingOptLabelVal, setEditingOptLabelVal] = useState("");
+  const [editingOptCodeVal, setEditingOptCodeVal] = useState("");
+
+  // Create mode (opciones pendientes) — edición unificada label + code
+  const [editingPendingIdx, setEditingPendingIdx] = useState<number | null>(null);
+  const [editingPendingLabelVal, setEditingPendingLabelVal] = useState("");
+  const [editingPendingCodeVal, setEditingPendingCodeVal] = useState("");
 
   const newOptInputRef = useRef<HTMLInputElement>(null);
   const [newOptLabel, setNewOptLabel] = useState("");
   const [newOptColor, setNewOptColor] = useState("");
+  const [newOptCode, setNewOptCode] = useState("");
   const [busyNewOpt, setBusyNewOpt] = useState(false);
   const [busyOptId, setBusyOptId] = useState<string | null>(null);
   const [busyToggleOptId, setBusyToggleOptId] = useState<string | null>(null);
@@ -145,9 +155,12 @@ export function AttributeLibraryModal({ open, onClose }: Props) {
 
   useEffect(() => {
     if (open) {
-      setView("list");
+      setView(initialView);
       setQ("");
       setViewTarget(null);
+      setFormTarget(null);
+      setDraft({ ...EMPTY_DRAFT });
+      setPendingOptions([]);
       load();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -199,8 +212,12 @@ export function AttributeLibraryModal({ open, onClose }: Props) {
     setDraft({ ...EMPTY_DRAFT });
     setPendingOptions([]);
     setFavOptIdx(null);
-    setEditingOptIdx(null);
-    setEditingOptLabel("");
+    setEditingOptId(null);
+    setEditingOptLabelVal("");
+    setEditingOptCodeVal("");
+    setEditingPendingIdx(null);
+    setEditingPendingLabelVal("");
+    setEditingPendingCodeVal("");
     setNewOptLabel("");
     setNewOptColor("");
     setSubmitted(false);
@@ -218,6 +235,12 @@ export function AttributeLibraryModal({ open, onClose }: Props) {
     setPendingOptions([]);
     setNewOptLabel("");
     setNewOptColor("");
+    setEditingOptId(null);
+    setEditingOptLabelVal("");
+    setEditingOptCodeVal("");
+    setEditingPendingIdx(null);
+    setEditingPendingLabelVal("");
+    setEditingPendingCodeVal("");
     setSubmitted(false);
     setView("form");
   }
@@ -235,8 +258,12 @@ export function AttributeLibraryModal({ open, onClose }: Props) {
     setFormTarget(null);
     setPendingOptions([]);
     setFavOptIdx(null);
-    setEditingOptIdx(null);
-    setEditingOptLabel("");
+    setEditingOptId(null);
+    setEditingOptLabelVal("");
+    setEditingOptCodeVal("");
+    setEditingPendingIdx(null);
+    setEditingPendingLabelVal("");
+    setEditingPendingCodeVal("");
     setNewOptLabel("");
     setNewOptColor("");
     setSubmitted(false);
@@ -292,6 +319,7 @@ export function AttributeLibraryModal({ open, onClose }: Props) {
                 label: opt.label,
                 value: opt.label,
                 colorHex: opt.colorHex,
+                codeExtension: opt.codeExtension ?? "",
               })
             )
           );
@@ -367,6 +395,7 @@ export function AttributeLibraryModal({ open, onClose }: Props) {
         label,
         value: label,
         colorHex: defIsColor ? newOptColor.trim() : "",
+        codeExtension: newOptCode.trim(),
       });
       setDefs((prev) =>
         prev.map((d) =>
@@ -375,6 +404,7 @@ export function AttributeLibraryModal({ open, onClose }: Props) {
       );
       setNewOptLabel("");
       setNewOptColor("");
+      setNewOptCode("");
     } catch (e: any) {
       toast.error(e?.message || "Error al agregar opción.");
     } finally {
@@ -426,6 +456,52 @@ export function AttributeLibraryModal({ open, onClose }: Props) {
     }
   }
 
+  async function handleSaveOptEdit(optId: string) {
+    if (!formTarget) return;
+    const label = editingOptLabelVal.trim();
+    const code = editingOptCodeVal.trim();
+    const opt = currentEditOptions.find((o) => o.id === optId);
+    setEditingOptId(null);
+    setEditingOptLabelVal("");
+    setEditingOptCodeVal("");
+    if (!opt || !label) return;
+    try {
+      const updated = await attributeDefsApi.updateOption(optId, {
+        label,
+        codeExtension: code,
+      });
+      setDefs((prev) =>
+        prev.map((d) =>
+          d.id === formTarget.id
+            ? {
+                ...d,
+                options: d.options.map((o) =>
+                  o.id === optId
+                    ? { ...o, label: updated.label, codeExtension: updated.codeExtension }
+                    : o
+                ),
+              }
+            : d
+        )
+      );
+    } catch (e: any) {
+      toast.error(e?.message || "Error al guardar la opción.");
+    }
+  }
+
+  function confirmPendingEdit(idx: number) {
+    const label = editingPendingLabelVal.trim();
+    const code = editingPendingCodeVal.trim().toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 4);
+    if (label) {
+      setPendingOptions((prev) =>
+        prev.map((o, i) => (i === idx ? { ...o, label, codeExtension: code } : o))
+      );
+    }
+    setEditingPendingIdx(null);
+    setEditingPendingLabelVal("");
+    setEditingPendingCodeVal("");
+  }
+
   async function handleRemoveOptionEdit(optId: string) {
     if (!formTarget) return;
     try {
@@ -453,10 +529,11 @@ export function AttributeLibraryModal({ open, onClose }: Props) {
     if (!label) return;
     setPendingOptions((prev) => [
       ...prev,
-      { label, colorHex: isColorDraft ? newOptColor.trim() : "", isActive: true },
+      { label, colorHex: isColorDraft ? newOptColor.trim() : "", codeExtension: newOptCode.trim(), isActive: true },
     ]);
     setNewOptLabel("");
     setNewOptColor("");
+    setNewOptCode("");
     setTimeout(() => newOptInputRef.current?.focus(), 0);
   }
 
@@ -464,22 +541,6 @@ export function AttributeLibraryModal({ open, onClose }: Props) {
     if (favOptIdx === idx) setFavOptIdx(null);
     else if (favOptIdx !== null && favOptIdx > idx) setFavOptIdx(favOptIdx - 1);
     setPendingOptions((prev) => prev.filter((_, i) => i !== idx));
-  }
-
-  function confirmEditOpt(idx: number) {
-    const label = editingOptLabel.trim();
-    if (label) {
-      setPendingOptions((prev) =>
-        prev.map((o, i) => (i === idx ? { ...o, label } : o))
-      );
-    }
-    setEditingOptIdx(null);
-    setEditingOptLabel("");
-  }
-
-  function cancelEditOpt() {
-    setEditingOptIdx(null);
-    setEditingOptLabel("");
   }
 
   /* =========================================================
@@ -546,6 +607,20 @@ export function AttributeLibraryModal({ open, onClose }: Props) {
               }
             }}
           />
+          <TPInput
+            value={newOptCode}
+            onChange={setNewOptCode}
+            placeholder="Cód."
+            wrapClassName="w-16 shrink-0"
+            title="Extensión de código para SKU (ej. A, R, B)"
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                if (isEditMode) void handleAddOptionEdit();
+                else handleAddPendingOption();
+              }
+            }}
+          />
           <button
             type="button"
             title="Agregar opción"
@@ -594,31 +669,87 @@ export function AttributeLibraryModal({ open, onClose }: Props) {
                           style={{ backgroundColor: opt.colorHex }}
                         />
                       )}
-                      <span className="flex-1 text-text truncate">{opt.label}</span>
+                      {/* Label + code unificados — edit mode */}
+                      {editingOptId === opt.id ? (
+                        <>
+                          <input
+                            type="text"
+                            value={editingOptLabelVal}
+                            onChange={(e) => setEditingOptLabelVal(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") { e.preventDefault(); void handleSaveOptEdit(opt.id); }
+                              if (e.key === "Escape") { setEditingOptId(null); setEditingOptLabelVal(""); setEditingOptCodeVal(""); }
+                            }}
+                            autoFocus
+                            placeholder="Nombre de opción"
+                            className="flex-1 rounded-lg border border-primary bg-transparent px-2 py-0.5 text-sm text-text outline-none"
+                          />
+                          <input
+                            type="text"
+                            value={editingOptCodeVal}
+                            onChange={(e) => setEditingOptCodeVal(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 4))}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") { e.preventDefault(); void handleSaveOptEdit(opt.id); }
+                              if (e.key === "Escape") { setEditingOptId(null); setEditingOptLabelVal(""); setEditingOptCodeVal(""); }
+                            }}
+                            placeholder="Cód."
+                            className="w-12 rounded border border-primary bg-transparent px-1.5 py-0.5 font-mono text-[11px] text-text outline-none text-center"
+                            title="Extensión de código para SKU"
+                          />
+                          <button
+                            type="button"
+                            title="Confirmar"
+                            onClick={() => void handleSaveOptEdit(opt.id)}
+                            className="shrink-0 text-primary"
+                          >
+                            <Check size={13} />
+                          </button>
+                        </>
+                      ) : (
+                        <>
+                          <span className="flex-1 text-text truncate">{opt.label}</span>
+                          <span className={cn(
+                            "font-mono text-[10px] px-1.5 py-0.5 rounded shrink-0 border",
+                            (opt as any).codeExtension
+                              ? "bg-surface2 text-muted border-transparent"
+                              : "bg-transparent text-muted border-dashed border-border opacity-40"
+                          )}>
+                            {(opt as any).codeExtension || <span className="text-[9px]">Cód.</span>}
+                          </span>
+                          {/* ★ Favorito — primero */}
+                          <button
+                            type="button"
+                            title={draft.defaultValue === opt.label ? "Quitar favorita" : "Marcar como favorita"}
+                            onClick={() =>
+                              setDraft((p) => ({
+                                ...p,
+                                defaultValue: p.defaultValue === opt.label ? "" : opt.label,
+                              }))
+                            }
+                            className="shrink-0 transition-colors"
+                          >
+                            <Star
+                              size={14}
+                              className={
+                                draft.defaultValue === opt.label
+                                  ? "fill-yellow-400 text-yellow-400"
+                                  : "text-muted hover:text-yellow-400"
+                              }
+                            />
+                          </button>
+                          {/* ✏ Editar — segundo */}
+                          <button
+                            type="button"
+                            title="Editar opción"
+                            onClick={() => { setEditingOptId(opt.id); setEditingOptLabelVal(opt.label); setEditingOptCodeVal((opt as any).codeExtension ?? ""); }}
+                            className="shrink-0 text-muted hover:text-text transition-colors"
+                          >
+                            <Pencil size={13} />
+                          </button>
+                        </>
+                      )}
 
-                      {/* Star (favorita) */}
-                      <button
-                        type="button"
-                        title={draft.defaultValue === opt.label ? "Quitar favorita" : "Marcar como favorita"}
-                        onClick={() =>
-                          setDraft((p) => ({
-                            ...p,
-                            defaultValue: p.defaultValue === opt.label ? "" : opt.label,
-                          }))
-                        }
-                        className="shrink-0 transition-colors"
-                      >
-                        <Star
-                          size={14}
-                          className={
-                            draft.defaultValue === opt.label
-                              ? "fill-yellow-400 text-yellow-400"
-                              : "text-muted hover:text-yellow-400"
-                          }
-                        />
-                      </button>
-
-                      {/* Toggle activo/inactivo */}
+                      {/* Toggle activo/inactivo — tercero */}
                       <button
                         type="button"
                         title={opt.isActive ? "Desactivar opción" : "Activar opción"}
@@ -676,63 +807,82 @@ export function AttributeLibraryModal({ open, onClose }: Props) {
                       />
                     )}
 
-                    {/* Label o input inline */}
-                    {editingOptIdx === idx ? (
-                      <input
-                        type="text"
-                        value={editingOptLabel}
-                        onChange={(e) => setEditingOptLabel(e.target.value)}
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter") { e.preventDefault(); confirmEditOpt(idx); }
-                          if (e.key === "Escape") cancelEditOpt();
-                        }}
-                        onBlur={() => confirmEditOpt(idx)}
-                        autoFocus
-                        className="flex-1 rounded-lg border border-primary bg-transparent px-2 py-0.5 text-sm text-text outline-none"
-                      />
+                    {/* Label + code unificados — create mode */}
+                    {editingPendingIdx === idx ? (
+                      <>
+                        <input
+                          type="text"
+                          value={editingPendingLabelVal}
+                          onChange={(e) => setEditingPendingLabelVal(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") { e.preventDefault(); confirmPendingEdit(idx); }
+                            if (e.key === "Escape") { setEditingPendingIdx(null); setEditingPendingLabelVal(""); setEditingPendingCodeVal(""); }
+                          }}
+                          autoFocus
+                          placeholder="Nombre de opción"
+                          className="flex-1 rounded-lg border border-primary bg-transparent px-2 py-0.5 text-sm text-text outline-none"
+                        />
+                        <input
+                          type="text"
+                          value={editingPendingCodeVal}
+                          onChange={(e) => setEditingPendingCodeVal(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 4))}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") { e.preventDefault(); confirmPendingEdit(idx); }
+                            if (e.key === "Escape") { setEditingPendingIdx(null); setEditingPendingLabelVal(""); setEditingPendingCodeVal(""); }
+                          }}
+                          placeholder="Cód."
+                          className="w-12 rounded border border-primary bg-transparent px-1.5 py-0.5 font-mono text-[11px] text-text outline-none text-center"
+                          title="Extensión de código para SKU"
+                        />
+                        <button
+                          type="button"
+                          title="Confirmar"
+                          onClick={() => confirmPendingEdit(idx)}
+                          className="shrink-0 text-primary"
+                        >
+                          <Check size={13} />
+                        </button>
+                      </>
                     ) : (
-                      <span className="flex-1 text-text truncate">{opt.label}</span>
+                      <>
+                        <span className="flex-1 text-text truncate">{opt.label}</span>
+                        <span className={cn(
+                          "font-mono text-[10px] px-1.5 py-0.5 rounded shrink-0 border",
+                          opt.codeExtension
+                            ? "bg-surface2 text-muted border-transparent"
+                            : "bg-transparent text-muted border-dashed border-border opacity-40"
+                        )}>
+                          {opt.codeExtension || <span className="text-[9px]">Cód.</span>}
+                        </span>
+                        {/* ★ Favorito — primero */}
+                        <button
+                          type="button"
+                          title={favOptIdx === idx ? "Quitar favorita" : "Marcar como favorita"}
+                          onClick={() => setFavOptIdx(favOptIdx === idx ? null : idx)}
+                          className="shrink-0 transition-colors"
+                        >
+                          <Star
+                            size={14}
+                            className={
+                              favOptIdx === idx
+                                ? "fill-yellow-400 text-yellow-400"
+                                : "text-muted hover:text-yellow-400"
+                            }
+                          />
+                        </button>
+                        {/* ✏ Editar — segundo */}
+                        <button
+                          type="button"
+                          title="Editar opción"
+                          onClick={() => { setEditingPendingIdx(idx); setEditingPendingLabelVal(opt.label); setEditingPendingCodeVal(opt.codeExtension ?? ""); }}
+                          className="shrink-0 text-muted hover:text-text transition-colors"
+                        >
+                          <Pencil size={13} />
+                        </button>
+                      </>
                     )}
 
-                    {/* Star (favorita) */}
-                    <button
-                      type="button"
-                      title={favOptIdx === idx ? "Quitar favorita" : "Marcar como favorita"}
-                      onClick={() => setFavOptIdx(favOptIdx === idx ? null : idx)}
-                      className="shrink-0 transition-colors"
-                    >
-                      <Star
-                        size={14}
-                        className={
-                          favOptIdx === idx
-                            ? "fill-yellow-400 text-yellow-400"
-                            : "text-muted hover:text-yellow-400"
-                        }
-                      />
-                    </button>
-
-                    {/* Editar / Confirmar edición */}
-                    {editingOptIdx === idx ? (
-                      <button
-                        type="button"
-                        title="Confirmar"
-                        onClick={() => confirmEditOpt(idx)}
-                        className="shrink-0 text-primary"
-                      >
-                        <Check size={13} />
-                      </button>
-                    ) : (
-                      <button
-                        type="button"
-                        title="Editar"
-                        onClick={() => { setEditingOptIdx(idx); setEditingOptLabel(opt.label); }}
-                        className="shrink-0 text-muted hover:text-text transition-colors"
-                      >
-                        <Pencil size={13} />
-                      </button>
-                    )}
-
-                    {/* Toggle activo/inactivo (local) */}
+                    {/* Toggle activo/inactivo (local) — tercero */}
                     <button
                       type="button"
                       title={opt.isActive ? "Desactivar opción" : "Activar opción"}
@@ -919,23 +1069,18 @@ export function AttributeLibraryModal({ open, onClose }: Props) {
 
   const modalFooter =
     view === "list" ? (
-      <>
-        <TPButton variant="secondary" onClick={onClose} iconLeft={<X size={16} />}>
-          Cerrar
-        </TPButton>
-        <TPButton variant="primary" onClick={openCreate} iconLeft={<Plus size={15} />}>
-          Nuevo atributo
-        </TPButton>
-      </>
+      <TPButton variant="secondary" onClick={onClose} iconLeft={<X size={16} />}>
+        Cerrar
+      </TPButton>
     ) : (
       <>
         <TPButton
           variant="secondary"
-          onClick={goBack}
+          onClick={initialView === "form" ? onClose : goBack}
           disabled={busySave}
-          iconLeft={<ArrowLeft size={15} />}
+          iconLeft={<X size={15} />}
         >
-          Volver
+          Cancelar
         </TPButton>
         <TPButton
           variant="primary"
@@ -959,8 +1104,8 @@ export function AttributeLibraryModal({ open, onClose }: Props) {
         maxWidth="4xl"
         busy={busySave}
         onClose={() => {
-          if (view === "form" && !busySave) goBack();
-          else onClose();
+          if (view === "form" && !busySave && initialView !== "form") goBack();
+          else if (!busySave) onClose();
         }}
         onEnter={view === "form" && !hasOptionsInDraft ? handleSave : undefined}
         footer={modalFooter}

@@ -26,6 +26,7 @@ export type TaxRow = {
   validTo: string | null;
   isActive: boolean;
   isFavorite: boolean;
+  isSystem: boolean;
   sortOrder: number;
   notes: string;
   deletedAt: string | null;

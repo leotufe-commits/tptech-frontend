@@ -169,11 +169,11 @@ export default function PerfilJoyeriaEdit(p: Props) {
             IZQUIERDA
         ========================= */}
         <div className="space-y-4">
-          <TPField label="Razón social">
+          <TPField label="Nombre de Fantasía" required>
             <TPInput
               tabIndex={t++}
-              value={p.company.legalName}
-              onChange={(v) => p.setCompanyField("legalName", v)}
+              value={p.existing.name}
+              onChange={(v) => p.setExistingField("name", v)}
               {...disabledProps}
             />
           </TPField>
@@ -217,11 +217,11 @@ export default function PerfilJoyeriaEdit(p: Props) {
             DERECHA
         ========================= */}
         <div className="space-y-4">
-          <TPField label="Nombre de Fantasía" required>
+          <TPField label="Razón social">
             <TPInput
               tabIndex={t++}
-              value={p.existing.name}
-              onChange={(v) => p.setExistingField("name", v)}
+              value={p.company.legalName}
+              onChange={(v) => p.setCompanyField("legalName", v)}
               {...disabledProps}
             />
           </TPField>
@@ -268,7 +268,7 @@ export default function PerfilJoyeriaEdit(p: Props) {
         <div className="font-semibold text-sm mb-4">Domicilio</div>
 
         <div className="grid grid-cols-1 md:grid-cols-12 gap-4">
-          <div className="md:col-span-5">
+          <div className="md:col-span-8">
             <TPField label="Calle">
               <TPInput
                 tabIndex={t++}
@@ -290,7 +290,18 @@ export default function PerfilJoyeriaEdit(p: Props) {
             </TPField>
           </div>
 
-          <div className="md:col-span-5">
+          <div className="md:col-span-2">
+            <TPField label="Código Postal">
+              <TPInput
+                tabIndex={t++}
+                value={p.existing.postalCode}
+                onChange={(v) => p.setExistingField("postalCode", v)}
+                {...disabledProps}
+              />
+            </TPField>
+          </div>
+
+          <div className="md:col-span-4">
             <TPField label="Ciudad">
               <TPComboCreatable
                 tabIndex={t++}
@@ -312,18 +323,7 @@ export default function PerfilJoyeriaEdit(p: Props) {
             </TPField>
           </div>
 
-          <div className="md:col-span-3">
-            <TPField label="Código Postal">
-              <TPInput
-                tabIndex={t++}
-                value={p.existing.postalCode}
-                onChange={(v) => p.setExistingField("postalCode", v)}
-                {...disabledProps}
-              />
-            </TPField>
-          </div>
-
-          <div className="md:col-span-5">
+          <div className="md:col-span-4">
             <TPField label="País">
               <TPComboCreatable
                 tabIndex={t++}

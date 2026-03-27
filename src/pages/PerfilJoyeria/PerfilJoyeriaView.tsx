@@ -67,26 +67,22 @@ export default function PerfilJoyeriaView(props: Props) {
     <div className="space-y-4">
       <TPSectionShell title="Datos de la empresa" icon={<Building2 className="h-4 w-4" />}>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
-          <TPInfoCard icon={<Building2 className="h-3.5 w-3.5" />} label="Razón social" value={company.legalName} />
           <TPInfoCard icon={<Tag className="h-3.5 w-3.5" />} label="Nombre de fantasía" value={existingName} />
+          <TPInfoCard icon={<Building2 className="h-3.5 w-3.5" />} label="Razón social" value={company.legalName} />
 
           <TPInfoCard icon={<Receipt className="h-3.5 w-3.5" />} label="Condición de IVA" value={ivaLine} />
           <TPInfoCard icon={<Phone className="h-3.5 w-3.5" />} label="Teléfono" value={phone} />
 
           <TPInfoCard icon={<Globe className="h-3.5 w-3.5" />} label="Sitio web" value={company.website} />
           <TPInfoCard icon={<Mail className="h-3.5 w-3.5" />} label="Correo" value={company.email} />
-        </div>
-      </TPSectionShell>
 
-      <TPSectionShell title="Domicilio" icon={<MapPin className="h-4 w-4" />}>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           <TPInfoCard icon={<MapPin className="h-3.5 w-3.5" />} label="Dirección" value={addressLine} />
           <TPInfoCard icon={<MapPin className="h-3.5 w-3.5" />} label="Detalle" value={addressMeta} />
-        </div>
-      </TPSectionShell>
 
-      <TPSectionShell title="Notas" icon={<StickyNote className="h-4 w-4" />}>
-        <TPInfoCard icon={<StickyNote className="h-3.5 w-3.5" />} label="Notas" value={company.notes} />
+          <div className="md:col-span-2">
+            <TPInfoCard icon={<StickyNote className="h-3.5 w-3.5" />} label="Notas" value={company.notes} />
+          </div>
+        </div>
       </TPSectionShell>
 
       <TPSectionShell

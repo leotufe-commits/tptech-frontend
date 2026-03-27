@@ -18,8 +18,11 @@ import Divisas from "./pages/Divisas";
 import InventarioArticulos from "./pages/InventarioArticulos";
 import InventarioAlmacenes from "./pages/InventarioAlmacenes";
 import InventarioMovimientos from "./pages/InventarioMovimientos";
+import InventarioArticulosMovimientos from "./pages/InventarioArticulosMovimientos";
 
 import VentasClientes from "./pages/VentasClientes";
+import Ventas from "./pages/Ventas";
+import Caja from "./pages/Caja";
 import ComprasProveedores from "./pages/ComprasProveedores";
 
 import PerfilJoyeria from "./pages/PerfilJoyeria";
@@ -49,6 +52,10 @@ import ConfiguracionSistemaListasPrecios from "./pages/configuracion-sistema/Con
 import ConfiguracionSistemaClientes from "./pages/configuracion-sistema/ConfiguracionSistemaClientes";
 import ConfiguracionSistemaProveedores from "./pages/configuracion-sistema/ConfiguracionSistemaProveedores";
 import ConfiguracionSistemaCorreos from "./pages/configuracion-sistema/ConfiguracionSistemaCorreos";
+import ConfiguracionSistemaPromociones from "./pages/configuracion-sistema/ConfiguracionSistemaPromociones";
+import ConfiguracionSistemaDescuentosCantidad from "./pages/configuracion-sistema/ConfiguracionSistemaDescuentosCantidad";
+import ConfiguracionSistemaEtiquetas from "./pages/configuracion-sistema/ConfiguracionSistemaEtiquetas";
+import DashboardRentabilidad from "./pages/DashboardRentabilidad";
 import EntityDetail from "./pages/entity-detail/EntityDetail";
 import ArticleDetail from "./pages/article-detail/ArticleDetail";
 
@@ -129,11 +136,11 @@ const router = createBrowserRouter([
 
           // ===== PRINCIPAL =====
           { path: "dashboard", element: <Dashboard /> },
+          { path: "reportes/rentabilidad", element: <DashboardRentabilidad /> },
           { path: "divisas", element: <Divisas /> },
 
           // ===== ARTÍCULOS =====
           { path: "articulos/articulos", element: <InventarioArticulos /> },
-          { path: "articulos/nuevo",     element: <ArticleDetail /> },
           { path: "articulos/:id",       element: <ArticleDetail /> },
           { path: "articulos/compuestos", element: <Placeholder title="Artículos compuestos" /> },
           { path: "articulos/grupos", element: <Placeholder title="Grupos de artículos" /> },
@@ -142,14 +149,19 @@ const router = createBrowserRouter([
           { path: "inventario/articulos", element: <InventarioArticulos /> },
           { path: "inventario/almacenes", element: <InventarioAlmacenes /> },
           { path: "inventario/movimientos", element: <InventarioMovimientos /> },
+          { path: "inventario/movimientos-articulos", element: <InventarioArticulosMovimientos /> },
 
           // ===== VENTAS =====
+          { path: "ventas", element: <Ventas /> },
+          { path: "ventas/pos", element: <Ventas /> },
+          { path: "ventas/:id", element: <Placeholder title="Detalle de venta" /> },
           { path: "ventas/clientes", element: <VentasClientes /> },
           { path: "ventas/ordenes-venta", element: <Placeholder title="Órdenes de venta" /> },
           { path: "ventas/facturas-clientes", element: <Placeholder title="Facturas de clientes" /> },
           { path: "ventas/paquetes", element: <Placeholder title="Paquetes" /> },
           { path: "ventas/remitos", element: <Placeholder title="Remitos" /> },
-          { path: "ventas/pagos-recibidos", element: <Placeholder title="Pagos recibidos" /> },
+          { path: "ventas/pagos-recibidos", element: <Caja /> },
+          { path: "ventas/caja", element: <Caja /> },
           { path: "ventas/devoluciones-venta", element: <Placeholder title="Devoluciones de venta" /> },
           { path: "ventas/notas-credito", element: <Placeholder title="Notas de crédito" /> },
 
@@ -205,10 +217,12 @@ const router = createBrowserRouter([
           { path: "configuracion-sistema/pagos", element: <ConfiguracionSistemaPagos /> },
           { path: "configuracion-sistema/envios", element: <ConfiguracionSistemaEnvios /> },
           { path: "configuracion-sistema/listas-precios", element: <ConfiguracionSistemaListasPrecios /> },
+          { path: "configuracion-sistema/promociones", element: <ConfiguracionSistemaPromociones /> },
+          { path: "configuracion-sistema/descuentos-cantidad", element: <ConfiguracionSistemaDescuentosCantidad /> },
           { path: "configuracion-sistema/categorias", element: <ConfiguracionSistemaCategorias /> },
           { path: "configuracion-sistema/correos", element: <ConfiguracionSistemaCorreos /> },
           { path: "configuracion-sistema/numeracion", element: <Placeholder title="Numeración de comprobantes" /> },
-          { path: "configuracion-sistema/etiquetas", element: <Placeholder title="Impresión de etiquetas" /> },
+          { path: "configuracion-sistema/etiquetas", element: <ConfiguracionSistemaEtiquetas /> },
 
           // ✅ ADMINISTRACIÓN
           { path: "configuracion-sistema/items", element: <ConfiguracionSistemaItems /> },

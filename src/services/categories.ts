@@ -30,6 +30,20 @@ export type CategoryPayload = {
   isActive?: boolean;
 };
 
+export type CategoryAttribute = {
+  id: string;           // ArticleCategoryAttribute.id (assignmentId)
+  isRequired: boolean;
+  isVariantAxis: boolean;
+  sortOrder: number;
+  definition: {
+    id: string;
+    name: string;
+    code: string;
+    inputType: string;
+    options: { id: string; label: string; value: string; codeExtension?: string }[];
+  };
+};
+
 export const categoriesApi = {
   list: () =>
     apiFetch<CategoryRow[]>("/categories", { method: "GET", on401: "throw" }),
@@ -66,4 +80,9 @@ export const categoriesApi = {
       body: data,
       on401: "throw",
     }),
+
+  attributes: {
+    getEffective: (categoryId: string) =>
+      apiFetch<CategoryAttribute[]>(`/categories/${categoryId}/attributes/effective`, { method: "GET", on401: "throw" }),
+  },
 };

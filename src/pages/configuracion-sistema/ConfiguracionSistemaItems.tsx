@@ -3,12 +3,18 @@ import React, { useEffect, useMemo, useState } from "react";
 import {
   ChevronRight,
   Plus,
+  Save,
   Tag,
   Receipt,
   Phone,
   Building2,
   MapPin,
-  Loader2,
+  Clock,
+  X,
+  Bookmark,
+  Factory,
+  Ruler,
+  CalculatorIcon,
 } from "lucide-react";
 
 import { cn } from "../../components/ui/tp";
@@ -16,18 +22,29 @@ import { TPSectionShell } from "../../components/ui/TPSectionShell";
 import { TPButton } from "../../components/ui/TPButton";
 import { TPStatusPill } from "../../components/ui/TPStatusPill";
 import { TPRowActions } from "../../components/ui/TPRowActions";
+
+function SystemBadge() {
+  return (
+    <span className="inline-flex items-center rounded-full bg-violet-500/15 px-2 py-0.5 text-[11px] font-medium text-violet-600 dark:text-violet-400 whitespace-nowrap">
+      Sistema
+    </span>
+  );
+}
 import { TPField } from "../../components/ui/TPField";
 import TPInput from "../../components/ui/TPInput";
-import TPSelect from "../../components/ui/TPSelect";
 import { Modal } from "../../components/ui/Modal";
 import { TPTd } from "../../components/ui/TPTable";
 import { TPTableKit, type TPColDef } from "../../components/ui/TPTableKit";
+
+import { useConfirmDelete } from "../../hooks/useConfirmDelete";
+import ConfirmDeleteDialog from "../../components/ui/ConfirmDeleteDialog";
 
 import {
   listCatalog,
   createCatalogItem,
   updateCatalogItem,
   setCatalogItemFavorite,
+  deleteCatalogItem,
   type CatalogType,
 } from "../../services/catalogs";
 
@@ -65,6 +82,13 @@ export default function ConfiguracionSistemaItems() {
         icon: <Receipt size={18} />,
       },
       {
+        key: "PAYMENT_TERM",
+        title: "Términos de pago",
+        desc: "Contado, 30 días, 60 días y cualquier plazo personalizado.",
+        group: "Comercial",
+        icon: <Clock size={18} />,
+      },
+      {
         key: "PHONE_PREFIX",
         title: "Prefijos telefónicos",
         desc: "Códigos por país para teléfonos (ej: +54).",
@@ -92,6 +116,34 @@ export default function ConfiguracionSistemaItems() {
         group: "Ubicaciones",
         icon: <MapPin size={18} />,
       },
+      {
+        key: "ARTICLE_BRAND",
+        title: "Marcas",
+        desc: "Marcas disponibles para clasificar artículos del catálogo.",
+        group: "Artículos",
+        icon: <Bookmark size={18} />,
+      },
+      {
+        key: "ARTICLE_MANUFACTURER",
+        title: "Fabricantes",
+        desc: "Fabricantes o proveedores de fabricación de los artículos.",
+        group: "Artículos",
+        icon: <Factory size={18} />,
+      },
+      {
+        key: "UNIT_OF_MEASURE",
+        title: "Unidades de medida",
+        desc: "Unidades para cuantificar artículos (UND, KG, MT, PAR…).",
+        group: "Artículos",
+        icon: <Ruler size={18} />,
+      },
+      {
+        key: "MULTIPLIER_BASE",
+        title: "Bases del multiplicador",
+        desc: "Unidades base para el modo de costo multiplicador (Gramos, Kilates, Unidades…).",
+        group: "Artículos",
+        icon: <CalculatorIcon size={18} />,
+      },
     ],
     []
   );
@@ -111,6 +163,8 @@ export default function ConfiguracionSistemaItems() {
   const [loading, setLoading] = useState(false);
   const [savingBusy, setSavingBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+
+  const { askDelete, dialogProps: deleteDialogProps } = useConfirmDelete();
 
   function toggleSort(col: SortCol) {
     if (sortBy !== col) {
@@ -140,6 +194,18 @@ export default function ConfiguracionSistemaItems() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selected]);
 
+  // Pre-carga silenciosa de todos los catálogos para que los contadores
+  // de la sidebar muestren valores reales desde el primer render.
+  useEffect(() => {
+    const otherKeys = catalogs.map((c) => c.key).filter((k) => k !== selected);
+    for (const key of otherKeys) {
+      listCatalog(key, { includeInactive: true }).then((items) => {
+        setRowsByKey((prev) => ({ ...prev, [key]: items.map(itemToRow) }));
+      }).catch(() => {/* silencioso */});
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const filteredRows = useMemo(() => {
     const s = norm(q);
     if (!s) return rowsAll;
@@ -151,10 +217,6 @@ export default function ConfiguracionSistemaItems() {
     const dir = sortDir === "asc" ? 1 : -1;
 
     arr.sort((a, b) => {
-      const fa = a.favorite ? 1 : 0;
-      const fb = b.favorite ? 1 : 0;
-      if (fa !== fb) return fb - fa;
-
       if (sortBy === "STATUS") {
         const ra = statusRank(a.status);
         const rb = statusRank(b.status);
@@ -172,7 +234,7 @@ export default function ConfiguracionSistemaItems() {
   }, [filteredRows, sortBy, sortDir]);
 
   const grouped = useMemo(() => {
-    const out: Record<CatalogGroup, Catalog[]> = { Fiscal: [], Ubicaciones: [] };
+    const out: Record<CatalogGroup, Catalog[]> = { Fiscal: [], Comercial: [], Artículos: [], Ubicaciones: [] };
     for (const c of catalogs) out[c.group].push(c);
     return out;
   }, [catalogs]);
@@ -184,13 +246,11 @@ export default function ConfiguracionSistemaItems() {
   const [editingId, setEditingId] = useState<string | null>(null);
 
   const [fLabel, setFLabel] = useState("");
-  const [fStatus, setFStatus] = useState<RowStatus>("Activo");
   const [formError, setFormError] = useState<string | null>(null);
 
   function openCreate() {
     setEditingId(null);
     setFLabel("");
-    setFStatus("Activo");
     setFormError(null);
     setModalOpen(true);
   }
@@ -198,7 +258,6 @@ export default function ConfiguracionSistemaItems() {
   function openEdit(r: Row) {
     setEditingId(r.id);
     setFLabel(r.label || "");
-    setFStatus(r.status || "Activo");
     setFormError(null);
     setModalOpen(true);
   }
@@ -230,19 +289,9 @@ export default function ConfiguracionSistemaItems() {
       setSavingBusy(true);
 
       if (editingId) {
-        await updateCatalogItem(editingId, {
-          label,
-          isActive: fStatus === "Activo",
-        });
+        await updateCatalogItem(editingId, { label });
       } else {
         await createCatalogItem(selected, label);
-        if (fStatus === "Inactivo") {
-          await refreshSelected(true);
-          const just = (rowsByKey[selected] ?? []).find(
-            (x) => x.label.trim().toLowerCase() === label.toLowerCase()
-          );
-          if (just?.id) await updateCatalogItem(just.id, { isActive: false });
-        }
       }
 
       await refreshSelected(true);
@@ -302,11 +351,13 @@ export default function ConfiguracionSistemaItems() {
     }
   }
 
-  async function removeRow(r: Row) {
-    const ok = window.confirm(
-      `¿Eliminar "${r.label}"?\n\nTodavía no está implementado el DELETE en backend. Si querés, lo agregamos (soft delete / isActive=false).`
-    );
-    if (!ok) return;
+  function removeRow(r: Row) {
+    askDelete({
+      entityName: "ítem",
+      entityLabel: r.label,
+      onDelete: () => deleteCatalogItem(r.id),
+      onAfterSuccess: () => refreshSelected(true),
+    });
   }
 
   return (
@@ -331,7 +382,7 @@ export default function ConfiguracionSistemaItems() {
           </div>
 
           <div className="mt-4 space-y-4">
-            {(["Fiscal", "Ubicaciones"] as CatalogGroup[]).map((groupName) => {
+            {(["Fiscal", "Comercial", "Artículos", "Ubicaciones"] as CatalogGroup[]).map((groupName) => {
               const list = grouped[groupName] || [];
               if (!list.length) return null;
 
@@ -410,28 +461,11 @@ export default function ConfiguracionSistemaItems() {
         {/* ================= RIGHT ================= */}
         <section className="space-y-3">
           {/* Cabecera del catálogo seleccionado */}
-          <div className="flex items-start justify-between gap-3">
-            <div className="min-w-0">
-              <div className="text-base font-semibold text-text truncate">
-                {current.title}
-              </div>
-              <div className="text-sm text-muted mt-0.5">{current.desc}</div>
+          <div className="min-w-0">
+            <div className="text-base font-semibold text-text truncate">
+              {current.title}
             </div>
-            <TPButton
-              variant="secondary"
-              onClick={() => refreshSelected(true)}
-              disabled={loading || savingBusy}
-              iconLeft={
-                loading ? (
-                  <Loader2 size={15} className="animate-spin" />
-                ) : (
-                  <Tag size={15} />
-                )
-              }
-              className="shrink-0"
-            >
-              {loading ? "Cargando…" : "Recargar"}
-            </TPButton>
+            <div className="text-sm text-muted mt-0.5">{current.desc}</div>
           </div>
 
           {err && <div className="text-sm text-red-600">{err}</div>}
@@ -453,6 +487,7 @@ export default function ConfiguracionSistemaItems() {
             onSort={(key) => toggleSort(key as SortCol)}
             loading={loading}
             emptyText="No se encontraron ítems con ese filtro."
+            pagination
             countLabel={(n) => `${n} ítem${n === 1 ? "" : "s"}`}
             actions={
               <TPButton
@@ -468,7 +503,10 @@ export default function ConfiguracionSistemaItems() {
               <tr key={r.id} className="border-b border-border hover:bg-surface2/40 transition-colors">
                 {vis.label && (
                   <TPTd>
-                    <span className="font-medium text-text">{r.label}</span>
+                    <div className="flex items-center gap-2">
+                      <span className="font-medium text-text">{r.label}</span>
+                      {r.isSystem && <SystemBadge />}
+                    </div>
                   </TPTd>
                 )}
                 {vis.status && (
@@ -496,6 +534,8 @@ export default function ConfiguracionSistemaItems() {
         </section>
       </div>
 
+      <ConfirmDeleteDialog {...deleteDialogProps} />
+
       {/* ================= Modal Crear/Editar ================= */}
       <Modal
         open={modalOpen}
@@ -510,10 +550,10 @@ export default function ConfiguracionSistemaItems() {
         onEnter={upsertRow}
         footer={
           <>
-            <TPButton variant="secondary" onClick={closeModal} disabled={savingBusy}>
+            <TPButton variant="secondary" onClick={closeModal} disabled={savingBusy} iconLeft={<X size={16} />}>
               Cancelar
             </TPButton>
-            <TPButton variant="primary" onClick={upsertRow} loading={savingBusy}>
+            <TPButton variant="primary" onClick={upsertRow} loading={savingBusy} iconLeft={<Save size={16} />}>
               Guardar
             </TPButton>
           </>
@@ -538,25 +578,6 @@ export default function ConfiguracionSistemaItems() {
             />
           </TPField>
 
-          <div className="grid gap-3 md:grid-cols-2">
-            <TPField label="Estado" hint={hints.statusHint}>
-              <TPSelect
-                value={fStatus}
-                onChange={(v) => setFStatus(v as RowStatus)}
-                options={[
-                  { value: "Activo", label: "Activo" },
-                  { value: "Inactivo", label: "Inactivo" },
-                ]}
-                disabled={savingBusy}
-              />
-            </TPField>
-
-            <div className="rounded-xl border border-border bg-surface2 p-3 text-xs text-muted">
-              <div className="font-semibold text-text text-xs mb-1">Favorito ⭐</div>
-              Definí un favorito por catálogo. En <b>Perfil de joyería</b>, si el campo está
-              vacío al editar/crear, se tomará el favorito como valor inicial.
-            </div>
-          </div>
         </div>
       </Modal>
     </TPSectionShell>

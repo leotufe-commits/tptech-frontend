@@ -1,6 +1,22 @@
-import type { EntityType, BalanceType } from "../../../services/commercial-entities";
+import type { EntityType, BalanceType, EntityRole } from "../../../services/commercial-entities";
 
-export type SortKey = "displayName" | "code" | "email" | "createdAt";
+/** Override de merma guardado localmente durante el CREATE del modal (antes de tener entityId). */
+export type MermaOverrideDraft = {
+  _localId: string;
+  variantId: string;
+  role: EntityRole;
+  mermaPercent: number;
+  notes: string;
+  isActive: boolean;
+  // Datos de display enriquecidos al momento de agregar (evita re-fetch)
+  _metalName: string;
+  _variantName: string;
+  _sku: string;
+  _purity: string;
+  _isFavorite: boolean;
+};
+
+export type SortKey = "displayName" | "code" | "email" | "createdAt" | "updatedAt";
 
 export type EntityDraft = {
   entityType: EntityType;

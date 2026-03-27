@@ -72,6 +72,7 @@ export default function WarehousesTable({
       loading={loading}
       emptyText="No hay almacenes para mostrar."
       countLabel="almacenes"
+      pagination
       onRowClick={(r) => onView(r)}
       renderRow={(r, vis) => {
         const active = isRowActive(r);

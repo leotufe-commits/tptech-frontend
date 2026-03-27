@@ -50,6 +50,7 @@ export type ShippingCarrierRow = {
   country: string;
   isFavorite: boolean;
   isActive: boolean;
+  isSystem: boolean;
   sortOrder: number;
   notes: string;
   deletedAt: string | null;

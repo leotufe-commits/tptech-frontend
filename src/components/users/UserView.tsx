@@ -24,6 +24,8 @@ import { useInventory } from "../../context/InventoryContext";
 
 import { cn, absUrl, initialsFrom } from "./users.ui";
 import { TPBadge } from "../ui/TPBadges";
+import { TPSectionShell } from "../ui/TPSectionShell";
+import { TPInfoCard } from "../ui/TPInfoCard";
 
 import { prefetchUserDetail, getRolesCached, getPermsCached } from "./users.data";
 
@@ -75,46 +77,6 @@ function safeFileLabel(name: any) {
 
 function cardBase(extra?: string) {
   return cn("tp-card rounded-2xl border border-border bg-card p-4", extra);
-}
-
-function SectionShell({
-  title,
-  icon,
-  children,
-}: {
-  title: string;
-  icon?: React.ReactNode;
-  children: React.ReactNode;
-}) {
-  return (
-    <div className={cardBase()}>
-      <div className="flex items-center gap-2 mb-3">
-        {icon}
-        <div className="text-sm font-semibold">{title}</div>
-      </div>
-      {children}
-    </div>
-  );
-}
-
-function InfoCard({
-  icon,
-  label,
-  value,
-}: {
-  icon?: React.ReactNode;
-  label: string;
-  value: React.ReactNode;
-}) {
-  return (
-    <div className={cn(cardBase("p-3"))}>
-      <div className="text-xs text-muted mb-1 flex items-center gap-2">
-        {icon}
-        {label}
-      </div>
-      <div className="font-semibold whitespace-pre-wrap break-words">{valueOrDash(value)}</div>
-    </div>
-  );
 }
 
 function truthyParam(v: string | null) {
@@ -430,29 +392,27 @@ export default function UserView() {
             </div>
           </div>
 
-          <SectionShell title="Datos del usuario" icon={<UserIcon className="h-4 w-4" />}>
+          <TPSectionShell title="Datos del usuario" icon={<UserIcon className="h-4 w-4" />}>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
-              <InfoCard icon={<UserIcon className="h-3.5 w-3.5" />} label="Nombre" value={valueOrDash(detail.name)} />
-              <InfoCard icon={<Mail className="h-3.5 w-3.5" />} label="Correo" value={valueOrDash(detail.email)} />
+              <TPInfoCard icon={<UserIcon className="h-3.5 w-3.5" />} label="Nombre" value={valueOrDash(detail.name)} />
+              <TPInfoCard icon={<Mail className="h-3.5 w-3.5" />} label="Correo" value={valueOrDash(detail.email)} />
 
-              <InfoCard icon={<Phone className="h-3.5 w-3.5" />} label="Teléfono" value={phone} />
-              <InfoCard icon={<IdCard className="h-3.5 w-3.5" />} label="Documento" value={doc} />
+              <TPInfoCard icon={<Phone className="h-3.5 w-3.5" />} label="Teléfono" value={phone} />
+              <TPInfoCard icon={<IdCard className="h-3.5 w-3.5" />} label="Documento" value={doc} />
 
-              <InfoCard
+              <TPInfoCard
                 icon={<Users className="h-3.5 w-3.5" />}
                 label="Roles"
                 value={
-                  rolesLoading ? (
-                    "Cargando…"
-                  ) : (detail.roles || []).length ? (
-                    (detail.roles || []).map((r: any) => roleLabel(r)).join(" • ")
-                  ) : (
-                    "—"
-                  )
+                  rolesLoading
+                    ? "Cargando…"
+                    : (detail.roles || []).length
+                    ? (detail.roles || []).map((r: any) => roleLabel(r)).join(" • ")
+                    : "—"
                 }
               />
 
-              <InfoCard
+              <TPInfoCard
                 icon={<Fingerprint className="h-3.5 w-3.5" />}
                 label="Acceso por PIN"
                 value={
@@ -463,30 +423,21 @@ export default function UserView() {
                     : "Sin PIN"
                 }
               />
-            </div>
-          </SectionShell>
 
-          <SectionShell title="Domicilio" icon={<MapPin className="h-4 w-4" />}>
-            <div className={cn(cardBase("p-3"))}>
-              <div className="text-xs text-muted mb-1 flex items-center gap-2">
-                <MapPin className="h-3.5 w-3.5" />
-                Dirección
-              </div>
-              <div className="font-semibold whitespace-pre-wrap break-words">{valueOrDash(addressLine)}</div>
-              <div className="mt-1 text-xs text-muted whitespace-pre-wrap break-words">{valueOrDash(addressMeta)}</div>
-            </div>
-          </SectionShell>
+              <TPInfoCard icon={<MapPin className="h-3.5 w-3.5" />} label="Dirección" value={addressLine} />
+              <TPInfoCard icon={<MapPin className="h-3.5 w-3.5" />} label="Detalle" value={addressMeta} />
 
-          <SectionShell title="Notas" icon={<StickyNote className="h-4 w-4" />}>
-            <div className={cn(cardBase("p-3"))}>
-              <div className="text-xs text-muted mb-1">Notas</div>
-              <div className="font-semibold whitespace-pre-wrap break-words">
-                {String((detail as any)?.notes || "").trim() || "—"}
+              <div className="md:col-span-2">
+                <TPInfoCard
+                  icon={<StickyNote className="h-3.5 w-3.5" />}
+                  label="Notas"
+                  value={String((detail as any)?.notes || "").trim() || "—"}
+                />
               </div>
             </div>
-          </SectionShell>
+          </TPSectionShell>
 
-          <SectionShell title="Permisos especiales" icon={<Shield className="h-4 w-4" />}>
+          <TPSectionShell title="Permisos especiales" icon={<Shield className="h-4 w-4" />}>
             {permsLoading ? (
               <div className="text-sm text-muted flex items-center gap-2">
                 <Loader2 className="h-4 w-4 animate-spin" />
@@ -513,9 +464,9 @@ export default function UserView() {
                 ))}
               </div>
             )}
-          </SectionShell>
+          </TPSectionShell>
 
-          <SectionShell title="Adjuntos" icon={<Paperclip className="h-4 w-4" />}>
+          <TPSectionShell title="Adjuntos" icon={<Paperclip className="h-4 w-4" />}>
             {attachments.length === 0 ? (
               <div className="text-sm text-muted">Todavía no hay adjuntos.</div>
             ) : (
@@ -546,7 +497,7 @@ export default function UserView() {
             <div className="mt-3 text-[11px] text-muted">
               * Esta vista es <b>solo lectura</b>. Para subir/eliminar adjuntos, usá <b>Editar</b>.
             </div>
-          </SectionShell>
+          </TPSectionShell>
         </div>
       )}
     </div>

@@ -12,6 +12,8 @@ export type RolePermission = {
 export type RoleLite = {
   id: string;
   name: string;
+  /** Nombre visible para mostrar al usuario (si está vacío se usa name) */
+  displayName?: string | null;
   code?: string;
   isSystem?: boolean;
   usersCount?: number;
@@ -60,9 +62,12 @@ function normalizeRoleLite(raw: any): RoleLite | null {
       ? name
       : undefined;
 
+  const displayNameRaw = toStr(raw.displayName);
+
   return {
     id,
     name,
+    displayName: displayNameRaw || null,
     code,
     isSystem: Boolean(raw.isSystem),
     usersCount: typeof raw.usersCount === "number" ? raw.usersCount : undefined,
@@ -186,6 +191,17 @@ export async function renameRole(roleId: string, name: string): Promise<RoleLite
   const resp = await apiFetch(`/roles/${roleId}`, {
     method: "PATCH",
     body: { name },
+  });
+
+  invalidateRolesCache();
+  return normalizeRole(resp);
+}
+
+/** Actualiza solo el displayName de un rol (para roles del sistema) */
+export async function updateRoleDisplayName(roleId: string, displayName: string): Promise<RoleLite> {
+  const resp = await apiFetch(`/roles/${roleId}`, {
+    method: "PATCH",
+    body: { displayName },
   });
 
   invalidateRolesCache();

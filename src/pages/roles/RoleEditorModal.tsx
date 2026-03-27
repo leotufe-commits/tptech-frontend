@@ -5,6 +5,7 @@ import { Modal } from "../../components/ui/Modal";
 import TPCheckbox from "../../components/ui/TPCheckbox";
 import TPButton from "../../components/ui/TPButton";
 import TPInput from "../../components/ui/TPInput";
+import TPAlert from "../../components/ui/TPAlert";
 import { cn } from "../../components/ui/tp";
 import type { Permission } from "../../services/permissions";
 
@@ -71,6 +72,7 @@ export default function RoleEditorModal({
   onClose,
   onSubmit,
   permissionsDisabled,
+  isSystem,
   errorMsg,
 }: {
   open: boolean;
@@ -85,6 +87,8 @@ export default function RoleEditorModal({
   onClose: () => void;
   onSubmit: (name: string, selectedIds: string[]) => Promise<void>;
   permissionsDisabled?: boolean;
+  /** true para roles del sistema: cambia el label del campo a "Nombre visible del rol" */
+  isSystem?: boolean;
   errorMsg?: string | null;
 }) {
   const permsByModule = useMemo(() => groupPermsByModule(allPerms), [allPerms]);
@@ -147,12 +151,18 @@ export default function RoleEditorModal({
           )}
 
           <TPInput
-            label="Nombre del rol"
+            label={isSystem ? "Nombre visible del rol" : "Nombre del rol"}
             value={name}
             onChange={setName}
             placeholder="Ej: Caja, Depósito, Ventas…"
             inputRef={nameInputRef}
           />
+
+          {permissionsDisabled && (
+            <TPAlert tone="warning">
+              Los permisos del rol <strong>Propietario</strong> no pueden modificarse.
+            </TPAlert>
+          )}
 
           <div
             className={cn(

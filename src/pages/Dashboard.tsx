@@ -87,7 +87,7 @@ function NiceTooltip({
   const rows = [...payload].sort((a, b) => (b?.value ?? 0) - (a?.value ?? 0));
 
   return (
-    <div className="rounded-xl border border-border bg-white px-3 py-2 shadow-sm">
+    <div className="rounded-xl border border-border bg-card px-3 py-2 shadow-sm">
       <div className="text-xs font-semibold text-text">{label}</div>
       <div className="mt-2 space-y-1">
         {rows.map((p: any) => {
@@ -177,6 +177,7 @@ type DashboardSummary = {
   };
   currencies: Array<{ id: string; code: string; name: string; symbol: string; isBase: boolean }>;
   metals: Array<{ id: string; name: string; symbol: string; sortOrder: number }>;
+  variants: Array<{ id: string; metalId: string; name: string; sku: string; purity: number; saleFactor: number; value: number | null }>;
   series: {
     fx: Array<Record<string, any>>;
     metals: Array<Record<string, any>>;
@@ -268,6 +269,7 @@ export default function Dashboard() {
 
   const currentMetals = useMemo(() => {
     const list = (data?.metals ?? []).map((m) => ({
+      id: m.id,
       name: m.name,
       symbol: m.symbol,
       sortOrder: m.sortOrder,
@@ -276,6 +278,17 @@ export default function Dashboard() {
     list.sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || a.name.localeCompare(b.name));
     return list;
   }, [data, metalsData]);
+
+  type VariantItem = NonNullable<DashboardSummary["variants"]>[number];
+  const variantsByMetal = useMemo(() => {
+    const map = new Map<string, VariantItem[]>();
+    for (const v of data?.variants ?? []) {
+      const arr = map.get(v.metalId) ?? [];
+      arr.push(v);
+      map.set(v.metalId, arr);
+    }
+    return map;
+  }, [data]);
 
   // ✅ Texto aclaratorio (Opción B)
   const fxNote = useMemo(() => {
@@ -322,7 +335,7 @@ export default function Dashboard() {
               <div className="h-72 w-full">
                 <ResponsiveContainer width="100%" height="100%">
                   <LineChart data={fxData} margin={{ top: 8, right: 14, left: 6, bottom: 0 }}>
-                    <CartesianGrid stroke="rgba(0,0,0,0.06)" vertical={false} />
+                    <CartesianGrid stroke="var(--border)" strokeOpacity={0.5} vertical={false} />
                     <XAxis dataKey="date" tick={{ fontSize: 12 }} tickLine={false} axisLine={false} />
                     <YAxis
                       tick={{ fontSize: 12 }}
@@ -388,7 +401,7 @@ export default function Dashboard() {
               <div className="h-72 w-full">
                 <ResponsiveContainer width="100%" height="100%">
                   <LineChart data={metalsData} margin={{ top: 8, right: 14, left: 6, bottom: 0 }}>
-                    <CartesianGrid stroke="rgba(0,0,0,0.06)" vertical={false} />
+                    <CartesianGrid stroke="var(--border)" strokeOpacity={0.5} vertical={false} />
                     <XAxis dataKey="date" tick={{ fontSize: 12 }} tickLine={false} axisLine={false} />
                     <YAxis
                       tick={{ fontSize: 12 }}
@@ -543,36 +556,60 @@ export default function Dashboard() {
 
               {/* Metales */}
               <div>
-                <div className="text-xs font-semibold text-text">Metales padres</div>
+                <div className="text-xs font-semibold text-text">Metales</div>
                 <div className="mt-2 space-y-2">
                   {currentMetals.length === 0 ? (
                     <div className="text-sm text-muted">—</div>
                   ) : (
-                    currentMetals.map((m) => (
-                      <div
-                        key={m.name}
-                        className="flex items-center justify-between gap-3 rounded-xl border border-border bg-surface px-4 py-3"
-                      >
-                        <div className="min-w-0">
-                          <div className="flex items-center gap-2">
-                            <span
-                              className="inline-block h-2.5 w-2.5 rounded-full"
-                              style={{ background: stableColorForKey(m.name) }}
-                            />
-                            <div className="truncate text-sm font-semibold text-text">
-                              {m.symbol ? `${m.symbol} · ` : ""}
-                              {m.name}
+                    currentMetals.map((m) => {
+                      const mVariants = variantsByMetal.get(m.id) ?? [];
+                      return (
+                        <div key={m.name} className="rounded-xl border border-border bg-surface overflow-hidden">
+                          {/* Metal padre */}
+                          <div className="flex items-center justify-between gap-3 px-4 py-3">
+                            <div className="min-w-0">
+                              <div className="flex items-center gap-2">
+                                <span
+                                  className="inline-block h-2.5 w-2.5 rounded-full"
+                                  style={{ background: stableColorForKey(m.name) }}
+                                />
+                                <div className="truncate text-sm font-semibold text-text">
+                                  {m.symbol ? `${m.symbol} · ` : ""}
+                                  {m.name}
+                                </div>
+                              </div>
+                              <div className="truncate text-xs text-muted">Valor de referencia</div>
+                            </div>
+                            <div className="shrink-0 text-sm font-semibold text-text">
+                              {formatMaybe(m.value)} {baseSymbol}
                             </div>
                           </div>
-                          <div className="truncate text-xs text-muted">Valor de referencia</div>
-                        </div>
 
-                        {/* ✅ SIEMPRE 2 decimales */}
-                        <div className="shrink-0 text-sm font-semibold text-text">
-                          {formatMaybe(m.value)} {baseSymbol}
+                          {/* Variantes */}
+                          {mVariants.length > 0 && (
+                            <div className="border-t border-border divide-y divide-border">
+                              {mVariants.map((v) => (
+                                <div
+                                  key={v.id}
+                                  className="flex items-center justify-between gap-3 bg-card px-4 py-2 pl-8"
+                                >
+                                  <div className="min-w-0">
+                                    <div className="truncate text-xs font-medium text-text">{v.name}</div>
+                                    <div className="text-[11px] text-muted">
+                                      Ley {v.purity.toLocaleString("es-AR", { minimumFractionDigits: 3, maximumFractionDigits: 3 })}
+                                      {" · "}SKU {v.sku}
+                                    </div>
+                                  </div>
+                                  <div className="shrink-0 text-xs font-semibold text-text">
+                                    {formatMaybe(v.value)} {baseSymbol}
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          )}
                         </div>
-                      </div>
-                    ))
+                      );
+                    })
                   )}
                 </div>
               </div>

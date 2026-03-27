@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 
 import TPInput from "../../../components/ui/TPInput";
 import { TPField } from "../../../components/ui/TPField";
@@ -129,6 +129,20 @@ export function VendedorForm({
   firstInputRef,
 }: Props) {
   const [pendingUser, setPendingUser] = useState<UserListItem | null>(null);
+
+  // Preview URLs locales (blob://) para imágenes staged en create modal.
+  // Se generan con createObjectURL y se revocan automáticamente al desmontar o cambiar.
+  const [stagedPreviews, setStagedPreviews] = useState<string[]>([]);
+  useEffect(() => {
+    const previews = stagedFiles.map((f) =>
+      f.type.startsWith("image/") ? URL.createObjectURL(f) : ""
+    );
+    setStagedPreviews(previews);
+    return () => {
+      previews.forEach((u) => u && URL.revokeObjectURL(u));
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stagedFiles]);
 
   const { baseCurrency } = useValuation();
   const currencySymbol = (baseCurrency as any)?.symbol || "$";
@@ -566,35 +580,6 @@ export function VendedorForm({
         )}
       </TPCard>
 
-      <TPCard className="p-4 space-y-4">
-        <div className="text-sm font-semibold">Persona de contacto</div>
-        <TPField label="Nombre">
-          <TPInput
-            value={draft.contactName}
-            onChange={(v) => set("contactName", v)}
-            placeholder="Ej: María García"
-            disabled={busySave}
-          />
-        </TPField>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-          <TPField label="Teléfono">
-            <TPInput
-              value={draft.contactPhone}
-              onChange={(v) => set("contactPhone", v)}
-              placeholder="Ej: +54 11 1234 5678"
-              disabled={busySave}
-            />
-          </TPField>
-          <TPField label="Email">
-            <TPInput
-              value={draft.contactEmail}
-              onChange={(v) => set("contactEmail", v)}
-              placeholder="contacto@email.com"
-              disabled={busySave}
-            />
-          </TPField>
-        </div>
-      </TPCard>
 
       <TPCard className="p-4 space-y-3">
         <div className="text-sm font-semibold">Notas</div>
@@ -625,6 +610,7 @@ export function VendedorForm({
               name: f.name,
               size: f.size,
               mimeType: f.type,
+              previewUrl: stagedPreviews[i] || undefined,
             }))}
             onUpload={(files) => onStagedFilesChange([...stagedFiles, ...files])}
             onDelete={(item) => {

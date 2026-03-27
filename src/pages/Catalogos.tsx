@@ -36,9 +36,14 @@ const TYPE_LABEL: Record<CatalogType, string> = {
   COUNTRY: "Países",
   DOCUMENT_TYPE: "Tipo de documento",
   IVA_CONDITION: "Condición de IVA",
+  PAYMENT_TERM: "Términos de pago",
+  ARTICLE_BRAND: "Marcas",
+  ARTICLE_MANUFACTURER: "Fabricantes",
+  UNIT_OF_MEASURE: "Unidades de medida",
+  MULTIPLIER_BASE: "Bases del multiplicador",
 };
 
-const TYPES: CatalogType[] = ["PHONE_PREFIX", "CITY", "PROVINCE", "COUNTRY", "DOCUMENT_TYPE", "IVA_CONDITION"];
+const TYPES: CatalogType[] = ["PHONE_PREFIX", "CITY", "PROVINCE", "COUNTRY", "DOCUMENT_TYPE", "IVA_CONDITION", "PAYMENT_TERM"];
 
 function parseBulkTextarea(text: string) {
   return Array.from(

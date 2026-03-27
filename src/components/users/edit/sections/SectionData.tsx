@@ -1,6 +1,6 @@
 // tptech-frontend/src/components/users/edit/sections/SectionData.tsx
 import React from "react";
-import { Download, Eye, EyeOff, Loader2, Trash2 } from "lucide-react";
+import { Download, Eye, EyeOff, Info, Loader2, Trash2 } from "lucide-react";
 
 import { cn, Section, formatBytes, safeFileLabel, absUrl } from "../../users.ui";
 import type { UserAttachment } from "../../../../services/users";
@@ -257,55 +257,62 @@ export default function SectionData(props: Props) {
   return (
     <div className="space-y-4">
       <Section title="Cuenta" desc="Email y contraseña inicial.">
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-          <TPInput
-            label="Email"
-            value={fEmail}
-            onChange={setFEmail}
-            placeholder="usuario@correo.com"
-            disabled={modalMode === "EDIT" || modalBusy}
-            autoComplete="email"
-          />
+        {isCreate ? (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <TPInput
+              label="Email"
+              value={fEmail}
+              onChange={setFEmail}
+              placeholder="usuario@correo.com"
+              disabled={modalBusy}
+              autoComplete="email"
+            />
 
-          <div>
-            {isCreate ? (
-              <>
-                <TPInput
-                  label="Contraseña (opcional)"
-                  value={fPassword}
-                  onChange={setFPassword}
-                  placeholder="Si la dejás vacía, queda Pendiente"
-                  disabled={modalBusy}
-                  autoComplete="new-password"
-                  type={showPassword ? "text" : "password"}
-                  rightIcon={
-                    <button
-                      type="button"
-                      className="inline-flex items-center justify-center"
-                      onClick={() => setShowPassword(!showPassword)}
-                      aria-label={showPassword ? "Ocultar contraseña" : "Mostrar contraseña"}
-                      disabled={modalBusy}
-                    >
-                      {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                    </button>
-                  }
-                />
-                <p className="mt-1 text-[11px] text-muted">
-                  Si la contraseña está vacía, el usuario queda <b>Pendiente</b> y se activa por invitación.
-                </p>
-              </>
-            ) : (
-              <div className="flex h-full flex-col justify-center rounded-xl border border-border bg-surface px-3 py-3 text-[12px] text-muted space-y-1">
-                <p className="font-medium text-text text-[13px]">Contraseña</p>
-                <p>El admin no puede cambiar la contraseña directamente.</p>
-                <p>
-                  Usá el botón <b>"Enviar reset de contraseña"</b> en el pie del formulario para enviarle un link al usuario.
-                </p>
-                <p className="text-[11px]">(El email tampoco se puede editar desde aquí)</p>
-              </div>
-            )}
+            <div>
+              <TPInput
+                label="Contraseña (opcional)"
+                value={fPassword}
+                onChange={setFPassword}
+                placeholder="Si la dejás vacía, queda Pendiente"
+                disabled={modalBusy}
+                autoComplete="new-password"
+                type={showPassword ? "text" : "password"}
+                rightIcon={
+                  <button
+                    type="button"
+                    className="inline-flex items-center justify-center"
+                    onClick={() => setShowPassword(!showPassword)}
+                    aria-label={showPassword ? "Ocultar contraseña" : "Mostrar contraseña"}
+                    disabled={modalBusy}
+                  >
+                    {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                  </button>
+                }
+              />
+              <p className="mt-1 text-[11px] text-muted">
+                Si la contraseña está vacía, el usuario queda <b>Pendiente</b> y se activa por invitación.
+              </p>
+            </div>
           </div>
-        </div>
+        ) : (
+          <div className="space-y-2">
+            <TPInput
+              label="Email"
+              value={fEmail}
+              onChange={setFEmail}
+              placeholder="usuario@correo.com"
+              disabled
+              autoComplete="email"
+            />
+
+            <div className="flex items-start gap-2 text-[12px] text-muted">
+              <Info className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+              <span>
+                La contraseña no puede editarse aquí. Usá <b>"Enviar reset de contraseña"</b> para que el usuario pueda cambiarla.
+              </span>
+            </div>
+          </div>
+        )}
       </Section>
 
       <Section title="Datos personales" desc="Nombre, documento y dirección.">
@@ -395,7 +402,7 @@ export default function SectionData(props: Props) {
               <div className="text-sm font-semibold mb-3">Domicilio</div>
 
               <div className="grid grid-cols-1 md:grid-cols-12 gap-3">
-                <div className="md:col-span-5">
+                <div className="md:col-span-8">
                   <TPInput label="Calle" value={fStreet} onChange={setFStreet} disabled={modalBusy} />
                 </div>
 
@@ -403,7 +410,16 @@ export default function SectionData(props: Props) {
                   <TPInput label="Número" value={fNumber} onChange={setFNumber} disabled={modalBusy} />
                 </div>
 
-                <div className="md:col-span-5">
+                <div className="md:col-span-2">
+                  <TPInput
+                    label="Código postal"
+                    value={fPostalCode}
+                    onChange={setFPostalCode}
+                    disabled={modalBusy}
+                  />
+                </div>
+
+                <div className="md:col-span-4">
                   <TPComboCreatable
                     label="Ciudad"
                     mode={isCreate ? "create" : "edit"}
@@ -440,15 +456,6 @@ export default function SectionData(props: Props) {
                       await provCat.createItem(label);
                       setFProvince(label);
                     }}
-                  />
-                </div>
-
-                <div className="md:col-span-4">
-                  <TPInput
-                    label="Código postal"
-                    value={fPostalCode}
-                    onChange={setFPostalCode}
-                    disabled={modalBusy}
                   />
                 </div>
 

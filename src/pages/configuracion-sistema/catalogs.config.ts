@@ -4,7 +4,7 @@ import type { CatalogItem, CatalogType } from "../../services/catalogs";
 /* =========================
    Types
 ========================= */
-export type CatalogGroup = "Ubicaciones" | "Fiscal";
+export type CatalogGroup = "Ubicaciones" | "Fiscal" | "Comercial" | "Artículos";
 
 export type Catalog = {
   key: CatalogType;
@@ -23,6 +23,7 @@ export type Row = {
   sortOrder: number;
   updatedAt?: string;
   favorite?: boolean;
+  isSystem?: boolean;
 };
 
 export type SortCol = "LABEL" | "STATUS";
@@ -87,6 +88,51 @@ export function catalogHints(key: CatalogType) {
         statusHint: "Desactivá para ocultarlo del selector.",
       };
 
+    case "PAYMENT_TERM":
+      return {
+        modalSubtitle: "Definí un plazo o condición de pago para usar en clientes y proveedores.",
+        nameLabel: "Término de pago",
+        namePlaceholder: "Ej: Contado, 30 días, 60 días neto",
+        nameHint: "Nombre visible en el combo de término de pago.",
+        statusHint: "Desactivá para ocultarlo del selector.",
+      };
+
+    case "ARTICLE_BRAND":
+      return {
+        modalSubtitle: "Definí marcas para clasificar artículos del catálogo.",
+        nameLabel: "Marca",
+        namePlaceholder: "Ej: Pandora, Swarovski, Genérica",
+        nameHint: "Nombre visible en el campo Marca del artículo.",
+        statusHint: "Desactivá para ocultarla sin borrar el historial.",
+      };
+
+    case "ARTICLE_MANUFACTURER":
+      return {
+        modalSubtitle: "Definí fabricantes o proveedores de fabricación para los artículos.",
+        nameLabel: "Fabricante",
+        namePlaceholder: "Ej: Fabricación propia, Importado, Tercero",
+        nameHint: "Nombre visible en el campo Fabricante del artículo.",
+        statusHint: "Desactivá para ocultarlo sin borrar el historial.",
+      };
+
+    case "UNIT_OF_MEASURE":
+      return {
+        modalSubtitle: "Definí unidades de medida para los artículos del catálogo.",
+        nameLabel: "Unidad",
+        namePlaceholder: "Ej: UND, KG, GR, MT, PAR",
+        nameHint: "Nombre corto visible en el campo Unidad de medida del artículo.",
+        statusHint: "Desactivá para ocultarla del selector.",
+      };
+
+    case "MULTIPLIER_BASE":
+      return {
+        modalSubtitle: "Definí bases de cálculo para el modo multiplicador (gramos, kilates, unidades, etc.).",
+        nameLabel: "Base",
+        namePlaceholder: "Ej: Gramos, Kilates, Unidades",
+        nameHint: "Nombre visible en el combo de base del multiplicador.",
+        statusHint: "Desactivá para ocultarla del selector.",
+      };
+
     default:
       return {
         modalSubtitle: "Completá los campos y guardá.",
@@ -117,5 +163,6 @@ export function itemToRow(it: CatalogItem): Row {
     sortOrder: it.sortOrder ?? 0,
     updatedAt: it.updatedAt,
     favorite: Boolean((it as any).isFavorite),
+    isSystem: it.isSystem,
   };
 }

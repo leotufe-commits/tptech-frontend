@@ -19,6 +19,7 @@ export type AttributeOption = {
   label: string;
   value: string;
   colorHex: string;
+  codeExtension: string;  // extensión para SKU de variante (ej. "A" → SKU padre + "A")
   sortOrder: number;
   isActive: boolean;
 };
@@ -83,6 +84,7 @@ export type OptionPayload = {
   label: string;
   value?: string;
   colorHex?: string;
+  codeExtension?: string;
   sortOrder?: number;
 };
 

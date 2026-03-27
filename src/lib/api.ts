@@ -26,7 +26,7 @@ function normalizeApiBase(raw: string) {
 }
 
 // normaliza: sin slash final + asegura /api en absolutos
-const API_URL = normalizeApiBase(RAW_API_URL);
+export const API_URL = normalizeApiBase(RAW_API_URL);
 
 // =========================
 // LEGACY TOKEN KEYS (solo compat)

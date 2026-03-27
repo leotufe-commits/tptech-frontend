@@ -7,6 +7,7 @@ import {
   ShoppingBag,
   Landmark,
   Settings,
+  BarChart2,
 } from "lucide-react";
 
 // ✅ IMPORT SIN EXTENSIÓN (correcto para Vite + TS)
@@ -81,6 +82,14 @@ export const SIDEBAR_NAV: NavItem[] = [
   { kind: "divider" },
 
   { kind: "link", label: "Finanzas", to: "/finanzas", icon: Landmark },
+  {
+    kind: "group",
+    label: "Reportes",
+    icon: BarChart2,
+    children: [
+      { label: "Rentabilidad", to: "/reportes/rentabilidad" },
+    ],
+  },
   { kind: "link", label: "Configuración", to: "/configuracion-sistema", icon: Settings },
 ];
 

@@ -34,6 +34,7 @@ export type PaymentMethodRow = {
   adjustmentValue: string | null;
   isFavorite: boolean;
   isActive: boolean;
+  isSystem: boolean;
   sortOrder: number;
   notes: string;
   deletedAt: string | null;

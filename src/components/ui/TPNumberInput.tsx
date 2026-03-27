@@ -69,8 +69,7 @@ function parseSmartNumber(raw: string) {
 
 function formatFixed(n: number, decimals?: number) {
   if (!Number.isFinite(n)) return "";
-  if (typeof decimals !== "number") return String(n).replace(".", ",");
-  return n.toFixed(decimals).replace(".", ",");
+  return n.toFixed(typeof decimals === "number" ? decimals : 2);
 }
 
 function pow10(decimals?: number) {
@@ -139,6 +138,11 @@ export default function TPNumberInput({
   const [isEditing, setIsEditing] = useState(false);
   const [draft, setDraft] = useState<string>("");
 
+  // Rastrea el último valor que nosotros emitimos via onChange.
+  // Si llega un value distinto, es un cambio externo del padre → sincronizar siempre,
+  // sin importar si isEditing es true.
+  const lastEmittedRef = useRef<number | null>(value ?? null);
+
   const stepSafe = useMemo(() => {
     const s = Number(step);
     return Number.isFinite(s) && s > 0 ? s : 1;
@@ -147,12 +151,26 @@ export default function TPNumberInput({
   const p = useMemo(() => pow10(decimals), [decimals]);
 
   useEffect(() => {
-    if (isEditing) return;
+    const isExternalChange = value !== lastEmittedRef.current;
 
-    if (typeof value === "number" && Number.isFinite(value)) {
-      setDraft(formatFixed(value, decimals));
-    } else {
-      setDraft("");
+    if (isExternalChange) {
+      // El padre cambió value independientemente (variante, catálogo, moneda).
+      // Sincronizar draft incondicionalmente y salir del modo edición.
+      lastEmittedRef.current = value ?? null;
+      if (isEditing) setIsEditing(false);
+      setDraft(
+        typeof value === "number" && Number.isFinite(value)
+          ? formatFixed(value, decimals)
+          : ""
+      );
+    } else if (!isEditing) {
+      // El cambio viene de nosotros mismos (eco del onChange), solo sincronizar
+      // si no estamos editando activamente.
+      setDraft(
+        typeof value === "number" && Number.isFinite(value)
+          ? formatFixed(value, decimals)
+          : ""
+      );
     }
   }, [value, decimals, isEditing]);
 
@@ -168,13 +186,16 @@ export default function TPNumberInput({
         typeof max === "number" && Number.isFinite(max) ? toScaled(max, p) : undefined;
 
       s = clampScaled(s, minS, maxS);
-      onChange(fromScaled(s, p));
+      const result = fromScaled(s, p);
+      lastEmittedRef.current = result;
+      onChange(result);
       return;
     }
 
     let v = next;
     if (typeof min === "number" && Number.isFinite(min) && v < min) v = min;
     if (typeof max === "number" && Number.isFinite(max) && v > max) v = max;
+    lastEmittedRef.current = v;
     onChange(v);
   }
 
@@ -296,6 +317,7 @@ export default function TPNumberInput({
 
             const raw = String(draft ?? "");
             if (raw.trim() === "" || raw === "-") {
+              lastEmittedRef.current = null;
               onChange(null);
               setDraft("");
               return;

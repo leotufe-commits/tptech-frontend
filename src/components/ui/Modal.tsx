@@ -1,5 +1,6 @@
 // tptech-frontend/src/components/ui/Modal.tsx
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { X } from "lucide-react";
 import { cn } from "./tp";
 
@@ -28,7 +29,7 @@ import { cn } from "./tp";
 
 let __tp_modal_stack: string[] = [];
 
-type MaxWidth = "sm" | "md" | "lg" | "xl" | "2xl" | "3xl" | "4xl" | "6xl";
+type MaxWidth = "sm" | "md" | "lg" | "xl" | "2xl" | "3xl" | "4xl" | "6xl" | "7xl";
 
 function maxWidthClass(maxWidth?: MaxWidth, wide?: boolean) {
   if (!maxWidth) return wide ? "max-w-6xl" : "max-w-4xl";
@@ -41,6 +42,7 @@ function maxWidthClass(maxWidth?: MaxWidth, wide?: boolean) {
   if (maxWidth === "3xl") return "max-w-3xl";
   if (maxWidth === "4xl") return "max-w-4xl";
   if (maxWidth === "6xl") return "max-w-6xl";
+  if (maxWidth === "7xl") return "max-w-7xl";
   return wide ? "max-w-6xl" : "max-w-4xl";
 }
 
@@ -390,6 +392,10 @@ export function Modal({
     // no robarlo — los portales React propagan eventos por el árbol React aunque estén en body
     if (active && active.closest?.('[role="dialog"][aria-modal="true"]')) return;
 
+    // ✅ si el foco fue al portal de TPComboFixed o TPComboCreatable (renderizado en body),
+    // no robarlo — el usuario está interactuando con el dropdown
+    if (active && active.closest?.('[data-tp-portal]')) return;
+
     const best = pickBest(root);
     (best ?? headerRef.current)?.focus?.();
   }
@@ -448,12 +454,12 @@ export function Modal({
   const defaultOverlayClass = stackSize > 1 ? "bg-black/25" : "bg-black/40";
   const overlayClass = overlayClassName ?? defaultOverlayClass;
 
-  const zBase = 50 + depth * 10;
+  const zBase = 1000 + depth * 10;
   const wCls = maxWidthClass(maxWidth, wide);
 
   const hasMeta = Boolean(subtitle || description);
 
-  return (
+  return createPortal(
     <div className="fixed inset-0" style={{ zIndex: zBase }} onFocusCapture={onFocusCapture}>
       {/* overlay */}
       <div
@@ -594,7 +600,8 @@ export function Modal({
           ) : null}
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }
 

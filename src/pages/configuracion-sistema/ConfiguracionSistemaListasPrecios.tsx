@@ -403,6 +403,7 @@ export default function ConfiguracionSistemaListasPrecios() {
         onSort={() => setSortDir((d) => (d === "asc" ? "desc" : "asc"))}
         loading={loading}
         emptyText={search ? "Sin resultados." : "No hay listas de precios creadas."}
+        pagination
         countLabel={(n) => `${n} ${n === 1 ? "lista" : "listas"}`}
         actions={
           <TPButton

@@ -14,6 +14,7 @@ export type CommercialApplyOn = "TOTAL" | "METAL" | "HECHURA" | "METAL_Y_HECHURA
 export type TaxOverrideMode = "INHERIT" | "EXEMPT" | "CUSTOM_RATE";
 export type BalanceEntryType = "INVOICE" | "PAYMENT" | "CREDIT_NOTE" | "DEBIT_NOTE" | "ADJUSTMENT";
 export type EntityRole = "CLIENT" | "SUPPLIER";
+export type EntityRelationType = "CLIENT_OF" | "SUPPLIES_TO" | "SAME_GROUP" | "RELATED_COMPANY" | "REFERRED_BY" | "OTHER";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -22,6 +23,7 @@ export type EntityAddress = {
   id: string;
   type: AddressType;
   label: string;
+  attn: string;
   street: string;
   streetNumber: string;
   floor: string;
@@ -40,6 +42,7 @@ export type EntityContact = {
   lastName: string;
   position: string;
   email: string;
+  phonePrefix: string;
   phone: string;
   whatsapp: string;
   isPrimary: boolean;
@@ -110,9 +113,15 @@ export type EntityRow = {
   balanceType: BalanceType;
   priceListId: string | null;
   currencyId: string | null;
+  paymentTerm: string;
+  commercialApplyOn: CommercialApplyOn | null;
+  commercialRuleType: CommercialRuleType | null;
+  commercialValueType: CommercialValueType | null;
+  commercialValue: string | null;
   isActive: boolean;
   sourceType: EntitySourceType;
   mergedIntoEntityId: string | null;
+  hasRelations: boolean;
   createdAt: string;
   updatedAt: string;
 };
@@ -142,6 +151,7 @@ export type EntityListResponse = {
 export type EntityAddressPayload = {
   type: AddressType;
   label?: string;
+  attn?: string;
   street?: string;
   streetNumber?: string;
   floor?: string;
@@ -158,6 +168,7 @@ export type EntityContactPayload = {
   lastName?: string;
   position?: string;
   email?: string;
+  phonePrefix?: string;
   phone?: string;
   whatsapp?: string;
   isPrimary?: boolean;
@@ -207,6 +218,11 @@ export type EntityPayload = {
   balanceType?: BalanceType;
   priceListId?: string | null;
   currencyId?: string | null;
+  commercialApplyOn?: CommercialApplyOn | null;
+  commercialRuleType?: CommercialRuleType | null;
+  commercialValueType?: CommercialValueType | null;
+  commercialValue?: string | null;
+  paymentTerm?: string;
   creditLimitClient?: string | null;
   creditLimitSupplier?: string | null;
   notes?: string;
@@ -222,6 +238,8 @@ export const commercialEntitiesApi = {
     skip?: number;
     take?: number;
     showInactive?: boolean;
+    sortKey?: string;
+    sortDir?: "asc" | "desc";
   }) => {
     const qs = new URLSearchParams();
     if (params?.role) qs.set("role", params.role);
@@ -229,6 +247,8 @@ export const commercialEntitiesApi = {
     if (params?.skip != null) qs.set("skip", String(params.skip));
     if (params?.take != null) qs.set("take", String(params.take));
     if (params?.showInactive) qs.set("showInactive", "true");
+    if (params?.sortKey) qs.set("sortKey", params.sortKey);
+    if (params?.sortDir) qs.set("sortDir", params.sortDir);
     const query = qs.toString() ? `?${qs.toString()}` : "";
     return apiFetch<EntityListResponse>(`/commercial-entities${query}`, {
       method: "GET",
@@ -267,6 +287,12 @@ export const commercialEntitiesApi = {
       method: "DELETE",
       on401: "throw",
     }),
+
+  bulkDelete: (ids: string[]) =>
+    apiFetch<{ deleted: number; blocked: number; skipped: number }>(
+      "/commercial-entities/bulk-delete",
+      { method: "POST", body: { ids }, on401: "throw" }
+    ),
 
   // Avatar
   avatar: {
@@ -381,4 +407,183 @@ export const COMMERCIAL_APPLY_ON_LABELS: Record<CommercialApplyOn, string> = {
   METAL: "Precio metal",
   HECHURA: "Solo hechura",
   METAL_Y_HECHURA: "Precio metal y hechura",
+};
+
+export const ENTITY_RELATION_TYPE_LABELS: Record<EntityRelationType, string> = {
+  CLIENT_OF:       "Es cliente de",
+  SUPPLIES_TO:     "Provee a",
+  SAME_GROUP:      "Mismo grupo / holding",
+  RELATED_COMPANY: "Empresa relacionada",
+  REFERRED_BY:     "Referido por",
+  OTHER:           "Otra relación",
+};
+
+// ---------------------------------------------------------------------------
+// New types
+// ---------------------------------------------------------------------------
+export type EntityMermaOverride = {
+  id: string;
+  variantId: string;
+  role: EntityRole;
+  mermaPercent: string;
+  notes: string;
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string;
+  variant: {
+    id: string;
+    name: string;
+    sku: string;
+    purity: string;
+    isFavorite: boolean;
+    isActive: boolean;
+    metal: { id: string; name: string; symbol: string };
+  };
+};
+
+export type EntityRelationRow = {
+  id: string;
+  fromEntityId: string;
+  toEntityId: string;
+  relationType: EntityRelationType;
+  notes: string;
+  isActive: boolean;
+  createdAt: string;
+  fromEntity: { id: string; displayName: string; code: string; avatarUrl: string; isClient: boolean; isSupplier: boolean };
+  toEntity:   { id: string; displayName: string; code: string; avatarUrl: string; isClient: boolean; isSupplier: boolean };
+};
+
+export type MergePreview = {
+  source: { id: string; displayName: string; code: string; avatarUrl: string };
+  target: { id: string; displayName: string; code: string; avatarUrl: string };
+  impact: { addresses: number; contacts: number; attachments: number; rules: number; balanceEntries: number };
+};
+
+export type BulkImportRowResult = {
+  row: number;
+  displayName: string;
+  status: "created" | "updated" | "skipped" | "error";
+  message?: string;
+  id?: string;
+};
+
+export type BulkImportResponse = {
+  results: BulkImportRowResult[];
+  summary: { created: number; updated: number; skipped: number; errors: number };
+};
+
+// Import v2
+export type ImportPreviewRow = {
+  index:       number;
+  displayName: string;
+  status:      "valid" | "existing" | "error";
+  errors:      string[];
+  existingId?: string;
+};
+
+export type ImportPreviewResponse = {
+  total:    number;
+  valid:    number;
+  errors:   number;
+  new:      number;
+  existing: number;
+  rows:     ImportPreviewRow[];
+};
+
+export type ImportCommitRow = {
+  row:         number;
+  displayName: string;
+  status:      "created" | "updated" | "skipped" | "error";
+  errors?:     string[];
+  message?:    string;
+  id?:         string;
+};
+
+export type ImportCommitResponse = {
+  results: ImportCommitRow[];
+  summary: { created: number; updated: number; skipped: number; errors: number };
+};
+
+// ---------------------------------------------------------------------------
+// Extended API
+// ---------------------------------------------------------------------------
+export const commercialEntitiesExtApi = {
+  // Merma overrides
+  merma: {
+    list: (entityId: string) =>
+      apiFetch<EntityMermaOverride[]>(`/commercial-entities/${entityId}/merma-overrides`, { method: "GET", on401: "throw" }),
+    upsert: (entityId: string, data: { variantId: string; role: EntityRole; mermaPercent: number; notes?: string; isActive?: boolean }) =>
+      apiFetch<EntityMermaOverride>(`/commercial-entities/${entityId}/merma-overrides`, { method: "PUT", body: data, on401: "throw" }),
+    remove: (entityId: string, overrideId: string) =>
+      apiFetch<{ id: string }>(`/commercial-entities/${entityId}/merma-overrides/${overrideId}`, { method: "DELETE", on401: "throw" }),
+  },
+
+  // Relations
+  relations: {
+    list: (entityId: string) =>
+      apiFetch<EntityRelationRow[]>(`/commercial-entities/${entityId}/relations`, { method: "GET", on401: "throw" }),
+    add: (entityId: string, data: { targetEntityId: string; relationType?: EntityRelationType; notes?: string }) =>
+      apiFetch<EntityRelationRow>(`/commercial-entities/${entityId}/relations`, { method: "POST", body: data, on401: "throw" }),
+    remove: (entityId: string, relationId: string) =>
+      apiFetch<{ id: string }>(`/commercial-entities/${entityId}/relations/${relationId}`, { method: "DELETE", on401: "throw" }),
+  },
+
+  // Merge
+  merge: {
+    preview: (sourceId: string, targetId: string) =>
+      apiFetch<MergePreview>(`/commercial-entities/merge-preview/${sourceId}/${targetId}`, { method: "GET", on401: "throw" }),
+    execute: (sourceId: string, targetId: string) =>
+      apiFetch<{ ok: boolean; sourceId: string; targetId: string; mergedAt: string }>(
+        `/commercial-entities/merge-into/${sourceId}/${targetId}`,
+        { method: "POST", on401: "throw" }
+      ),
+  },
+
+  // Bulk import (legacy)
+  bulkImport: (data: {
+    rows: Record<string, string>[];
+    dryRun: boolean;
+    mode: "create" | "update" | "upsert";
+    role: "client" | "supplier" | "both";
+    matchBy: "documentNumber" | "email" | "displayName";
+  }) =>
+    apiFetch<BulkImportResponse>("/commercial-entities/bulk-import", { method: "POST", body: data, on401: "throw" }),
+
+  // Export
+  downloadExport: async (type: "clients" | "suppliers", format: "csv" | "xlsx"): Promise<void> => {
+    const { API_URL } = await import("../lib/api");
+    const url = `${API_URL}/commercial-entities/export?type=${type}&format=${format}`;
+    const res = await fetch(url, { credentials: "include" });
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      let msg = `Error ${res.status}`;
+      try { msg = (JSON.parse(text) as any)?.message ?? msg; } catch {}
+      throw new Error(msg);
+    }
+    const blob = await res.blob();
+    const disposition = res.headers.get("Content-Disposition") ?? "";
+    const match = disposition.match(/filename="?([^";\n]+)"?/);
+    const date  = new Date().toISOString().slice(0, 10);
+    const defaultName = `${type === "clients" ? "clientes" : "proveedores"}-${date}.${format}`;
+    const filename = match?.[1] ?? defaultName;
+    const objUrl = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = objUrl; a.download = filename; a.click();
+    URL.revokeObjectURL(objUrl);
+  },
+
+  // Import v2
+  importPreview: (data: {
+    rows: Record<string, string>[];
+    role: "client" | "supplier" | "both";
+  }) =>
+    apiFetch<ImportPreviewResponse>("/commercial-entities/import/preview", { method: "POST", body: data, on401: "throw" }),
+
+  importCommit: (data: {
+    rows: Record<string, string>[];
+    mode: "create" | "update" | "upsert";
+    role: "client" | "supplier" | "both";
+    matchBy: "documentNumber" | "email";
+  }) =>
+    apiFetch<ImportCommitResponse>("/commercial-entities/import/commit", { method: "POST", body: data, on401: "throw" }),
 };

@@ -81,6 +81,7 @@ export function VendedoresTable({
           Nuevo vendedor
         </TPButton>
       }
+      pagination
       onRowClick={(row) => onView(row)}
       renderRow={(row, vis) => (
         <TPTr key={row.id} className={!row.isActive ? "opacity-60" : undefined}>

@@ -1,5 +1,5 @@
-import React, { useState } from "react";
-import { Plus, Pencil, Trash2, Star, Mail, Phone, MessageCircle } from "lucide-react";
+import React, { useEffect, useState } from "react";
+import { Plus, Pencil, Trash2, Star, Mail, Phone, Users, X, Save } from "lucide-react";
 import { TPButton } from "../../../components/ui/TPButton";
 import { TPCard } from "../../../components/ui/TPCard";
 import { TPField } from "../../../components/ui/TPField";
@@ -7,10 +7,11 @@ import TPInput from "../../../components/ui/TPInput";
 import TPTextarea from "../../../components/ui/TPTextarea";
 import { TPIconButton } from "../../../components/ui/TPIconButton";
 import { TPBadge } from "../../../components/ui/TPBadges";
-import { TPCheckbox } from "../../../components/ui/TPCheckbox";
+import TPComboCreatable from "../../../components/ui/TPComboCreatable";
 import { Modal } from "../../../components/ui/Modal";
 import ConfirmDeleteDialog from "../../../components/ui/ConfirmDeleteDialog";
 import { toast } from "../../../lib/toast";
+import { useCatalog } from "../../../hooks/useCatalog";
 import {
   commercialEntitiesApi,
   type EntityContact,
@@ -21,10 +22,19 @@ import {
 // Types
 // ---------------------------------------------------------------------------
 interface Props {
-  entityId: string;
-  data: EntityContact[];
-  loading: boolean;
-  onReload: () => void;
+  entityId?: string;
+  data?: EntityContact[];
+  loading?: boolean;
+  onReload?: () => void;
+  /** Modo offline (CREATE): ítems gestionados localmente sin llamadas a API */
+  offlineItems?: EntityContact[];
+  onOfflineItemsChange?: (items: EntityContact[]) => void;
+  /** Incrementar para abrir el modal de agregar desde afuera */
+  openAddTrigger?: number;
+  /** Ocultar el label de conteo cuando el padre ya lo muestra */
+  hideCountLabel?: boolean;
+  /** Ocultar el header completo (conteo + botón) cuando el padre provee su propio header */
+  hideHeader?: boolean;
 }
 
 type ContactDraft = {
@@ -32,6 +42,7 @@ type ContactDraft = {
   lastName: string;
   position: string;
   email: string;
+  phonePrefix: string;
   phone: string;
   whatsapp: string;
   isPrimary: boolean;
@@ -45,6 +56,7 @@ const EMPTY_DRAFT: ContactDraft = {
   lastName: "",
   position: "",
   email: "",
+  phonePrefix: "",
   phone: "",
   whatsapp: "",
   isPrimary: false,
@@ -53,10 +65,26 @@ const EMPTY_DRAFT: ContactDraft = {
   notes: "",
 };
 
+
 // ---------------------------------------------------------------------------
 // Component
 // ---------------------------------------------------------------------------
-export function TabContacts({ entityId, data, loading, onReload }: Props) {
+export function TabContacts({
+  entityId,
+  data = [],
+  loading = false,
+  onReload,
+  offlineItems,
+  onOfflineItemsChange,
+  openAddTrigger,
+  hideCountLabel = false,
+  hideHeader = false,
+}: Props) {
+  const prefixCat = useCatalog("PHONE_PREFIX");
+
+  const isOffline = !!onOfflineItemsChange;
+  const effectiveData = isOffline ? (offlineItems ?? []) : data;
+
   const [modalOpen, setModalOpen] = useState(false);
   const [modalMode, setModalMode] = useState<"create" | "edit">("create");
   const [editingContact, setEditingContact] = useState<EntityContact | null>(null);
@@ -69,6 +97,11 @@ export function TabContacts({ entityId, data, loading, onReload }: Props) {
   const [busyDelete, setBusyDelete] = useState(false);
 
   const [busyPrimary, setBusyPrimary] = useState<string | null>(null);
+
+  useEffect(() => {
+    if ((openAddTrigger ?? 0) > 0) openCreate();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [openAddTrigger]);
 
   function set<K extends keyof ContactDraft>(key: K, val: ContactDraft[K]) {
     setDraft((p) => ({ ...p, [key]: val }));
@@ -88,6 +121,7 @@ export function TabContacts({ entityId, data, loading, onReload }: Props) {
       lastName: c.lastName,
       position: c.position,
       email: c.email,
+      phonePrefix: c.phonePrefix ?? "",
       phone: c.phone,
       whatsapp: c.whatsapp,
       isPrimary: c.isPrimary,
@@ -105,18 +139,59 @@ export function TabContacts({ entityId, data, loading, onReload }: Props) {
     setSubmitted(true);
     if (!draft.firstName.trim() && !draft.lastName.trim()) return;
 
+    // ── Offline mode ───────────────────────────────────────────────────────
+    if (isOffline) {
+      const newItem: EntityContact = {
+        id: modalMode === "edit" ? editingContact!.id : `_draft_${Date.now()}`,
+        firstName: draft.firstName.trim(),
+        lastName: draft.lastName.trim(),
+        position: draft.position.trim(),
+        email: draft.email.trim(),
+        phonePrefix: draft.phonePrefix,
+        phone: draft.phone.trim(),
+        whatsapp: draft.whatsapp.trim(),
+        isPrimary: draft.isPrimary,
+        receivesDocuments: draft.receivesDocuments,
+        receivesPaymentsOrCollections: draft.receivesPaymentsOrCollections,
+        portalAccess: false,
+        notes: draft.notes.trim(),
+        createdAt: modalMode === "edit" ? editingContact!.createdAt : new Date().toISOString(),
+      };
+
+      const current = offlineItems ?? [];
+      let updated: EntityContact[];
+
+      if (modalMode === "create") {
+        // Si el nuevo es primary, quitar primary de los demás
+        const base = newItem.isPrimary
+          ? current.map((c) => ({ ...c, isPrimary: false }))
+          : [...current];
+        updated = [...base, newItem];
+      } else {
+        updated = current.map((c) => c.id === newItem.id ? newItem : c);
+        if (newItem.isPrimary) {
+          updated = updated.map((c) => c.id !== newItem.id ? { ...c, isPrimary: false } : c);
+        }
+      }
+
+      onOfflineItemsChange!(updated);
+      setModalOpen(false);
+      return;
+    }
+
+    // ── Live mode ──────────────────────────────────────────────────────────
     const payload: EntityContactPayload = { ...draft };
     setBusySave(true);
     try {
       if (modalMode === "create") {
-        await commercialEntitiesApi.contacts.create(entityId, payload);
+        await commercialEntitiesApi.contacts.create(entityId!, payload);
         toast.success("Contacto agregado.");
       } else {
-        await commercialEntitiesApi.contacts.update(entityId, editingContact!.id, payload);
+        await commercialEntitiesApi.contacts.update(entityId!, editingContact!.id, payload);
         toast.success("Contacto actualizado.");
       }
       setModalOpen(false);
-      onReload();
+      onReload?.();
     } catch (e: any) {
       toast.error(e?.message || "Error al guardar.");
     } finally {
@@ -125,11 +200,20 @@ export function TabContacts({ entityId, data, loading, onReload }: Props) {
   }
 
   async function handleSetPrimary(c: EntityContact) {
+    // ── Offline mode ───────────────────────────────────────────────────────
+    if (isOffline) {
+      onOfflineItemsChange!(
+        (offlineItems ?? []).map((item) => ({ ...item, isPrimary: item.id === c.id }))
+      );
+      return;
+    }
+
+    // ── Live mode ──────────────────────────────────────────────────────────
     setBusyPrimary(c.id);
     try {
-      await commercialEntitiesApi.contacts.setPrimary(entityId, c.id);
+      await commercialEntitiesApi.contacts.setPrimary(entityId!, c.id);
       toast.success("Contacto principal actualizado.");
-      onReload();
+      onReload?.();
     } catch (e: any) {
       toast.error(e?.message || "Error al actualizar.");
     } finally {
@@ -139,21 +223,29 @@ export function TabContacts({ entityId, data, loading, onReload }: Props) {
 
   async function handleDelete() {
     if (!deleteTarget) return;
+
+    // ── Offline mode ───────────────────────────────────────────────────────
+    if (isOffline) {
+      onOfflineItemsChange!((offlineItems ?? []).filter((c) => c.id !== deleteTarget.id));
+      setDeleteOpen(false);
+      setDeleteTarget(null);
+      return;
+    }
+
+    // ── Live mode ──────────────────────────────────────────────────────────
     setBusyDelete(true);
     try {
-      await commercialEntitiesApi.contacts.remove(entityId, deleteTarget.id);
+      await commercialEntitiesApi.contacts.remove(entityId!, deleteTarget.id);
       toast.success("Contacto eliminado.");
       setDeleteOpen(false);
       setDeleteTarget(null);
-      onReload();
+      onReload?.();
     } catch (e: any) {
       toast.error(e?.message || "Error al eliminar.");
     } finally {
       setBusyDelete(false);
     }
   }
-
-  const isCurrentlyPrimary = modalMode === "edit" && editingContact?.isPrimary;
 
   // ---------------------------------------------------------------------------
   // Render
@@ -165,22 +257,29 @@ export function TabContacts({ entityId, data, loading, onReload }: Props) {
   return (
     <div className="space-y-3">
       {/* Header */}
-      <div className="flex items-center justify-between">
-        <span className="text-sm text-muted">{data.length} {data.length === 1 ? "contacto" : "contactos"}</span>
-        <TPButton variant="primary" onClick={openCreate} iconLeft={<Plus size={15} />} className="h-8">
-          Agregar contacto
-        </TPButton>
-      </div>
+      {!hideHeader && (
+        <div className="flex items-center justify-between">
+          {!hideCountLabel && (
+            <span className="text-sm text-muted">{effectiveData.length} {effectiveData.length === 1 ? "contacto" : "contactos"}</span>
+          )}
+          <div className={hideCountLabel ? "ml-auto" : ""}>
+            <TPButton variant="primary" onClick={openCreate} iconLeft={<Plus size={15} />} className="h-8">
+              Agregar contacto
+            </TPButton>
+          </div>
+        </div>
+      )}
 
       {/* Empty state */}
-      {data.length === 0 && (
-        <div className="py-12 text-center text-sm text-muted">
-          No hay contactos registrados.
+      {effectiveData.length === 0 && (
+        <div className="flex flex-col items-center gap-1.5 py-5 text-center">
+          <Users size={18} className="text-border" />
+          <span className="text-xs text-muted">No hay contactos registrados.</span>
         </div>
       )}
 
       {/* List */}
-      {data.map((c) => (
+      {effectiveData.map((c) => (
         <TPCard key={c.id} className="p-4">
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0 flex-1">
@@ -209,40 +308,24 @@ export function TabContacts({ entityId, data, loading, onReload }: Props) {
                 )}
                 {c.phone && (
                   <span className="flex items-center gap-1 text-xs text-muted">
-                    <Phone size={11} /> {c.phone}
-                  </span>
-                )}
-                {c.whatsapp && (
-                  <span className="flex items-center gap-1 text-xs text-muted">
-                    <MessageCircle size={11} /> {c.whatsapp}
+                    <Phone size={11} /> {[c.phonePrefix, c.phone].filter(Boolean).join(" ")}
                   </span>
                 )}
               </div>
-
-              {/* Flags */}
-              {(c.receivesDocuments || c.receivesPaymentsOrCollections) && (
-                <div className="flex flex-wrap gap-1.5 mt-1.5">
-                  {c.receivesDocuments && (
-                    <TPBadge tone="neutral" size="sm">Recibe documentos</TPBadge>
-                  )}
-                  {c.receivesPaymentsOrCollections && (
-                    <TPBadge tone="neutral" size="sm">Recibe pagos/cobros</TPBadge>
-                  )}
-                </div>
-              )}
             </div>
 
             {/* Actions */}
             <div className="flex items-center gap-1 shrink-0">
-              {!c.isPrimary && (
-                <TPIconButton
-                  title="Marcar como principal"
-                  disabled={busyPrimary === c.id}
-                  onClick={() => handleSetPrimary(c)}
-                >
-                  <Star size={14} />
-                </TPIconButton>
-              )}
+              <TPIconButton
+                title={c.isPrimary ? "Contacto principal" : "Marcar como principal"}
+                disabled={busyPrimary === c.id || c.isPrimary}
+                onClick={() => !c.isPrimary && handleSetPrimary(c)}
+              >
+                <Star
+                  size={14}
+                  className={c.isPrimary ? "fill-yellow-400 text-yellow-400" : undefined}
+                />
+              </TPIconButton>
               <TPIconButton title="Editar" onClick={() => openEdit(c)}>
                 <Pencil size={14} />
               </TPIconButton>
@@ -262,64 +345,50 @@ export function TabContacts({ entityId, data, loading, onReload }: Props) {
         open={modalOpen}
         onClose={() => !busySave && setModalOpen(false)}
         title={modalMode === "create" ? "Agregar contacto" : "Editar contacto"}
-        maxWidth="lg"
+        maxWidth="xl"
       >
         <div className="space-y-4 p-1">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            <TPField label="Nombre">
+              <TPInput value={draft.firstName} onChange={(v) => set("firstName", v)} disabled={busySave} placeholder="Juan" />
+            </TPField>
             <TPField
               label="Apellido"
               error={submitted && !draft.firstName.trim() && !draft.lastName.trim() ? "Requerido." : null}
             >
               <TPInput value={draft.lastName} onChange={(v) => set("lastName", v)} disabled={busySave} placeholder="García" />
             </TPField>
-            <TPField label="Nombre">
-              <TPInput value={draft.firstName} onChange={(v) => set("firstName", v)} disabled={busySave} placeholder="Juan" />
+            <TPField label="Cargo / Puesto">
+              <TPInput value={draft.position} onChange={(v) => set("position", v)} disabled={busySave} placeholder="Gerente de compras" />
             </TPField>
           </div>
-
-          <TPField label="Cargo / Puesto">
-            <TPInput value={draft.position} onChange={(v) => set("position", v)} disabled={busySave} placeholder="Gerente de compras" />
-          </TPField>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             <TPField label="Email">
               <TPInput type="email" value={draft.email} onChange={(v) => set("email", v)} disabled={busySave} placeholder="contacto@empresa.com" />
             </TPField>
             <TPField label="Teléfono">
-              <TPInput value={draft.phone} onChange={(v) => set("phone", v)} disabled={busySave} placeholder="+54 11 1234 5678" />
+              <div className="flex gap-2">
+                <div className="w-28 shrink-0">
+                  <TPComboCreatable
+                    type="PHONE_PREFIX"
+                    items={prefixCat.items}
+                    loading={prefixCat.loading}
+                    value={draft.phonePrefix}
+                    onChange={(v) => set("phonePrefix", v)}
+                    placeholder="+54"
+                    disabled={busySave}
+                    allowCreate
+                    onRefresh={() => void prefixCat.refresh()}
+                    onCreate={async (label) => { await prefixCat.createItem(label); set("phonePrefix", label); }}
+                    mode="edit"
+                  />
+                </div>
+                <div className="flex-1">
+                  <TPInput value={draft.phone} onChange={(v) => set("phone", v)} disabled={busySave} placeholder="11 1234 5678" />
+                </div>
+              </div>
             </TPField>
-          </div>
-
-          <TPField label="WhatsApp">
-            <TPInput value={draft.whatsapp} onChange={(v) => set("whatsapp", v)} disabled={busySave} placeholder="+54 9 11 1234 5678" />
-          </TPField>
-
-          <div className="space-y-2">
-            <TPCheckbox
-              checked={draft.isPrimary}
-              onChange={(v) => set("isPrimary", v)}
-              disabled={busySave || isCurrentlyPrimary}
-              label={
-                <span className="text-sm">
-                  Contacto principal
-                  {isCurrentlyPrimary && (
-                    <span className="text-xs text-muted ml-1">(para quitar, marcá otro como principal)</span>
-                  )}
-                </span>
-              }
-            />
-            <TPCheckbox
-              checked={draft.receivesDocuments}
-              onChange={(v) => set("receivesDocuments", v)}
-              disabled={busySave}
-              label={<span className="text-sm">Recibe documentos</span>}
-            />
-            <TPCheckbox
-              checked={draft.receivesPaymentsOrCollections}
-              onChange={(v) => set("receivesPaymentsOrCollections", v)}
-              disabled={busySave}
-              label={<span className="text-sm">Recibe pagos / cobros</span>}
-            />
           </div>
 
           <TPField label="Notas">
@@ -333,11 +402,11 @@ export function TabContacts({ entityId, data, loading, onReload }: Props) {
           </TPField>
 
           <div className="flex justify-end gap-2 pt-2">
-            <TPButton variant="secondary" onClick={() => setModalOpen(false)} disabled={busySave}>
+            <TPButton variant="secondary" onClick={() => setModalOpen(false)} disabled={busySave} iconLeft={<X size={14} />}>
               Cancelar
             </TPButton>
-            <TPButton variant="primary" onClick={handleSave} disabled={busySave}>
-              {busySave ? "Guardando…" : modalMode === "create" ? "Agregar" : "Guardar"}
+            <TPButton variant="primary" onClick={handleSave} disabled={busySave} iconLeft={busySave ? undefined : <Save size={14} />} loading={busySave}>
+              {modalMode === "create" ? "Agregar" : "Guardar"}
             </TPButton>
           </div>
         </div>

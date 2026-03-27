@@ -10,6 +10,7 @@ import {
   fetchRole,
   listRoles,
   renameRole,
+  updateRoleDisplayName,
   updateRolePermissions,
   extractPermissionIdsFromRoleDetail,
   type RoleLite,
@@ -84,7 +85,7 @@ const RoleRow = React.memo(function RoleRow({
           onEdit={canAdmin && !isEditingThis ? () => onOpenEdit(r) : undefined}
           onDelete={canAdmin && !isEditingThis ? () => onDelete(r) : () => {}}
           deleteDisabled={isSystem || isEditingThis}
-          deleteTitle={isSystem ? "No podés eliminar roles del sistema" : "Eliminar"}
+          deleteTitle={isSystem ? "Este rol es del sistema y no puede eliminarse." : "Eliminar"}
         />
       </td>
     </TPTr>
@@ -124,6 +125,7 @@ export default function RolesPage() {
   const [editInitialName, setEditInitialName] = useState("");
   const [editInitialPermIds, setEditInitialPermIds] = useState<string[]>([]);
   const [editPermissionsDisabled, setEditPermissionsDisabled] = useState(false);
+  const [editIsSystem, setEditIsSystem] = useState(false);
 
   const createNameRef = useRef<HTMLInputElement | null>(null);
   const editNameRef = useRef<HTMLInputElement | null>(null);
@@ -338,10 +340,17 @@ export default function RolesPage() {
       const reqId = ++editReqRef.current;
       setEditingRoleId(r.id);
 
-      const nameOnly = isOwnerRole(r);
-      setEditPermissionsDisabled(nameOnly);
+      const owner = isOwnerRole(r);
+      const system = Boolean(r.isSystem);
+      setEditIsSystem(system);
+      setEditPermissionsDisabled(owner); // solo OWNER: permisos bloqueados
 
-      setEditInitialName(r.name);
+      // Para roles de sistema mostramos el displayName (o el name si no hay displayName)
+      // Para roles personalizados mostramos el name directamente
+      const initialLabel = system
+        ? (r.displayName ?? r.name)
+        : r.name;
+      setEditInitialName(initialLabel);
       setEditInitialPermIds([]);
       setTarget(r);
 
@@ -383,8 +392,18 @@ export default function RolesPage() {
       setModalErr(null);
 
       try {
-        if (clean !== target.name) {
-          await renameRole(target.id, clean);
+        const system = Boolean(target.isSystem);
+        if (system) {
+          // Roles de sistema: actualizamos displayName (el name técnico nunca cambia)
+          const currentDisplay = String(target.displayName ?? target.name ?? "").trim();
+          if (clean !== currentDisplay) {
+            await updateRoleDisplayName(target.id, clean);
+          }
+        } else {
+          // Roles personalizados: actualizamos name
+          if (clean !== target.name) {
+            await renameRole(target.id, clean);
+          }
         }
 
         if (!editPermissionsDisabled) {
@@ -439,6 +458,7 @@ export default function RolesPage() {
         onSort={(key) => toggleSort(key as "ROLE" | "TYPE")}
         loading={loading}
         emptyText="No hay roles."
+        pagination
         countLabel={(n) => `${n} ${n === 1 ? "rol" : "roles"}`}
         renderRow={(r) => (
           <RoleRow
@@ -483,6 +503,7 @@ export default function RolesPage() {
         submitLabel="Guardar"
         nameInputRef={editNameRef}
         permissionsDisabled={editPermissionsDisabled}
+        isSystem={editIsSystem}
         errorMsg={modalErr}
         onClose={() => {
           setEditOpen(false);

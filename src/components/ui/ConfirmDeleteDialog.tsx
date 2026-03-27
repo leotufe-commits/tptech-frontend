@@ -1,5 +1,6 @@
 // src/components/ui/ConfirmDeleteDialog.tsx
 import React, { useEffect, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 import { Loader2, Trash2 } from "lucide-react";
 
 function cn(...classes: Array<string | false | null | undefined>) {
@@ -63,8 +64,8 @@ export default function ConfirmDeleteDialog({
 
   const desc = description ?? message ?? "Esta acción no se puede deshacer.";
 
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center px-4">
+  return createPortal(
+    <div className="fixed inset-0 flex items-center justify-center px-4" style={{ zIndex: 2000 }}>
       <div className="absolute inset-0 bg-black/40" onClick={isBusy ? undefined : onClose} />
 
       <div className="relative w-full max-w-lg rounded-2xl border border-border bg-surface p-5 shadow-xl">
@@ -136,6 +137,7 @@ export default function ConfirmDeleteDialog({
           </button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }

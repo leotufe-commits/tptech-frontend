@@ -1,5 +1,5 @@
 // tptech-frontend/src/components/ui/Avatar.tsx
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 
 /* utils locales */
 function browserOrigin() {
@@ -65,6 +65,8 @@ type Props = {
   rounded?: "full" | "xl";
   bust?: string | number;
   framed?: boolean;
+  /** Ícono/nodo a mostrar cuando no hay imagen (reemplaza las iniciales) */
+  fallbackIcon?: ReactNode;
 };
 
 export default function Avatar({
@@ -77,6 +79,7 @@ export default function Avatar({
   rounded = "full",
   bust,
   framed = true,
+  fallbackIcon,
 }: Props) {
   const [failed, setFailed] = useState(false);
 
@@ -122,6 +125,8 @@ export default function Avatar({
           onLoad={() => setFailed(false)}
           onError={() => setFailed(true)}
         />
+      ) : fallbackIcon ? (
+        <span className="text-muted/60">{fallbackIcon}</span>
       ) : (
         <span
           className="select-none font-bold text-primary"

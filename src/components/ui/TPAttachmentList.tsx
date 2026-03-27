@@ -1,6 +1,6 @@
 // src/components/ui/TPAttachmentList.tsx
 import React, { useState } from "react";
-import { Eye, Download, Trash2, FileText } from "lucide-react";
+import { Eye, Download, Trash2, FileText, FileImage, FileSpreadsheet, Film, Music, Archive } from "lucide-react";
 import { TPCard } from "./TPCard";
 import TPIconButton from "./TPIconButton";
 import { cn } from "./tp";
@@ -10,6 +10,8 @@ export type TPAttachmentItem = {
   name: string;
   size?: number;
   url?: string;
+  /** URL local (blob:// o data:) para preview antes de subir al servidor */
+  previewUrl?: string;
   mimeType?: string;
 };
 
@@ -34,15 +36,47 @@ function formatBytes(bytes?: number) {
 }
 
 function isImage(mime?: string, name?: string) {
-  const s = String(mime || name || "").toLowerCase();
+  const m = String(mime || "").toLowerCase();
+  const ext = String(name || "").split(".").pop()?.toLowerCase() ?? "";
   return (
-    s.startsWith("image/") ||
-    s.endsWith(".png") ||
-    s.endsWith(".jpg") ||
-    s.endsWith(".jpeg") ||
-    s.endsWith(".webp") ||
-    s.endsWith(".gif")
+    m.startsWith("image/") ||
+    ["png", "jpg", "jpeg", "webp", "gif", "svg"].includes(ext)
   );
+}
+
+function getFileIcon(mime?: string, name?: string) {
+  const m = String(mime || "").toLowerCase();
+  const ext = String(name || "").split(".").pop()?.toLowerCase() ?? "";
+
+  if (isImage(m, name))
+    return <FileImage className="h-4 w-4 text-blue-400" />;
+  if (m === "application/pdf" || ext === "pdf")
+    return <FileText className="h-4 w-4 text-red-400" />;
+  if (
+    m.includes("spreadsheet") ||
+    m.includes("excel") ||
+    ["xls", "xlsx", "csv"].includes(ext)
+  )
+    return <FileSpreadsheet className="h-4 w-4 text-green-500" />;
+  if (
+    m.includes("wordprocessingml") ||
+    m.includes("msword") ||
+    ["doc", "docx"].includes(ext)
+  )
+    return <FileText className="h-4 w-4 text-blue-500" />;
+  if (m.startsWith("video/") || ["mp4", "mov", "avi", "mkv"].includes(ext))
+    return <Film className="h-4 w-4 text-purple-400" />;
+  if (m.startsWith("audio/") || ["mp3", "wav", "ogg", "flac"].includes(ext))
+    return <Music className="h-4 w-4 text-yellow-400" />;
+  if (
+    m.includes("zip") ||
+    m.includes("rar") ||
+    m.includes("x-tar") ||
+    ["zip", "rar", "7z", "tar", "gz"].includes(ext)
+  )
+    return <Archive className="h-4 w-4 text-muted" />;
+
+  return <FileText className="h-4 w-4 text-muted" />;
 }
 
 export function TPAttachmentList({
@@ -66,24 +100,26 @@ export function TPAttachmentList({
       {items.map((item) => {
         const busy = Boolean(loading || (deletingId && deletingId === item.id));
         const img = isImage(item.mimeType, item.name);
-        const imgFailed = item.url ? failedUrls.has(item.url) : false;
+        // Para preview: prioriza previewUrl (blob local) sobre url (servidor)
+        const thumbSrc = item.previewUrl || item.url;
+        const imgFailed = thumbSrc ? failedUrls.has(thumbSrc) : false;
 
         return (
           <TPCard key={item.id} className="p-3 bg-card">
             <div className="flex items-center gap-3">
               {/* Preview */}
               <div className="h-10 w-10 shrink-0 overflow-hidden rounded-lg grid place-items-center border border-border bg-surface2">
-                {img && item.url && !imgFailed ? (
+                {img && thumbSrc && !imgFailed ? (
                   <img
-                    src={item.url}
+                    src={thumbSrc}
                     alt={item.name}
                     className="h-full w-full object-cover"
                     onError={() => {
-                      if (item.url) setFailedUrls((prev) => new Set(prev).add(item.url!));
+                      if (thumbSrc) setFailedUrls((prev) => new Set(prev).add(thumbSrc));
                     }}
                   />
                 ) : (
-                  <FileText className="h-4 w-4 text-muted" />
+                  getFileIcon(item.mimeType, item.name)
                 )}
               </div>
 

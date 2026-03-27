@@ -100,7 +100,7 @@ export default function TPAttachmentManager({
         items={items}
         deletingId={deletingId}
         onView={(item) => item.url && window.open(item.url, "_blank")}
-        onDownload={items.some((i) => i.url) ? downloadItem : undefined}
+        onDownload={downloadItem}
         onDelete={onDelete}
         emptyText={emptyText}
       />

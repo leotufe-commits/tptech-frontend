@@ -197,15 +197,10 @@ export default function TPComboCreatableMulti({
   }, [activeItems]);
 
   const suggestions = useMemo(() => {
-    const available = activeItems.filter(
+    return activeItems.filter(
       (it) => !selectedLower.includes(norm(getItemValue(it)).toLowerCase())
     );
-
-    if (!query.trim()) return available;
-
-    const q = query.trim().toLowerCase();
-    return available.filter((it) => norm(it.label).toLowerCase().includes(q));
-  }, [activeItems, selectedLower, query]);
+  }, [activeItems, selectedLower]);
 
   useEffect(() => {
     function onDoc(e: MouseEvent) {
@@ -250,6 +245,17 @@ export default function TPComboCreatableMulti({
     }
     setActiveIndex(suggestions.length ? 0 : -1);
   }, [open, suggestions]);
+
+  useEffect(() => {
+    if (!open || !query.trim()) return;
+    const q = query.trim().toLowerCase();
+    let idx = suggestions.findIndex((it) => norm(it.label).toLowerCase().startsWith(q));
+    if (idx === -1) idx = suggestions.findIndex((it) => norm(it.label).toLowerCase().includes(q));
+    if (idx >= 0) {
+      setActiveIndex(idx);
+      setTimeout(() => itemRefs.current[idx]?.scrollIntoView({ block: "nearest" }), 0);
+    }
+  }, [query, open, suggestions]);
 
   useEffect(() => {
     if (createOpen) {
@@ -527,11 +533,7 @@ export default function TPComboCreatableMulti({
               ))}
 
               {suggestions.length === 0 && !allowCreate && (
-                <div className="px-3 py-2 text-sm text-muted">
-                  {norm(query)
-                    ? `No hay coincidencias para "${norm(query)}".`
-                    : "Sin opciones disponibles"}
-                </div>
+                <div className="px-3 py-2 text-sm text-muted">Sin opciones disponibles</div>
               )}
 
               {allowCreate && (

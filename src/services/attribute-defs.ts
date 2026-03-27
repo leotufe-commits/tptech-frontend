@@ -8,6 +8,7 @@ export type AttributeDefOption = {
   label: string;
   value: string;
   colorHex: string;
+  codeExtension: string;  // extensión para SKU de variante
   sortOrder: number;
   isActive: boolean;
   createdAt: string;
@@ -48,6 +49,7 @@ export type AttributeDefOptionPayload = {
   label: string;
   value?: string;
   colorHex?: string;
+  codeExtension?: string;
   sortOrder?: number;
 };
 
@@ -88,6 +90,13 @@ export const attributeDefsApi = {
   createOption: (defId: string, data: AttributeDefOptionPayload) =>
     apiFetch<AttributeDefOption>(`/attribute-defs/${defId}/options`, {
       method: "POST",
+      body: data,
+      on401: "throw",
+    }),
+
+  updateOption: (optionId: string, data: AttributeDefOptionPayload) =>
+    apiFetch<AttributeDefOption>(`/attribute-defs/options/${optionId}`, {
+      method: "PUT",
       body: data,
       on401: "throw",
     }),

@@ -1,0 +1,74 @@
+/* src/styles/print-labels.css
+   CSS de impresión para el motor de etiquetas de TPTech.
+   Importar este archivo en el componente que genera la vista de impresión.
+   Estas reglas solo se aplican en contexto @media print. */
+
+/* ── Reset de página ────────────────────────────────────────────────────────── */
+@page {
+  margin: 0;
+  padding: 0;
+}
+
+/* ── Raíz del sheet de impresión ─────────────────────────────────────────────
+   Envuelve todas las páginas. En pantalla es invisible; en impresión se activa. */
+.label-sheet-print-root {
+  display: none;
+}
+
+@media print {
+  /* Ocultar el resto de la UI, mostrar solo la raíz de impresión */
+  body > *:not(.label-sheet-print-root) {
+    display: none !important;
+  }
+
+  .label-sheet-print-root {
+    display: block;
+    position: fixed;
+    inset: 0;
+    overflow: visible;
+    background: white;
+  }
+
+  body,
+  html {
+    margin:  0;
+    padding: 0;
+    background: white;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  /* ── Cada página de etiquetas ─────────────────────────────────────────────
+     page-break-after: always hace que cada .label-page comience en página nueva. */
+  .label-page {
+    page-break-after: always;
+    break-after: page;
+    position: relative;
+    overflow: hidden;
+  }
+
+  /* La última página no necesita salto */
+  .label-page:last-child {
+    page-break-after: avoid;
+    break-after: avoid;
+  }
+
+  /* ── Suprimir bordes de debug en impresión ────────────────────────────── */
+  .label-debug-border {
+    outline: none !important;
+    border:  none !important;
+  }
+}
+
+/* ── Utilidades de scroll para preview en pantalla ───────────────────────── */
+.label-preview-scroll {
+  overflow: auto;
+  max-height: 320px;
+  background: #f1f5f9;
+  border-radius: 6px;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+}

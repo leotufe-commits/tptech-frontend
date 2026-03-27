@@ -7,7 +7,12 @@ export type CatalogType =
   | "PHONE_PREFIX"
   | "CITY"
   | "PROVINCE"
-  | "COUNTRY";
+  | "COUNTRY"
+  | "PAYMENT_TERM"
+  | "ARTICLE_BRAND"
+  | "ARTICLE_MANUFACTURER"
+  | "UNIT_OF_MEASURE"
+  | "MULTIPLIER_BASE";
 
 export type CatalogItem = {
   id: string;
@@ -16,8 +21,8 @@ export type CatalogItem = {
   isActive: boolean;
   sortOrder: number;
 
-  // ✅ NUEVO: favorito (opcional para no romper DB vieja)
   isFavorite?: boolean;
+  isSystem?: boolean;
 
   createdAt?: string;
   updatedAt?: string;
@@ -93,5 +98,14 @@ export async function setCatalogItemFavorite(id: string, isFavorite: boolean) {
   return apiFetch<{ item: CatalogItem }>(`/company/catalogs/item/${id}/favorite`, {
     method: "PATCH",
     body: { isFavorite },
+  });
+}
+
+/**
+ * DELETE /company/catalogs/item/:id
+ */
+export async function deleteCatalogItem(id: string) {
+  return apiFetch<{ ok: boolean }>(`/company/catalogs/item/${id}`, {
+    method: "DELETE",
   });
 }

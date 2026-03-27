@@ -8,6 +8,7 @@ import {
   Copy,
   ShieldCheck,
   ShieldBan,
+  Combine,
 } from "lucide-react";
 import { cn } from "./tp";
 
@@ -34,6 +35,8 @@ export function TPRowActions({
   onDelete,
   deleteDisabled,
   deleteTitle,
+  onCombine,
+  combineTitle,
   extra,
   className,
 }: {
@@ -56,6 +59,10 @@ export function TPRowActions({
   deleteDisabled?: boolean;
   /** Tooltip personalizado del botón eliminar (por defecto: "Eliminar"). */
   deleteTitle?: string;
+  /** Acción "Combinar" — aparece entre Toggle y Eliminar. */
+  onCombine?: () => void;
+  /** Tooltip del botón combinar (por defecto: "Combinar"). */
+  combineTitle?: string;
   extra?: ReactNode;
   className?: string;
 }) {
@@ -70,12 +77,8 @@ export function TPRowActions({
           disabled={busyFavorite}
         >
           <Star
-            size={15}
-            className={
-              isFavorite
-                ? "fill-yellow-400 text-yellow-400"
-                : "text-muted"
-            }
+            size={16}
+            className={isFavorite ? "fill-yellow-400 text-yellow-400" : undefined}
           />
         </ActionBtn>
       )}
@@ -105,10 +108,16 @@ export function TPRowActions({
           disabled={busyToggle || toggleDisabled}
         >
           {isActive ? (
-            <ShieldCheck size={15} className="text-muted" />
+            <ShieldCheck size={16} />
           ) : (
-            <ShieldBan size={15} className="text-muted" />
+            <ShieldBan size={16} />
           )}
+        </ActionBtn>
+      )}
+
+      {onCombine && (
+        <ActionBtn title={combineTitle ?? "Combinar"} onClick={onCombine}>
+          <Combine size={16} />
         </ActionBtn>
       )}
 

@@ -22,6 +22,8 @@ import {
   BarChart3,
   LayoutGrid,
   Mail,
+  BadgePercent,
+  PackagePlus,
 } from "lucide-react";
 
 function cn(...classes: Array<string | false | null | undefined>) {
@@ -220,6 +222,18 @@ export default function ConfiguracionSistema() {
             title: "Categorías de artículos",
             desc: "Estructura del catálogo y organización.",
             icon: <Layers size={20} />,
+          },
+          {
+            to: "/configuracion-sistema/promociones",
+            title: "Promociones",
+            desc: "Descuentos especiales por tiempo o evento, aplicados con prioridad máxima en el punto de venta.",
+            icon: <BadgePercent size={20} />,
+          },
+          {
+            to: "/configuracion-sistema/descuentos-cantidad",
+            title: "Descuentos por cantidad",
+            desc: "Tramos de descuento automáticos según la cantidad vendida. Se activan en el punto de venta.",
+            icon: <PackagePlus size={20} />,
           },
         ],
       },

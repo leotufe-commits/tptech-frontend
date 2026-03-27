@@ -5,14 +5,14 @@ export const CLIENT_COL_LS_KEY = "tptech_col_clientes";
 export const SUPPLIER_COL_LS_KEY = "tptech_col_proveedores";
 
 export const ENTITY_COLS: TPColDef[] = [
-  { key: "nombre",    label: "Nombre",           canHide: false, sortKey: "displayName" },
-  { key: "roles",     label: "Rol" },
-  { key: "tipo",      label: "Tipo",              visible: false },
+  { key: "nombre",   label: "Nombre",          canHide: false, sortKey: "displayName" },
+  { key: "roles",    label: "Rol" },
   { key: "documento", label: "CUIT / DNI" },
-  { key: "contacto",  label: "Email / Teléfono",  sortKey: "email" },
-  { key: "iva",       label: "Cond. IVA",         visible: false },
-  { key: "estado",    label: "Estado" },
-  { key: "acciones",  label: "Acciones",          canHide: false, align: "right" },
+  { key: "contacto", label: "Contacto",         sortKey: "email" },
+  { key: "iva",      label: "Cond. IVA" },
+  { key: "termino",  label: "Término de pago",  visible: false },
+  { key: "estado",   label: "Estado" },
+  { key: "acciones", label: "Acciones",         canHide: false, align: "right" },
 ];
 
 export const EMPTY_DRAFT: EntityDraft = {

@@ -34,7 +34,7 @@ import {
 
 import { TPTECH_VALUATION_CHANGED, type ValuationChangedDetail } from "../../../services/valuation";
 
-import { fmtMoneySmart, fmtNumber2, fmtNumberSmart, fmtPurity2, purityKey2 } from "../../../lib/format";
+import { fmtMoneySmart, fmtNumber2, fmtNumberSmart, fmtPurity3, purityKey2 } from "../../../lib/format";
 
 import {
   type VarSortKey,
@@ -780,9 +780,9 @@ export default function MetalsAndVariantsPanel({
                       onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") setSelectedMetalId(m.id); }}
                       className={cn(
                         "w-full rounded-2xl border p-3 text-left transition relative overflow-hidden cursor-pointer",
-                        "focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-primary/20",
+                        "focus-visible:outline-none",
                         active
-                          ? "border-primary/50 bg-surface2 shadow-[0_0_0_1px_rgba(59,130,246,0.25)]"
+                          ? "border-primary/50 bg-surface2"
                           : "border-border bg-card hover:bg-surface2",
                         !isActive && "opacity-60"
                       )}
@@ -963,7 +963,7 @@ export default function MetalsAndVariantsPanel({
 
                                 {varColVis["purity"] !== false && (
                                   <TPTd label="Pureza / Ley" className="text-right tabular-nums">
-                                    <div className="text-text">{fmtPurity2(v.purity)}</div>
+                                    <div className="text-text">{fmtPurity3(v.purity)}</div>
                                     <div className="text-xs text-muted">{leyTxt === "—" ? "—" : `${leyTxt}/1000`}</div>
                                   </TPTd>
                                 )}

@@ -97,7 +97,7 @@ function Leaf({
           "focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-primary/20",
           isActive
             ? "bg-surface2 text-text border-border shadow-[0_2px_0_0_rgba(0,0,0,0.08)]"
-            : "bg-card text-muted border-border shadow-[0_1px_0_0_rgba(0,0,0,0.05)] hover:bg-surface2 hover:text-text"
+            : "bg-card text-text/70 border-border shadow-[0_1px_0_0_rgba(0,0,0,0.05)] hover:bg-surface2 hover:text-text"
         )
       }
       title={collapsed ? label : undefined}
@@ -117,11 +117,11 @@ function Leaf({
               className={cn(
                 "shrink-0",
                 collapsed ? "" : "ml-2",
-                isActive ? "text-primary" : "text-muted group-hover:text-text"
+                isActive ? "text-primary" : "text-text/60 group-hover:text-primary"
               )}
             />
           ) : (
-            <span className={cn("shrink-0", isActive ? "text-primary" : "text-muted")}>•</span>
+            <span className={cn("shrink-0", isActive ? "text-primary" : "text-text/60")}>•</span>
           )}
 
           {collapsed ? (
@@ -129,7 +129,7 @@ function Leaf({
               className={cn(
                 "text-[11px] leading-tight text-center",
                 "w-full max-w-[66px] overflow-hidden line-clamp-2 break-words",
-                isActive ? "text-text" : "text-muted"
+                isActive ? "text-text" : "text-text/70"
               )}
             >
               {label}
@@ -252,13 +252,13 @@ function Group({
               active ? "bg-primary" : "bg-transparent"
             )}
           />
-          {Icon ? <Icon size={20} className={cn(active ? "text-primary" : "text-muted")} /> : null}
+          {Icon ? <Icon size={20} className={cn(active ? "text-primary" : "text-text/60")} /> : null}
 
           <span
             className={cn(
               "text-[11px] leading-tight text-center",
               "w-full max-w-[66px] overflow-hidden line-clamp-2 break-words",
-              active ? "text-text" : "text-muted"
+              active ? "text-text" : "text-text/70"
             )}
           >
             {label}
@@ -300,7 +300,7 @@ function Group({
                             "block w-full rounded-xl px-3 py-2 text-sm transition border",
                             isActive
                               ? "bg-surface2 text-text border-border"
-                              : "bg-card text-muted border-transparent hover:border-border hover:bg-surface2 hover:text-text"
+                              : "bg-card text-text/70 border-transparent hover:border-border hover:bg-surface2 hover:text-text"
                           )
                         }
                         onClick={() => {
@@ -329,7 +329,7 @@ function Group({
         className={cn(
           "group relative w-full rounded-lg transition select-none",
           "min-h-[56px] px-5 flex items-center justify-between",
-          "text-[15px] font-bold",
+          "text-[15px] font-semibold",
           "border border-border bg-card shadow-[0_1px_0_0_rgba(0,0,0,0.05)]",
           "hover:bg-surface2 hover:text-text",
           expandedOpen && "bg-surface2",
@@ -346,11 +346,11 @@ function Group({
         />
 
         <div className="flex items-center gap-3 min-w-0">
-          {Icon ? <Icon size={20} className={cn(active ? "text-primary" : "text-muted")} /> : null}
-          <span className={cn("truncate", active ? "text-text" : "text-muted")}>{label}</span>
+          {Icon ? <Icon size={20} className={cn(active ? "text-primary" : "text-text/60")} /> : null}
+          <span className={cn("truncate", active ? "text-text" : "text-text/70")}>{label}</span>
         </div>
 
-        <ChevronDown className={cn("h-4 w-4 text-muted transition", expandedOpen && "rotate-180")} />
+        <ChevronDown className={cn("h-4 w-4 text-text/50 transition", expandedOpen && "rotate-180")} />
       </button>
 
       {/* ✅ TREE CONNECTORS (si esto NO aparece, expandedOpen NO está true) */}

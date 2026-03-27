@@ -95,6 +95,7 @@ export default function CreateVariantModal({
   const [name, setName] = useState("");
   const [sku, setSku] = useState("");
   const [purity, setPurity] = useState(0.75);
+  const [purityTooHigh, setPurityTooHigh] = useState(false);
 
   const [err, setErr] = useState<string | null>(null);
   const [advancedOpen, setAdvancedOpen] = useState(false);
@@ -306,7 +307,7 @@ export default function CreateVariantModal({
       }
     }
 
-    if (!Number.isFinite(purity) || purity <= 0 || purity > 10) {
+    if (!Number.isFinite(purity) || purity <= 0 || purity > 1) {
       return setErr("Pureza/Ley inválida. Ej: 0.750 (18k) / 0.585 (14k) / 0.925 (plata).");
     }
 
@@ -434,15 +435,22 @@ export default function CreateVariantModal({
                   onChange={(v) => {
                     if (typeof v === "number" && Number.isFinite(v)) {
                       markDirty();
-                      setPurity(v);
+                      if (v > 1) {
+                        setPurityTooHigh(true);
+                        setPurity(1);
+                      } else {
+                        setPurityTooHigh(false);
+                        setPurity(v);
+                      }
                     }
                   }}
                   step={0.001}
                   min={0}
-                  max={10}
+                  max={1}
                   decimals={3}
                   placeholder="0.750"
                   disabled={busy}
+                  error={purityTooHigh ? "La pureza no puede ser mayor a 1." : null}
                   className={cn("h-[52px]", "text-left")}
                   wrapClassName="space-y-0"
                   inputRef={purityRef}
@@ -482,19 +490,19 @@ export default function CreateVariantModal({
               </span>
             </div>
           }
-          description="Podés modificar el factor o el precio final. Al cambiar uno, se actualiza el otro."
+          description="Modificá la merma / factor para ajustar el precio final calculado automáticamente."
         >
           <div className="mt-3 rounded-2xl border border-border bg-card p-3 space-y-3">
             <TPAlert tone="info">
               <div className="mt-1 text-sm">
-                Podés escribir tanto el <b>factor</b> como el <b>precio final</b>. El sistema mantiene ambos
-                sincronizados.
+                Modificá la <b>merma / factor</b> para ajustar el precio. El <b>precio final</b> se calcula
+                automáticamente.
               </div>
             </TPAlert>
 
             <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
               <TPNumberInput
-                label="Factor"
+                label="Merma / Factor"
                 value={Number.isFinite(saleFactor) ? saleFactor : null}
                 onChange={(v) => {
                   markDirty();
