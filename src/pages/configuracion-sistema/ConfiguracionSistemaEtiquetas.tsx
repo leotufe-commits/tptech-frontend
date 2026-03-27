@@ -1356,25 +1356,47 @@ function NewTemplateModal({ open, onClose, onCreate }: {
 
 // ─── CalibrationSection ───────────────────────────────────────────────────────
 
-/** Botones ±delta para ajuste rápido de offset */
-function OffsetNudge({ value, onChange }: { value: number | null; onChange: (v: number | null) => void }) {
+/** Botones de ajuste rápido de offset.
+ *  El valor 0 en `steps` actúa como reset absoluto a 0. */
+function OffsetNudge({
+  value, onChange, steps, min = -20, max = 20,
+}: {
+  value:    number | null;
+  onChange: (v: number | null) => void;
+  steps:    readonly number[];
+  min?:     number;
+  max?:     number;
+}) {
   const cur = value ?? 0;
-  const STEPS = [-1, -0.5, +0.5, +1] as const;
   return (
-    <div className="flex gap-0.5">
-      {STEPS.map(d => (
-        <button
-          key={d}
-          type="button"
-          onClick={() => onChange(Math.round((cur + d) * 10) / 10)}
-          className="px-1.5 py-0.5 text-[10px] font-mono font-semibold rounded bg-amber-100 hover:bg-amber-200 text-amber-800 transition leading-none tabular-nums"
-        >
-          {d > 0 ? `+${d}` : d}
-        </button>
-      ))}
+    <div className="flex flex-wrap gap-0.5 justify-end">
+      {steps.map((d, i) => {
+        const isReset = d === 0;
+        const newVal = isReset
+          ? 0
+          : Math.max(min, Math.min(max, Math.round((cur + d) * 10) / 10));
+        return (
+          <button
+            key={i}
+            type="button"
+            onClick={() => onChange(newVal)}
+            className={cn(
+              "px-1 py-0.5 text-[9.5px] font-mono font-semibold rounded transition leading-none tabular-nums",
+              isReset
+                ? "bg-slate-100 hover:bg-slate-200 text-slate-500"
+                : "bg-amber-100 hover:bg-amber-200 text-amber-800",
+            )}
+          >
+            {isReset ? "0" : d > 0 ? `+${d}` : String(d)}
+          </button>
+        );
+      })}
     </div>
   );
 }
+
+const NUDGE_STEPS_X = [-1, -0.5, 0, +0.5, +1] as const;
+const NUDGE_STEPS_Y = [-20, -10, -5, -2, -1, -0.5, 0, +0.5, +1, +2, +5, +10, +20] as const;
 
 /** Mini preview visual del efecto del offset.
  *  El rectángulo interior (contenido impreso) se desplaza respecto al exterior (borde físico). */
@@ -1386,18 +1408,31 @@ function OffsetPreview({ ox, oy, wMm, hMm }: { ox: number; oy: number; wMm: numb
   const bW = aspect >= MAX_W / MAX_H ? MAX_W : Math.round(MAX_H * aspect);
   const bH = aspect >= MAX_W / MAX_H ? Math.round(MAX_W / aspect) : MAX_H;
 
-  // px por mm en esta escala
+  // px por mm en esta escala — capear al 70% del box para que siempre sea visible
   const pxPerMm = bW / wMm;
-  const shiftX  = Math.round(ox * pxPerMm);
-  const shiftY  = Math.round(oy * pxPerMm);
+  const rawX  = ox * pxPerMm;
+  const rawY  = oy * pxPerMm;
+  const capX  = bW * 0.7;
+  const capY  = bH * 0.7;
+  const shiftX  = Math.round(Math.max(-capX, Math.min(capX, rawX)));
+  const shiftY  = Math.round(Math.max(-capY, Math.min(capY, rawY)));
+  const isCapped = Math.abs(rawX) > capX || Math.abs(rawY) > capY;
+
   const cx = bW / 2;
   const cy = bH / 2;
 
   const isZero = ox === 0 && oy === 0;
 
+  const fmtVal = (v: number) => `${v >= 0 ? "+" : ""}${v}`;
+
   return (
     <div className="flex flex-col items-center gap-1.5">
-      <p className="text-[10px] font-semibold text-amber-700 uppercase tracking-wide">Vista previa del desplazamiento</p>
+      <div className="flex items-center justify-between w-full">
+        <p className="text-[10px] font-semibold text-amber-700 uppercase tracking-wide">Vista previa del desplazamiento</p>
+        <span className="text-[9.5px] font-mono font-semibold text-amber-900 bg-amber-100 px-1.5 py-0.5 rounded">
+          X: {fmtVal(ox)}mm &nbsp; Y: {fmtVal(oy)}mm
+        </span>
+      </div>
       <div
         style={{ width: bW, height: bH, position: "relative", flexShrink: 0 }}
         className="rounded overflow-hidden bg-white border border-amber-300/60"
@@ -1432,12 +1467,13 @@ function OffsetPreview({ ox, oy, wMm, hMm }: { ox: number; oy: number; wMm: numb
               <div style={{ position:"absolute", left:x-2, top:y+2, width:5, height:1, background:"#94a3b8" }} />
             </React.Fragment>
           ))}
-          {/* Label de offset */}
-          <div style={{ position:"absolute", left:cx-22, top:cy+3, width:44, textAlign:"center", fontSize:8, fontFamily:"monospace", color: isZero ? "#16a34a" : "#92400e", fontWeight:600, whiteSpace:"nowrap" }}>
-            X{ox >= 0 ? "+" : ""}{ox} Y{oy >= 0 ? "+" : ""}{oy}mm
-          </div>
         </div>
       </div>
+      {isCapped && (
+        <p className="text-[9px] text-amber-600 italic text-center">
+          Vista reducida — el offset real supera el área del preview
+        </p>
+      )}
       <p className="text-[9.5px] text-slate-400 text-center">
         {isZero
           ? "Sin desplazamiento — el contenido coincide con el borde físico"
@@ -1525,7 +1561,7 @@ function CalibrationSection({
           <div className="space-y-1.5">
             <div className="flex items-center justify-between">
               <label className="text-[11px] font-medium text-amber-800">Offset X (mm)</label>
-              <OffsetNudge value={offsetX} onChange={onOffsetX} />
+              <OffsetNudge value={offsetX} onChange={onOffsetX} steps={NUDGE_STEPS_X} min={-20} max={20} />
             </div>
             <TPNumberInput value={offsetX} onChange={onOffsetX} decimals={1} min={-20} max={20} />
             <p className="text-[10px] text-amber-600">
@@ -1538,9 +1574,9 @@ function CalibrationSection({
           <div className="space-y-1.5">
             <div className="flex items-center justify-between">
               <label className="text-[11px] font-medium text-amber-800">Offset Y (mm)</label>
-              <OffsetNudge value={offsetY} onChange={onOffsetY} />
+              <OffsetNudge value={offsetY} onChange={onOffsetY} steps={NUDGE_STEPS_Y} min={-100} max={100} />
             </div>
-            <TPNumberInput value={offsetY} onChange={onOffsetY} decimals={1} min={-20} max={20} />
+            <TPNumberInput value={offsetY} onChange={onOffsetY} decimals={1} min={-100} max={100} />
             <p className="text-[10px] text-amber-600">
               <span className="text-emerald-700 font-medium">+ positivo</span> → abajo &nbsp;·&nbsp;
               <span className="text-red-600 font-medium">− negativo</span> → arriba
