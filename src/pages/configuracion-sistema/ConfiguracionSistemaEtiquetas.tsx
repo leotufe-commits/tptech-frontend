@@ -1438,10 +1438,13 @@ function OffsetPreview({ ox, oy, wMm, hMm }: { ox: number; oy: number; wMm: numb
           </div>
         </div>
       </div>
-      <p className="text-[9.5px] text-slate-400">
+      <p className="text-[9.5px] text-slate-400 text-center">
         {isZero
           ? "Sin desplazamiento — el contenido coincide con el borde físico"
-          : `Contenido desplazado ${ox !== 0 ? `${ox > 0 ? "→" : "←"} ${Math.abs(ox)}mm en X` : ""}${ox !== 0 && oy !== 0 ? " · " : ""}${oy !== 0 ? `${oy > 0 ? "↓" : "↑"} ${Math.abs(oy)}mm en Y` : ""}`
+          : [
+              ox > 0 ? `Derecha ${ox}mm` : ox < 0 ? `Izquierda ${Math.abs(ox)}mm` : null,
+              oy > 0 ? `Abajo ${oy}mm`   : oy < 0 ? `Arriba ${Math.abs(oy)}mm`    : null,
+            ].filter(Boolean).join(" · ")
         }
       </p>
     </div>

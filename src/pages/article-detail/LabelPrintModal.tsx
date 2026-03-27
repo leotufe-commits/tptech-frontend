@@ -296,8 +296,6 @@ export function buildCalibrationHtml(printer: PrinterProfileRow, labelWMm: numbe
   const mBottom = parseFloat(printer.marginBottomMm);
   const offsetX = parseFloat(printer.offsetXMm);
   const offsetY = parseFloat(printer.offsetYMm);
-  const pageW   = parseFloat(printer.pageWidthMm);
-  const pageH   = parseFloat(printer.pageHeightMm);
 
   const cx = lw / 2;
   const cy = lh / 2;
@@ -454,18 +452,26 @@ type PreviewProps = {
 function LabelPreview({ template, printer, items, copies, defaultCopies }: PreviewProps) {
   const lh      = parseFloat(template.heightMm);
   const cols    = printer?.columns ?? 1;
-  const gapH    = printer ? parseFloat(printer.gapHMm)       : 0;
-  const gapV    = printer ? parseFloat(printer.gapVMm)       : 2;
-  // offset = margen del perfil + calibración física
-  const offX    = printer ? parseFloat(printer.marginLeftMm) + parseFloat(printer.offsetXMm) : 0;
-  const offY    = printer ? parseFloat(printer.marginTopMm)  + parseFloat(printer.offsetYMm) : 0;
+  const gapH    = printer ? parseFloat(printer.gapHMm) : 0;
+  const gapV    = printer ? parseFloat(printer.gapVMm) : 2;
+  const isA4pw  = printer?.type === "A4" || printer?.type === "INKJET";
+  // Térmica: @page size = label size, margin=0 → offset es la traslación DENTRO de la etiqueta.
+  //          En el preview solo se muestra el offsetX/Y (no el margen de página).
+  // A4/Inkjet: @page maneja el margen → el preview suma margen + offset para mostrar el layout completo.
+  const offX    = printer
+    ? (isA4pw ? parseFloat(printer.marginLeftMm) : 0) + parseFloat(printer.offsetXMm)
+    : 0;
+  const offY    = printer
+    ? (isA4pw ? parseFloat(printer.marginTopMm)  : 0) + parseFloat(printer.offsetYMm)
+    : 0;
+  const marginTopForCalc = isA4pw && printer ? parseFloat(printer.marginTopMm) : 0;
 
   // Mostrar máximo 1 página en preview
   const rows = Math.min(3, calcRowsPerPage({
     printerType:    (printer?.type ?? "THERMAL") as "THERMAL" | "ZEBRA" | "A4" | "INKJET",
     pageHeightMm:   printer ? parseFloat(printer.pageHeightMm) : 9999,
-    marginTopMm:    offY,
-    marginBottomMm: printer ? parseFloat(printer.marginBottomMm) : 0,
+    marginTopMm:    marginTopForCalc,
+    marginBottomMm: isA4pw && printer ? parseFloat(printer.marginBottomMm) : 0,
     gapVMm:         gapV,
     labelHeightMm:  lh,
   }));
