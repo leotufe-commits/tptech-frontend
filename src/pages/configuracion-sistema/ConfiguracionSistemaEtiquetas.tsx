@@ -34,7 +34,8 @@ import {
   type PrinterProfileRow, type PrinterType,
 } from "../../services/printer-profiles";
 
-import LabelRenderer from "../../components/labels/LabelRenderer";
+import LabelRenderer          from "../../components/labels/LabelRenderer";
+import { buildCalibrationHtml } from "../article-detail/LabelPrintModal";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -1353,11 +1354,275 @@ function NewTemplateModal({ open, onClose, onCreate }: {
 
 // ─── PrinterRow ───────────────────────────────────────────────────────────────
 
-function PrinterRow({ p, onEdit, onDelete }: {
-  p: PrinterProfileRow;
-  onEdit:   () => void;
-  onDelete: () => void;
+// ─── CalibrationSection ───────────────────────────────────────────────────────
+
+/** Botones ±delta para ajuste rápido de offset */
+function OffsetNudge({ value, onChange }: { value: number | null; onChange: (v: number | null) => void }) {
+  const cur = value ?? 0;
+  const STEPS = [-1, -0.5, +0.5, +1] as const;
+  return (
+    <div className="flex gap-0.5">
+      {STEPS.map(d => (
+        <button
+          key={d}
+          type="button"
+          onClick={() => onChange(Math.round((cur + d) * 10) / 10)}
+          className="px-1.5 py-0.5 text-[10px] font-mono font-semibold rounded bg-amber-100 hover:bg-amber-200 text-amber-800 transition leading-none tabular-nums"
+        >
+          {d > 0 ? `+${d}` : d}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+/** Mini preview visual del efecto del offset.
+ *  El rectángulo interior (contenido impreso) se desplaza respecto al exterior (borde físico). */
+function OffsetPreview({ ox, oy, wMm, hMm }: { ox: number; oy: number; wMm: number; hMm: number }) {
+  // Escalar a una caja de ~180 × 90px máximo, respetando la proporción
+  const MAX_W = 180;
+  const MAX_H = 80;
+  const aspect = wMm / hMm;
+  const bW = aspect >= MAX_W / MAX_H ? MAX_W : Math.round(MAX_H * aspect);
+  const bH = aspect >= MAX_W / MAX_H ? Math.round(MAX_W / aspect) : MAX_H;
+
+  // px por mm en esta escala
+  const pxPerMm = bW / wMm;
+  const shiftX  = Math.round(ox * pxPerMm);
+  const shiftY  = Math.round(oy * pxPerMm);
+  const cx = bW / 2;
+  const cy = bH / 2;
+
+  const isZero = ox === 0 && oy === 0;
+
+  return (
+    <div className="flex flex-col items-center gap-1.5">
+      <p className="text-[10px] font-semibold text-amber-700 uppercase tracking-wide">Vista previa del desplazamiento</p>
+      <div
+        style={{ width: bW, height: bH, position: "relative", flexShrink: 0 }}
+        className="rounded overflow-hidden bg-white border border-amber-300/60"
+      >
+        {/* Zona física de la etiqueta (borde punteado = referencia fija) */}
+        <div
+          style={{ position: "absolute", inset: 0, border: "1.5px dashed #94a3b8", borderRadius: 2 }}
+          title="Borde físico de la etiqueta"
+        />
+
+        {/* Contenido impreso desplazado */}
+        <div
+          style={{
+            position: "absolute",
+            left:   shiftX,
+            top:    shiftY,
+            width:  bW,
+            height: bH,
+            transition: "left 0.15s, top 0.15s",
+          }}
+        >
+          {/* Borde del contenido */}
+          <div style={{ position: "absolute", inset: 0, border: `1.5px solid ${isZero ? "#22c55e" : "#f59e0b"}`, borderRadius: 2 }} />
+          {/* Cruz horizontal */}
+          <div style={{ position: "absolute", left: 0, top: cy - 0.5, width: bW, height: 1, background: isZero ? "#86efac" : "#fbbf24", opacity: 0.8 }} />
+          {/* Cruz vertical */}
+          <div style={{ position: "absolute", left: cx - 0.5, top: 0, width: 1, height: bH, background: isZero ? "#86efac" : "#fbbf24", opacity: 0.8 }} />
+          {/* Marcas esquina */}
+          {([[3,0],[3,bH-5],[bW-5,0],[bW-5,bH-5]] as [number,number][]).map(([x,y],i) => (
+            <React.Fragment key={i}>
+              <div style={{ position:"absolute", left:x, top:y, width:1, height:5, background:"#94a3b8" }} />
+              <div style={{ position:"absolute", left:x-2, top:y+2, width:5, height:1, background:"#94a3b8" }} />
+            </React.Fragment>
+          ))}
+          {/* Label de offset */}
+          <div style={{ position:"absolute", left:cx-22, top:cy+3, width:44, textAlign:"center", fontSize:8, fontFamily:"monospace", color: isZero ? "#16a34a" : "#92400e", fontWeight:600, whiteSpace:"nowrap" }}>
+            X{ox >= 0 ? "+" : ""}{ox} Y{oy >= 0 ? "+" : ""}{oy}mm
+          </div>
+        </div>
+      </div>
+      <p className="text-[9.5px] text-slate-400">
+        {isZero
+          ? "Sin desplazamiento — el contenido coincide con el borde físico"
+          : `Contenido desplazado ${ox !== 0 ? `${ox > 0 ? "→" : "←"} ${Math.abs(ox)}mm en X` : ""}${ox !== 0 && oy !== 0 ? " · " : ""}${oy !== 0 ? `${oy > 0 ? "↓" : "↑"} ${Math.abs(oy)}mm en Y` : ""}`
+        }
+      </p>
+    </div>
+  );
+}
+
+function CalibrationSection({
+  offsetX, offsetY, onOffsetX, onOffsetY,
+  previewWMm = 58, previewHMm = 40,
+  onPrintCalibration,
+}: {
+  offsetX:              number | null;
+  offsetY:              number | null;
+  onOffsetX:            (v: number | null) => void;
+  onOffsetY:            (v: number | null) => void;
+  previewWMm?:          number;
+  previewHMm?:          number;
+  onPrintCalibration?:  () => void;
 }) {
+  const [open, setOpen] = useState(false);
+  const ox = offsetX ?? 0;
+  const oy = offsetY ?? 0;
+  const hasOffset = ox !== 0 || oy !== 0;
+
+  return (
+    <div className="rounded-xl border border-amber-300/50 bg-amber-50/40 overflow-hidden">
+
+      {/* ── Header / toggle ─────────────────────────────────────────────── */}
+      <button
+        type="button"
+        onClick={() => setOpen(o => !o)}
+        className="w-full flex items-center gap-2 px-3 py-2.5 text-left hover:bg-amber-50/60 transition"
+      >
+        <div className="w-6 h-6 rounded-lg bg-amber-500/20 flex items-center justify-center flex-shrink-0">
+          <ScanLine size={13} className="text-amber-700" />
+        </div>
+        <div className="flex-1 min-w-0">
+          <p className="text-xs font-semibold text-amber-800 leading-tight">Calibración física de impresión</p>
+          <p className="text-[10.5px] text-amber-600 leading-tight mt-0.5">
+            Corregí el desplazamiento entre diseño y etiqueta física
+          </p>
+        </div>
+        <div className="flex items-center gap-1.5 flex-shrink-0">
+          {hasOffset ? (
+            <span className="text-[10px] bg-amber-500/20 text-amber-800 font-mono font-medium px-1.5 py-0.5 rounded-full tabular-nums">
+              X{ox >= 0 ? "+" : ""}{ox} Y{oy >= 0 ? "+" : ""}{oy}
+            </span>
+          ) : (
+            <span className="text-[10px] text-amber-500/70">sin ajuste</span>
+          )}
+          {open ? <ChevronUp size={13} className="text-amber-600" /> : <ChevronDown size={13} className="text-amber-600" />}
+        </div>
+      </button>
+
+      {/* ── Contenido colapsable ─────────────────────────────────────────── */}
+      {open && (
+        <div className="px-3 pb-3 space-y-4 border-t border-amber-200/60">
+
+          {/* Descripción + botón imprimir */}
+          <div className="flex items-start justify-between gap-3 pt-3">
+            <p className="text-[11.5px] text-amber-800 leading-relaxed flex-1">
+              Corregí el desfasaje entre diseño y papel{" "}
+              <span className="font-semibold">sin modificar tus plantillas</span>.
+            </p>
+            {onPrintCalibration && (
+              <button
+                type="button"
+                onClick={onPrintCalibration}
+                className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-700 text-white text-[10.5px] font-semibold transition whitespace-nowrap flex-shrink-0"
+              >
+                <Printer size={11} />
+                Imprimir prueba
+              </button>
+            )}
+          </div>
+
+          {/* ── Offset X ── */}
+          <div className="space-y-1.5">
+            <div className="flex items-center justify-between">
+              <label className="text-[11px] font-medium text-amber-800">Offset X (mm)</label>
+              <OffsetNudge value={offsetX} onChange={onOffsetX} />
+            </div>
+            <TPNumberInput value={offsetX} onChange={onOffsetX} decimals={1} min={-20} max={20} />
+            <p className="text-[10px] text-amber-600">
+              <span className="text-emerald-700 font-medium">+ positivo</span> → derecha &nbsp;·&nbsp;
+              <span className="text-red-600 font-medium">− negativo</span> → izquierda
+            </p>
+          </div>
+
+          {/* ── Offset Y ── */}
+          <div className="space-y-1.5">
+            <div className="flex items-center justify-between">
+              <label className="text-[11px] font-medium text-amber-800">Offset Y (mm)</label>
+              <OffsetNudge value={offsetY} onChange={onOffsetY} />
+            </div>
+            <TPNumberInput value={offsetY} onChange={onOffsetY} decimals={1} min={-20} max={20} />
+            <p className="text-[10px] text-amber-600">
+              <span className="text-emerald-700 font-medium">+ positivo</span> → abajo &nbsp;·&nbsp;
+              <span className="text-red-600 font-medium">− negativo</span> → arriba
+            </p>
+          </div>
+
+          {/* ── Preview en vivo ── */}
+          <div className="rounded-lg bg-white/70 border border-amber-200/50 p-3">
+            <OffsetPreview ox={ox} oy={oy} wMm={previewWMm} hMm={previewHMm} />
+          </div>
+
+          {/* Cómo calibrar */}
+          <div className="space-y-1.5">
+            <p className="text-[11px] font-semibold text-amber-800 uppercase tracking-wide">Cómo calibrar</p>
+            <ol className="space-y-1">
+              {[
+                "Hacé clic en \"Imprimir prueba\" e imprimí la etiqueta de calibración",
+                "Compará el borde impreso con el borde físico de la etiqueta",
+                "Medí el desplazamiento en mm",
+                "Ingresá el valor opuesto (usá los botones ±0.5 / ±1 para ajuste rápido)",
+                "Volvé a imprimir y repetí hasta alinear",
+              ].map((step, i) => (
+                <li key={i} className="flex gap-2 text-[10.5px] text-amber-800">
+                  <span className="w-4 h-4 rounded-full bg-amber-500/20 text-amber-700 font-bold text-[9px] flex items-center justify-center flex-shrink-0 mt-0.5">
+                    {i + 1}
+                  </span>
+                  {step}
+                </li>
+              ))}
+            </ol>
+          </div>
+
+          {/* Ejemplos */}
+          <div className="space-y-1.5">
+            <p className="text-[11px] font-semibold text-amber-800 uppercase tracking-wide">Ejemplos</p>
+            <div className="rounded-lg bg-white/60 border border-amber-200/50 divide-y divide-amber-100/80">
+              {[
+                { problem: "Salió 2 mm a la izquierda",  fix: "Offset X = +2"   },
+                { problem: "Salió 3 mm a la derecha",    fix: "Offset X = −3"   },
+                { problem: "Salió 1 mm más abajo",       fix: "Offset Y = −1"   },
+                { problem: "Salió 1.5 mm más arriba",    fix: "Offset Y = +1.5" },
+              ].map((ex, i) => (
+                <div key={i} className="flex items-center justify-between px-2 py-1.5 gap-2">
+                  <span className="text-[10.5px] text-amber-700">{ex.problem}</span>
+                  <span className="text-[10.5px] font-mono font-semibold text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded whitespace-nowrap">
+                    {ex.fix}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Importante */}
+          <div className="rounded-lg bg-amber-100/60 border border-amber-200/60 p-2.5 space-y-1">
+            <p className="text-[10.5px] font-semibold text-amber-800">Importante</p>
+            {[
+              "Estos ajustes se aplican a todas las plantillas que usen esta impresora.",
+              "No es necesario mover elementos dentro del diseño.",
+              "Una vez calibrado, el sistema queda alineado automáticamente.",
+            ].map((item, i) => (
+              <p key={i} className="text-[10.5px] text-amber-700 flex gap-1.5 items-start">
+                <span className="text-amber-500 mt-0.5 flex-shrink-0">•</span>
+                {item}
+              </p>
+            ))}
+          </div>
+
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── PrinterRow ───────────────────────────────────────────────────────────────
+
+function PrinterRow({ p, onEdit, onDelete, onCalibrate }: {
+  p:            PrinterProfileRow;
+  onEdit:       () => void;
+  onDelete:     () => void;
+  onCalibrate:  () => void;
+}) {
+  const offX = parseFloat(p.offsetXMm);
+  const offY = parseFloat(p.offsetYMm);
+  const hasOffset = offX !== 0 || offY !== 0;
+
   return (
     <div className={cn(
       "group flex items-center gap-3 p-3 rounded-xl border border-border bg-surface hover:border-primary/30 transition",
@@ -1372,12 +1637,20 @@ function PrinterRow({ p, onEdit, onDelete }: {
           {p.isDefault && (
             <span className="text-[10px] bg-primary/10 text-primary font-medium px-1.5 py-0.5 rounded-full">Default</span>
           )}
+          {hasOffset && (
+            <span className="text-[10px] bg-amber-500/15 text-amber-700 font-medium px-1.5 py-0.5 rounded-full tabular-nums">
+              X{offX >= 0 ? "+" : ""}{offX} Y{offY >= 0 ? "+" : ""}{offY}mm
+            </span>
+          )}
         </div>
         <p className="text-xs text-muted tabular-nums">
           {PRINTER_TYPE_LABELS[p.type]} · {p.pageWidthMm}×{p.pageHeightMm}mm · {p.columns} col
         </p>
       </div>
       <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition">
+        <TPButton variant="ghost" onClick={onCalibrate} className="text-xs px-2 py-1 text-amber-600" title="Imprimir prueba de calibración">
+          <ScanLine size={11} />
+        </TPButton>
         <TPButton variant="ghost" onClick={onEdit}   className="text-xs px-2 py-1"><Pencil size={11} /></TPButton>
         <TPButton variant="ghost" onClick={onDelete} className="text-xs px-2 py-1 text-red-500"><Trash2 size={11} /></TPButton>
       </div>
@@ -1404,6 +1677,8 @@ function PrinterModal({ open, profile, onClose, onSave }: {
   const [mBottom,   setMBottom]   = useState<number | null>(profile ? parseFloat(profile.marginBottomMm) : 5);
   const [gapH,      setGapH]      = useState<number | null>(profile ? parseFloat(profile.gapHMm) : 2);
   const [gapV,      setGapV]      = useState<number | null>(profile ? parseFloat(profile.gapVMm) : 2);
+  const [offsetX,   setOffsetX]   = useState<number | null>(profile ? parseFloat(profile.offsetXMm) : 0);
+  const [offsetY,   setOffsetY]   = useState<number | null>(profile ? parseFloat(profile.offsetYMm) : 0);
   const [isDefault, setIsDefault] = useState(profile?.isDefault ?? false);
   const [busy,      setBusy]      = useState(false);
   const [usePreset, setUsePreset] = useState<number | null>(null);
@@ -1421,6 +1696,8 @@ function PrinterModal({ open, profile, onClose, onSave }: {
     setMBottom(profile? parseFloat(profile.marginBottomMm) : 5);
     setGapH(profile   ? parseFloat(profile.gapHMm) : 2);
     setGapV(profile   ? parseFloat(profile.gapVMm) : 2);
+    setOffsetX(profile ? parseFloat(profile.offsetXMm) : 0);
+    setOffsetY(profile ? parseFloat(profile.offsetYMm) : 0);
     setIsDefault(profile?.isDefault ?? false);
     setUsePreset(null);
   }, [open, profile]);
@@ -1447,6 +1724,7 @@ function PrinterModal({ open, profile, onClose, onSave }: {
         marginTopMm: mTop ?? 5,      marginLeftMm: mLeft ?? 5,
         marginRightMm: mRight ?? 5,  marginBottomMm: mBottom ?? 5,
         gapHMm: gapH ?? 2,           gapVMm: gapV ?? 2,
+        offsetXMm: offsetX ?? 0,     offsetYMm: offsetY ?? 0,
         isDefault,
       };
       if (profile) {
@@ -1533,6 +1811,51 @@ function PrinterModal({ open, profile, onClose, onSave }: {
             <TPNumberInput value={gapV} onChange={setGapV} decimals={1} min={0} />
           </TPField>
         </div>
+
+        {/* ── Calibración física ─────────────────────────────────────────── */}
+        <CalibrationSection
+          offsetX={offsetX}
+          offsetY={offsetY}
+          onOffsetX={setOffsetX}
+          onOffsetY={setOffsetY}
+          previewWMm={pageW ?? 58}
+          previewHMm={
+            type === "A4" || type === "INKJET"
+              ? 40
+              : Math.min(pageH ?? 40, 50)
+          }
+          onPrintCalibration={() => {
+            // Construir perfil sintético con los valores actuales del formulario
+            const syntheticProfile: PrinterProfileRow = {
+              id:             profile?.id ?? "preview",
+              name:           name.trim() || "Impresora",
+              type,
+              dpi:            203,
+              pageWidthMm:    String(pageW  ?? 58),
+              pageHeightMm:   String(pageH  ?? 297),
+              marginTopMm:    String(mTop   ?? 5),
+              marginLeftMm:   String(mLeft  ?? 5),
+              marginRightMm:  String(mRight ?? 5),
+              marginBottomMm: String(mBottom ?? 5),
+              gapHMm:         String(gapH   ?? 2),
+              gapVMm:         String(gapV   ?? 2),
+              columns:        cols ?? 1,
+              offsetXMm:      String(offsetX ?? 0),
+              offsetYMm:      String(offsetY ?? 0),
+              isDefault:      false,
+              isActive:       true,
+              deletedAt:      null,
+              createdAt:      "",
+            };
+            const lw = pageW ?? 58;
+            const lh = type === "A4" || type === "INKJET" ? 40 : Math.min(pageH ?? 40, 50);
+            const html = buildCalibrationHtml(syntheticProfile, lw, lh);
+            const win = window.open("", "_blank", "width=600,height=400");
+            win?.document.write(html);
+            win?.document.close();
+          }}
+        />
+
         <TPCheckbox checked={isDefault} onChange={setIsDefault} label="Impresora predeterminada" />
       </div>
     </Modal>
@@ -1694,6 +2017,16 @@ export default function ConfiguracionSistemaEtiquetas() {
                   key={p.id}
                   p={p}
                   onEdit={() => setPrinterModal(p)}
+                  onCalibrate={() => {
+                    const isA4 = p.type === "A4" || p.type === "INKJET";
+                    // Usar ancho de página; alto = 40mm para térmica, 50mm para A4
+                    const lw = parseFloat(String(p.pageWidthMm));
+                    const lh = isA4 ? 50 : Math.min(parseFloat(String(p.pageHeightMm)), 50);
+                    const html = buildCalibrationHtml(p, lw, lh);
+                    const win = window.open("", "_blank", "width=600,height=400");
+                    win?.document.write(html);
+                    win?.document.close();
+                  }}
                   onDelete={() => askDelete({
                     entityName:  "Perfil",
                     entityLabel: p.name,

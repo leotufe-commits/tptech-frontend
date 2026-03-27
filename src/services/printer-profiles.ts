@@ -16,6 +16,8 @@ export type PrinterProfileRow = {
   gapHMm:          string;
   gapVMm:          string;
   columns:         number;
+  offsetXMm:       string;
+  offsetYMm:       string;
   isDefault:       boolean;
   isActive:        boolean;
   deletedAt:       string | null;
@@ -35,6 +37,8 @@ export type PrinterProfilePayload = {
   gapHMm?:         number;
   gapVMm?:         number;
   columns?:        number;
+  offsetXMm?:      number;
+  offsetYMm?:      number;
   isDefault?:      boolean;
   isActive?:       boolean;
 };

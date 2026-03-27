@@ -210,6 +210,8 @@ function buildTemplateHtml(
   const cols      = printer ? printer.columns : 1;
   const pageH     = printer ? parseFloat(printer.pageHeightMm) : 9999;
   const pageW     = printer ? parseFloat(printer.pageWidthMm)  : lw;
+  const offsetX   = printer ? parseFloat(printer.offsetXMm)    : 0;
+  const offsetY   = printer ? parseFloat(printer.offsetYMm)    : 0;
 
   // Calcular filas por página
   const rows = calcRowsPerPage({
@@ -227,7 +229,7 @@ function buildTemplateHtml(
 
   const elements = tpl.elements.filter((el) => el.visible !== false);
 
-  // Generar HTML de páginas
+  // Generar HTML de páginas — el offset se aplica como traslación del bloque de etiquetas
   const pagesHtml = pages.map((page) => {
     const labelsHtml = page.map((row) =>
       row.map((item) => {
@@ -239,13 +241,15 @@ function buildTemplateHtml(
     if (isA4) {
       return `
 <div class="lpage" style="position:relative; width:${pageW - mLeft - mRight}mm; padding:0; margin:0;">
-  <div style="display:flex; flex-wrap:wrap; gap:${gapV}mm ${gapH}mm;">${labelsHtml}</div>
+  <div style="display:flex; flex-wrap:wrap; gap:${gapV}mm ${gapH}mm; margin-left:${offsetX}mm; margin-top:${offsetY}mm;">${labelsHtml}</div>
 </div>`;
     } else {
-      // Térmica: cada etiqueta con salto de página
+      // Térmica: cada etiqueta con salto de página; offset traslada el contenido dentro del área imprimible
       return page.flat().map((item) => {
         const elHtml = elements.map((el) => elementToHtml(el, item)).join("\n");
-        return `<div class="lpage" style="position:relative; width:${lw}mm; height:${lh}mm; overflow:hidden;">${elHtml}</div>`;
+        return `<div class="lpage" style="position:relative; width:${lw}mm; height:${lh}mm; overflow:hidden;">
+  <div style="position:absolute; left:${offsetX}mm; top:${offsetY}mm; width:${lw}mm; height:${lh}mm;">${elHtml}</div>
+</div>`;
       }).join("\n");
     }
   }).join("\n");
@@ -271,6 +275,99 @@ function buildTemplateHtml(
 </head>
 <body>
 ${pagesHtml}
+  <script>window.onload = function() { window.print(); };</script>
+</body>
+</html>`;
+}
+
+// ─── Prueba de calibración ────────────────────────────────────────────────────
+/**
+ * Genera una página de prueba de calibración para una impresora.
+ * Muestra borde exacto, cruces, marcas de esquina y referencias de medida,
+ * con el offset del perfil aplicado (para verificar su efecto real).
+ */
+export function buildCalibrationHtml(printer: PrinterProfileRow, labelWMm: number, labelHMm: number): string {
+  const lw      = labelWMm;
+  const lh      = labelHMm;
+  const isA4    = printer.type === "A4" || printer.type === "INKJET";
+  const mTop    = parseFloat(printer.marginTopMm);
+  const mLeft   = parseFloat(printer.marginLeftMm);
+  const mRight  = parseFloat(printer.marginRightMm);
+  const mBottom = parseFloat(printer.marginBottomMm);
+  const offsetX = parseFloat(printer.offsetXMm);
+  const offsetY = parseFloat(printer.offsetYMm);
+  const pageW   = parseFloat(printer.pageWidthMm);
+  const pageH   = parseFloat(printer.pageHeightMm);
+
+  const cx = lw / 2;
+  const cy = lh / 2;
+  const mk = 3; // largo marca de esquina en mm
+
+  // SVG inline de la etiqueta de calibración
+  function calLabel(): string {
+    return `
+<div style="position:relative; width:${lw}mm; height:${lh}mm; background:#fff; overflow:visible;">
+  <!-- Borde exterior -->
+  <div style="position:absolute; inset:0; border:0.3mm solid #000;"></div>
+  <!-- Cruz horizontal -->
+  <div style="position:absolute; left:0; top:${cy - 0.1}mm; width:${lw}mm; height:0.2mm; background:#000;"></div>
+  <!-- Cruz vertical -->
+  <div style="position:absolute; left:${cx - 0.1}mm; top:0; width:0.2mm; height:${lh}mm; background:#000;"></div>
+  <!-- Marcas esquina TL -->
+  <div style="position:absolute; left:${mk}mm; top:0; width:0.2mm; height:${mk}mm; background:#000;"></div>
+  <div style="position:absolute; left:0; top:${mk}mm; width:${mk}mm; height:0.2mm; background:#000;"></div>
+  <!-- Marcas esquina TR -->
+  <div style="position:absolute; right:${mk}mm; top:0; width:0.2mm; height:${mk}mm; background:#000;"></div>
+  <div style="position:absolute; right:0; top:${mk}mm; width:${mk}mm; height:0.2mm; background:#000;"></div>
+  <!-- Marcas esquina BL -->
+  <div style="position:absolute; left:${mk}mm; bottom:0; width:0.2mm; height:${mk}mm; background:#000;"></div>
+  <div style="position:absolute; left:0; bottom:${mk}mm; width:${mk}mm; height:0.2mm; background:#000;"></div>
+  <!-- Marcas esquina BR -->
+  <div style="position:absolute; right:${mk}mm; bottom:0; width:0.2mm; height:${mk}mm; background:#000;"></div>
+  <div style="position:absolute; right:0; bottom:${mk}mm; width:${mk}mm; height:0.2mm; background:#000;"></div>
+  <!-- Texto TL -->
+  <div style="position:absolute; left:${mk + 0.8}mm; top:0.8mm; font-size:4.5pt; font-family:Arial; color:#000; white-space:nowrap;">TL ${lw}×${lh}mm</div>
+  <!-- Texto TR -->
+  <div style="position:absolute; right:${mk + 0.8}mm; top:0.8mm; font-size:4.5pt; font-family:Arial; color:#000; white-space:nowrap; text-align:right;">TR</div>
+  <!-- Texto BL -->
+  <div style="position:absolute; left:${mk + 0.8}mm; bottom:0.8mm; font-size:4.5pt; font-family:Arial; color:#000; white-space:nowrap;">BL</div>
+  <!-- Texto BR -->
+  <div style="position:absolute; right:${mk + 0.8}mm; bottom:0.8mm; font-size:4.5pt; font-family:Arial; color:#000; white-space:nowrap; text-align:right;">BR</div>
+  <!-- Centro -->
+  <div style="position:absolute; left:${cx - 8}mm; top:${cy + 0.5}mm; width:16mm; font-size:4pt; font-family:Arial; text-align:center; color:#444;">CENTRO</div>
+  <!-- Offset aplicado -->
+  <div style="position:absolute; left:${cx - 12}mm; top:${cy + 2.5}mm; width:24mm; font-size:3.8pt; font-family:Arial; text-align:center; color:#888;">
+    Offset X:${offsetX >= 0 ? "+" : ""}${offsetX}mm  Y:${offsetY >= 0 ? "+" : ""}${offsetY}mm
+  </div>
+  <!-- Perfil -->
+  <div style="position:absolute; left:1mm; top:${cy + 0.5}mm; font-size:3.5pt; font-family:Arial; color:#999; max-width:${cx - 2}mm; overflow:hidden; white-space:nowrap;">${printer.name}</div>
+</div>`;
+  }
+
+  const pageRule = isA4
+    ? `@page { size: A4; margin: ${mTop}mm ${mRight}mm ${mBottom}mm ${mLeft}mm; }`
+    : `@page { size: ${lw}mm ${lh}mm; margin: 0; }`;
+
+  const content = isA4
+    ? `<div style="margin-left:${offsetX}mm; margin-top:${offsetY}mm;">${calLabel()}</div>`
+    : `<div style="position:relative; width:${lw}mm; height:${lh}mm; overflow:hidden;">
+  <div style="position:absolute; left:${offsetX}mm; top:${offsetY}mm; width:${lw}mm; height:${lh}mm;">${calLabel()}</div>
+</div>`;
+
+  return `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Calibración — ${printer.name}</title>
+  <style>
+    * { margin:0; padding:0; box-sizing:border-box; }
+    html, body { background:#fff; }
+    ${pageRule}
+    @media print { * { -webkit-print-color-adjust:exact; print-color-adjust:exact; } }
+  </style>
+</head>
+<body>
+  ${content}
   <script>window.onload = function() { window.print(); };</script>
 </body>
 </html>`;
@@ -355,12 +452,13 @@ type PreviewProps = {
 
 /** Muestra las primeras etiquetas a escala, en grilla según perfil de impresora. */
 function LabelPreview({ template, printer, items, copies, defaultCopies }: PreviewProps) {
-  const lh   = parseFloat(template.heightMm);
-  const cols  = printer?.columns ?? 1;
-  const gapH  = printer ? parseFloat(printer.gapHMm)  : 0;
-  const gapV  = printer ? parseFloat(printer.gapVMm)  : 2;
-  const offX  = printer ? parseFloat(printer.marginLeftMm) : 0;
-  const offY  = printer ? parseFloat(printer.marginTopMm)  : 0;
+  const lh      = parseFloat(template.heightMm);
+  const cols    = printer?.columns ?? 1;
+  const gapH    = printer ? parseFloat(printer.gapHMm)       : 0;
+  const gapV    = printer ? parseFloat(printer.gapVMm)       : 2;
+  // offset = margen del perfil + calibración física
+  const offX    = printer ? parseFloat(printer.marginLeftMm) + parseFloat(printer.offsetXMm) : 0;
+  const offY    = printer ? parseFloat(printer.marginTopMm)  + parseFloat(printer.offsetYMm) : 0;
 
   // Mostrar máximo 1 página en preview
   const rows = Math.min(3, calcRowsPerPage({
