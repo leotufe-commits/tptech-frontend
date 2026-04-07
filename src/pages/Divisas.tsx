@@ -1,7 +1,8 @@
 // src/pages/Divisas.tsx
-import React, { useMemo, useState } from "react";
+import React, { useMemo, useRef, useState } from "react";
 
 import { useValuation, type MetalRow, type VariantRow } from "../hooks/useValuation";
+import type { MetalsAndVariantsPanelHandle } from "../components/valuation/modals/MetalsAndVariantsPanel";
 
 import CurrenciesPanel from "../components/valuation/modals/CurrenciesPanel";
 import MetalsAndVariantsPanel from "../components/valuation/modals/MetalsAndVariantsPanel";
@@ -27,6 +28,7 @@ function normSku(s: any) {
 
 export default function Divisas() {
   const v = useValuation();
+  const panelRef = useRef<MetalsAndVariantsPanelHandle>(null);
 
   /* =========================
      Monedas
@@ -185,7 +187,11 @@ export default function Divisas() {
   async function onSaveMetal(data: { name: string; symbol?: string; referenceValue?: number }) {
     if (metalModalMode === "CREATE") {
       const r = await v.createMetal(data);
-      return await refetchIfOk(r);
+      const result = await refetchIfOk(r);
+      if (result?.ok && (r as any).metal?.id) {
+        panelRef.current?.selectMetal(String((r as any).metal.id));
+      }
+      return result;
     }
 
     const id = String(metalEditing?.id || "").trim();
@@ -392,6 +398,7 @@ export default function Divisas() {
         />
 
         <MetalsAndVariantsPanel
+          ref={panelRef}
           loading={v.loading}
           saving={v.saving}
           metals={v.metals}

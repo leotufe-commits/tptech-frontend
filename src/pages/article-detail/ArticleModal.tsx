@@ -1,10 +1,12 @@
 // src/pages/article-detail/ArticleModal.tsx
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import ReactDOM from "react-dom";
 import { useNavigate } from "react-router-dom";
 import {
   AlertCircle,
   ArrowDown,
   ArrowRight,
+  ChevronDown,
   ArrowUp,
   Calculator,
   Camera,
@@ -19,14 +21,17 @@ import {
   Layers,
   Loader2,
   Package,
-  Percent,
   Plus,
   RefreshCw,
+  Ruler,
   Save,
+  Scale,
   Sliders,
   Sparkles,
+  Star,
   Tag,
   Trash2,
+  Wrench,
   X,
 } from "lucide-react";
 import {
@@ -56,14 +61,20 @@ import { TPButton }     from "../../components/ui/TPButton";
 import { TPCheckbox }   from "../../components/ui/TPCheckbox";
 import TPComboFixed     from "../../components/ui/TPComboFixed";
 import TPComboCreatable from "../../components/ui/TPComboCreatable";
+import { TPDimensionsGuide } from "../../components/ui/TPDimensionsGuide";
 import TPComboCreatableMulti from "../../components/ui/TPComboCreatableMulti";
+import TPNumberSelect       from "../../components/ui/TPNumberSelect";
+import TPAdjTypeButton     from "../../components/ui/TPAdjTypeButton";
+import TPIconButton        from "../../components/ui/TPIconButton";
 import { cn } from "../../components/ui/tp";
 import {
   listCatalog,
   createCatalogItem,
+  setCatalogItemFavorite,
   type CatalogItem,
 } from "../../services/catalogs";
 import { toast } from "../../lib/toast";
+import EditVariantModal from "./EditVariantModal.js";
 
 import {
   articlesApi,
@@ -85,13 +96,16 @@ import {
   type ComputedSalePrice,
   type EffectivePriceSource,
   type VariantPayload,
+  type VariantImage,
   type CompositionPayload,
   type VariantAttributeValue,
+  type CostLine,
+  type CostLineType,
+  type QuantityUnit,
   ARTICLE_TYPE_LABELS,
   ARTICLE_STATUS_LABELS,
   STOCK_MODE_LABELS,
   HECHURA_MODE_LABELS,
-  COST_MODE_LABELS,
   BARCODE_SOURCE_LABELS,
   BARCODE_SOURCE_DESCRIPTIONS,
   fmtMoney,
@@ -100,13 +114,12 @@ import { categoriesApi, type CategoryRow, type CategoryAttribute } from "../../s
 import ConfirmDeleteDialog from "../../components/ui/ConfirmDeleteDialog";
 import { TPRowActions }    from "../../components/ui/TPRowActions";
 // price-lists no se usa en este modal (simulación movida al backend)
-import { getMetals, getVariants, getCurrencies, type MetalVariantRow, type CurrencyRow } from "../../services/valuation";
+import { getMetals, getVariants, getCurrencies, setFavoriteVariant, clearFavoriteVariant, type MetalVariantRow, type CurrencyRow } from "../../services/valuation";
 import { taxesApi, type TaxRow } from "../../services/taxes";
 import { type SalePriceResult } from "../../services/sales";
 import { promotionsApi, type PromotionRow } from "../../services/promotions";
 import { quantityDiscountsApi, type QuantityDiscountRow } from "../../services/quantity-discounts";
-import CostCompositionTable, { type MetalVariantOption, type CurrencyOption, TYPE_OPTIONS, TYPE_CFG } from "../../components/ui/CostCompositionTable";
-import type { CostLine, CostLineType } from "../../services/articles";
+import CostCompositionTable, { type MetalVariantOption, type CurrencyOption, TYPE_OPTIONS, TYPE_CFG, applyLineAdj } from "../../components/ui/CostCompositionTable";
 import {
   commercialEntitiesApi,
   type EntityRow,
@@ -114,15 +127,19 @@ import {
 } from "../../services/commercial-entities";
 import EntityEditModal from "../configuracion-sistema/clientes/EntityEditModal";
 import TPAvatarUploader from "../../components/ui/TPAvatarUploader";
+import { CreateCategoryModal } from "../../components/categories/CreateCategoryModal";
+import { TPAlert } from "../../components/ui/TPAlert";
+import { articleMovementsApi } from "../../services/article-movements";
+import { articleGroupsApi, type ArticleGroupRow } from "../../services/article-groups";
+import GroupPickerField from "./GroupPickerField";
 
 // ---------------------------------------------------------------------------
 // Tipos
 // ---------------------------------------------------------------------------
-type Tab = "general" | "costos" | "variantes";
+type Tab = "principal" | "variantes";
 
 const TABS: { key: Tab; label: string; icon: React.ReactNode }[] = [
-  { key: "general",   label: "General",   icon: <FileText size={13} /> },
-  { key: "costos",    label: "Costos",    icon: <Calculator size={13} /> },
+  { key: "principal", label: "Artículo",  icon: <FileText size={13} /> },
   { key: "variantes", label: "Variantes", icon: <Layers size={13} /> },
 ];
 
@@ -136,6 +153,7 @@ type Draft = {
   articleType: ArticleType;
   description: string;
   categoryId: string;
+  groupId: string;
   brand: string;
   manufacturer: string;
   supplierCode: string;
@@ -176,6 +194,20 @@ type Draft = {
   manualTaxIds: string[];
   // Avanzado
   reorderPoint: number | null;
+  openingStock: number | null;
+  // Dimensiones físicas
+  dimensionLength: number | null;
+  dimensionWidth: number | null;
+  dimensionHeight: number | null;
+  dimensionUnit: string;
+  weight: number | null;
+  weightUnit: string;
+  // Cantidades de venta
+  minSaleQuantity: number | null;
+  maxSaleQuantity: number | null;
+  defaultQuantity: number | null;
+  // Contabilidad
+  inventoryAccount: string;
 };
 
 const EMPTY_DRAFT: Draft = {
@@ -184,6 +216,7 @@ const EMPTY_DRAFT: Draft = {
   articleType: "PRODUCT",
   description: "",
   categoryId: "",
+  groupId: "",
   brand: "",
   manufacturer: "",
   supplierCode: "",
@@ -201,7 +234,7 @@ const EMPTY_DRAFT: Draft = {
   barcodeType: "CODE128",
   barcodeSource: "SKU",
   autoBarcode: false,
-  costCalculationMode: "MANUAL",
+  costCalculationMode: "METAL_MERMA_HECHURA",
   costPrice: null,
   salePrice: null,
   useManualSalePrice: false,
@@ -219,6 +252,17 @@ const EMPTY_DRAFT: Draft = {
   manualAdjustmentValue: null,
   manualTaxIds: [],
   reorderPoint: null,
+  openingStock: null,
+  dimensionLength: null,
+  dimensionWidth: null,
+  dimensionHeight: null,
+  dimensionUnit: "cm",
+  weight: null,
+  weightUnit: "",
+  minSaleQuantity: null,
+  maxSaleQuantity: null,
+  defaultQuantity: null,
+  inventoryAccount: "Activo de inventario",
 };
 
 function articleToDraft(a: ArticleDetail | ArticleRow): Draft {
@@ -228,6 +272,7 @@ function articleToDraft(a: ArticleDetail | ArticleRow): Draft {
     articleType:          a.articleType,
     description:          a.description ?? "",
     categoryId:           a.categoryId ?? "",
+    groupId:              ("groupId" in a ? (a as any).groupId : "") ?? "",
     brand:                a.brand ?? "",
     manufacturer:         a.manufacturer ?? "",
     supplierCode:         ("supplierCode" in a ? a.supplierCode : "") ?? "",
@@ -245,7 +290,7 @@ function articleToDraft(a: ArticleDetail | ArticleRow): Draft {
     barcodeType:          a.barcodeType,
     barcodeSource:        (a as ArticleDetail).barcodeSource ?? "SKU",
     autoBarcode:          false,
-    costCalculationMode:  a.costCalculationMode ?? "MANUAL",
+    costCalculationMode:  "METAL_MERMA_HECHURA",
     costPrice:            a.costPrice != null ? parseFloat(a.costPrice) : null,
     salePrice:            a.salePrice != null ? parseFloat(a.salePrice) : null,
     useManualSalePrice:   (a as any).useManualSalePrice ?? false,
@@ -264,6 +309,17 @@ function articleToDraft(a: ArticleDetail | ArticleRow): Draft {
     manualAdjustmentValue:  a.manualAdjustmentValue != null ? parseFloat(a.manualAdjustmentValue) : null,
     manualTaxIds:           a.manualTaxIds ?? [],
     reorderPoint:         a.reorderPoint != null ? parseFloat(a.reorderPoint) : null,
+    openingStock:         null, // no se edita en modo edit (bloqueado si hay movimientos)
+    dimensionLength:      (a as any).dimensionLength != null ? parseFloat((a as any).dimensionLength) : null,
+    dimensionWidth:       (a as any).dimensionWidth  != null ? parseFloat((a as any).dimensionWidth)  : null,
+    dimensionHeight:      (a as any).dimensionHeight != null ? parseFloat((a as any).dimensionHeight) : null,
+    dimensionUnit:        (a as any).dimensionUnit ?? "cm",
+    weight:               (a as any).weight     != null ? parseFloat((a as any).weight)     : null,
+    weightUnit:           (a as any).weightUnit ?? "",
+    minSaleQuantity:      (a as any).minSaleQuantity  != null ? parseFloat((a as any).minSaleQuantity)  : null,
+    maxSaleQuantity:      (a as any).maxSaleQuantity  != null ? parseFloat((a as any).maxSaleQuantity)  : null,
+    defaultQuantity:      (a as any).defaultQuantity  != null ? parseFloat((a as any).defaultQuantity)  : null,
+    inventoryAccount:     (a as any).inventoryAccount ?? "",
   };
 }
 
@@ -272,15 +328,26 @@ function articleToDraft(a: ArticleDetail | ArticleRow): Draft {
  * - Prisma Decimal se serializa como string → convertir a number.
  * - HECHURA sin label → completar con texto por defecto.
  */
+function defaultQuantityUnit(type: string): QuantityUnit {
+  return type === "METAL" ? "g" : "u";
+}
+
 function normalizeCostLines(lines: any[]): CostLine[] {
   return (lines ?? []).map(l => ({
     ...l,
+    id:           l.id ?? crypto.randomUUID(),
     quantity:     l.quantity     != null ? parseFloat(String(l.quantity))     : 0,
+    quantityUnit: (l.quantityUnit ?? defaultQuantityUnit(l.type)) as QuantityUnit,
     unitValue:    l.unitValue    != null ? parseFloat(String(l.unitValue))    : 0,
     mermaPercent: l.mermaPercent != null ? parseFloat(String(l.mermaPercent)) : null,
     label:        (l.label ?? "") !== "" ? (l.label ?? "") : (l.type === "HECHURA" ? "Hechura / Mano de Obra" : ""),
+    lineAdjKind:  l.lineAdjKind  ?? "",
+    lineAdjType:  l.lineAdjType  ?? "",
+    lineAdjValue: l.lineAdjValue != null ? parseFloat(String(l.lineAdjValue)) : null,
   }));
 }
+
+// AdjTypeButton ahora vive en src/components/ui/TPAdjTypeButton.tsx
 
 /**
  * Calcula el costo neto (base + ajuste) para guardar en costPrice.
@@ -309,6 +376,7 @@ function draftToPayload(d: Draft): ArticlePayload {
     articleType:          d.articleType,
     description:          d.description.trim() || undefined,
     categoryId:           d.categoryId || null,
+    groupId:              d.groupId || null,
     brand:                d.brand.trim() || undefined,
     manufacturer:         d.manufacturer.trim() || undefined,
     supplierCode:         d.supplierCode.trim() || undefined,
@@ -351,6 +419,17 @@ function draftToPayload(d: Draft): ArticlePayload {
     manualAdjustmentValue:  d.manualAdjustmentValue,
     manualTaxIds:           d.manualTaxIds,
     reorderPoint:           d.reorderPoint,
+    openingStock:           d.openingStock,
+    dimensionLength:        d.dimensionLength,
+    dimensionWidth:         d.dimensionWidth,
+    dimensionHeight:        d.dimensionHeight,
+    dimensionUnit:          d.dimensionUnit || "cm",
+    weight:                 d.weight,
+    weightUnit:             d.weightUnit,
+    minSaleQuantity:        d.minSaleQuantity,
+    maxSaleQuantity:        d.maxSaleQuantity,
+    defaultQuantity:        d.defaultQuantity,
+    inventoryAccount:       d.inventoryAccount,
   };
 }
 
@@ -447,6 +526,25 @@ function buildSelectedFromVariants(
       }
     }
 
+    // Fallback: si no se encontraron valores via attributeValues, inferir desde el nombre de la variante
+    if (usedOpts.length === 0 && axis.definition.options.length > 0) {
+      const axisIndex = axes.indexOf(axis);
+      const seen = new Set<string>();
+      for (const v of variants) {
+        const parts = (v.name ?? "").split(" · ");
+        const part = parts[axisIndex]?.trim();
+        if (!part) continue;
+        const matchedOpt = axis.definition.options.find(
+          o => o.value.trim().toLowerCase() === part.toLowerCase()
+            || o.label.trim().toLowerCase() === part.toLowerCase()
+        );
+        if (matchedOpt && !seen.has(matchedOpt.value)) {
+          seen.add(matchedOpt.value);
+          usedOpts.push(matchedOpt.value);
+        }
+      }
+    }
+
     if (usedOpts.length > 0) result[axis.id] = usedOpts;
   }
   return result;
@@ -492,6 +590,10 @@ function SortableVariantRow({
   const axisLabel = variantLabel(variant);
   // Título completo: "Nombre artículo — Oro Amarillo · L"
   const fullLabel = articleName ? `${articleName} — ${axisLabel}` : axisLabel;
+  // Detección de imagen heredada del artículo padre
+  const hasOwnImg = !!(variant.images?.find(i => i.isMain)?.url ?? variant.images?.[0]?.url ?? variant.imageUrl);
+  const displayImg = getVariantDisplayImage(variant, articleMainImageUrl);
+  const isInherited = !hasOwnImg && !!displayImg;
   return (
     <div
       ref={setNodeRef}
@@ -511,18 +613,19 @@ function SortableVariantRow({
       </button>
 
       {/* Imagen de variante (thumbnail con fallback al artículo padre) */}
-      {(() => {
-        const displayImg = getVariantDisplayImage(variant, articleMainImageUrl);
-        return (
-          <div className="shrink-0 w-8 h-8 rounded overflow-hidden border border-border bg-surface2/40 flex items-center justify-center">
-            {displayImg ? (
-              <img src={displayImg} alt="" className="w-full h-full object-cover" />
-            ) : (
-              <Image size={14} className="text-muted/30" />
-            )}
-          </div>
-        );
-      })()}
+      <div
+        className={cn(
+          "shrink-0 w-8 h-8 rounded overflow-hidden bg-surface2/40 flex items-center justify-center",
+          isInherited ? "border border-dashed border-border/60" : "border border-border",
+        )}
+        title={isInherited ? "Imagen heredada del artículo" : undefined}
+      >
+        {displayImg ? (
+          <img src={displayImg} alt="" className={cn("w-full h-full object-cover", isInherited && "opacity-60")} />
+        ) : (
+          <Image size={14} className="text-muted/30" />
+        )}
+      </div>
 
       {/* Contenido principal */}
       <div className="flex-1 min-w-0">
@@ -537,8 +640,14 @@ function SortableVariantRow({
           )}
         </div>
         {/* Línea 2: SKU (sublínea clara debajo del nombre) */}
-        {variant.sku && (
+        {variant.sku ? (
           <p className="text-xs text-muted mt-0.5 font-mono">SKU: {variant.sku}</p>
+        ) : (
+          <p className="text-xs text-amber-500/80 mt-0.5 italic">Sin SKU</p>
+        )}
+        {/* Imagen heredada */}
+        {isInherited && (
+          <p className="text-[10px] text-muted/50 italic mt-0.5">Imagen del artículo</p>
         )}
         {/* Chips de ejes (refuerzo visual de los valores) */}
         {axisCols.length > 0 && (
@@ -639,6 +748,56 @@ function SortableChip({
 }
 
 // ---------------------------------------------------------------------------
+// Constantes de estilos de líneas de costo (módulo-level para reutilización)
+// ---------------------------------------------------------------------------
+const COST_ROW_BG: Record<string, string> = {
+  METAL:   "bg-amber-500/5  hover:bg-amber-500/10",
+  HECHURA: "bg-blue-500/5   hover:bg-blue-500/10",
+  PRODUCT: "bg-violet-500/5 hover:bg-violet-500/10",
+  SERVICE: "bg-green-500/5  hover:bg-green-500/10",
+};
+
+// ---------------------------------------------------------------------------
+// Fila sortable de línea de costo (necesita useSortable → componente separado)
+// ---------------------------------------------------------------------------
+function SortableCostLineRow({
+  id, type, children,
+}: {
+  id: string;
+  type: string;
+  children: React.ReactNode;
+}) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
+    useSortable({ id });
+  const style = { transform: CSS.Transform.toString(transform), transition };
+  return (
+    <tr
+      ref={setNodeRef}
+      style={style}
+      className={cn(
+        "transition-colors group",
+        COST_ROW_BG[type] ?? "hover:bg-surface2/30",
+        isDragging && "opacity-40 shadow-lg z-10",
+      )}
+    >
+      {/* Handle */}
+      <td className="px-2 py-1.5 align-middle w-6">
+        <button
+          type="button"
+          {...attributes}
+          {...listeners}
+          className="cursor-grab active:cursor-grabbing text-muted/25 hover:text-muted/60 transition touch-none"
+          title="Arrastrar para reordenar"
+        >
+          <GripVertical size={13} />
+        </button>
+      </td>
+      {children}
+    </tr>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Componente principal
 // ---------------------------------------------------------------------------
 export default function ArticleModal({
@@ -659,7 +818,7 @@ export default function ArticleModal({
   const dndSensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
 
   /* ── tab ─────────────────────────────────────────────────────────────── */
-  const [activeTab, setActiveTab] = useState<Tab>("general");
+  const [activeTab, setActiveTab] = useState<Tab>("principal");
 
   /* ── article cargado ─────────────────────────────────────────────────── */
   const [article,   setArticle]   = useState<ArticleDetail | null>(null);
@@ -674,20 +833,86 @@ export default function ArticleModal({
 
   /* ── modal avanzado de identificación ───────────────────────────────── */
   const [advancedModalOpen, setAdvancedModalOpen] = useState(false);
+  const [showNoPriceWarning, setShowNoPriceWarning] = useState(false);
+
+  /* ── secciones colapsables — acordeón: solo una abierta a la vez ──────── */
+  type AccordionSection = "stock" | "comercial" | "medidas" | "notas" | null;
+  const [openSection, setOpenSection] = useState<AccordionSection>(null);
+  const toggleSection = (s: Exclude<AccordionSection, null>) =>
+    setOpenSection(prev => (prev === s ? null : s));
+  const stockOpen     = openSection === "stock";
+  const comercialOpen = openSection === "comercial";
+  const medidasOpen   = openSection === "medidas";
+  const notasOpen     = openSection === "notas";
+  const [unitPickerOpen, setUnitPickerOpen] = useState<string | null>(null);
+  const [unitPickerPos, setUnitPickerPos] = useState<{ top: number; left: number; width: number }>({ top: 0, left: 0, width: 120 });
 
   /* ── pickers ─────────────────────────────────────────────────────────── */
   const [categories,   setCategories]   = useState<CategoryRow[]>([]);
+  const [groups,       setGroups]       = useState<ArticleGroupRow[]>([]);
+  const [createCatOpen, setCreateCatOpen] = useState(false);
   const [suppliers,    setSuppliers]    = useState<EntityRow[]>([]);
   const [metalVariants, setMetalVariants] = useState<MetalVariantRow[]>([]);
-  const [productItems,  setProductItems]  = useState<{ id: string; name: string; costPrice: number | null }[]>([]);
-  const [serviceItems,  setServiceItems]  = useState<{ id: string; name: string; costPrice: number | null }[]>([]);
+  const [productItems,  setProductItems]  = useState<{ id: string; name: string; sku: string; stock: number | null; costPrice: number | null; costPriceNative: number | null; manualCurrencyId: string | null }[]>([]);
+  const [serviceItems,  setServiceItems]  = useState<{ id: string; name: string; sku: string; stock: number | null; costPrice: number | null; costPriceNative: number | null; manualCurrencyId: string | null }[]>([]);
 
   /* ── catálogos comerciales ────────────────────────────────────────────── */
   const [brandItems,           setBrandItems]           = useState<CatalogItem[]>([]);
   const [manufacturerItems,    setManufacturerItems]    = useState<CatalogItem[]>([]);
   const [unitItems,            setUnitItems]            = useState<CatalogItem[]>([]);
   const [multiplierBaseItems,  setMultiplierBaseItems]  = useState<CatalogItem[]>([]);
+  const [weightUnitItems,      setWeightUnitItems]      = useState<CatalogItem[]>([]);
 
+  /* ── Valores predeterminados para nuevos artículos (estrellita) ─────── */
+  const [defaultArticleType, setDefaultArticleType] = useState<ArticleType | null>(
+    () => (localStorage.getItem("tptech_default_article_type") as ArticleType | null)
+  );
+  const [defaultStockMode,  setDefaultStockMode]  = useState<StockMode | null>(
+    () => (localStorage.getItem("tptech_default_stock_mode") as StockMode | null)
+  );
+  const [defaultStatus,     setDefaultStatus]     = useState<ArticleStatus | null>(
+    () => (localStorage.getItem("tptech_default_status") as ArticleStatus | null)
+  );
+  const [defaultInventory,  setDefaultInventory]  = useState<string | null>(
+    () => localStorage.getItem("tptech_default_inventory_account")
+  );
+  const [defaultAdjType, setDefaultAdjType] = useState<string | null>(
+    () => localStorage.getItem("tptech_default_adj_type")
+  );
+  function handleSetDefaultAdjType(val: string) {
+    if (defaultAdjType === val) { localStorage.removeItem("tptech_default_adj_type"); setDefaultAdjType(null); }
+    else { localStorage.setItem("tptech_default_adj_type", val); setDefaultAdjType(val); }
+  }
+  function handleSetDefaultArticleType(val: string) {
+    if (defaultArticleType === val) { localStorage.removeItem("tptech_default_article_type"); setDefaultArticleType(null); }
+    else { localStorage.setItem("tptech_default_article_type", val); setDefaultArticleType(val as ArticleType); }
+  }
+  function handleSetDefaultStockMode(val: string) {
+    if (defaultStockMode === val) { localStorage.removeItem("tptech_default_stock_mode"); setDefaultStockMode(null); }
+    else { localStorage.setItem("tptech_default_stock_mode", val); setDefaultStockMode(val as StockMode); }
+  }
+  function handleSetDefaultStatus(val: string) {
+    if (defaultStatus === val) { localStorage.removeItem("tptech_default_status"); setDefaultStatus(null); }
+    else { localStorage.setItem("tptech_default_status", val); setDefaultStatus(val as ArticleStatus); }
+  }
+  function handleSetDefaultInventory(val: string) {
+    if (defaultInventory === val) { localStorage.removeItem("tptech_default_inventory_account"); setDefaultInventory(null); }
+    else { localStorage.setItem("tptech_default_inventory_account", val); setDefaultInventory(val); }
+  }
+  const [defaultShowInStore, setDefaultShowInStore] = useState<boolean | null>(
+    () => { const v = localStorage.getItem("tptech.articleDefaults.showInStore"); return v === null ? null : v === "true"; }
+  );
+  const [defaultIsReturnable, setDefaultIsReturnable] = useState<boolean | null>(
+    () => { const v = localStorage.getItem("tptech.articleDefaults.isReturnable"); return v === null ? null : v === "true"; }
+  );
+  function handleSetDefaultShowInStore(val: boolean) {
+    if (defaultShowInStore === val) { localStorage.removeItem("tptech.articleDefaults.showInStore"); setDefaultShowInStore(null); }
+    else { localStorage.setItem("tptech.articleDefaults.showInStore", String(val)); setDefaultShowInStore(val); }
+  }
+  function handleSetDefaultIsReturnable(val: boolean) {
+    if (defaultIsReturnable === val) { localStorage.removeItem("tptech.articleDefaults.isReturnable"); setDefaultIsReturnable(null); }
+    else { localStorage.setItem("tptech.articleDefaults.isReturnable", String(val)); setDefaultIsReturnable(val); }
+  }
   /* ── modal nuevo proveedor (modal real del sistema) ──────────────────── */
   const [newSupplierModalOpen, setNewSupplierModalOpen] = useState(false);
 
@@ -699,7 +924,8 @@ export default function ArticleModal({
   const [loadingCost,        setLoadingCost]         = useState(false);
 
   /* ── cost composition (nueva arquitectura de líneas) ─────────────────── */
-  const [costLines,    setCostLines]    = useState<CostLine[]>([]);
+  const [costLines,      setCostLines]      = useState<CostLine[]>([]);
+  const [confirmDropIdx, setConfirmDropIdx] = useState<number | null>(null);
   const [currencies,   setCurrencies]   = useState<CurrencyRow[]>([]);
   const [taxes,        setTaxes]        = useState<TaxRow[]>([]);
 
@@ -711,7 +937,6 @@ export default function ArticleModal({
   const [varEditId,     setVarEditId]     = useState<string | null>(null);
   const [varDraft,      setVarDraft]      = useState<VariantPayload>({ code: "", name: "" });
   const [busyVar,       setBusyVar]       = useState(false);
-  const [busyVarImage,  setBusyVarImage]  = useState(false);
   const [removingVar,   setRemovingVar]   = useState<string | null>(null);
   /* ejes de variante: atributos con isVariantAxis=true de la categoría */
   const [variantAxes,     setVariantAxes]     = useState<CategoryAttribute[]>([]);
@@ -733,6 +958,7 @@ export default function ArticleModal({
   /* combinaciones calculadas para el preview */
   const [genCombos,   setGenCombos]   = useState<GenCombo[]>([]);
   const [genBusy,     setGenBusy]     = useState(false);
+  const [removeComboAlert, setRemoveComboAlert] = useState<string | null>(null);
   /* variantes borradas en esta sesión: combo-key → variantId (para badge "Regenerable" y restauración) */
   const [deletedVariants, setDeletedVariants] = useState<Map<string, string>>(new Map());
   /* variantes soft-deleted cargadas del backend (para regeneración entre sesiones) */
@@ -741,15 +967,23 @@ export default function ArticleModal({
   /* ── composiciones ───────────────────────────────────────────────────── */
   const [compositions, setCompositions] = useState<ArticleComposition[]>([]);
 
+  /* ── existencia de apertura ───────────────────────────────────────────── */
+  const [hasMovements, setHasMovements] = useState(false);
+
   /* ── imágenes ─────────────────────────────────────────────────────────── */
   const [images,            setImages]           = useState<ArticleImage[]>([]);
   const [busyImg,           setBusyImg]          = useState(false);
   const [busyAddImg,        setBusyAddImg]       = useState(false);
   const [removingImg,       setRemovingImg]      = useState<string | null>(null);
-  const [pendingMainImage,    setPendingMainImage]    = useState<File | null>(null);
-  const [pendingMainImageUrl, setPendingMainImageUrl] = useState<string | null>(null);
+  /** Imágenes pendientes en modo create (aún sin articleId). El índice 0 es la principal. */
+  const [pendingImages, setPendingImages] = useState<{ file: File; url: string }[]>([]);
   const addImgInputRef = useRef<HTMLInputElement>(null);
   const skuInputRef    = useRef<HTMLInputElement>(null);
+  /** Imágenes pendientes en el mini-modal de variante (modo CREATE, hasta 5, se suben al guardar). */
+  const [pendingVarImages,        setPendingVarImages]        = useState<File[]>([]);
+  const [pendingVarImagePreviews, setPendingVarImagePreviews] = useState<string[]>([]);
+  /** Map draftId → File para imágenes pendientes de variantes en modo create-article. */
+  const pendingVariantImagesRef = useRef<Map<string, File>>(new Map());
 
   /* ── carga de ejes de variante ────────────────────────────────────────── */
   const [variantAxesLoading, setVariantAxesLoading] = useState(false);
@@ -760,6 +994,7 @@ export default function ArticleModal({
   const catalogLoadedRef = useRef(false);
   /** Hash de los ejes para los que ya corrió la preselección (evita repetir si no cambiaron los ejes) */
   const preselectedAxesHashRef = useRef<string>("");
+  const handleSaveInFlightRef  = useRef(false); // evita doble-submit por doble-click
 
   /**
    * Mirrors síncronos de los catálogos para uso dentro de fetchArticle,
@@ -768,15 +1003,15 @@ export default function ArticleModal({
    */
   const metalVariantsRef = useRef<MetalVariantRow[]>([]);
   const currenciesRef    = useRef<CurrencyRow[]>([]);
-  const productItemsRef  = useRef<{ id: string; name: string; costPrice: number | null }[]>([]);
-  const serviceItemsRef  = useRef<{ id: string; name: string; costPrice: number | null }[]>([]);
+  const productItemsRef  = useRef<{ id: string; name: string; sku: string; stock: number | null; costPrice: number | null; costPriceNative: number | null; manualCurrencyId: string | null }[]>([]);
+  const serviceItemsRef  = useRef<{ id: string; name: string; sku: string; stock: number | null; costPrice: number | null; costPriceNative: number | null; manualCurrencyId: string | null }[]>([]);
 
   // ── reset al abrir/cerrar ──────────────────────────────────────────────
   useEffect(() => {
     if (!open) {
       // Limpiar al cerrar (con delay para evitar flash)
       const t = setTimeout(() => {
-        setActiveTab("general");
+        setActiveTab("principal");
         setArticle(null);
         const lastMode = (() => {
           try { return localStorage.getItem("tptech_last_cost_mode") as CostCalculationMode | null; } catch { return null; }
@@ -790,6 +1025,7 @@ export default function ArticleModal({
           ...(lastStockMode ? { stockMode: lastStockMode } : {}),
         });
         setSubmitted(false);
+        setShowNoPriceWarning(false);
         setAdvancedModalOpen(false);
         setVariants([]);
         setVariantStock({});
@@ -808,9 +1044,13 @@ export default function ArticleModal({
         setShowUnsavedDialog(false);
         setImages([]);
         setBusyAddImg(false);
-        setPendingMainImage(null);
+        setPendingImages(prev => { prev.forEach(p => URL.revokeObjectURL(p.url)); return []; });
         setVariantAxesLoading(false);
         setCompositions([]);
+        setHasMovements(false);
+        setPendingVarImages([]);
+        setPendingVarImagePreviews(prev => { prev.forEach(URL.revokeObjectURL); return []; });
+        pendingVariantImagesRef.current.clear();
         setComputed(null);
         setComputedSale(null);
         setEffectiveSource(null);
@@ -822,6 +1062,7 @@ export default function ArticleModal({
 
     // Cargar pickers comunes
     void loadCategories();
+    void loadGroups();
     void loadSuppliers();
     void loadMetalVariants();
     void loadCatalogArticles();
@@ -836,7 +1077,12 @@ export default function ArticleModal({
       void loadBrandItems();
       void loadManufacturerItems();
       void loadUnitItems();
+      void loadMultiplierBaseItems();
       void fetchArticle(articleId);
+      // Verificar si el artículo ya tiene movimientos (para bloquear apertura)
+      articleMovementsApi.list({ articleId, pageSize: 1 })
+        .then(r => setHasMovements(r.total > 0))
+        .catch(() => setHasMovements(false));
     } else {
       // Modo crear / clonar
       const base: Draft = { ...EMPTY_DRAFT };
@@ -850,8 +1096,20 @@ export default function ArticleModal({
         }
         const savedStockMode = localStorage.getItem("tptech_last_stock_mode") as StockMode | null;
         if (savedStockMode) base.stockMode = savedStockMode;
-        const savedCostMode = localStorage.getItem("tptech_last_cost_mode") as CostCalculationMode | null;
-        if (savedCostMode) base.costCalculationMode = savedCostMode;
+        // Predeterminados con estrellita — tienen prioridad sobre "último usado"
+        const defStockMode = localStorage.getItem("tptech_default_stock_mode") as StockMode | null;
+        if (defStockMode) base.stockMode = defStockMode;
+        const defStatus = localStorage.getItem("tptech_default_status") as ArticleStatus | null;
+        if (defStatus) base.status = defStatus;
+        const defInventory = localStorage.getItem("tptech_default_inventory_account");
+        if (defInventory !== null) base.inventoryAccount = defInventory;
+        // Modo de costo siempre METAL_MERMA_HECHURA (modelo unificado)
+        const defAdjType = localStorage.getItem("tptech_default_adj_type");
+        if (defAdjType) base.manualAdjustmentType = defAdjType as "PERCENTAGE" | "FIXED_AMOUNT";
+        const defShowInStore = localStorage.getItem("tptech.articleDefaults.showInStore");
+        if (defShowInStore !== null) base.showInStore = defShowInStore === "true";
+        const defIsReturnable = localStorage.getItem("tptech.articleDefaults.isReturnable");
+        if (defIsReturnable !== null) base.isReturnable = defIsReturnable === "true";
       }
       setDraft(base);
       // En modo clon: pre-cargar líneas de costo y composiciones metálicas
@@ -947,6 +1205,20 @@ export default function ArticleModal({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
+  /* ── Sincronización en vivo al guardar un artículo referenciado ────────────
+     Al recibir tptech:article-cost-changed se recarga el catálogo de productos
+     y servicios. El useEffect de sincronización de PRODUCT/SERVICE reacciona
+     automáticamente al cambio en productItems/serviceItems. */
+  useEffect(() => {
+    if (!open) return;
+    function onArticleCostChanged() {
+      void loadCatalogArticles();
+    }
+    window.addEventListener("tptech:article-cost-changed", onArticleCostChanged);
+    return () => window.removeEventListener("tptech:article-cost-changed", onArticleCostChanged);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
+
   async function fetchArticle(id: string) {
     setLoading(true);
     try {
@@ -954,7 +1226,6 @@ export default function ArticleModal({
       setArticle(data);
       const d = articleToDraft(data);
       setDraft(d);
-      setAdvancedModalOpen(d.barcodeSource !== "SKU");
       setVariants(data.variants ?? []);
       setImages(data.images ?? []);
       setCompositions(data.compositions ?? []);
@@ -972,7 +1243,23 @@ export default function ArticleModal({
       // sincronización se ejecuta con costLines=[] y no puede hacer nada.
       // Cuando fetchArticle termina, sus deps no cambiaron → efecto no re-corre.
       // Con los refs siempre actualizados, aplicamos el precio vigente ahora.
-      const parsedLines = normalizeCostLines(data.costComposition ?? []);
+      let parsedLines = normalizeCostLines(data.costComposition ?? []);
+      // Auto-migrar artículos con modos MANUAL o MULTIPLIER al modelo unificado.
+      // Si el artículo no tiene líneas de composición, generar una línea HECHURA sintética.
+      if (parsedLines.length === 0 && data.costCalculationMode !== "METAL_MERMA_HECHURA") {
+        if (data.costCalculationMode === "MANUAL" && data.manualBaseCost != null) {
+          const base = parseFloat(String(data.manualBaseCost));
+          if (base > 0) {
+            parsedLines = [{ type: "HECHURA" as const, label: "Hechura / Mano de Obra", quantity: 1, quantityUnit: "u" as const, unitValue: base, currencyId: (data as any).manualCurrencyId || null, mermaPercent: null, metalVariantId: null, sortOrder: 0, lineAdjKind: "", lineAdjType: "", lineAdjValue: null }];
+          }
+        } else if (data.costCalculationMode === "MULTIPLIER" && data.multiplierQuantity != null && data.multiplierValue != null) {
+          const qty = parseFloat(String(data.multiplierQuantity));
+          const val = parseFloat(String(data.multiplierValue));
+          if (qty > 0 && val > 0) {
+            parsedLines = [{ type: "HECHURA" as const, label: "Hechura / Mano de Obra", quantity: qty, quantityUnit: "u" as const, unitValue: val, currencyId: (data as any).multiplierCurrencyId || null, mermaPercent: null, metalVariantId: null, sortOrder: 0, lineAdjKind: "", lineAdjType: "", lineAdjValue: null }];
+          }
+        }
+      }
       const variants   = metalVariantsRef.current;
       const currList   = currenciesRef.current;
       const hasMeta    = variants.length > 0 && currList.length > 0;
@@ -1034,7 +1321,7 @@ export default function ArticleModal({
           .catch(() => {});
       }
     } catch (e: any) {
-      toast.error(e?.message || "Error al cargar artículo.");
+      toast.error(e?.message || "No se pudo cargar el artículo. Intentá cerrar y volver a abrir.");
       onClose();
     } finally {
       setLoading(false);
@@ -1052,19 +1339,16 @@ export default function ArticleModal({
     setVariantAxesLoading(true);
     try {
       const all = await categoriesApi.attributes.getEffective(categoryId);
-      console.debug("[TPTech] atributos efectivos recibidos:", all);
       // Filtrar atributos con definition faltante (relación rota en DB)
       const valid = (all ?? []).filter(a => {
         if (!a.definition) {
-          console.warn("[TPTech] Atributo ignorado — definition null/undefined. assignmentId:", a.id, "| raw:", a);
+          console.warn("[TPTech] Atributo ignorado — definition null/undefined. assignmentId:", a.id);
           return false;
         }
         return true;
       });
       const axes = valid.filter(a => a.isVariantAxis);
       const attrs = valid.filter(a => !a.isVariantAxis);
-      console.debug("[TPTech] variantAxes:", axes.map(a => a.definition.name));
-      console.debug("[TPTech] artAttrs:", attrs.map(a => a.definition.name));
       // Resetear la preselección para que re-corra con los ejes frescos
       preselectedAxesHashRef.current = "";
       setVariantAxes(axes);
@@ -1078,26 +1362,23 @@ export default function ArticleModal({
     }
   }
 
-  // Si la categoría cambia y ya no tiene ejes, redirigir al tab General
+  // Si la categoría cambia y ya no tiene ejes, redirigir al tab principal
   useEffect(() => {
-    if (activeTab === "variantes" && !variantAxesLoading && variantAxes.length === 0) {
-      setActiveTab("general");
+    if (activeTab === "variantes" && !variantAxesLoading && variantAxes.length === 0 && variants.length === 0) {
+      setActiveTab("principal");
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [variantAxes.length, variantAxesLoading]);
 
   // En edición: pre-seleccionar en el configurador los valores de variantes ya existentes.
-  // Hash combinado: IDs de ejes + conteo de attributeValues por variante.
-  // Esto re-corre automáticamente cuando los datos de atributos se cargan,
-  // sin depender de timing ni del orden de renderizado.
+  // Hash basado solo en IDs de ejes: corre una vez por configuración de ejes, independiente
+  // de si attributeValues está vacío (evita que el hash quede "bloqueado" con datos parciales).
   useEffect(() => {
     if (!isEdit || variantAxes.length === 0 || variants.length === 0) return;
-    const axesHash   = variantAxes.map(a => a.id).join("|");
-    const attrsHash  = variants.map(v => v.attributeValues?.length ?? 0).join(",");
-    const combinedHash = `${axesHash}::${attrsHash}`;
-    if (preselectedAxesHashRef.current === combinedHash) return;
+    const axesHash = variantAxes.map(a => a.id).join("|");
+    if (preselectedAxesHashRef.current === axesHash) return;
     const newSelected = buildSelectedFromVariants(variantAxes, variants);
-    preselectedAxesHashRef.current = combinedHash;
+    preselectedAxesHashRef.current = axesHash;
     if (Object.keys(newSelected).length > 0) {
       setGenSelected(newSelected);
     }
@@ -1137,12 +1418,12 @@ export default function ArticleModal({
         ...prev,
         stockMode:           "NO_STOCK",
         reorderPoint:        null,
-        costCalculationMode: "MANUAL",
+        costCalculationMode: "METAL_MERMA_HECHURA",
         isReturnable:        false,
         sellWithoutVariants: true,
       }));
-      // Si estábamos en variantes, volver a general
-      setActiveTab(prev => prev === "variantes" ? "general" : prev);
+      // Si estábamos en variantes, volver al tab principal
+      setActiveTab(prev => prev === "variantes" ? "principal" : prev);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [draft.articleType]);
@@ -1156,6 +1437,9 @@ export default function ArticleModal({
 
   async function loadCategories() {
     try { setCategories(await categoriesApi.list()); } catch {}
+  }
+  async function loadGroups() {
+    try { setGroups(await articleGroupsApi.list()); } catch {}
   }
   async function loadSuppliers() {
     try {
@@ -1197,9 +1481,33 @@ export default function ArticleModal({
         const cp = r.costPrice != null && r.costPrice !== "" ? Number(r.costPrice) : null;
         return cp != null && Number.isFinite(cp) && cp > 0 ? cp : null;
       }
-      const toLabel = (r: any) => r.sku ? `[${r.sku}] ${r.name}` : r.name;
-      const mappedProds = prodRows.map((r: any) => ({ id: r.id, name: toLabel(r), costPrice: toPrice(r) }));
-      const mappedSvcs  = svcRows.map((r: any)  => ({ id: r.id, name: toLabel(r), costPrice: toPrice(r) }));
+      const toStock = (r: any) =>
+        r.stockMode === "BY_ARTICLE" && r.stockData != null ? (r.stockData.total ?? null) : null;
+      // costPrice → siempre en moneda BASE (para que el sync effect funcione bien).
+      //   Viene de computedCostBase; null si no hay tasa cargada.
+      // costPriceNative → en moneda ORIGINAL del artículo (solo MANUAL).
+      //   Se usa en onSelect para carga inicial sin necesitar conversión.
+      const toCostBase = (r: any): number | null => {
+        const base = r.computedCostBase != null && r.computedCostBase !== "" ? Number(r.computedCostBase) : null;
+        return base != null && Number.isFinite(base) && base > 0 ? base : null;
+      };
+      const toCostNative = (r: any): number | null => {
+        if (r.costCalculationMode !== "MANUAL") return null;
+        const cp = r.costPrice != null && r.costPrice !== "" ? Number(r.costPrice) : null;
+        return cp != null && Number.isFinite(cp) && cp > 0 ? cp : null;
+      };
+      const mappedProds = prodRows.map((r: any) => ({
+        id: r.id, name: r.name, sku: r.sku || "", stock: toStock(r),
+        costPrice: toCostBase(r),
+        costPriceNative: toCostNative(r),
+        manualCurrencyId: r.manualCurrencyId ?? null,
+      }));
+      const mappedSvcs  = svcRows.map((r: any) => ({
+        id: r.id, name: r.name, sku: r.sku || "", stock: toStock(r),
+        costPrice: toCostBase(r),
+        costPriceNative: toCostNative(r),
+        manualCurrencyId: r.manualCurrencyId ?? null,
+      }));
       productItemsRef.current  = mappedProds; // mirror síncrono para fetchArticle
       serviceItemsRef.current  = mappedSvcs;
       setProductItems(mappedProds);
@@ -1244,33 +1552,73 @@ export default function ArticleModal({
   /** Carga los 3 catálogos y aplica los favoritos al draft (solo en create mode) */
   async function loadCatalogItemsWithDefaults() {
     try {
-      const [brands, manufacturers, units, multiplierBases] = await Promise.all([
+      const [brands, manufacturers, units, multiplierBases, weightUnits] = await Promise.all([
         listCatalog("ARTICLE_BRAND").catch(() => [] as CatalogItem[]),
         listCatalog("ARTICLE_MANUFACTURER").catch(() => [] as CatalogItem[]),
         listCatalog("UNIT_OF_MEASURE").catch(() => [] as CatalogItem[]),
         listCatalog("MULTIPLIER_BASE").catch(() => [] as CatalogItem[]),
+        listCatalog("WEIGHT_UNIT").catch(() => [] as CatalogItem[]),
       ]);
       setBrandItems(brands);
       setManufacturerItems(manufacturers);
       setUnitItems(units);
       setMultiplierBaseItems(multiplierBases);
+      setWeightUnitItems(weightUnits);
 
-      const fBrand = brands.find((i) => i.isFavorite && i.isActive !== false)?.label ?? "";
-      const fManuf = manufacturers.find((i) => i.isFavorite && i.isActive !== false)?.label ?? "";
-      const fUnit  = units.find((i) => i.isFavorite && i.isActive !== false)?.label ?? "";
+      const fBrand         = brands.find((i) => i.isFavorite && i.isActive !== false)?.label ?? "";
+      const fManuf         = manufacturers.find((i) => i.isFavorite && i.isActive !== false)?.label ?? "";
+      const fUnit          = units.find((i) => i.isFavorite && i.isActive !== false)?.label ?? "";
+      const fMultiplierBase = multiplierBases.find((i) => i.isFavorite && i.isActive !== false)?.label ?? "";
 
-      if (fBrand || fManuf || fUnit) {
+      if (fBrand || fManuf || fUnit || fMultiplierBase) {
         setDraft((prev) => ({
           ...prev,
-          brand:         prev.brand         || fBrand,
-          manufacturer:  prev.manufacturer  || fManuf,
-          unitOfMeasure: prev.unitOfMeasure || fUnit,
+          brand:          prev.brand          || fBrand,
+          manufacturer:   prev.manufacturer   || fManuf,
+          unitOfMeasure:  prev.unitOfMeasure  || fUnit,
+          weightUnit:     prev.weightUnit     || fMultiplierBase,
+          multiplierBase: prev.multiplierBase || fMultiplierBase,
         }));
       }
     } catch {}
   }
   async function loadUnitItems() {
     try { setUnitItems(await listCatalog("UNIT_OF_MEASURE")); } catch {}
+  }
+  async function loadMultiplierBaseItems() {
+    try { setMultiplierBaseItems(await listCatalog("MULTIPLIER_BASE")); } catch {}
+  }
+  async function loadWeightUnitItems() {
+    try { setWeightUnitItems(await listCatalog("WEIGHT_UNIT")); } catch {}
+  }
+
+  async function toggleCatalogFavorite(
+    itemId: string,
+    currentlyFavorite: boolean,
+    setItems: React.Dispatch<React.SetStateAction<CatalogItem[]>>,
+  ) {
+    const next = !currentlyFavorite;
+    // Snapshot para revertir si falla
+    let prevItems: CatalogItem[] = [];
+    setItems(prev => {
+      prevItems = prev;
+      return prev.map(i => ({
+        ...i,
+        // Solo uno puede ser favorito: si next=true, quitar a todos los demás
+        isFavorite: i.id === itemId ? next : (next ? false : i.isFavorite),
+      }));
+    });
+    try {
+      // Si había otro favorito antes, quitárselo primero
+      const prevFav = prevItems.find(i => i.isFavorite && i.id !== itemId);
+      if (next && prevFav) {
+        await setCatalogItemFavorite(prevFav.id, false);
+      }
+      await setCatalogItemFavorite(itemId, next);
+    } catch {
+      setItems(prevItems);
+      toast.error("No se pudo actualizar el favorito");
+    }
   }
 
   async function handleSupplierCreated(entity: EntityDetailType) {
@@ -1282,6 +1630,17 @@ export default function ArticleModal({
   function set<K extends keyof Draft>(k: K, val: Draft[K]) {
     if (k === "costCalculationMode") {
       try { localStorage.setItem("tptech_last_cost_mode", val as string); } catch {}
+      // Al cambiar a MULTIPLIER: si multiplierBase está vacío, aplicar favorita del catálogo
+      if (val === "MULTIPLIER") {
+        const favBase = multiplierBaseItems.find(i => i.isFavorite && i.isActive !== false)?.label ?? "";
+        setDraft((prev) => ({
+          ...prev,
+          costCalculationMode: val as CostCalculationMode,
+          multiplierBase: prev.multiplierBase || favBase,
+        }));
+        setDraftChanged(true);
+        return;
+      }
     }
     if (k === "stockMode" && !articleId) {
       try { localStorage.setItem("tptech_last_stock_mode", val as string); } catch {}
@@ -1292,24 +1651,128 @@ export default function ArticleModal({
 
   // ── guardar ────────────────────────────────────────────────────────────
   async function handleSave() {
-    setSubmitted(true);
-    if (!draft.name.trim() || (!draft.sku.trim() && draft.barcodeSource === "SKU")) {
-      setActiveTab("general");
-      return;
+    if (handleSaveInFlightRef.current) return;
+    handleSaveInFlightRef.current = true;
+    try {
+      setSubmitted(true);
+      const hasVariants = variants.length > 0 || variantAxes.length > 0;
+      if (!draft.name.trim() || (!draft.sku.trim() && draft.barcodeSource === "SKU" && !hasVariants)) {
+        setActiveTab("principal");
+        return;
+      }
+      // Advertir si alguna variante no tiene SKU (no bloquea el guardado)
+      if (hasVariants && variants.some(v => !v.sku?.trim())) {
+        toast.warning("Algunas variantes no tienen SKU. Podés asignarles uno más adelante.");
+      }
+      // Validar atributos requeridos del artículo
+      const missingArtAttr = artAttrs.find(a => a.isRequired && !(artAttrValues[a.id] ?? "").trim());
+      if (missingArtAttr) {
+        setActiveTab("principal");
+        return;
+      }
+      // Bloquear guardado si MANUAL con moneda no-base sin cotización
+      if (draft.costCalculationMode === "MANUAL" && draft.manualCurrencyId) {
+        const selCurr = currencies.find(c => c.id === draft.manualCurrencyId);
+        const isBase = selCurr?.isBase ?? false;
+        if (!isBase && !selCurr?.latestRate) {
+          toast.error(`${selCurr?.code ?? "La moneda seleccionada"} no tiene cotización vigente. Sin ella el costo no puede convertirse a la moneda base para el cálculo de precios.`);
+          setActiveTab("principal");
+          return;
+        }
+      }
+      // Bloquear guardado si METAL_MERMA_HECHURA con líneas en moneda no-base sin cotización
+      if (draft.costCalculationMode === "METAL_MERMA_HECHURA" && costLines.length > 0) {
+        const baseCurrId = currencies.find(c => c.isBase)?.id;
+        const linesWithIssue = costLines.filter(l =>
+          l.currencyId && l.currencyId !== baseCurrId &&
+          !currencies.find(c => c.id === l.currencyId)?.latestRate
+        );
+        if (linesWithIssue.length > 0) {
+          const uniqueCodes = [...new Set(
+            linesWithIssue.map(l => currencies.find(c => c.id === l.currencyId)?.code ?? "?")
+          )];
+          const codes = uniqueCodes.length > 3
+            ? `${uniqueCodes.slice(0, 3).join(", ")} y ${uniqueCodes.length - 3} más`
+            : uniqueCodes.join(", ");
+          toast.error(`${codes} no tiene cotización vigente. Sin ella el costo de composición no puede calcularse correctamente. Actualizá la cotización o cambiá la moneda de esas líneas.`);
+          setActiveTab("principal");
+          return;
+        }
+      }
+      // Advertir si el costo efectivo es 0 o nulo.
+      // Cada modo tiene su propia fuente de costo real:
+      // - MANUAL:              calculable en cliente (base + ajuste)
+      // - MULTIPLIER:          calculable en cliente (cantidad × valor)
+      // - METAL_MERMA_HECHURA: requiere cotizaciones → usar `computed` del backend
+      // - COST_LINES:          requiere cotizaciones → usar `computed` del backend
+      let effectiveCost: number | null = null;
+      if (draft.costCalculationMode === "MANUAL") {
+        effectiveCost = computeManualFinalCost(draft, taxes);
+        // Fallback: artículos con costPrice directo (antes de manualBaseCost), compatibilidad
+        if (effectiveCost == null && draft.costPrice != null && draft.costPrice > 0) {
+          effectiveCost = draft.costPrice;
+        }
+      } else if (draft.costCalculationMode === "MULTIPLIER") {
+        const q = draft.multiplierQuantity;
+        const v = draft.multiplierValue;
+        effectiveCost = (q != null && v != null) ? q * v : null;
+      } else {
+        const cv = computed?.value;
+        if (cv != null) {
+          effectiveCost = parseFloat(cv);
+        } else if (costLines.length > 0) {
+          // computed no está disponible (artículo nuevo o líneas editadas sin guardar):
+          // calcular desde las líneas en memoria, igual que "Total estimado"
+          const baseCurrencyId = currencies.find(c => c.isBase)?.id ?? "";
+          const linesTotal = costLines.reduce((sum, line) => {
+            if (!line.quantity || !line.unitValue) return sum;
+            let raw = line.type === "METAL"
+              ? line.quantity * (1 + (line.mermaPercent ?? 0) / 100) * line.unitValue
+              : line.quantity * line.unitValue;
+            if (line.type !== "METAL") raw = applyLineAdj(raw, line.lineAdjKind ?? "", line.lineAdjType ?? "", line.lineAdjValue ?? null);
+            const currId = line.currencyId ?? baseCurrencyId;
+            if (currId !== baseCurrencyId) {
+              const curr = currencies.find(c => c.id === currId);
+              if (curr?.latestRate != null) raw = raw * curr.latestRate;
+              else return sum;
+            }
+            return sum + raw;
+          }, 0);
+          effectiveCost = linesTotal > 0 ? linesTotal : null;
+        }
+      }
+      if ((effectiveCost == null || effectiveCost === 0) && variants.length === 0) {
+        setShowNoPriceWarning(true);
+        return;
+      }
+      await executeSave();
+    } finally {
+      handleSaveInFlightRef.current = false;
     }
-    // Validar atributos requeridos del artículo
-    const missingArtAttr = artAttrs.find(a => a.isRequired && !(artAttrValues[a.id] ?? "").trim());
-    if (missingArtAttr) {
-      setActiveTab("general");
-      return;
-    }
+  }
+
+  async function executeSave() {
+    setShowNoPriceWarning(false);
     setBusySave(true);
     try {
       const payload = draftToPayload(draft);
-      // Para modo MANUAL: guardar el costo final calculado (base + ajuste + impuestos)
-      if (draft.costCalculationMode === "MANUAL") {
-        payload.costPrice = computeManualFinalCost(draft, taxes);
+      // Si el artículo tiene variantes, ciertos campos del padre no aplican
+      const hasVariantsForSave = variantAxes.length > 0 || variants.length > 0;
+      if (hasVariantsForSave) {
+        payload.openingStock  = null;
+        payload.reorderPoint  = null;
+        // El padre con variantes NO debe heredar el SKU base como barcode:
+        // cada variante tiene su propio barcode. Solo conservar si el usuario
+        // cargó un barcode CUSTOM explícito (barcode !== null).
+        if (payload.barcodeSource === "SKU" || payload.barcodeSource === "CODE") {
+          payload.barcodeSource = "CUSTOM";
+          payload.barcode       = null;
+          payload.autoBarcode   = false;
+        }
       }
+      // costPrice ya viene asignado en draftToPayload(): base + ajuste, SIN impuestos.
+      // Los impuestos se persisten solo como manualTaxIds (referencias) y se aplican
+      // dinámicamente en lectura. Nunca se suman al costPrice guardado.
       // Incluir líneas de composición de costo en el payload (guardado atómico)
       payload.costComposition = costLines;
 
@@ -1348,6 +1811,9 @@ export default function ArticleModal({
                 sku: dv.sku || undefined,
                 barcode: dv.barcode ?? undefined,
                 barcodeType: dv.barcodeType,
+                barcodeSource: dv.barcodeSource,
+                reorderPoint: dv.reorderPoint != null ? parseFloat(dv.reorderPoint as any) : undefined,
+                openingStock: (dv as any).openingStock != null ? parseFloat((dv as any).openingStock) : undefined,
                 costPrice: dv.costPrice != null ? parseFloat(dv.costPrice as any) : undefined,
                 priceOverride: dv.priceOverride != null ? parseFloat(dv.priceOverride as any) : undefined,
                 sortOrder: dv.sortOrder,
@@ -1370,10 +1836,20 @@ export default function ArticleModal({
               }));
               if (attrPayload.length > 0) {
                 const savedAttrs = await articlesApi.variantAttributes.set(saved.id, created_v.id, attrPayload);
-                persistedVariants.push({ ...created_v, attributeValues: savedAttrs });
-              } else {
-                persistedVariants.push(created_v);
+                created_v = { ...created_v, attributeValues: savedAttrs };
               }
+              // Subir imagen pendiente de la variante draft si existe
+              const pendingImg = pendingVariantImagesRef.current.get(dv.id);
+              if (pendingImg) {
+                try {
+                  const newImg = await articlesApi.variants.images.upload(saved.id, created_v.id, pendingImg, true);
+                  created_v = { ...created_v, images: [newImg], imageUrl: newImg.url };
+                } catch {
+                  // Best-effort: no bloquear si falla la imagen
+                }
+                pendingVariantImagesRef.current.delete(dv.id);
+              }
+              persistedVariants.push(created_v);
               varOk++;
             } catch (err: any) {
               varFailed.push(`${dv.name} (${dv.code})`);
@@ -1389,7 +1865,7 @@ export default function ArticleModal({
             toast.success(`Artículo creado con ${total} variante${total !== 1 ? "s" : ""}.`);
           } else {
             toast.warning(
-              `Artículo creado. ${varOk} variante${varOk !== 1 ? "s" : ""} creada${varOk !== 1 ? "s" : ""}, ${varFailed.length} fallaron: ${varFailed.join(", ")}.`
+              `Artículo creado. ${varOk} variante${varOk !== 1 ? "s" : ""} creada${varOk !== 1 ? "s" : ""}. ${varFailed.length} no pud${varFailed.length !== 1 ? "ieron" : "o"} crearse: ${varFailed.join(", ")}. Podés agregarlas desde la pestaña Variantes.`
             );
           }
         }
@@ -1407,15 +1883,17 @@ export default function ArticleModal({
         }
       }
 
-      // Subir imagen pendiente (create mode)
-      if (!isEdit && pendingMainImage) {
-        try {
-          const img = await articlesApi.images.upload(saved.id, pendingMainImage, "", true);
-          setImages([img]);
-          setPendingMainImage(null);
-        } catch {
-          // best-effort: el artículo ya se creó, la imagen se puede subir después
+      // Subir imágenes pendientes en orden (create mode). La primera es la principal.
+      if (!isEdit && pendingImages.length > 0) {
+        const uploaded: ArticleImage[] = [];
+        for (let i = 0; i < pendingImages.length; i++) {
+          try {
+            const img = await articlesApi.images.upload(saved.id, pendingImages[i].file, "", i === 0);
+            uploaded.push(img);
+          } catch { /* best-effort: el artículo ya se creó */ }
         }
+        setImages(uploaded);
+        setPendingImages(prev => { prev.forEach(p => URL.revokeObjectURL(p.url)); return []; });
       }
 
       // Sincronizar estado con la respuesta final
@@ -1431,13 +1909,15 @@ export default function ArticleModal({
         toast.success(isEdit ? "Cambios guardados." : "Artículo creado.");
       }
       setDraftChanged(false); // reset dirty state después de guardar exitosamente
+      // Notificar a otros modales abiertos que referencian este artículo como producto/servicio
+      window.dispatchEvent(new CustomEvent("tptech:article-cost-changed", { detail: { articleId: saved.id } }));
       onSaved?.(saved);
       if (!isEdit) {
         // En modo crear, pasar a edición del recién creado (mismo modal)
         onClose();
       }
     } catch (e: any) {
-      toast.error(e?.message || "Error al guardar.");
+      toast.error(e?.message || "No se pudieron guardar los cambios. Revisá los campos obligatorios y volvé a intentar.");
     } finally {
       setBusySave(false);
     }
@@ -1474,7 +1954,7 @@ export default function ArticleModal({
       updated++;
       return { ...line, unitValue: newUnitValue };
     }));
-    if (updated > 0) toast.success(`${updated} línea(s) de metal actualizada(s) con cotización actual.`);
+    if (updated > 0) toast.success(`${updated} línea${updated !== 1 ? "s" : ""} de metal actualizada${updated !== 1 ? "s" : ""} con la cotización actual.`);
     else toast.info("Todos los precios ya están al día.");
   }
 
@@ -1501,8 +1981,10 @@ export default function ArticleModal({
   // ── variantes ──────────────────────────────────────────────────────────
   function openNewVariant() {
     setVarEditId(null);
-    setVarDraft({ code: "", name: "" });
+    setVarDraft({ code: "", name: "", barcodeSource: "SKU" });
     setVarAttrValues({});
+    setPendingVarImages([]);
+    setPendingVarImagePreviews(prev => { prev.forEach(URL.revokeObjectURL); return []; });
     setVarModal(true);
   }
   function openEditVariant(v: ArticleVariant) {
@@ -1513,13 +1995,18 @@ export default function ArticleModal({
       sku: v.sku ?? "",
       barcode: v.barcode ?? "",
       barcodeType: v.barcodeType,
+      barcodeSource: v.barcodeSource ?? "SKU",
       costPrice: v.costPrice != null ? parseFloat(v.costPrice) : null,
       reorderPoint: v.reorderPoint != null ? parseFloat(v.reorderPoint) : null,
+      openingStock: v.openingStock != null ? parseFloat(v.openingStock) : null,
       weightOverride: v.weightOverride != null ? parseFloat(v.weightOverride) : null,
       hechuraPriceOverride: v.hechuraPriceOverride != null ? parseFloat(v.hechuraPriceOverride) : null,
       priceOverride: v.priceOverride != null ? parseFloat(v.priceOverride) : null,
       sortOrder: v.sortOrder,
+      notes: v.notes ?? "",
     });
+    setPendingVarImages([]);
+    setPendingVarImagePreviews(prev => { prev.forEach(URL.revokeObjectURL); return []; });
     // Inicializar valores de atributos de variante desde los datos cargados
     const attrMap: Record<string, string> = {};
     (v.attributeValues ?? []).forEach((av: VariantAttributeValue) => {
@@ -1528,82 +2015,6 @@ export default function ArticleModal({
     setVarAttrValues(attrMap);
     setVarModal(true);
   }
-  /** Sube una nueva imagen a la galería de la variante (primera → principal automáticamente). */
-  async function handleVariantImageFile(file: File) {
-    if (!varEditId || !articleId) return;
-    setBusyVarImage(true);
-    try {
-      const currentVariant = variants.find(v => v.id === varEditId);
-      const isFirst = !currentVariant?.images?.length && !currentVariant?.imageUrl;
-      const newImg = await articlesApi.variants.images.upload(articleId, varEditId, file, isFirst || !currentVariant?.images?.length);
-      setVariants(prev => prev.map(v => {
-        if (v.id !== varEditId) return v;
-        const updatedImages = [...(v.images ?? []).map(i => newImg.isMain ? { ...i, isMain: false } : i), newImg];
-        return { ...v, images: updatedImages, imageUrl: newImg.isMain ? newImg.url : v.imageUrl };
-      }));
-    } catch (err: any) {
-      toast.error(err?.message || "Error al subir imagen.");
-      throw err; // re-throw so TPAvatarUploader can revert preview
-    } finally {
-      setBusyVarImage(false);
-    }
-  }
-
-  /** Elimina una imagen de la galería. Si era principal, el backend promueve la siguiente. */
-  async function handleVariantImageRemoveById(imageId: string) {
-    if (!varEditId || !articleId) return;
-    setBusyVarImage(true);
-    try {
-      await articlesApi.variants.images.remove(articleId, varEditId, imageId);
-      setVariants(prev => prev.map(v => {
-        if (v.id !== varEditId) return v;
-        const remaining = (v.images ?? []).filter(i => i.id !== imageId);
-        const newMain = remaining.find(i => i.isMain)?.url ?? remaining[0]?.url ?? "";
-        return { ...v, images: remaining, imageUrl: newMain };
-      }));
-    } catch (err: any) {
-      toast.error(err?.message || "Error al eliminar imagen.");
-    } finally {
-      setBusyVarImage(false);
-    }
-  }
-
-  /** Cambia la imagen principal de la variante. */
-  async function handleVariantSetMainImage(imageId: string) {
-    if (!varEditId || !articleId) return;
-    try {
-      const updated = await articlesApi.variants.images.setMain(articleId, varEditId, imageId);
-      setVariants(prev => prev.map(v => {
-        if (v.id !== varEditId) return v;
-        const updatedImages = (v.images ?? []).map(i => ({ ...i, isMain: i.id === imageId }));
-        return { ...v, images: updatedImages, imageUrl: updated.url };
-      }));
-    } catch (err: any) {
-      toast.error(err?.message || "Error al cambiar imagen principal.");
-    }
-  }
-
-  /** Elimina la imagen principal actual (la primera imagen de la galería, si existe). */
-  async function handleVariantImageRemove() {
-    if (!varEditId || !articleId) return;
-    const currentVariant = variants.find(v => v.id === varEditId);
-    const mainImg = currentVariant?.images?.find(i => i.isMain) ?? currentVariant?.images?.[0];
-    if (mainImg) {
-      await handleVariantImageRemoveById(mainImg.id);
-      return;
-    }
-    // fallback legacy: limpiar imageUrl si no hay galería
-    setBusyVarImage(true);
-    try {
-      await articlesApi.variants.update(articleId, varEditId, { imageUrl: "" });
-      setVariants(prev => prev.map(v => v.id === varEditId ? { ...v, imageUrl: "" } : v));
-    } catch (err: any) {
-      toast.error(err?.message || "Error al eliminar imagen.");
-    } finally {
-      setBusyVarImage(false);
-    }
-  }
-
   async function saveVariant() {
     setBusyVar(true);
 
@@ -1617,20 +2028,18 @@ export default function ArticleModal({
 
     // Validar campos base
     if (varEditId) {
-      // Edición rápida: SKU y Nombre son obligatorios
+      // Edición rápida: Nombre es obligatorio; SKU es recomendado (advierte pero no bloquea)
       if (!(varDraft.sku ?? "").trim()) {
-        toast.error("El SKU es obligatorio.");
-        setBusyVar(false);
-        return;
+        toast.warning("Esta variante no tiene SKU. Podés asignarle uno más adelante.");
       }
       if (!derivedName) {
-        toast.error("El nombre es obligatorio.");
+        toast.error("El nombre de la variante es obligatorio para guardar.");
         setBusyVar(false);
         return;
       }
     } else {
       if (!derivedName || !varDraft.code?.trim()) {
-        toast.error("Nombre y código son obligatorios.");
+        toast.error("El nombre y el código de la variante son obligatorios.");
         setBusyVar(false);
         return;
       }
@@ -1684,7 +2093,7 @@ export default function ArticleModal({
 
       if (varEditId) {
         setVariants(prev => prev.map(v => v.id === varEditId
-          ? { ...v, code: varDraft.code, name: derivedName, sku: varDraft.sku ?? "", attributeValues: attrValues }
+          ? { ...v, code: varDraft.code, name: derivedName, sku: varDraft.sku ?? "", reorderPoint: (varDraft as any).reorderPoint ?? null, attributeValues: attrValues }
           : v
         ));
       } else {
@@ -1696,53 +2105,139 @@ export default function ArticleModal({
           sku: varDraft.sku ?? "",
           barcode: varDraft.barcode ?? null,
           barcodeType: varDraft.barcodeType ?? "CODE128",
-          barcodeSource: "SKU",
+          barcodeSource: varDraft.barcodeSource ?? "SKU",
           costPrice: null,
-          reorderPoint: null,
+          reorderPoint: (varDraft as any).reorderPoint ?? null,
+          openingStock: (varDraft as any).openingStock ?? null,
           notes: "",
           priceOverride: null,
           weightOverride: null,
           hechuraPriceOverride: null,
-          imageUrl: "",
+          imageUrl: pendingVarImagePreviews[0] ?? "",
           images: [],
           sortOrder: variants.length,
           isActive: true,
           createdAt: new Date().toISOString(),
           attributeValues: attrValues,
         };
+        if (pendingVarImages.length > 0) {
+          pendingVariantImagesRef.current.set(draftId, pendingVarImages[0]);
+        }
         setVariants(prev => [...prev, newVar]);
       }
       setVarModal(false);
       setBusyVar(false);
+      setPendingVarImages([]);
+      setPendingVarImagePreviews(prev => { prev.forEach(URL.revokeObjectURL); return []; });
       return;
     }
 
-    // ── MODO EDIT: llamada a API ─────────────────────────────────────────
-    try {
-      let saved: ArticleVariant;
-      const payload = { ...varDraft, name: derivedName };
-      if (varEditId) {
-        saved = await articlesApi.variants.update(articleId, varEditId, payload);
-      } else {
-        saved = await articlesApi.variants.create(articleId, payload);
+    // ── MODO EDIT API: actualizar variante existente ────────────────────────
+    if (varEditId) {
+      try {
+        const payload = { ...varDraft, name: derivedName };
+        let saved: ArticleVariant = await articlesApi.variants.update(articleId, varEditId, payload);
+
+        // Guardar attributeValues si hay ejes configurados
+        const attrPayload = variantAxes
+          .filter(ax => (varAttrValues[ax.id] ?? "").trim() !== "")
+          .map(ax => ({ assignmentId: ax.id, value: varAttrValues[ax.id].trim() }));
+        if (attrPayload.length > 0) {
+          try {
+            const savedAttrs = await articlesApi.variantAttributes.set(articleId, saved.id, attrPayload);
+            saved = { ...saved, attributeValues: savedAttrs };
+          } catch (attrErr) {
+            throw attrErr;
+          }
+        }
+
+        // Subir imágenes pendientes
+        if (pendingVarImages.length > 0) {
+          const uploadedImages: VariantImage[] = [];
+          for (let i = 0; i < pendingVarImages.length; i++) {
+            try {
+              const newImg = await articlesApi.variants.images.upload(articleId, saved.id, pendingVarImages[i], i === 0);
+              uploadedImages.push(newImg);
+            } catch {
+              // No bloquear el guardado si falla alguna imagen
+            }
+          }
+          if (uploadedImages.length > 0) {
+            saved = { ...saved, images: uploadedImages, imageUrl: uploadedImages[0].url };
+          }
+        }
+        setVariants(prev => prev.map(v => v.id === varEditId ? { ...v, ...saved } : v));
+        setVarModal(false);
+        setPendingVarImages([]);
+        setPendingVarImagePreviews(prev => { prev.forEach(URL.revokeObjectURL); return []; });
+        toast.success("Variante actualizada.");
+      } catch (e: any) {
+        toast.error(e?.message || "No se pudo actualizar la variante.");
+      } finally { setBusyVar(false); }
+      return;
+    }
+
+    // ── MODO EDIT API: crear variante nueva ─────────────────────────────────
+
+    // Validar ejes requeridos antes de enviar al backend.
+    if (variantAxes.length > 0) {
+      const missingAxes = variantAxes.filter(ax => !(varAttrValues[ax.id] ?? "").trim());
+      if (missingAxes.length > 0) {
+        const names = missingAxes.map(ax => ax.definition.name).join(", ");
+        toast.error(`Completá los ejes de variante obligatorios: ${names}`);
+        setBusyVar(false);
+        return;
       }
+    }
+
+    try {
+      const payload = { ...varDraft, name: derivedName };
+      let saved: ArticleVariant = await articlesApi.variants.create(articleId, payload);
+
+      // Si el backend restauró internamente una variante soft-deleted, ya tiene atributos previos.
+      // En ese caso no compensamos borrándola si falla el guardado de ejes (igual que en generación).
+      const wasBackendRestored = (saved.attributeValues?.length ?? 0) > 0;
 
       // Guardar attributeValues si hay ejes configurados
       const attrPayload = variantAxes
         .filter(ax => (varAttrValues[ax.id] ?? "").trim() !== "")
         .map(ax => ({ assignmentId: ax.id, value: varAttrValues[ax.id].trim() }));
       if (attrPayload.length > 0) {
-        const savedAttrs = await articlesApi.variantAttributes.set(articleId, saved.id, attrPayload);
-        saved = { ...saved, attributeValues: savedAttrs };
+        try {
+          const savedAttrs = await articlesApi.variantAttributes.set(articleId, saved.id, attrPayload);
+          saved = { ...saved, attributeValues: savedAttrs };
+        } catch (attrErr) {
+          // Compensación: si la variante era nueva (no restaurada), borrarla para evitar que
+          // quede incompleta en la base de datos. Mismo criterio que la generación automática.
+          if (!wasBackendRestored) {
+            try { await articlesApi.variants.remove(articleId, saved.id); } catch {}
+          }
+          throw attrErr; // re-throw: el catch externo muestra el error al usuario
+        }
       }
 
-      setVariants((prev) =>
-        varEditId ? prev.map((v) => v.id === varEditId ? saved : v) : [...prev, saved]
-      );
+      // Subir imágenes pendientes
+      if (pendingVarImages.length > 0) {
+        const uploadedImages: VariantImage[] = [];
+        for (let i = 0; i < pendingVarImages.length; i++) {
+          try {
+            const newImg = await articlesApi.variants.images.upload(articleId, saved.id, pendingVarImages[i], i === 0);
+            uploadedImages.push(newImg);
+          } catch {
+            // No bloquear el guardado si falla alguna imagen
+          }
+        }
+        if (uploadedImages.length > 0) {
+          saved = { ...saved, images: uploadedImages, imageUrl: uploadedImages[0].url };
+        }
+      }
+      setVariants(prev => [...prev, saved]);
       setVarModal(false);
-      toast.success(varEditId ? "Variante actualizada." : "Variante creada.");
+      setPendingVarImages([]);
+      setPendingVarImagePreviews(prev => { prev.forEach(URL.revokeObjectURL); return []; });
+      toast.success("Variante creada.");
     } catch (e: any) {
-      toast.error(e?.message || "Error al guardar variante.");
+      toast.error(e?.message || "No se pudo guardar la variante. Verificá que el código no esté duplicado.");
     } finally { setBusyVar(false); }
   }
   async function doRemoveVariant(variantId: string) {
@@ -1768,7 +2263,7 @@ export default function ArticleModal({
       setDeleteVariantId(null);
       toast.success("Variante eliminada.");
     } catch (e: any) {
-      toast.error(e?.message || "Error al eliminar variante.");
+      toast.error(e?.message || "No se pudo eliminar la variante. Puede estar siendo referenciada en ventas o movimientos.");
     } finally { setRemovingVar(null); }
   }
   async function toggleVariant(v: ArticleVariant) {
@@ -1781,7 +2276,7 @@ export default function ArticleModal({
       const updated = await articlesApi.variants.toggle(articleId, v.id);
       setVariants((prev) => prev.map((vv) => vv.id === v.id ? updated : vv));
     } catch (e: any) {
-      toast.error(e?.message || "Error al cambiar estado.");
+      toast.error(e?.message || "No se pudo cambiar el estado de la variante. Intentá de nuevo.");
     }
   }
 
@@ -1798,8 +2293,18 @@ export default function ArticleModal({
     try {
       await articlesApi.variants.reorder(articleId, reordered.map(v => v.id));
     } catch {
-      toast.error("Error al guardar el orden de variantes.");
+      toast.error("No se pudo guardar el nuevo orden. El cambio puede no haberse aplicado — recargá para ver el estado actual.");
     }
+  }
+
+  // ── reordenar líneas de costo por drag
+  function handleCostLineDragEnd(event: DragEndEvent) {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+    const oldIdx = costLines.findIndex(l => l.id === active.id);
+    const newIdx = costLines.findIndex(l => l.id === over.id);
+    if (oldIdx === -1 || newIdx === -1) return;
+    setCostLines(arrayMove(costLines, oldIdx, newIdx).map((l, i) => ({ ...l, sortOrder: i })));
   }
 
   // ── reordenar opciones seleccionadas por eje (controla orden de generación)
@@ -1853,6 +2358,7 @@ export default function ArticleModal({
         [axisId]: checked ? [...cur, value] : cur.filter(v => v !== value),
       };
     });
+    setRemoveComboAlert(null);
   }
 
   function addGenTag(axisId: string) {
@@ -1864,6 +2370,7 @@ export default function ArticleModal({
       return { ...prev, [axisId]: [...cur, val] };
     });
     setGenTagInput(prev => ({ ...prev, [axisId]: "" }));
+    setRemoveComboAlert(null);
   }
 
   function removeGenTag(axisId: string, value: string) {
@@ -1871,6 +2378,7 @@ export default function ArticleModal({
       ...prev,
       [axisId]: (prev[axisId] ?? []).filter(v => v !== value),
     }));
+    setRemoveComboAlert(null);
   }
 
   /** Producto cartesiano de arrays */
@@ -1942,37 +2450,58 @@ export default function ArticleModal({
    *  - Si todas las extensiones están presentes: BASE + concat (sin separador) → A000AB
    *  - Si alguna extensión falta: BASE-PART1-PART2 con separador */
   function makeVarSku(articleCode: string, values: string[], extensions: string[]): string {
-    const base = articleCode.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 10) || "ART";
+    const cleaned = articleCode.toUpperCase().replace(/[^A-Z0-9-]/g, "");
+    const base = cleaned.replace(/-+$/, "").slice(0, 10) || "ART";
     const parts = values.map((v, i) => {
       const ext = (extensions[i] ?? "").trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
       if (ext) return ext;
       return v.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 6) || "X";
     });
     const allHaveExt = extensions.every(e => e.trim());
-    return allHaveExt ? base + parts.join("") : [base, ...parts].join("-");
+    // Siempre insertar guion entre base y extensiones (sea que el padre terminara en "-" o no)
+    return allHaveExt
+      ? base + "-" + parts.join("")
+      : [base, ...parts].join("-");
   }
 
   /** Valida los SKU de los combos: detecta duplicados en el lote y conflictos con variantes existentes */
   function validateGenSkus(combos: GenCombo[]): GenCombo[] {
-    const existingSkus = new Set(variants.map(v => (v.sku ?? "").trim().toUpperCase()).filter(Boolean));
-    const batchSkus = new Map<string, number>(); // sku -> cantidad en el lote
-    for (const c of combos) {
-      if (!c.isNew) continue;
-      const key = c.sku.trim().toUpperCase();
-      if (!key) continue;
-      batchSkus.set(key, (batchSkus.get(key) ?? 0) + 1);
+    // Map SKU_UPPER → nombre de la variante existente (para mostrar en el error)
+    const existingSkuMap = new Map<string, string>();
+    for (const v of variants) {
+      const key = (v.sku ?? "").trim().toUpperCase();
+      if (key) existingSkuMap.set(key, v.name || v.code);
     }
+
+    // Map SKU_UPPER → lista de combos nuevos con ese SKU (para detectar duplicados internos)
+    const batchSkuMap = new Map<string, GenCombo[]>();
+    for (const c of combos) {
+      if (!c.isNew || !c.sku.trim()) continue;
+      const key = c.sku.trim().toUpperCase();
+      const list = batchSkuMap.get(key) ?? [];
+      list.push(c);
+      batchSkuMap.set(key, list);
+    }
+
     return combos.map(c => {
       if (!c.isNew) return c;
       const trimmed = c.sku.trim();
       const key = trimmed.toUpperCase();
       if (!key) return { ...c, skuError: undefined };
-      if (existingSkus.has(key)) {
-        return { ...c, skuError: "Este SKU ya existe en una variante del artículo." };
+
+      if (existingSkuMap.has(key)) {
+        const conflictName = existingSkuMap.get(key)!;
+        return { ...c, skuError: `SKU "${trimmed}" ya está usado por la variante "${conflictName}"` };
       }
-      if ((batchSkus.get(key) ?? 0) > 1) {
-        return { ...c, skuError: "SKU duplicado dentro de la generación." };
+
+      const batchList = batchSkuMap.get(key) ?? [];
+      if (batchList.length > 1) {
+        // Buscar el otro combo del lote con el mismo SKU (distinto key de combinación)
+        const other = batchList.find(b => b.key !== c.key);
+        const otherName = other?.name ?? "otra combinación";
+        return { ...c, skuError: `SKU duplicado en las combinaciones nuevas (también usado por "${otherName}")` };
       }
+
       return { ...c, skuError: undefined };
     });
   }
@@ -1982,6 +2511,48 @@ export default function ArticleModal({
       const updated = prev.map(c => c.key === key ? { ...c, sku } : c);
       return validateGenSkus(updated);
     });
+  }
+
+  function removeCombo(comboKey: string) {
+    const combo = genCombos.find(c => c.key === comboKey && c.isNew);
+    if (!combo) {
+      setRemoveComboAlert("No se encontró la combinación a eliminar.");
+      return;
+    }
+
+    const remaining = genCombos.filter(c => c.isNew && c.key !== comboKey);
+
+    // Detectar si hay al menos un valor que puede desseleccionarse (huérfano)
+    const hasOrphanAttr = combo.attrs.some(attr =>
+      !remaining.some(c =>
+        c.attrs.some(a => a.assignmentId === attr.assignmentId && a.value === attr.value)
+      )
+    );
+
+    if (!hasOrphanAttr) {
+      setRemoveComboAlert(
+        "Esta combinación no puede eliminarse porque sus valores son compartidos con otras combinaciones. Para quitarla, deseleccioná las opciones correspondientes en el generador."
+      );
+      return;
+    }
+
+    // Éxito: limpiar alert y aplicar cambio
+    setRemoveComboAlert(null);
+    setGenSelected(prev => {
+      const next = { ...prev };
+      for (const attr of combo.attrs) {
+        const { assignmentId, value } = attr;
+        // Solo desseleccionar si ningún otro combo nuevo usa este (eje, valor)
+        const usedByOther = remaining.some(c =>
+          c.attrs.some(a => a.assignmentId === assignmentId && a.value === value)
+        );
+        if (!usedByOther) {
+          next[assignmentId] = (next[assignmentId] ?? []).filter(v => v !== value);
+        }
+      }
+      return next;
+    });
+    // El useEffect que observa genSelected recomputará genCombos automáticamente
   }
 
   /** Computa el producto cartesiano de los valores seleccionados y determina
@@ -2038,7 +2609,10 @@ export default function ArticleModal({
     let created = 0;
     const skipped = genCombos.filter(c => !c.isNew).length;
 
-    const newCombos = genCombos.filter(c => c.isNew);
+    // Separar: válidos (sin error) vs con error de validación frontal (ej. SKU duplicado).
+    // Los inválidos no se envían a la API: ya sabemos que fallarán y tienen su propio mensaje en pantalla.
+    const skuErrorCombos = genCombos.filter(c => c.isNew && Boolean(c.skuError));
+    const newCombos      = genCombos.filter(c => c.isNew && !c.skuError);
 
     // ── MODO CREATE: agregar al estado local ─────────────────────────────
     if (!articleId) {
@@ -2069,6 +2643,7 @@ export default function ArticleModal({
           barcodeSource: "SKU" as const,
           costPrice: null,
           reorderPoint: null,
+          openingStock: null,
           notes: "",
           priceOverride: null,
           weightOverride: null,
@@ -2156,11 +2731,25 @@ export default function ArticleModal({
       }
     }
 
-    if (created > 0) toast.success(`${created} variante${created !== 1 ? "s" : ""} creada${created !== 1 ? "s" : ""}.`);
-    // Solo notificar errores reales del backend (apiSkipped), no las omisiones correctas (skipped)
-    // porque el preview ya las mostraba como "Existe" antes de hacer click
-    if (apiSkipped > 0) toast.error(`${apiSkipped} combinación${apiSkipped !== 1 ? "es" : ""} no pudieron crearse. Pueden ya existir activas o tener conflicto de código — revisá la lista.`);
-    if (created === 0 && apiSkipped === 0) toast.info("No había combinaciones nuevas para crear.");
+    // Total de combinaciones que no pudieron procesarse (error de API + errores de SKU frontal)
+    const totalFailed = apiSkipped + skuErrorCombos.length;
+
+    if (created > 0 && totalFailed > 0) {
+      // Resultado mixto: algunas OK, algunas fallidas
+      toast.success(`${created} variante${created !== 1 ? "s" : ""} creada${created !== 1 ? "s" : ""}.`);
+      const failReason = skuErrorCombos.length > 0 ? " (SKU duplicado u otro conflicto)" : " (conflicto de código)";
+      toast.error(
+        `${totalFailed} combinación${totalFailed !== 1 ? "es" : ""} no pudo${totalFailed !== 1 ? "eron" : ""} crearse${failReason}. Podés corregirlas y crearlas individualmente.`,
+        { durationMs: 6000 }
+      );
+    } else if (created > 0) {
+      toast.success(`${created} variante${created !== 1 ? "s" : ""} creada${created !== 1 ? "s" : ""}.`);
+    } else if (totalFailed > 0) {
+      // Todas fallaron
+      toast.error(`Ninguna combinación pudo crearse. Revisá los SKU o códigos y volvé a intentar.`);
+    } else {
+      toast.info("No había combinaciones nuevas para crear.");
+    }
     setGenBusy(false);
   }
 
@@ -2286,11 +2875,13 @@ export default function ArticleModal({
 
   /** Sube o reemplaza la imagen principal del artículo (usada en tab General). */
   async function handleUploadMainImage(file: File) {
-    // Create mode: guardar para subir después de crear el artículo
+    // Create mode: reemplazar la imagen principal local (posición 0)
     if (!articleId) {
-      if (pendingMainImageUrl) URL.revokeObjectURL(pendingMainImageUrl);
-      setPendingMainImage(file);
-      setPendingMainImageUrl(URL.createObjectURL(file));
+      const url = URL.createObjectURL(file);
+      setPendingImages(prev => {
+        if (prev[0]) URL.revokeObjectURL(prev[0].url);
+        return [{ file, url }, ...prev.slice(1)];
+      });
       return;
     }
     setBusyImg(true);
@@ -2298,17 +2889,18 @@ export default function ArticleModal({
       const img = await articlesApi.images.upload(articleId, file, "", true);
       setImages(prev => [...prev.map(i => ({ ...i, isMain: false })), img]);
     } catch (e: any) {
-      toast.error(e?.message || "Error al subir imagen.");
+      toast.error(e?.message || "No se pudo subir la imagen principal. Verificá el formato (JPG, PNG, WebP) y el tamaño del archivo.");
     } finally { setBusyImg(false); }
   }
 
   /** Elimina la imagen principal actual (usada en tab General). */
   async function handleDeleteMainImage() {
-    // Create mode: solo limpiar el pending
+    // Create mode: quitar la imagen principal local (posición 0)
     if (!articleId) {
-      setPendingMainImage(null);
-      if (pendingMainImageUrl) URL.revokeObjectURL(pendingMainImageUrl);
-      setPendingMainImageUrl(null);
+      setPendingImages(prev => {
+        if (prev[0]) URL.revokeObjectURL(prev[0].url);
+        return prev.slice(1);
+      });
       return;
     }
     const mainImg = images.find(i => i.isMain) ?? images[0] ?? null;
@@ -2321,7 +2913,7 @@ export default function ArticleModal({
       await articlesApi.images.setMain(articleId, imgId);
       setImages((prev) => prev.map((img) => ({ ...img, isMain: img.id === imgId })));
     } catch (e: any) {
-      toast.error(e?.message || "Error al establecer imagen principal.");
+      toast.error(e?.message || "No se pudo establecer la imagen principal. Intentá de nuevo.");
     }
   }
   async function handleRemoveImage(imgId: string) {
@@ -2332,22 +2924,47 @@ export default function ArticleModal({
       setImages((prev) => prev.filter((img) => img.id !== imgId));
       toast.success("Imagen eliminada.");
     } catch (e: any) {
-      toast.error(e?.message || "Error al eliminar imagen.");
+      toast.error(e?.message || "No se pudo eliminar la imagen. Intentá de nuevo.");
     } finally { setRemovingImg(null); }
   }
 
   async function handleAddImage(file: File) {
-    if (!articleId) return;
-    if (images.length >= 5) { toast.error("Máximo 5 imágenes por artículo."); return; }
+    // Create mode: agregar imagen pendiente local
+    if (!articleId) {
+      if (pendingImages.length >= 5) { toast.error("Límite de imágenes alcanzado (máximo 5). Eliminá una imagen para poder agregar otra."); return; }
+      const url = URL.createObjectURL(file);
+      setPendingImages(prev => [...prev, { file, url }]);
+      return;
+    }
+    if (images.length >= 5) { toast.error("Límite de imágenes alcanzado (máximo 5). Eliminá una imagen para poder agregar otra."); return; }
     setBusyAddImg(true);
     try {
       const img = await articlesApi.images.upload(articleId, file, "", false);
       setImages(prev => [...prev, img]);
     } catch (e: any) {
-      toast.error(e?.message || "Error al subir imagen.");
+      toast.error(e?.message || "No se pudo subir la imagen. Verificá el formato (JPG, PNG, WebP) y el tamaño del archivo.");
     } finally {
       setBusyAddImg(false);
     }
+  }
+
+  /** Mueve una imagen pendiente (create mode) a la posición 0 (principal). */
+  function handleSetPendingMain(idx: number) {
+    setPendingImages(prev => {
+      const next = [...prev];
+      const [item] = next.splice(idx, 1);
+      return [item, ...next];
+    });
+  }
+
+  /** Elimina una imagen pendiente (create mode) por índice. */
+  function handleRemovePendingImage(idx: number) {
+    setPendingImages(prev => {
+      const next = [...prev];
+      URL.revokeObjectURL(next[idx].url);
+      next.splice(idx, 1);
+      return next;
+    });
   }
 
   async function handleSetMainImage(imgId: string) {
@@ -2356,7 +2973,7 @@ export default function ArticleModal({
       await articlesApi.images.setMain(articleId, imgId);
       setImages(prev => prev.map(i => ({ ...i, isMain: i.id === imgId })));
     } catch (e: any) {
-      toast.error(e?.message || "Error al cambiar imagen principal.");
+      toast.error(e?.message || "No se pudo establecer la imagen principal. Intentá de nuevo.");
     }
   }
 
@@ -2383,14 +3000,14 @@ export default function ArticleModal({
   }, [categories]);
   const articleTypeOptions = (Object.keys(ARTICLE_TYPE_LABELS) as ArticleType[])
     .filter((k) => k !== "MATERIAL") // MATERIAL no se ofrece como opción nueva
-    .map((k) => ({ value: k, label: ARTICLE_TYPE_LABELS[k] }));
+    .map((k) => ({ value: k, label: ARTICLE_TYPE_LABELS[k], isFavorite: defaultArticleType === k }));
   const statusOptions = (Object.keys(ARTICLE_STATUS_LABELS) as ArticleStatus[]).map((k) => ({
-    value: k, label: ARTICLE_STATUS_LABELS[k],
+    value: k, label: ARTICLE_STATUS_LABELS[k], isFavorite: defaultStatus === k,
   }));
   // Ocultar BY_MATERIAL salvo que el artículo ya lo tenga asignado (para no romper edición)
   const stockModeOptions = (Object.keys(STOCK_MODE_LABELS) as StockMode[])
     .filter((k) => k !== "BY_MATERIAL" || draft.stockMode === "BY_MATERIAL")
-    .map((k) => ({ value: k, label: STOCK_MODE_LABELS[k] }));
+    .map((k) => ({ value: k, label: STOCK_MODE_LABELS[k], isFavorite: defaultStockMode === k }));
   const barcodeTypeOptions = [
     { value: "CODE128", label: "CODE128" },
     { value: "EAN13",   label: "EAN-13" },
@@ -2399,10 +3016,12 @@ export default function ArticleModal({
   const hechuraModeOptions = (Object.keys(HECHURA_MODE_LABELS) as HechuraPriceMode[]).map((k) => ({
     value: k, label: HECHURA_MODE_LABELS[k],
   }));
-  const costModeOptions: { value: CostCalculationMode; label: string }[] = [
-    { value: "MANUAL",              label: COST_MODE_LABELS["MANUAL"] },
-    { value: "MULTIPLIER",          label: COST_MODE_LABELS["MULTIPLIER"] },
-    { value: "METAL_MERMA_HECHURA", label: COST_MODE_LABELS["METAL_MERMA_HECHURA"] },
+  const inventoryAccountOptions = [
+    { value: "",                     label: "— Sin especificar —",  isFavorite: defaultInventory === "" },
+    { value: "Activo de inventario", label: "Activo de inventario", isFavorite: defaultInventory === "Activo de inventario" },
+    { value: "_h_avanzado",          label: "Producción avanzada",  isHeader: true },
+    { value: "Bienes finalizados",   label: "Bienes finalizados",   isFavorite: defaultInventory === "Bienes finalizados" },
+    { value: "Trabajo en curso",     label: "Trabajo en curso",     isFavorite: defaultInventory === "Trabajo en curso" },
   ];
 
 
@@ -2414,14 +3033,373 @@ export default function ArticleModal({
     : "Nuevo artículo";
 
   // ── tab content ────────────────────────────────────────────────────────
+
+  /** Tab único: identidad → costo → stock → colapsables */
+  function renderTabPrincipal() {
+    const identityContent = renderTabGeneral();
+    const costContent     = renderTabCostos();
+
+    function CollapseHeader({ label, open, onToggle }: { label: string; open: boolean; onToggle: () => void }) {
+      return (
+        <button
+          type="button"
+          onClick={onToggle}
+          className="w-full flex items-center justify-between px-4 py-3 bg-surface2/40 hover:bg-surface2/70 transition-colors"
+        >
+          <span className="text-[11px] font-semibold text-muted/70 uppercase tracking-wider">{label}</span>
+          <ChevronDown size={14} className={cn("text-muted transition-transform duration-200", open && "rotate-180")} />
+        </button>
+      );
+    }
+
+    return (
+      <div className="space-y-3">
+
+        {/* ① IDENTIDAD */}
+        {identityContent}
+
+        {/* ② COSTO — card contenedor */}
+        {draft.articleType !== "SERVICE" && (
+          <div className="rounded-xl bg-surface2/40 border border-border/50 overflow-hidden">
+            <div className="flex items-center gap-2 px-4 py-2 border-b border-border/40">
+              <span className="text-[10px] font-bold uppercase tracking-widest text-muted select-none">Costo</span>
+            </div>
+            <div className="p-3">
+              {costContent}
+            </div>
+          </div>
+        )}
+
+        {/* ③ STOCK — colapsable */}
+        {draft.articleType !== "SERVICE" && draft.stockMode !== "NO_STOCK" && (
+          <div className="rounded-xl border border-border/50 overflow-hidden">
+            <CollapseHeader label="Stock" open={stockOpen} onToggle={() => toggleSection("stock")} />
+            {stockOpen && (
+              <div className="p-4 space-y-3 border-t border-border/30">
+
+                {/* Fila 1: Punto de reposición + Cant. predeterminada */}
+                {variants.length === 0 && variantAxes.length === 0 && (
+                  <div className="grid grid-cols-2 gap-3">
+                    <TPField label="Punto de reposición" hint="Stock mínimo para alerta">
+                      <TPNumberInput
+                        value={draft.reorderPoint}
+                        onChange={(v) => set("reorderPoint", v)}
+                        decimals={2} min={0} placeholder="0,00"
+                      />
+                    </TPField>
+                    <TPField label="Cant. predeterminada">
+                      <TPNumberInput
+                        value={draft.defaultQuantity}
+                        onChange={(v) => set("defaultQuantity", v)}
+                        decimals={2} min={0} placeholder="0,00"
+                      />
+                    </TPField>
+                  </div>
+                )}
+
+                {/* Fila 2: Cant. mínima + Cant. máxima */}
+                <div className="grid grid-cols-2 gap-3">
+                  <TPField label="Cant. mínima de venta">
+                    <TPNumberInput
+                      value={draft.minSaleQuantity}
+                      onChange={(v) => set("minSaleQuantity", v)}
+                      decimals={2} min={0} placeholder="0,00"
+                    />
+                  </TPField>
+                  <TPField label="Cant. máxima de venta">
+                    <TPNumberInput
+                      value={draft.maxSaleQuantity}
+                      onChange={(v) => set("maxSaleQuantity", v)}
+                      decimals={2} min={0} placeholder="0,00"
+                    />
+                  </TPField>
+                </div>
+
+                {/* Fila 3: Existencia de apertura (ancho completo) */}
+                {variants.length === 0 && variantAxes.length === 0 && !hasMovements && (
+                  <TPField
+                    label="Existencia de apertura"
+                    hint={isEdit
+                      ? "Cantidad inicial antes del primer movimiento de inventario."
+                      : "Cantidad inicial con la que ingresa este artículo al sistema."}
+                  >
+                    <TPNumberInput
+                      value={draft.openingStock}
+                      onChange={(v) => set("openingStock", v)}
+                      decimals={4} min={0} placeholder="0"
+                    />
+                  </TPField>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ④ CONFIGURACIÓN COMERCIAL — colapsable */}
+        <div className="rounded-xl border border-border/50 overflow-hidden">
+          <CollapseHeader label="Configuración comercial" open={comercialOpen} onToggle={() => toggleSection("comercial")} />
+          {comercialOpen && (
+            <div className="p-4 space-y-3 border-t border-border/30">
+              <div className="grid grid-cols-2 gap-3">
+                <TPField label="Proveedor preferido">
+                  <TPComboFixed
+                    value={draft.preferredSupplierId}
+                    onChange={(v) => {
+                      if (v === "__new__") { setNewSupplierModalOpen(true); }
+                      else { set("preferredSupplierId", v); }
+                    }}
+                    options={[
+                      { value: "", label: "Sin proveedor preferido" },
+                      ...suppliers.map((s) => ({ value: s.id, label: s.displayName })),
+                      { value: "__new__", label: "+ Nuevo proveedor…" },
+                    ]}
+                    searchable
+                  />
+                </TPField>
+                {draft.articleType !== "SERVICE" ? (
+                  <TPField label="Código en proveedor">
+                    <TPInput value={draft.supplierCode} onChange={(v) => set("supplierCode", v)} placeholder="Ref. proveedor" />
+                  </TPField>
+                ) : <div />}
+              </div>
+              {draft.articleType !== "SERVICE" && (
+                <div className="grid grid-cols-2 gap-3">
+                  <TPField label="Marca">
+                    <TPComboCreatable
+                      type="ARTICLE_BRAND"
+                      items={brandItems}
+                      value={draft.brand}
+                      onChange={(v) => set("brand", v)}
+                      placeholder="Seleccionar o crear marca…"
+                      allowCreate
+                      onCreate={async (label) => { await createCatalogItem("ARTICLE_BRAND", label); await loadBrandItems(); }}
+                      onRefresh={loadBrandItems}
+                      mode={isEdit ? "edit" : "create"}
+                    />
+                  </TPField>
+                  <TPField label="Fabricante">
+                    <TPComboCreatable
+                      type="ARTICLE_MANUFACTURER"
+                      items={manufacturerItems}
+                      value={draft.manufacturer}
+                      onChange={(v) => set("manufacturer", v)}
+                      placeholder="Seleccionar o crear fabricante…"
+                      allowCreate
+                      onCreate={async (label) => { await createCatalogItem("ARTICLE_MANUFACTURER", label); await loadManufacturerItems(); }}
+                      onRefresh={loadManufacturerItems}
+                      mode={isEdit ? "edit" : "create"}
+                    />
+                  </TPField>
+                </div>
+              )}
+              {draft.articleType !== "SERVICE" && (
+                <TPField label="Cuenta de inventario" hint="Usá Activo de inventario para la mayoría de los artículos.">
+                  <TPComboFixed
+                    value={draft.inventoryAccount}
+                    onChange={(v) => set("inventoryAccount", v)}
+                    options={inventoryAccountOptions}
+                    onSetFavorite={handleSetDefaultInventory}
+                  />
+                </TPField>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* ⑤ MEDIDAS — colapsable */}
+        <div className="rounded-xl border border-border/50">
+          <CollapseHeader label="Medidas" open={medidasOpen} onToggle={() => toggleSection("medidas")} />
+          {medidasOpen && (
+            <div className="p-3 border-t border-border/30">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+
+              {/* Card: Dimensiones */}
+              <div className="rounded-lg border border-border/40">
+                <div className="px-3 py-1.5 bg-surface2/30 border-b border-border/30">
+                  <span className="text-[10px] font-semibold uppercase tracking-wider text-muted/70">Dimensiones</span>
+                </div>
+                <div className="p-3 flex flex-col sm:flex-row gap-3 items-start">
+                  {/* Inputs */}
+                  <div className="flex-1 grid grid-cols-2 sm:grid-cols-4 gap-2 items-end">
+                  <TPField label="Frente">
+                    <TPNumberInput value={draft.dimensionLength} onChange={(v) => set("dimensionLength", v)} decimals={2} min={0} placeholder="—" />
+                  </TPField>
+                  <TPField label="Profundo">
+                    <TPNumberInput value={draft.dimensionWidth} onChange={(v) => set("dimensionWidth", v)} decimals={2} min={0} placeholder="—" />
+                  </TPField>
+                  <TPField label="Alto">
+                    <TPNumberInput value={draft.dimensionHeight} onChange={(v) => set("dimensionHeight", v)} decimals={2} min={0} placeholder="—" />
+                  </TPField>
+                  <TPField label="Unidad">
+                    <div
+                      className="relative"
+                      onBlur={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node)) setUnitPickerOpen(null); }}
+                    >
+                      <button
+                        type="button"
+                        onClick={() => setUnitPickerOpen(v => v === "dimension" ? null : "dimension")}
+                        className="h-8 w-full flex items-center gap-1.5 px-2 rounded border border-border bg-surface2/40 hover:border-primary/50 transition text-left"
+                      >
+                        <Ruler size={11} className="text-muted shrink-0" />
+                        <span className="text-xs font-semibold truncate">{draft.unitOfMeasure || "—"}</span>
+                      </button>
+                      {unitPickerOpen === "dimension" && (
+                        <div className="absolute top-full left-0 mt-1 z-50 min-w-[120px] rounded-lg border border-border bg-surface shadow-lg py-1 max-h-48 overflow-y-auto">
+                          {unitItems.filter(u => u.isActive !== false).map(u => (
+                            <div key={u.id} className="flex items-center gap-1 px-2 hover:bg-surface2 transition">
+                              <button
+                                type="button"
+                                onMouseDown={() => { set("unitOfMeasure", u.label); setUnitPickerOpen(null); }}
+                                className={cn("flex-1 text-left py-1.5 text-xs", draft.unitOfMeasure === u.label && "text-primary font-semibold")}
+                              >
+                                {u.label}
+                              </button>
+                              <button
+                                type="button"
+                                title={u.isFavorite ? "Quitar de favoritos" : "Marcar como favorito"}
+                                onMouseDown={(e) => { e.preventDefault(); if (!u.isFavorite) set("unitOfMeasure", u.label); void toggleCatalogFavorite(u.id, !!u.isFavorite, setUnitItems); }}
+                                className={cn("shrink-0 transition-colors", u.isFavorite ? "text-yellow-400" : "text-muted/20 hover:text-yellow-400")}
+                              >
+                                <Star size={11} className={u.isFavorite ? "fill-yellow-400" : ""} />
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </TPField>
+                  </div>{/* fin grid inputs */}
+
+                  {/* Guide — siempre a la izquierda */}
+                  <div className="w-auto shrink-0 flex items-center justify-center order-first">
+                    <TPDimensionsGuide
+                      className="w-32 h-24 text-muted/50"
+                    />
+                  </div>
+                </div>{/* fin flex row */}
+              </div>
+
+              {/* Card: Peso */}
+              <div className="rounded-lg border border-border/40">
+                <div className="px-3 py-1.5 bg-surface2/30 border-b border-border/30">
+                  <span className="text-[10px] font-semibold uppercase tracking-wider text-muted/70">Peso</span>
+                </div>
+                <div className="p-3 grid grid-cols-[1fr_auto] gap-2 items-end">
+                  <TPField label="Peso">
+                    <TPNumberInput value={draft.weight} onChange={(v) => set("weight", v)} decimals={2} min={0} placeholder="0,00" />
+                  </TPField>
+                  <TPField label="Unidad">
+                    <div
+                      className="relative"
+                      onBlur={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node)) setUnitPickerOpen(null); }}
+                    >
+                      <button
+                        type="button"
+                        onClick={() => setUnitPickerOpen(v => v === "weight" ? null : "weight")}
+                        className="h-8 w-full flex items-center gap-1.5 px-2 rounded border border-border bg-surface2/40 hover:border-primary/50 transition text-left"
+                      >
+                        <Scale size={11} className="text-muted shrink-0" />
+                        <span className="text-xs font-semibold truncate">{draft.weightUnit || "—"}</span>
+                      </button>
+                      {unitPickerOpen === "weight" && (
+                        <div className="absolute top-full left-0 mt-1 z-50 min-w-[120px] rounded-lg border border-border bg-surface shadow-lg py-1 max-h-48 overflow-y-auto">
+                          {multiplierBaseItems.filter(u => u.isActive !== false).map(u => (
+                            <div key={u.id} className="flex items-center gap-1 px-2 hover:bg-surface2 transition">
+                              <button
+                                type="button"
+                                onMouseDown={() => { set("weightUnit", u.label); setUnitPickerOpen(null); }}
+                                className={cn("flex-1 text-left py-1.5 text-xs", draft.weightUnit === u.label && "text-primary font-semibold")}
+                              >
+                                {u.label}
+                              </button>
+                              <button
+                                type="button"
+                                title={u.isFavorite ? "Quitar de favoritos" : "Marcar como favorito"}
+                                onMouseDown={(e) => { e.preventDefault(); if (!u.isFavorite) set("weightUnit", u.label); void toggleCatalogFavorite(u.id, !!u.isFavorite, setMultiplierBaseItems); }}
+                                className={cn("shrink-0 transition-colors", u.isFavorite ? "text-yellow-400" : "text-muted/20 hover:text-yellow-400")}
+                              >
+                                <Star size={11} className={u.isFavorite ? "fill-yellow-400" : ""} />
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </TPField>
+                </div>
+              </div>
+
+              </div>{/* fin grid 2 columnas */}
+            </div>
+          )}
+        </div>
+
+        {/* ⑥ NOTAS Y OPCIONES — colapsable */}
+        <div className="rounded-xl border border-border/50 overflow-hidden">
+          <CollapseHeader label="Notas y opciones" open={notasOpen} onToggle={() => toggleSection("notas")} />
+          {notasOpen && (
+            <div className="p-4 border-t border-border/30">
+              <TPField label="Notas internas">
+                <TPTextarea
+                  value={draft.notes}
+                  onChange={(v) => set("notes", v)}
+                  rows={2}
+                  placeholder="Notas internas (no visible al cliente)"
+                />
+              </TPField>
+            </div>
+          )}
+        </div>
+
+        {/* Comportamiento comercial */}
+        {(() => {
+          const siNoOptions = [
+            { value: "true",  label: "Sí" },
+            { value: "false", label: "No" },
+          ];
+          return (
+            <div className="flex flex-col gap-2 pl-1">
+              <div className="flex items-center">
+                <span className="text-xs text-text/80 w-52 shrink-0">Mostrar en tienda</span>
+                <div className="w-24 shrink-0">
+                  <TPComboFixed
+                    value={String(draft.showInStore)}
+                    onChange={(v) => set("showInStore", v === "true")}
+                    options={siNoOptions}
+                    onSetFavorite={(v) => handleSetDefaultShowInStore(v === "true")}
+                    favoriteValue={defaultShowInStore === null ? undefined : String(defaultShowInStore)}
+                  />
+                </div>
+              </div>
+              {draft.articleType !== "SERVICE" && (
+                <div className="flex items-center">
+                  <span className="text-xs text-text/80 w-52 shrink-0">Acepta devoluciones</span>
+                  <div className="w-24 shrink-0">
+                    <TPComboFixed
+                      value={String(draft.isReturnable)}
+                      onChange={(v) => set("isReturnable", v === "true")}
+                      options={siNoOptions}
+                      onSetFavorite={(v) => handleSetDefaultIsReturnable(v === "true")}
+                      favoriteValue={defaultIsReturnable === null ? undefined : String(defaultIsReturnable)}
+                    />
+                  </div>
+                </div>
+              )}
+            </div>
+          );
+        })()}
+
+      </div>
+    );
+  }
+
   function renderTabGeneral() {
-    const mainImageSrc = pendingMainImageUrl
-      ?? images.find(i => i.isMain)?.url
-      ?? images[0]?.url
-      ?? article?.mainImageUrl
-      ?? null;
+    const mainImageSrc = !isEdit
+      ? (pendingImages[0]?.url ?? null)
+      : (images.find(i => i.isMain)?.url ?? images[0]?.url ?? article?.mainImageUrl ?? null);
     const mainImageId = images.find(i => i.isMain)?.id ?? images[0]?.id ?? null;
-    const hasDeleteTarget = !!mainImageId || !!pendingMainImage;
+    const hasDeleteTarget = !isEdit ? pendingImages.length > 0 : !!mainImageId;
+    const galleryCount = isEdit ? images.length : pendingImages.length;
 
     return (
       <div className="space-y-3">
@@ -2482,32 +3460,26 @@ export default function ArticleModal({
                 )}
               </div>
 
-              {/* ── Tira de miniaturas (solo edición) ── */}
-              {isEdit && (
-                <div className="flex flex-col gap-1">
-                  <div className="flex gap-1 flex-wrap">
-                    {/* Todas las imágenes — principal con ring persistente */}
-                    {images.map(img => (
+              {/* ── Tira de miniaturas (create y edit) ── */}
+              <div className="flex flex-col gap-1">
+                <div className="flex gap-1 flex-wrap">
+                  {isEdit ? (
+                    /* Edit mode: imágenes ya guardadas */
+                    images.map(img => (
                       <div
                         key={img.id}
                         onClick={() => { if (!img.isMain) void handleSetMainImage(img.id); }}
                         className={cn(
                           "relative group w-11 h-11 rounded-lg overflow-hidden border-2 shrink-0 bg-surface2 transition-all",
-                          img.isMain
-                            ? "border-primary cursor-default"
-                            : "border-border hover:border-primary/60 cursor-pointer"
+                          img.isMain ? "border-primary cursor-default" : "border-border hover:border-primary/60 cursor-pointer"
                         )}
                       >
                         <img src={img.url} alt="" className="w-full h-full object-cover" />
-
-                        {/* Badge "principal" persistente */}
                         {img.isMain && (
                           <div className="absolute top-0.5 left-0.5 bg-primary rounded-sm w-3.5 h-3.5 flex items-center justify-center">
                             <Check size={8} className="text-white" strokeWidth={3} />
                           </div>
                         )}
-
-                        {/* Overlay hover */}
                         <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-0.5">
                           {!img.isMain && (
                             <button type="button" title="Hacer principal"
@@ -2522,38 +3494,70 @@ export default function ArticleModal({
                           >{removingImg === img.id ? <Loader2 size={12} className="animate-spin" /> : <X size={12} />}</button>
                         </div>
                       </div>
-                    ))}
-
-                    {/* Botón agregar (oculto cuando llega a máximo) */}
-                    {images.length < 5 && (
-                      <button type="button" title="Agregar imagen"
-                        onClick={() => addImgInputRef.current?.click()}
-                        disabled={busyAddImg}
-                        className="w-11 h-11 rounded-lg border-2 border-dashed border-border flex items-center justify-center text-muted hover:text-primary hover:border-primary transition-colors shrink-0"
+                    ))
+                  ) : (
+                    /* Create mode: imágenes pendientes locales */
+                    pendingImages.map((p, idx) => (
+                      <div
+                        key={idx}
+                        onClick={() => { if (idx !== 0) handleSetPendingMain(idx); }}
+                        className={cn(
+                          "relative group w-11 h-11 rounded-lg overflow-hidden border-2 shrink-0 bg-surface2 transition-all",
+                          idx === 0 ? "border-primary cursor-default" : "border-border hover:border-primary/60 cursor-pointer"
+                        )}
                       >
-                        {busyAddImg ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />}
-                      </button>
-                    )}
-                    <input ref={addImgInputRef} type="file" accept="image/*" hidden
-                      onChange={(e) => { const f = e.target.files?.[0] ?? null; e.currentTarget.value = ""; if (f) void handleAddImage(f); }}
-                    />
-                  </div>
+                        <img src={p.url} alt="" className="w-full h-full object-cover" />
+                        {idx === 0 && (
+                          <div className="absolute top-0.5 left-0.5 bg-primary rounded-sm w-3.5 h-3.5 flex items-center justify-center">
+                            <Check size={8} className="text-white" strokeWidth={3} />
+                          </div>
+                        )}
+                        <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-0.5">
+                          {idx !== 0 && (
+                            <button type="button" title="Hacer principal"
+                              onClick={(e) => { e.stopPropagation(); handleSetPendingMain(idx); }}
+                              className="p-1 rounded text-white hover:text-primary transition-colors"
+                            ><Check size={12} /></button>
+                          )}
+                          <button type="button" title="Eliminar"
+                            onClick={(e) => { e.stopPropagation(); handleRemovePendingImage(idx); }}
+                            className="p-1 rounded text-white hover:text-red-400 transition-colors"
+                          ><X size={12} /></button>
+                        </div>
+                      </div>
+                    ))
+                  )}
 
-                  {/* Contador y formato */}
-                  <span className="text-[10px] text-muted">{images.length}/5 · PNG, JPG, WebP</span>
+                  {/* Botón agregar (oculto al llegar al máximo) */}
+                  {galleryCount < 5 && (
+                    <button type="button" title="Agregar imagen"
+                      onClick={() => addImgInputRef.current?.click()}
+                      disabled={busyAddImg}
+                      className="w-11 h-11 rounded-lg border-2 border-dashed border-border flex items-center justify-center text-muted hover:text-primary hover:border-primary transition-colors shrink-0"
+                    >
+                      {busyAddImg ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />}
+                    </button>
+                  )}
+                  <input ref={addImgInputRef} type="file" accept="image/*" hidden
+                    onChange={(e) => { const f = e.target.files?.[0] ?? null; e.currentTarget.value = ""; if (f) void handleAddImage(f); }}
+                  />
                 </div>
-              )}
+
+                {/* Contador y formato */}
+                <span className="text-[10px] text-muted">{galleryCount}/5 · PNG, JPG, WebP</span>
+              </div>
             </div>
 
             {/* ── Columna derecha: SKU+Categoría / Nombre / Descripción / config ── */}
             <div className="flex-1 min-w-0 flex flex-col gap-3">
 
-              {/* Fila 1: SKU + Categoría */}
-              <div className="grid grid-cols-2 gap-2">
+              {/* Fila 1: SKU | Categoría | Grupo */}
+              <div className={cn("grid gap-2", draft.articleType === "SERVICE" ? "grid-cols-2" : "grid-cols-3")}>
                 <TPField
                   label="SKU"
                   required={draft.barcodeSource === "SKU"}
                   error={submitted && !draft.sku.trim() && draft.barcodeSource === "SKU" ? "Requerido" : undefined}
+                  hint={(variants.length > 0 || variantAxes.length > 0) ? "Base para SKU de variantes" : undefined}
                   labelRight={
                     <button type="button" onClick={() => setAdvancedModalOpen(true)}
                       className="flex items-center gap-1 text-xs text-muted hover:text-foreground transition-colors"
@@ -2575,7 +3579,19 @@ export default function ArticleModal({
                   />
                 </TPField>
                 {draft.articleType !== "SERVICE" && (
-                  <TPField label="Categoría">
+                  <TPField
+                    label="Categoría"
+                    labelRight={
+                      <button
+                        type="button"
+                        onClick={() => setCreateCatOpen(true)}
+                        className="flex items-center gap-0.5 text-primary hover:underline leading-none"
+                      >
+                        <Plus size={11} />
+                        Nueva
+                      </button>
+                    }
+                  >
                     <TPComboFixed
                       value={draft.categoryId}
                       onChange={(v) => set("categoryId", v)}
@@ -2584,6 +3600,12 @@ export default function ArticleModal({
                     />
                   </TPField>
                 )}
+                <GroupPickerField
+                  value={draft.groupId}
+                  onChange={(v) => set("groupId", v)}
+                  groups={groups}
+                  onGroupCreated={(g) => setGroups(prev => [...prev, g])}
+                />
               </div>
 
               {/* Fila 2: Nombre */}
@@ -2618,19 +3640,13 @@ export default function ArticleModal({
               <div className="border-t border-border/40" />
 
               {/* Config 2×2: Tipo / Estado / StockMode / ReorderPoint */}
-              <div className="grid grid-cols-2 gap-2">
+              <div className="grid grid-cols-3 gap-2">
                 <TPField label="Tipo">
                   <TPComboFixed
                     value={draft.articleType}
                     onChange={(v) => set("articleType", v as ArticleType)}
                     options={articleTypeOptions}
-                  />
-                </TPField>
-                <TPField label="Estado">
-                  <TPComboFixed
-                    value={draft.status}
-                    onChange={(v) => set("status", v as ArticleStatus)}
-                    options={statusOptions}
+                    onSetFavorite={handleSetDefaultArticleType}
                   />
                 </TPField>
                 <TPField
@@ -2642,22 +3658,21 @@ export default function ArticleModal({
                     onChange={(v) => set("stockMode", v as StockMode)}
                     options={stockModeOptions}
                     disabled={draft.articleType === "SERVICE"}
+                    onSetFavorite={handleSetDefaultStockMode}
+                    favoriteValue={defaultStockMode}
                   />
                 </TPField>
-                {draft.articleType !== "SERVICE" && (
-                  <TPField
-                    label="Punto de reposición"
-                    hint={variants.length > 0 ? "Se configura por variante" : undefined}
-                  >
-                    <TPNumberInput
-                      value={draft.reorderPoint}
-                      onChange={(v) => set("reorderPoint", v)}
-                      placeholder="0" min={0}
-                      disabled={variants.length > 0}
-                    />
-                  </TPField>
-                )}
+                <TPField label="Estado">
+                  <TPComboFixed
+                    value={draft.status}
+                    onChange={(v) => set("status", v as ArticleStatus)}
+                    options={statusOptions}
+                    onSetFavorite={handleSetDefaultStatus}
+                    favoriteValue={defaultStatus}
+                  />
+                </TPField>
               </div>
+
             </div>
           </div>
         </div>
@@ -2822,75 +3837,6 @@ export default function ArticleModal({
           </div>
         </Modal>
 
-        {/* ── Datos comerciales ─────────────────────────────────────── */}
-        <TPCard title="Datos comerciales">
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            {/* Proveedor preferido — siempre primero y visible, incluso para servicios */}
-            <TPField label="Proveedor preferido" className={draft.articleType === "SERVICE" ? "sm:col-span-2" : undefined}>
-              <TPComboFixed
-                value={draft.preferredSupplierId}
-                onChange={(v) => {
-                  if (v === "__new__") { setNewSupplierModalOpen(true); }
-                  else { set("preferredSupplierId", v); }
-                }}
-                options={[
-                  { value: "", label: "Sin proveedor preferido" },
-                  ...suppliers.map((s) => ({ value: s.id, label: s.displayName })),
-                  { value: "__new__", label: "+ Nuevo proveedor…" },
-                ]}
-                searchable
-              />
-            </TPField>
-            {/* Campos que solo aplican a productos (no servicios) */}
-            {draft.articleType !== "SERVICE" && (
-              <>
-                <TPField label="Código en proveedor">
-                  <TPInput value={draft.supplierCode} onChange={(v) => set("supplierCode", v)} placeholder="Ref. proveedor" />
-                </TPField>
-                <TPField label="Marca">
-                  <TPComboCreatable
-                    type="ARTICLE_BRAND"
-                    items={brandItems}
-                    value={draft.brand}
-                    onChange={(v) => set("brand", v)}
-                    placeholder="Seleccionar o crear marca…"
-                    allowCreate
-                    onCreate={async (label) => { await createCatalogItem("ARTICLE_BRAND", label); await loadBrandItems(); }}
-                    onRefresh={loadBrandItems}
-                    mode={isEdit ? "edit" : "create"}
-                  />
-                </TPField>
-                <TPField label="Fabricante">
-                  <TPComboCreatable
-                    type="ARTICLE_MANUFACTURER"
-                    items={manufacturerItems}
-                    value={draft.manufacturer}
-                    onChange={(v) => set("manufacturer", v)}
-                    placeholder="Seleccionar o crear fabricante…"
-                    allowCreate
-                    onCreate={async (label) => { await createCatalogItem("ARTICLE_MANUFACTURER", label); await loadManufacturerItems(); }}
-                    onRefresh={loadManufacturerItems}
-                    mode={isEdit ? "edit" : "create"}
-                  />
-                </TPField>
-                <TPField label="Unidad de medida">
-                  <TPComboCreatable
-                    type="UNIT_OF_MEASURE"
-                    items={unitItems}
-                    value={draft.unitOfMeasure}
-                    onChange={(v) => set("unitOfMeasure", v)}
-                    placeholder="UND, KG, MT…"
-                    allowCreate
-                    onCreate={async (label) => { await createCatalogItem("UNIT_OF_MEASURE", label); await loadUnitItems(); }}
-                    onRefresh={loadUnitItems}
-                    mode={isEdit ? "edit" : "create"}
-                  />
-                </TPField>
-              </>
-            )}
-          </div>
-        </TPCard>
-
         <EntityEditModal
           open={newSupplierModalOpen}
           mode="CREATE"
@@ -2900,55 +3846,50 @@ export default function ArticleModal({
           onSaved={handleSupplierCreated}
         />
 
-        {/* ── Opciones y notas ──────────────────────────────────────── */}
-        <TPCard title="Opciones y notas">
-          <div className="space-y-3">
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <TPCheckbox checked={draft.showInStore} onChange={(v) => set("showInStore", v)} label="Mostrar en tienda" />
-              {draft.articleType !== "SERVICE" && (
-                <TPCheckbox checked={draft.isReturnable} onChange={(v) => set("isReturnable", v)} label="Acepta devoluciones" />
-              )}
-              {draft.articleType !== "SERVICE" && (
-                <TPCheckbox checked={draft.sellWithoutVariants} onChange={(v) => set("sellWithoutVariants", v)} label="Vender sin variantes" />
-              )}
-            </div>
-            <TPField label="Notas internas">
-              <TPTextarea
-                value={draft.notes}
-                onChange={(v) => set("notes", v)}
-                rows={2}
-                placeholder="Notas internas (no visible al cliente)"
-              />
-            </TPField>
-          </div>
-        </TPCard>
+        <CreateCategoryModal
+          open={createCatOpen}
+          onClose={() => setCreateCatOpen(false)}
+          categories={categories}
+          initialParentId={draft.categoryId || undefined}
+          onCreated={async (id) => {
+            await loadCategories();
+            set("categoryId", id);
+          }}
+        />
       </div>
     );
   }
 
   function addCostLine(type: CostLineType) {
     const line: CostLine = {
+      id:             crypto.randomUUID(),
       type,
-      label:          type === "HECHURA" ? "Hechura / Mano de Obra" : "",
+      label:          type === "HECHURA" ? "Precio / Hechura" : "",
       quantity:       1,
-      unitValue:      0,
+      quantityUnit:   type === "HECHURA"
+        ? (multiplierBaseItems.find(w => w.isFavorite && w.isActive !== false)?.label ?? defaultQuantityUnit(type))
+        : defaultQuantityUnit(type),
+      unitValue:      type === "METAL" ? (metalVariants.find(m => m.isFavorite)?.finalSalePrice != null ? Number(metalVariants.find(m => m.isFavorite)!.finalSalePrice) : 0) : 0,
       currencyId:     null,
       mermaPercent:   type === "METAL" ? (draft.mermaPercent ?? null) : null,
-      metalVariantId: null,
+      metalVariantId: type === "METAL" ? (metalVariants.find(m => m.isFavorite)?.id ?? null) : null,
       sortOrder:      costLines.length,
+      lineAdjKind:    "",
+      lineAdjType:    "",
+      lineAdjValue:   null,
     };
     setCostLines(prev => [...prev, line]);
   }
 
   function renderTabCostos() {
     const isService = draft.articleType === "SERVICE";
-    const mode = draft.costCalculationMode;
 
-    // Armar opciones para CostCompositionTable
     const metalVariantOptions: MetalVariantOption[] = metalVariants.map((mv) => ({
       id:               mv.id,
       label:            `${(mv as any)._metalName ? `${(mv as any)._metalName} — ` : ""}${mv.name}`,
       latestQuotePrice: mv.finalSalePrice != null ? Number(mv.finalSalePrice) : null,
+      isFavorite:       mv.isFavorite,
+      metalId:          mv.metalId,
     }));
     const currencyOptions: CurrencyOption[] = currencies.map((c) => ({
       id:         c.id,
@@ -2957,482 +3898,603 @@ export default function ArticleModal({
       isBase:     c.isBase,
       latestRate: c.latestRate ?? null,
     }));
-    const baseCurrency = currencies.find(c => c.isBase);
+    const baseCurrency       = currencies.find(c => c.isBase);
     const baseCurrencyId     = baseCurrency?.id     ?? "";
     const baseCurrencySymbol = baseCurrency?.symbol ?? "$";
 
     return (
-      <div className="space-y-4">
+      <div className="space-y-3">
 
-        {/* ══════════════════════════════════════════════════════════
-            COMPOSICIÓN DE COSTO — se muestra siempre que haya líneas,
-            independientemente del modo de cálculo seleccionado.
-            En modo METAL_MERMA_HECHURA la tabla se muestra dentro del bloque
-            de ese modo (con botones de agregar). Aquí la mostramos para los
-            demás modos cuando el artículo ya tiene líneas guardadas.
-        ══════════════════════════════════════════════════════════ */}
-        {!isService && costLines.length > 0 && mode !== "METAL_MERMA_HECHURA" && (
-          <TPCard
-            title="Composición de costo"
-            right={<span className="text-xs font-medium text-amber-400">Tiene prioridad sobre el modo de cálculo</span>}
-          >
-            <div className="space-y-3">
-              <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-300 flex items-center gap-2">
-                <Info size={12} className="shrink-0" />
-                Este artículo tiene líneas de composición guardadas. El backend las usa para calcular el costo, sin importar el modo seleccionado. Para editar la composición, cambiá el modo a <strong className="font-semibold">Metal + Hechura</strong>.
-              </div>
-              <CostCompositionTable
-                lines={costLines}
-                onChange={setCostLines}
-                metalVariants={metalVariantOptions}
-                currencies={currencyOptions}
-                baseCurrencyId={baseCurrencyId}
-                baseCurrencySymbol={baseCurrencySymbol}
-                defaultMermaPercent={draft.mermaPercent}
-                productItems={productItems.map(p => ({ id: p.id, label: p.name, costPrice: p.costPrice, salePrice: null }))}
-                serviceItems={serviceItems.map(s => ({ id: s.id, label: s.name, costPrice: s.costPrice, salePrice: null }))}
-                hideAddButtons
-              />
-            </div>
-          </TPCard>
-        )}
+        {(() => {
+          function fmtN(n: number) {
+            return n.toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+          }
+          const patchLine = (i: number, patch: Partial<CostLine>) => {
+            setCostLines(prev => prev.map((l, idx) => idx === i ? { ...l, ...patch } : l));
+          };
+          const dropLine = (i: number) => {
+            setConfirmDropIdx(i);
+          };
+          const calcLine = (line: CostLine): number => {
+            if (!line.quantity || !line.unitValue) return 0;
+            let raw = line.type === "METAL"
+              ? line.quantity * (1 + (line.mermaPercent ?? 0) / 100) * line.unitValue
+              : line.quantity * line.unitValue;
+            if (line.type !== "METAL") raw = applyLineAdj(raw, line.lineAdjKind ?? "", line.lineAdjType ?? "", line.lineAdjValue ?? null);
+            const currId = line.currencyId ?? baseCurrencyId;
+            if (currId !== baseCurrencyId) {
+              const curr = currencyOptions.find(c => c.id === currId);
+              if (curr?.latestRate != null) raw = raw * curr.latestRate;
+              else return 0;
+            }
+            return raw;
+          };
 
-        {/* ══════════════════════════════════════════════════════════
-            BLOQUE 1 — COSTO DEL ARTÍCULO (solo modo MANUAL)
-        ══════════════════════════════════════════════════════════ */}
-        {mode === "MANUAL" && (() => {
-          const selCurr  = currencies.find(c => c.id === draft.manualCurrencyId) ?? currencies.find(c => c.isBase);
-          const selSym   = selCurr?.symbol ?? baseCurrencySymbol;
-          const baseCurr = currencies.find(c => c.isBase);
+          const metalLinesIdx   = costLines.map((l, i) => ({ line: l, i })).filter(({ line }) => line.type === "METAL");
+          const hechuraLinesIdx = costLines.map((l, i) => ({ line: l, i })).filter(({ line }) => line.type === "HECHURA");
+          const otherLinesIdx   = costLines.map((l, i) => ({ line: l, i })).filter(({ line }) => line.type !== "METAL" && line.type !== "HECHURA");
+
+          const productLinesIdx = costLines.map((l, i) => ({ line: l, i })).filter(({ line }) => line.type === "PRODUCT");
+          const serviceLinesIdx = costLines.map((l, i) => ({ line: l, i })).filter(({ line }) => line.type === "SERVICE");
+
+          const metalTotal   = metalLinesIdx.reduce((s, { line }) => s + calcLine(line), 0);
+          const hechuraTotal = hechuraLinesIdx.reduce((s, { line }) => s + calcLine(line), 0);
+          const productTotal = productLinesIdx.reduce((s, { line }) => s + calcLine(line), 0);
+          const serviceTotal = serviceLinesIdx.reduce((s, { line }) => s + calcLine(line), 0);
+          const otherTotal   = productTotal + serviceTotal;
+          const rawBase      = metalTotal + hechuraTotal + otherTotal;
+
+          // Flags para indicar visualmente si alguna línea del grupo tiene ajuste propio
+          const lineAdjActive = (l: CostLine) => l.lineAdjKind && l.lineAdjKind !== "" && (l.lineAdjValue ?? 0) > 0;
+          const metalHasLineAdj   = metalLinesIdx.some(({ line }) => lineAdjActive(line));
+          const hechuraHasLineAdj = hechuraLinesIdx.some(({ line }) => lineAdjActive(line));
+          const productHasLineAdj = productLinesIdx.some(({ line }) => lineAdjActive(line));
+          const serviceHasLineAdj = serviceLinesIdx.some(({ line }) => lineAdjActive(line));
 
           const taxOptions    = taxes.filter(t => t.calculationType === "PERCENTAGE" && t.rate != null);
           const selectedTaxes = taxOptions.filter(t => draft.manualTaxIds.includes(t.id));
           const totalTaxPct   = selectedTaxes.reduce((s, t) => s + parseFloat(t.rate!), 0);
 
-          const rawBase      = draft.manualBaseCost ?? 0;
           const adjVal       = Math.abs(draft.manualAdjustmentValue ?? 0);
           const adjSign      = draft.manualAdjustmentKind === "" ? 0 : draft.manualAdjustmentKind === "SURCHARGE" ? 1 : -1;
           const adjAmount    = adjSign * (draft.manualAdjustmentType === "PERCENTAGE" ? rawBase * (adjVal / 100) : adjVal);
           const adjustedCost = rawBase + adjAmount;
           const taxAmount    = totalTaxPct > 0 ? adjustedCost * (totalTaxPct / 100) : 0;
           const finalCost    = adjustedCost + taxAmount;
-          const rate          = selCurr && !selCurr.isBase ? (selCurr.latestRate ?? null) : null;
-          const convertedCost = rate != null ? adjustedCost * rate : null;
-          const hasFinalCost  = rawBase > 0;
+          const selSym       = baseCurrencySymbol;
 
-          function fmtN(n: number) {
-            return n.toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-          }
+          // Chip de tipo de línea
+          const TYPE_CHIP: Record<string, { label: string; cls: string }> = {
+            METAL:   { label: "Metal",    cls: "bg-amber-500/15 text-amber-600 dark:text-amber-400" },
+            HECHURA: { label: "Hechura",  cls: "bg-blue-500/15 text-blue-600 dark:text-blue-400"   },
+            PRODUCT: { label: "Producto", cls: "bg-violet-500/15 text-violet-600 dark:text-violet-400" },
+            SERVICE: { label: "Servicio", cls: "bg-green-500/15 text-green-600 dark:text-green-400" },
+          };
+          const SUBTOTAL_COLOR: Record<string, string> = {
+            METAL:   "text-amber-600 dark:text-amber-400",
+            HECHURA: "text-blue-600 dark:text-blue-400",
+            PRODUCT: "text-violet-600 dark:text-violet-400",
+            SERVICE: "text-green-600 dark:text-green-400",
+          };
+          // ROW_BG se usa en SortableCostLineRow (módulo level: COST_ROW_BG)
 
           return (
-            <TPCard title="Costo del artículo" right={<span className="text-xs text-muted">Manual</span>}>
-              <div className="space-y-5">
+            <div className="space-y-2">
 
-                {/* Selector de método */}
-                {!isService && (
-                  <TPField label="¿Cómo se calcula el costo?" hint="Podés cambiar a cálculo por metal o multiplicador si el artículo tiene composición de materiales.">
-                    <TPComboFixed
-                      value={mode}
-                      onChange={(v) => set("costCalculationMode", v as CostCalculationMode)}
-                      options={costModeOptions}
-                    />
-                  </TPField>
-                )}
-
-                {/* ── Ajuste e impuestos ───────────────── */}
-                <div className="border-t border-border pt-4 space-y-5">
-                  <div className="text-xs font-semibold text-muted uppercase tracking-wide">Ajuste e impuestos</div>
-
-                  {/* 3 columnas: moneda | costo base | equivalente */}
-                  <div className="grid grid-cols-1 gap-3 md:grid-cols-3 md:items-stretch">
-                    <div className="rounded-xl border border-border bg-card p-3 flex flex-col gap-2">
-                      <div className="text-xs font-semibold text-muted uppercase tracking-wide">Moneda</div>
-                      <TPComboFixed
-                        value={draft.manualCurrencyId || baseCurrencyId}
-                        onChange={(v) => set("manualCurrencyId", v)}
-                        options={currencies.map(c => ({
-                          value: c.id,
-                          label: `${c.code} — ${c.symbol}${c.isBase ? " (base)" : ""}`,
-                        }))}
-                      />
-                      <div className="mt-auto text-[11px] text-muted">
-                        {selCurr?.isBase ? "Moneda principal de tu negocio" : `Tipo de cambio: ${selCurr?.latestRate ?? "sin cotización"}`}
-                      </div>
-                    </div>
-                    <div className="rounded-xl border border-border bg-card p-3 flex flex-col gap-2">
-                      <div className="text-xs font-semibold text-muted uppercase tracking-wide">Costo base</div>
-                      <TPNumberInput
-                        value={draft.manualBaseCost}
-                        onChange={(v) => set("manualBaseCost", v)}
-                        placeholder="0,00"
-                        min={0}
-                        decimals={2}
-                        leftIcon={<span className="text-sm font-semibold">{selSym}</span>}
-                        className="h-[48px]"
-                        wrapClassName="space-y-0"
-                      />
-                      <div className="mt-auto text-[11px] text-muted">Lo que te cuesta comprar o fabricar este artículo (sin impuestos)</div>
-                    </div>
-                    <div className="rounded-xl border border-border bg-card p-3 flex flex-col gap-2">
-                      <div className="text-xs font-semibold text-muted uppercase tracking-wide">
-                        Equivalente en moneda base
-                      </div>
-                      <TPNumberInput
-                        value={convertedCost != null ? rawBase * rate! : rawBase > 0 ? rawBase : null}
-                        onChange={() => {}}
-                        readOnly
-                        decimals={2}
-                        showArrows={false}
-                        leftIcon={<span className="text-sm font-semibold">{convertedCost != null ? (baseCurr?.symbol ?? "$") : selSym}</span>}
-                        className="h-[48px]"
-                        wrapClassName="space-y-0"
-                      />
-                      <div className="mt-auto text-[11px] text-muted">
-                        {convertedCost != null ? "Convertido con cotización actual" : "No requiere conversión"}
-                      </div>
-                    </div>
+              {/* ── Costo guardado por el backend ─────────────────── */}
+              {isEdit && computed && (
+                <div className={cn(
+                  "rounded-xl border p-3 flex items-start gap-3",
+                  computed.partial ? "border-amber-500/30 bg-amber-500/10" : "border-emerald-500/30 bg-emerald-500/10"
+                )}>
+                  <div className="shrink-0 mt-0.5">
+                    {computed.partial ? <AlertCircle size={15} className="text-amber-400" /> : <Calculator size={15} className="text-emerald-400" />}
                   </div>
-
-                  {selCurr && !selCurr.isBase && selCurr.latestRate == null && (
-                    <div className="flex items-center gap-2 rounded-lg border border-amber-500/20 bg-amber-500/8 px-3 py-2 text-xs text-amber-700 dark:text-amber-400">
-                      <Info size={12} className="shrink-0" />
-                      {selCurr.code} no tiene cotización cargada — no se puede convertir a {baseCurr?.code ?? "moneda base"}.
-                    </div>
-                  )}
-
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                    <TPField label="Tipo de beneficio o recargo" hint="Beneficio (bonificación) o recargo sobre el costo.">
-                      <TPComboFixed
-                        value={draft.manualAdjustmentKind}
-                        onChange={(v) => {
-                          const kind = v as "" | "BONUS" | "SURCHARGE";
-                          set("manualAdjustmentKind", kind);
-                          if (kind === "") {
-                            set("manualAdjustmentType", "");
-                            set("manualAdjustmentValue", null);
-                          } else if (draft.manualAdjustmentKind === "") {
-                            set("manualAdjustmentType", lastAdjTypeRef.current);
-                          }
-                        }}
-                        options={[
-                          { value: "",          label: "— Sin especificar —" },
-                          { value: "BONUS",     label: "Beneficio" },
-                          { value: "SURCHARGE", label: "Recargo" },
-                        ]}
-                      />
-                    </TPField>
-                    <TPField label="Tipo de valor">
-                      <TPComboFixed
-                        value={draft.manualAdjustmentType || "PERCENTAGE"}
-                        onChange={(v) => {
-                          const t = v as "PERCENTAGE" | "FIXED_AMOUNT";
-                          lastAdjTypeRef.current = t;
-                          set("manualAdjustmentType", t);
-                        }}
-                        disabled={draft.manualAdjustmentKind === ""}
-                        options={[
-                          { value: "PERCENTAGE",   label: "Porcentaje (%)" },
-                          { value: "FIXED_AMOUNT", label: `Monto fijo (${selSym})` },
-                        ]}
-                      />
-                    </TPField>
-                    <TPField
-                      label="Valor"
-                      hint={adjAmount !== 0 ? (adjAmount < 0 ? `Reduce el costo en ${selSym} ${fmtN(Math.abs(adjAmount))}` : `Suma ${selSym} ${fmtN(adjAmount)} al costo`) : undefined}
-                    >
-                      <TPNumberInput
-                        value={draft.manualAdjustmentKind === "" ? 0 : draft.manualAdjustmentValue}
-                        onChange={(v) => set("manualAdjustmentValue", v)}
-                        placeholder="0.00"
-                        decimals={2}
-                        min={0}
-                        disabled={draft.manualAdjustmentKind === ""}
-                        suffix={(draft.manualAdjustmentType || "PERCENTAGE") === "PERCENTAGE" ? <Percent size={12} /> : undefined}
-                        leftIcon={(draft.manualAdjustmentType || "PERCENTAGE") === "FIXED_AMOUNT" ? <span className="text-sm font-semibold">{selSym}</span> : undefined}
-                      />
-                    </TPField>
+                  <div className="flex-1 min-w-0 text-sm">
+                    <span className="font-medium text-text">Costo guardado: </span>
+                    <span className={computed.partial ? "text-amber-300" : "text-emerald-300"}>
+                      {computed.value != null ? fmtMoney(computed.value) : "—"}
+                    </span>
+                    {article?.computedCostWithTax != null && article.computedCostWithTax !== article.computedCostBase && (
+                      <span className="ml-3 text-sm">
+                        <span className="font-medium text-text">c/imp: </span>
+                        <span className={computed.partial ? "text-amber-300" : "text-emerald-300"}>
+                          {fmtMoney(article.computedCostWithTax)}
+                        </span>
+                      </span>
+                    )}
+                    {computed.partial && <div className="text-xs text-amber-300/80 mt-0.5">Cálculo parcial — alguna línea no tiene cotización.</div>}
                   </div>
+                  <button type="button" onClick={recomputeCost} disabled={loadingCost}
+                    className="shrink-0 h-7 w-7 rounded-lg border border-border bg-surface2/40 grid place-items-center hover:bg-surface2 transition" title="Recalcular">
+                    {loadingCost ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />}
+                  </button>
+                </div>
+              )}
 
-                  <TPField label="Impuestos aplicados" hint="Seleccioná los impuestos que afectan el costo de este artículo.">
-                    <TPComboCreatableMulti
-                      type="IVA_CONDITION"
-                      items={taxOptions.map(t => ({
-                        id:       t.id,
-                        label:    t.name,
-                        value:    t.id,
-                        isActive: t.isActive,
-                      }))}
-                      values={draft.manualTaxIds}
-                      onChange={(vals) => set("manualTaxIds", vals)}
-                      mode={isEdit ? "edit" : "create"}
-                      allowCreate={false}
-                      placeholder="Seleccioná impuestos…"
-                    />
-                    {selectedTaxes.length > 0 && (
-                      <p className="mt-1.5 text-xs font-medium text-text">
-                        {selectedTaxes.map((t, i) => {
-                          const pct = t.rate != null ? parseFloat(t.rate!) : 0;
-                          const amt = adjustedCost * (pct / 100);
+              {/* ── TABLA DE LÍNEAS ───────────────────────────────── */}
+              <div className="rounded-xl border border-border overflow-hidden">
+
+                {/* Header con botones de agregar */}
+                <div className="flex items-center justify-between gap-2 px-3 py-2 bg-surface2/40 border-b border-border/60">
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-xs font-semibold text-text">Composición de costo</span>
+                    {costLines.length > 0 && (
+                      <span className="inline-flex items-center justify-center h-4 min-w-4 px-1 rounded-full bg-primary/15 text-[10px] font-bold text-primary">
+                        {costLines.length}
+                      </span>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-1 flex-wrap justify-end">
+                    {metalLinesIdx.some(({ line }) => line.metalVariantId) && (
+                      <button type="button" onClick={updateMetalPrices}
+                        className="inline-flex items-center gap-1 px-2 py-0.5 text-[11px] rounded-md border transition bg-amber-500/10 border-amber-500/30 text-amber-500 hover:bg-amber-500/20">
+                        <RefreshCw size={9} />
+                        Actualizar
+                      </button>
+                    )}
+                    {(["METAL","HECHURA","PRODUCT","SERVICE"] as CostLineType[]).map((type) => {
+                      const cfg = TYPE_CHIP[type];
+                      return (
+                        <button key={type} type="button" onClick={() => addCostLine(type)}
+                          className={cn(
+                            "inline-flex items-center gap-0.5 px-2 py-0.5 text-[11px] rounded-md border transition",
+                            cfg.cls, "border-current/30 bg-current/5 hover:bg-current/15"
+                          )}>
+                          <Plus size={9} />
+                          {cfg.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* Tabla de líneas */}
+                {costLines.length === 0 ? (
+                  <div className="px-4 py-8 text-center">
+                    <p className="text-sm text-muted">Sin líneas de costo. Usá los botones de arriba para agregar metal, hechura u otros costos.</p>
+                  </div>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-xs min-w-[600px]">
+                      <thead>
+                        <tr className="border-b border-border/50 bg-surface2/20">
+                          <th className="w-6"></th>
+                          <th className="pl-[18px] pr-[9px] py-1.5 text-left text-[10px] font-semibold text-muted/70 uppercase tracking-wider whitespace-nowrap w-[70px]">Tipo</th>
+                          <th className="pl-[9px] pr-[18px] py-1.5 text-left text-[10px] font-semibold text-muted/70 uppercase tracking-wider whitespace-nowrap w-[44px]">Mon.</th>
+                          <th className="px-[18px] py-1.5 text-left text-[10px] font-semibold text-muted/70 uppercase tracking-wider w-[160px]">Descripción / Variante</th>
+                          <th className="px-[18px] py-1.5 text-left text-[10px] font-semibold text-muted/70 uppercase tracking-wider whitespace-nowrap w-[80px]">Cant.</th>
+                          <th className="px-[18px] py-1.5 text-left text-[10px] font-semibold text-muted/70 uppercase tracking-wider whitespace-nowrap w-[110px]">Precio unit.</th>
+                          <th className="px-[18px] py-1.5 text-left text-[10px] font-semibold text-muted/70 uppercase tracking-wider whitespace-nowrap w-[130px]">Bonif. / Recargo</th>
+                          <th className="px-[18px] py-1.5 text-right text-[10px] font-semibold text-muted/70 uppercase tracking-wider whitespace-nowrap w-[110px]">Subtotal</th>
+                          <th className="w-8"></th>
+                        </tr>
+                      </thead>
+                      <DndContext sensors={dndSensors} collisionDetection={closestCenter} onDragEnd={handleCostLineDragEnd}>
+                        <SortableContext items={costLines.map(l => l.id!)} strategy={verticalListSortingStrategy}>
+                      <tbody className="divide-y divide-border/30">
+                        {costLines.map((line, i) => {
+                          const isMetal    = line.type === "METAL";
+                          const lineTotal  = calcLine(line);
+                          const currForLine = currencyOptions.find(c => c.id === (line.currencyId ?? baseCurrencyId)) ?? currencyOptions.find(c => c.isBase);
+                          const chip = TYPE_CHIP[line.type] ?? { label: line.type, cls: "bg-surface2 text-muted" };
                           return (
-                            <span key={t.id}>
-                              {i > 0 && <span className="text-muted mx-1">+</span>}
-                              {t.name}
-                              <span className="text-muted font-normal ml-1">({selSym} {fmtN(amt)})</span>
-                            </span>
+                            <SortableCostLineRow key={line.id ?? i} id={line.id!} type={line.type}>
+
+                              {/* Tipo */}
+                              <td className="pl-[18px] pr-[9px] py-1.5 align-middle">
+                                <span className={cn("inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold leading-none", chip.cls)}>
+                                  {chip.label}
+                                </span>
+                              </td>
+
+                              {/* Moneda */}
+                              <td className="pl-[9px] pr-[18px] py-1.5 align-middle">
+                                <TPComboFixed
+                                  value={line.currencyId ?? baseCurrencyId}
+                                  onChange={(v) => {
+                                    const newCurrId  = v || null;
+                                    const oldRate    = currencyOptions.find(c => c.id === (line.currencyId ?? baseCurrencyId))?.latestRate ?? 1;
+                                    const newRate    = currencyOptions.find(c => c.id === (newCurrId    ?? baseCurrencyId))?.latestRate ?? 1;
+                                    const inBase     = line.unitValue * oldRate;
+                                    const converted  = newRate ? Math.round((inBase / newRate) * 10000) / 10000 : line.unitValue;
+                                    patchLine(i, { currencyId: newCurrId, unitValue: converted });
+                                  }}
+                                  options={currencyOptions.map(c => ({ value: c.id, label: c.code }))}
+                                />
+                              </td>
+
+                              {/* Descripción / Variante */}
+                              <td className="px-[18px] py-1.5 align-middle">
+                                {isMetal ? (
+                                  <TPComboFixed
+                                    value={line.metalVariantId ?? ""}
+                                    onChange={(v) => {
+                                      const mv = metalVariantOptions.find(m => m.id === v);
+                                      // latestQuotePrice está en moneda base; si la línea ya tiene otra moneda, convertir
+                                      let unitValue = mv?.latestQuotePrice ?? line.unitValue;
+                                      if (mv?.latestQuotePrice != null && line.currencyId && line.currencyId !== baseCurrencyId) {
+                                        const lineRate = currencyOptions.find(c => c.id === line.currencyId)?.latestRate ?? 1;
+                                        if (lineRate) unitValue = Math.round((mv.latestQuotePrice / lineRate) * 10000) / 10000;
+                                      }
+                                      patchLine(i, { metalVariantId: v || null, unitValue });
+                                    }}
+                                    options={[
+                                      { value: "", label: "Seleccionar variante…" },
+                                      ...metalVariantOptions.map(mv => ({ value: mv.id, label: mv.label, isFavorite: mv.isFavorite })),
+                                    ]}
+                                    searchable
+                                    favoriteValue={metalVariants.find(m => m.isFavorite)?.id}
+                                    onSetFavorite={async (variantId) => {
+                                      const mv = metalVariants.find(m => m.id === variantId);
+                                      if (!mv) return;
+                                      const wasFav = mv.isFavorite;
+                                      const prevVariants = metalVariants;
+                                      setMetalVariants(prev => prev.map(m => ({
+                                        ...m,
+                                        isFavorite: m.metalId === mv.metalId
+                                          ? m.id === variantId && !wasFav
+                                          : m.isFavorite,
+                                      })));
+                                      try {
+                                        if (!wasFav) {
+                                          await setFavoriteVariant(variantId, mv.metalId);
+                                        } else {
+                                          await clearFavoriteVariant(mv.metalId);
+                                        }
+                                      } catch {
+                                        setMetalVariants(prevVariants);
+                                        toast.error("No se pudo actualizar el favorito");
+                                      }
+                                    }}
+                                  />
+                                ) : line.type === "PRODUCT" ? (
+                                  <TPComboFixed
+                                    value={line.catalogItemId ?? ""}
+                                    onChange={(v) => {
+                                      const item = productItems.find(p => p.id === v);
+                                      if (!item) { patchLine(i, { label: v, catalogItemId: null }); return; }
+                                      let unitValue  = item.costPrice ?? line.unitValue;
+                                      let currencyId = item.manualCurrencyId ?? line.currencyId;
+                                      // Si el usuario ya eligió moneda, convertir precio del artículo a esa moneda
+                                      if (line.currencyId && item.costPrice != null) {
+                                        const itemRate = currencyOptions.find(c => c.id === (item.manualCurrencyId ?? baseCurrencyId))?.latestRate ?? 1;
+                                        const lineRate = currencyOptions.find(c => c.id === line.currencyId)?.latestRate ?? 1;
+                                        const inBase   = item.costPrice * itemRate;
+                                        unitValue  = lineRate ? Math.round((inBase / lineRate) * 10000) / 10000 : inBase;
+                                        currencyId = line.currencyId;
+                                      }
+                                      patchLine(i, { label: item.name ?? v, catalogItemId: item.id, unitValue, currencyId });
+                                    }}
+                                    options={[
+                                      { value: "", label: "Seleccionar producto…" },
+                                      ...productItems.map(p => ({ value: p.id, label: p.name })),
+                                    ]}
+                                    searchable
+                                  />
+                                ) : line.type === "SERVICE" ? (
+                                  <TPComboFixed
+                                    value={line.catalogItemId ?? ""}
+                                    onChange={(v) => {
+                                      const item = serviceItems.find(s => s.id === v);
+                                      if (!item) { patchLine(i, { label: v, catalogItemId: null }); return; }
+                                      let unitValue  = item.costPrice ?? line.unitValue;
+                                      let currencyId = item.manualCurrencyId ?? line.currencyId;
+                                      // Si el usuario ya eligió moneda, convertir precio del artículo a esa moneda
+                                      if (line.currencyId && item.costPrice != null) {
+                                        const itemRate = currencyOptions.find(c => c.id === (item.manualCurrencyId ?? baseCurrencyId))?.latestRate ?? 1;
+                                        const lineRate = currencyOptions.find(c => c.id === line.currencyId)?.latestRate ?? 1;
+                                        const inBase   = item.costPrice * itemRate;
+                                        unitValue  = lineRate ? Math.round((inBase / lineRate) * 10000) / 10000 : inBase;
+                                        currencyId = line.currencyId;
+                                      }
+                                      patchLine(i, { label: item.name ?? v, catalogItemId: item.id, unitValue, currencyId });
+                                    }}
+                                    options={[
+                                      { value: "", label: "Seleccionar servicio…" },
+                                      ...serviceItems.map(s => ({ value: s.id, label: s.name })),
+                                    ]}
+                                    searchable
+                                  />
+                                ) : (
+                                  <TPInput
+                                    value={line.label}
+                                    onChange={(v) => patchLine(i, { label: v })}
+                                    placeholder="Precio / Hechura…"
+                                  />
+                                )}
+                              </td>
+
+                              {/* Cantidad */}
+                              <td className="px-[18px] py-1.5 align-middle">
+                                <div className="flex items-center gap-1">
+                                  <div className="flex-1 min-w-0">
+                                    <TPNumberInput
+                                      value={line.quantity}
+                                      onChange={(v) => patchLine(i, { quantity: v ?? 0 })}
+                                      decimals={2}
+                                      step={isMetal ? 0.1 : undefined}
+                                      min={0}
+                                    />
+                                  </div>
+                                  {line.type === "HECHURA" && (() => {
+                                    const pickerId = `qty-${line.id}`;
+                                    return (
+                                      <div
+                                        className="relative shrink-0"
+                                        onBlur={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node)) setUnitPickerOpen(null); }}
+                                      >
+                                        <button
+                                          type="button"
+                                          onClick={(e) => {
+                                            const rect = (e.currentTarget as HTMLButtonElement).getBoundingClientRect();
+                                            setUnitPickerPos({ top: rect.bottom + 4, left: rect.left, width: Math.max(rect.width, 120) });
+                                            setUnitPickerOpen(v => v === pickerId ? null : pickerId);
+                                          }}
+                                          className="h-7 px-1.5 flex items-center rounded border border-border bg-transparent text-[10px] font-bold text-muted hover:text-text hover:border-primary/50 transition"
+                                          title="Unidad de cantidad"
+                                        >
+                                          {line.quantityUnit || "u"}
+                                        </button>
+                                        {unitPickerOpen === pickerId && ReactDOM.createPortal(
+                                          <div
+                                            style={{ position: "fixed", top: unitPickerPos.top, left: unitPickerPos.left, minWidth: unitPickerPos.width, zIndex: 9999 }}
+                                            className="rounded-lg border border-border bg-surface shadow-lg py-1 max-h-48 overflow-y-auto"
+                                          >
+                                            {multiplierBaseItems.filter(w => w.isActive !== false).map(w => (
+                                              <div key={w.id} className="flex items-center gap-1 px-2 hover:bg-surface2 transition">
+                                                <button
+                                                  type="button"
+                                                  onMouseDown={() => { patchLine(i, { quantityUnit: w.label as QuantityUnit }); setUnitPickerOpen(null); }}
+                                                  className={cn("flex-1 text-left py-1.5 text-xs", line.quantityUnit === w.label && "text-primary font-semibold")}
+                                                >
+                                                  {w.label}
+                                                </button>
+                                                <button
+                                                  type="button"
+                                                  title={w.isFavorite ? "Quitar de favoritos" : "Marcar como favorito"}
+                                                  onMouseDown={(e) => {
+                                                    e.preventDefault();
+                                                    if (!w.isFavorite) patchLine(i, { quantityUnit: w.label as QuantityUnit });
+                                                    void toggleCatalogFavorite(w.id, !!w.isFavorite, setMultiplierBaseItems);
+                                                  }}
+                                                  className={cn("shrink-0 transition-colors", w.isFavorite ? "text-yellow-400" : "text-muted/20 hover:text-yellow-400")}
+                                                >
+                                                  <Star size={11} className={w.isFavorite ? "fill-yellow-400" : ""} />
+                                                </button>
+                                              </div>
+                                            ))}
+                                          </div>,
+                                          document.body
+                                        )}
+                                      </div>
+                                    );
+                                  })()}
+                                </div>
+                              </td>
+
+
+                              {/* Precio unitario */}
+                              <td className="px-[18px] py-1.5 align-middle">
+                                <TPNumberInput
+                                  value={line.unitValue}
+                                  onChange={(v) => patchLine(i, { unitValue: v ?? 0 })}
+                                  decimals={2}
+                                  min={0}
+                                  leftIcon={<span className="text-[10px] font-semibold text-muted">{currForLine?.symbol ?? selSym}</span>}
+                                />
+                              </td>
+
+                              {/* Bonif. / Recargo — oculto para METAL */}
+                              <td className="px-[18px] py-1.5 align-middle">
+                                {line.type !== "METAL" ? (
+                                  <div className="flex items-center gap-1">
+                                    {/* ± toggle: "" → BONUS → SURCHARGE → "" */}
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        if (line.lineAdjKind === "")          patchLine(i, { lineAdjKind: "BONUS",     lineAdjType: line.lineAdjType || "PERCENTAGE" });
+                                        else if (line.lineAdjKind === "BONUS")     patchLine(i, { lineAdjKind: "SURCHARGE" });
+                                        else                                        patchLine(i, { lineAdjKind: "",         lineAdjType: "", lineAdjValue: null });
+                                      }}
+                                      className={cn(
+                                        "shrink-0 h-7 w-7 rounded border text-[11px] font-bold transition grid place-items-center",
+                                        line.lineAdjKind === "BONUS"     && "border-emerald-500/50 text-emerald-500 bg-emerald-500/5",
+                                        line.lineAdjKind === "SURCHARGE" && "border-amber-500/50 text-amber-500 bg-amber-500/5",
+                                        line.lineAdjKind === ""          && "border-border/50 text-muted/35",
+                                      )}
+                                      title="Bonificación (−) / Recargo (+)"
+                                    >
+                                      {line.lineAdjKind === "SURCHARGE" ? "+" : line.lineAdjKind === "BONUS" ? "−" : "±"}
+                                    </button>
+                                    <div className="flex-1 min-w-0">
+                                      <TPNumberInput
+                                        value={line.lineAdjValue}
+                                        onChange={(v) => patchLine(i, { lineAdjValue: v ?? null })}
+                                        decimals={2}
+                                        min={0}
+                                        disabled={line.lineAdjKind === ""}
+                                      />
+                                    </div>
+                                    {/* %/$ toggle */}
+                                    <button
+                                      type="button"
+                                      onClick={() => patchLine(i, {
+                                        lineAdjType: (line.lineAdjType || "PERCENTAGE") === "PERCENTAGE" ? "FIXED_AMOUNT" : "PERCENTAGE",
+                                      })}
+                                      disabled={line.lineAdjKind === ""}
+                                      className={cn(
+                                        "shrink-0 h-7 w-7 rounded border text-[10px] font-bold transition grid place-items-center",
+                                        line.lineAdjKind !== ""
+                                          ? "border-border text-muted hover:text-text hover:border-primary/50"
+                                          : "border-border/30 text-muted/25 cursor-default",
+                                      )}
+                                      title="Cambiar entre % y monto fijo"
+                                    >
+                                      {(line.lineAdjType || "PERCENTAGE") === "PERCENTAGE" ? "%" : "$"}
+                                    </button>
+                                  </div>
+                                ) : (
+                                  <span className="text-[10px] text-muted/30">—</span>
+                                )}
+                              </td>
+
+                              {/* Subtotal */}
+                              <td className="px-[18px] py-1.5 text-right align-middle">
+                                {lineTotal > 0 ? (
+                                  <div>
+                                    <span className={cn("tabular-nums font-bold text-sm", SUBTOTAL_COLOR[line.type] ?? "text-text")}>
+                                      {selSym} {fmtN(lineTotal)}
+                                    </span>
+                                    <div className="text-[10px] text-muted/50 tabular-nums">
+                                      {fmtN(line.quantity)} {line.quantityUnit} × {currForLine?.symbol ?? selSym} {fmtN(line.unitValue)}
+                                    </div>
+                                    {line.currencyId && line.currencyId !== baseCurrencyId && currForLine?.latestRate != null && (
+                                      <div className="text-[10px] text-muted/40 tabular-nums">
+                                        Resultado: {currForLine.symbol} {fmtN(lineTotal / currForLine.latestRate)}
+                                      </div>
+                                    )}
+                                  </div>
+                                ) : (
+                                  <span className="text-muted/30">—</span>
+                                )}
+                              </td>
+
+                              {/* Eliminar */}
+                              <td className="px-[18px] py-1.5 align-middle text-right">
+                                <TPIconButton
+                                  onClick={() => dropLine(i)}
+                                  className="opacity-0 group-hover:opacity-100 h-7 w-7 hover:text-red-400 hover:border-red-400/40 transition-all ml-auto"
+                                  title="Eliminar fila"
+                                >
+                                  <X size={13} />
+                                </TPIconButton>
+                              </td>
+                            </SortableCostLineRow>
                           );
                         })}
-                        <span className="ml-2 text-muted font-normal">= {fmtN(totalTaxPct)}% total ({selSym} {fmtN(taxAmount)})</span>
-                      </p>
-                    )}
-                  </TPField>
+                      </tbody>
+                        </SortableContext>
+                      </DndContext>
+                    </table>
+                  </div>
+                )}
 
-                  <div className="border-t border-border pt-5 space-y-2">
-                    <div className={cn(
-                      "rounded-2xl border-2 px-6 py-6 text-center transition",
-                      hasFinalCost ? "border-primary/40 bg-primary/5" : "border-dashed border-border bg-surface2/20"
-                    )}>
-                      <div className="text-[11px] font-semibold text-muted uppercase tracking-widest mb-1">
-                        Costo ajustado del artículo
-                      </div>
-                      {hasFinalCost && (
-                        <div className="text-[11px] text-muted flex items-center justify-center gap-1.5 mb-2">
-                          <span>{selSym} {fmtN(rawBase)}</span>
-                          {adjVal !== 0 && (
-                            <span className={cn("font-medium", adjAmount < 0 ? "text-emerald-500" : "text-amber-500")}>
-                              {adjAmount < 0 ? "−" : "+"} {fmtN(Math.abs(adjAmount))}
-                            </span>
-                          )}
-                        </div>
+                {/* Advertencia: variante sin cotización */}
+                {metalLinesIdx.some(({ line }) => !line.unitValue && line.metalVariantId) && (
+                  <div className="flex items-center gap-1.5 px-3 py-2 border-t border-border/40 text-[11px] text-amber-500/80">
+                    <AlertCircle size={11} className="shrink-0" />
+                    Alguna variante de metal no tiene cotización. Ingresá el valor por gramo manualmente.
+                  </div>
+                )}
+
+                {/* Footer: resumen por tipo */}
+                {rawBase > 0 && (
+                  <div className="border-t border-border/60 bg-surface2/30 px-4 py-2.5">
+                    <div className="flex items-center justify-end gap-5 flex-wrap text-xs">
+                      {metalTotal > 0 && (
+                        <span className="text-muted">
+                          Metal: <span className="font-bold tabular-nums text-amber-600 dark:text-amber-400">{selSym} {fmtN(metalTotal)}</span>
+                        </span>
                       )}
-                      <div className={cn(
-                        "tabular-nums font-semibold",
-                        hasFinalCost ? "text-3xl text-text" : "text-base text-muted font-normal"
-                      )}>
-                        {hasFinalCost ? `${selSym} ${fmtN(adjustedCost)}` : "Ingresá el costo base"}
-                      </div>
-                      {convertedCost != null && baseCurr && (
-                        <div className="mt-2 text-[11px] text-muted">
-                          ≈ {baseCurr.symbol} {fmtN(convertedCost)} en {baseCurr.code}
-                        </div>
+                      {hechuraTotal > 0 && (
+                        <span className="text-muted">
+                          Hechura: <span className="font-bold tabular-nums text-blue-600 dark:text-blue-400">{selSym} {fmtN(hechuraTotal)}</span>
+                        </span>
                       )}
-                      {hasFinalCost && (
-                        <p className="mt-2 text-[11px] text-muted/70">Este valor se guarda como costo del artículo</p>
+                      {productTotal > 0 && (
+                        <span className="text-muted">
+                          Productos: <span className="font-bold tabular-nums text-violet-600 dark:text-violet-400">{selSym} {fmtN(productTotal)}</span>
+                        </span>
                       )}
+                      {serviceTotal > 0 && (
+                        <span className="text-muted">
+                          Servicios: <span className="font-bold tabular-nums text-green-600 dark:text-green-400">{selSym} {fmtN(serviceTotal)}</span>
+                        </span>
+                      )}
+                      <span className="text-muted border-l border-border/60 pl-5">
+                        Base: <span className="font-bold tabular-nums text-text">{selSym} {fmtN(rawBase)}</span>
+                      </span>
                     </div>
-                    {hasFinalCost && taxAmount > 0 && (
-                      <div className="rounded-xl border border-amber-500/20 bg-amber-500/5 px-4 py-2.5 space-y-1.5 text-xs">
-                        <div className="flex items-center justify-between">
-                          <span className="text-amber-600 dark:text-amber-400">Impuestos referenciales ({fmtN(totalTaxPct)}%)</span>
-                          <span className="tabular-nums font-medium text-amber-600 dark:text-amber-400">+ {selSym} {fmtN(taxAmount)}</span>
+                  </div>
+                )}
+              </div>
+
+              {/* ── AJUSTE + IMPUESTOS (lado a lado) ─────────────── */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+
+                {/* Ajuste de costo */}
+                <div className="rounded-xl border border-border overflow-hidden">
+                  <div className="px-3 py-2 bg-surface2/40 border-b border-border/60">
+                    <span className="text-xs font-semibold text-text">Ajuste de costo</span>
+                  </div>
+                  <div className="px-3 py-2 space-y-2">
+                    <TPComboFixed
+                      value={draft.manualAdjustmentKind}
+                      onChange={(v) => {
+                        const kind = v as "" | "BONUS" | "SURCHARGE";
+                        set("manualAdjustmentKind", kind);
+                        if (kind === "") {
+                          set("manualAdjustmentType", "");
+                          set("manualAdjustmentValue", null);
+                        } else if (draft.manualAdjustmentKind === "") {
+                          set("manualAdjustmentType", lastAdjTypeRef.current);
+                        }
+                      }}
+                      options={[
+                        { value: "",          label: "Sin ajuste" },
+                        { value: "BONUS",     label: "Bonificación" },
+                        { value: "SURCHARGE", label: "Recargo" },
+                      ]}
+                    />
+                    {draft.manualAdjustmentKind !== "" && (
+                      <div className="space-y-1.5">
+                        <div className="flex items-center gap-2">
+                          <div className="flex-1 min-w-0">
+                            {(draft.manualAdjustmentType || "PERCENTAGE") === "PERCENTAGE"
+                              ? <TPNumberInput
+                                  value={draft.manualAdjustmentValue}
+                                  onChange={(v) => set("manualAdjustmentValue", v ?? null)}
+                                  decimals={2} min={0}
+                                  suffix={<span className="text-[11px] font-bold">%</span>}
+                                />
+                              : <TPNumberInput
+                                  value={draft.manualAdjustmentValue}
+                                  onChange={(v) => set("manualAdjustmentValue", v ?? null)}
+                                  decimals={2} min={0}
+                                  leftIcon={<span className="text-[11px] font-semibold text-muted">{selSym}</span>}
+                                />
+                            }
+                          </div>
+                          <TPAdjTypeButton
+                            value={(draft.manualAdjustmentType || "PERCENTAGE") as "PERCENTAGE" | "FIXED_AMOUNT"}
+                            onChange={(t) => { lastAdjTypeRef.current = t; set("manualAdjustmentType", t); }}
+                            favoriteValue={defaultAdjType}
+                            onSetFavorite={handleSetDefaultAdjType}
+                          />
                         </div>
-                        <div className="flex items-center justify-between border-t border-amber-500/20 pt-1.5">
-                          <span className="font-semibold text-amber-600 dark:text-amber-400">Total con impuestos (referencial)</span>
-                          <span className="tabular-nums font-bold text-amber-600 dark:text-amber-400">{selSym} {fmtN(finalCost)}</span>
-                        </div>
+                        {adjAmount !== 0 && rawBase > 0 && (
+                          <div className={cn(
+                            "text-[10px] tabular-nums text-right",
+                            adjAmount < 0 ? "text-emerald-600/80 dark:text-emerald-400/80" : "text-amber-600/80 dark:text-amber-400/80"
+                          )}>
+                            {draft.manualAdjustmentType === "PERCENTAGE"
+                              ? `${selSym} ${fmtN(rawBase)} × ${adjVal}% = ${adjAmount < 0 ? "−" : "+"}${selSym} ${fmtN(Math.abs(adjAmount))}`
+                              : `${adjAmount < 0 ? "−" : "+"}${selSym} ${fmtN(Math.abs(adjAmount))} s/ ${selSym} ${fmtN(rawBase)}`
+                            }
+                          </div>
+                        )}
                       </div>
                     )}
                   </div>
                 </div>
 
-              </div>
-            </TPCard>
-          );
-        })()}
-
-        {/* ── MODO METAL + MERMA + HECHURA → un solo card ─────────────── */}
-        {!isService && mode === "METAL_MERMA_HECHURA" && (() => {
-          const selSym        = baseCurrencySymbol;
-          const taxOptions    = taxes.filter(t => t.calculationType === "PERCENTAGE" && t.rate != null);
-          const selectedTaxes = taxOptions.filter(t => draft.manualTaxIds.includes(t.id));
-          const totalTaxPct   = selectedTaxes.reduce((s, t) => s + parseFloat(t.rate!), 0);
-
-          // Calcular suma en tiempo real desde las líneas de composición
-          const rawBase = costLines.reduce((sum, line) => {
-            if (!line.quantity || !line.unitValue) return sum;
-            let raw: number;
-            if (line.type === "METAL") {
-              const mermaFactor = 1 + (line.mermaPercent ?? 0) / 100;
-              raw = line.quantity * mermaFactor * line.unitValue;
-            } else {
-              raw = line.quantity * line.unitValue;
-            }
-            const currId = line.currencyId ?? baseCurrencyId;
-            if (currId !== baseCurrencyId) {
-              const curr = currencyOptions.find(c => c.id === currId);
-              if (curr?.latestRate != null) raw = raw * curr.latestRate;
-              else return sum;
-            }
-            return sum + raw;
-          }, 0);
-
-          const adjVal       = Math.abs(draft.manualAdjustmentValue ?? 0);
-          const adjSign      = draft.manualAdjustmentKind === "" ? 0 : draft.manualAdjustmentKind === "SURCHARGE" ? 1 : -1;
-          const adjAmount    = adjSign * (draft.manualAdjustmentType === "PERCENTAGE" ? rawBase * (adjVal / 100) : adjVal);
-          const adjustedCost = rawBase + adjAmount;
-          const taxAmount    = totalTaxPct > 0 ? adjustedCost * (totalTaxPct / 100) : 0;
-          const finalCost    = adjustedCost + taxAmount;
-          const hasFinalCost = rawBase > 0;
-
-          function fmtN(n: number) {
-            return n.toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-          }
-
-          return (
-            <TPCard title="Costo del artículo" right={<span className="text-xs text-muted">Metal y Hechura</span>}>
-              <div className="space-y-5">
-
-                {/* Selector de método */}
-                <TPField label="¿Cómo se calcula el costo?" hint="Podés cambiar a cálculo manual o multiplicador.">
-                  <TPComboFixed
-                    value={mode}
-                    onChange={(v) => set("costCalculationMode", v as CostCalculationMode)}
-                    options={costModeOptions}
-                  />
-                </TPField>
-
-                {/* ── Ajuste e impuestos ───────────────── */}
-                <div className="border-t border-border pt-4 space-y-5">
-                  <div className="flex items-center justify-between gap-2 flex-wrap">
-                    <div className="text-xs font-semibold text-muted uppercase tracking-wide">Ajuste e impuestos</div>
-                    <div className="flex items-center gap-1.5 flex-wrap">
-                      {costLines.some(l => l.type === "METAL" && l.metalVariantId) && (
-                        <button
-                          type="button"
-                          onClick={updateMetalPrices}
-                          className="inline-flex items-center gap-1 px-2 py-0.5 text-xs rounded-lg border transition shrink-0 bg-amber-500/10 border-amber-500/30 text-amber-400 hover:bg-amber-500/20"
-                        >
-                          <RefreshCw size={9} />
-                          Actualizar precios
-                        </button>
-                      )}
-                      {TYPE_OPTIONS.map(opt => {
-                        const cfg = TYPE_CFG[opt.value];
-                        return (
-                          <button
-                            key={opt.value}
-                            type="button"
-                            onClick={() => addCostLine(opt.value)}
-                            className={cn(
-                              "inline-flex items-center gap-1 px-2 py-0.5 text-xs rounded-lg border transition shrink-0",
-                              "bg-surface2/30 border-border text-muted hover:text-text",
-                              cfg.rowBg, `hover:${cfg.rowBorder}`
-                            )}
-                          >
-                            <Plus size={9} />
-                            {opt.label}
-                          </button>
-                        );
-                      })}
-                    </div>
+                {/* Impuestos de compra */}
+                <div className="rounded-xl border border-border overflow-hidden">
+                  <div className="px-3 py-2 bg-surface2/40 border-b border-border/60">
+                    <span className="text-xs font-semibold text-text">Impuestos de compra</span>
                   </div>
-
-                {/* Costo computado por el backend */}
-                {isEdit && computed && (
-                  <div className={cn(
-                    "rounded-xl border p-3 flex items-start gap-3",
-                    computed.partial ? "border-amber-500/30 bg-amber-500/10" : "border-emerald-500/30 bg-emerald-500/10"
-                  )}>
-                    <div className="shrink-0 mt-0.5">
-                      {computed.partial ? <AlertCircle size={15} className="text-amber-400" /> : <Calculator size={15} className="text-emerald-400" />}
-                    </div>
-                    <div className="flex-1 min-w-0 text-sm">
-                      <span className="font-medium text-text">Costo s/imp: </span>
-                      <span className={computed.partial ? "text-amber-300" : "text-emerald-300"}>
-                        {computed.value != null ? fmtMoney(computed.value) : "—"}
-                      </span>
-                      {article?.computedCostWithTax != null && article.computedCostWithTax !== article.computedCostBase && (
-                        <span className="ml-3 text-sm">
-                          <span className="font-medium text-text">c/imp: </span>
-                          <span className={computed.partial ? "text-amber-300" : "text-emerald-300"}>
-                            {fmtMoney(article.computedCostWithTax)}
-                          </span>
-                        </span>
-                      )}
-                      {computed.mode === "COST_LINES" && <span className="ml-2 text-xs text-muted font-normal">(composición por líneas)</span>}
-                      {computed.partial && <div className="text-xs text-amber-300/80 mt-0.5">Cálculo parcial — alguna línea no tiene cotización.</div>}
-                    </div>
-                    <button type="button" onClick={recomputeCost} disabled={loadingCost}
-                      className="shrink-0 h-7 w-7 rounded-lg border border-border bg-surface2/40 grid place-items-center hover:bg-surface2 transition" title="Recalcular">
-                      {loadingCost ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />}
-                    </button>
-                  </div>
-                )}
-
-                {/* Composición de costo */}
-                <CostCompositionTable
-                  lines={costLines}
-                  onChange={setCostLines}
-                  metalVariants={metalVariantOptions}
-                  currencies={currencyOptions}
-                  baseCurrencyId={baseCurrencyId}
-                  baseCurrencySymbol={baseCurrencySymbol}
-                  defaultMermaPercent={draft.mermaPercent}
-                  productItems={productItems.map(p => ({ id: p.id, label: p.name, costPrice: p.costPrice, salePrice: null }))}
-                  serviceItems={serviceItems.map(s => ({ id: s.id, label: s.name, costPrice: s.costPrice, salePrice: null }))}
-                  hideAddButtons
-                />
-
-                {!isEdit && costLines.length === 0 && (
-                  <div className="rounded-xl border border-border bg-surface2/30 p-3 text-xs text-muted flex items-center gap-2">
-                    <Info size={12} />
-                    Podés agregar líneas de costo ahora o después de guardar el artículo.
-                  </div>
-                )}
-
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                    <TPField label="Tipo de beneficio o recargo" hint="Beneficio (bonificación) o recargo sobre el costo.">
-                      <TPComboFixed
-                        value={draft.manualAdjustmentKind}
-                        onChange={(v) => {
-                          const kind = v as "" | "BONUS" | "SURCHARGE";
-                          set("manualAdjustmentKind", kind);
-                          if (kind === "") {
-                            set("manualAdjustmentType", "");
-                            set("manualAdjustmentValue", null);
-                          } else if (draft.manualAdjustmentKind === "") {
-                            set("manualAdjustmentType", lastAdjTypeRef.current);
-                          }
-                        }}
-                        options={[
-                          { value: "",          label: "— Sin especificar —" },
-                          { value: "BONUS",     label: "Beneficio" },
-                          { value: "SURCHARGE", label: "Recargo" },
-                        ]}
-                      />
-                    </TPField>
-                    <TPField label="Tipo de valor">
-                      <TPComboFixed
-                        value={draft.manualAdjustmentType || "PERCENTAGE"}
-                        onChange={(v) => {
-                          const t = v as "PERCENTAGE" | "FIXED_AMOUNT";
-                          lastAdjTypeRef.current = t;
-                          set("manualAdjustmentType", t);
-                        }}
-                        disabled={draft.manualAdjustmentKind === ""}
-                        options={[
-                          { value: "PERCENTAGE",   label: "Porcentaje (%)" },
-                          { value: "FIXED_AMOUNT", label: `Monto fijo (${selSym})` },
-                        ]}
-                      />
-                    </TPField>
-                    <TPField
-                      label="Valor"
-                      hint={adjAmount !== 0 ? (adjAmount < 0 ? `Reduce el costo en ${selSym} ${fmtN(Math.abs(adjAmount))}` : `Suma ${selSym} ${fmtN(adjAmount)} al costo`) : undefined}
-                    >
-                      <TPNumberInput
-                        value={draft.manualAdjustmentKind === "" ? 0 : draft.manualAdjustmentValue}
-                        onChange={(v) => set("manualAdjustmentValue", v)}
-                        placeholder="0.00"
-                        decimals={2}
-                        min={0}
-                        disabled={draft.manualAdjustmentKind === ""}
-                        suffix={(draft.manualAdjustmentType || "PERCENTAGE") === "PERCENTAGE" ? <Percent size={12} /> : undefined}
-                        leftIcon={(draft.manualAdjustmentType || "PERCENTAGE") === "FIXED_AMOUNT" ? <span className="text-sm font-semibold">{selSym}</span> : undefined}
-                      />
-                    </TPField>
-                  </div>
-
-                  <TPField label="Impuestos aplicados" hint="Seleccioná los impuestos que afectan el costo de este artículo.">
+                  <div className="px-3 py-2 space-y-2">
                     <TPComboCreatableMulti
                       type="IVA_CONDITION"
                       items={taxOptions.map(t => ({ id: t.id, label: t.name, value: t.id, isActive: t.isActive }))}
@@ -3443,385 +4505,107 @@ export default function ArticleModal({
                       placeholder="Seleccioná impuestos…"
                     />
                     {selectedTaxes.length > 0 && (
-                      <p className="mt-1.5 text-xs font-medium text-text">
-                        {selectedTaxes.map((t, i) => {
+                      <div className="rounded-lg border border-border/60 bg-surface2/20 overflow-hidden">
+                        {selectedTaxes.map((t, idx) => {
                           const pct = t.rate != null ? parseFloat(t.rate!) : 0;
                           const amt = adjustedCost * (pct / 100);
                           return (
-                            <span key={t.id}>
-                              {i > 0 && <span className="text-muted mx-1">+</span>}
-                              {t.name}<span className="text-muted font-normal ml-1">({selSym} {fmtN(amt)})</span>
-                            </span>
+                            <div key={t.id} className={cn("flex items-center justify-between gap-2 px-2.5 py-1.5 text-xs", idx > 0 && "border-t border-border/40")}>
+                              <div className="flex items-center gap-1.5 min-w-0 flex-1 flex-wrap">
+                                <span className="font-medium text-text truncate">{t.name}</span>
+                                <span className="text-muted/70">{fmtN(pct)}%</span>
+                                {t.includedInPrice
+                                  ? <span className="text-[10px] px-1 py-0.5 rounded bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 font-medium">incl.</span>
+                                  : <span className="text-[10px] px-1 py-0.5 rounded bg-surface2 text-muted font-medium border border-border/40">se suma</span>
+                                }
+                              </div>
+                              <span className="tabular-nums font-semibold text-text shrink-0">+ {selSym} {fmtN(amt)}</span>
+                            </div>
                           );
                         })}
-                        <span className="ml-2 text-muted font-normal">= {fmtN(totalTaxPct)}% total ({selSym} {fmtN(taxAmount)})</span>
-                      </p>
-                    )}
-                  </TPField>
-
-                  <div className="border-t border-border pt-5 space-y-2">
-                    <div className={cn(
-                      "rounded-2xl border-2 px-6 py-6 text-center transition",
-                      hasFinalCost ? "border-primary/40 bg-primary/5" : "border-dashed border-border bg-surface2/20"
-                    )}>
-                      <div className="text-[11px] font-semibold text-muted uppercase tracking-widest mb-1">Costo ajustado del artículo</div>
-                      {hasFinalCost && (
-                        <div className="text-[11px] text-muted flex items-center justify-center gap-1.5 mb-2">
-                          <span>{selSym} {fmtN(rawBase)}</span>
-                          {adjVal !== 0 && (
-                            <span className={cn("font-medium", adjAmount < 0 ? "text-emerald-500" : "text-amber-500")}>
-                              {adjAmount < 0 ? "−" : "+"} {fmtN(Math.abs(adjAmount))}
-                            </span>
-                          )}
-                        </div>
-                      )}
-                      <div className={cn("tabular-nums font-semibold", hasFinalCost ? "text-3xl text-text" : "text-base text-muted font-normal")}>
-                        {hasFinalCost ? `${selSym} ${fmtN(adjustedCost)}` : "Configurá la composición de costo"}
-                      </div>
-                      {hasFinalCost && (
-                        <p className="mt-2 text-[11px] text-muted/70">Este valor se guarda como costo del artículo</p>
-                      )}
-                    </div>
-                    {hasFinalCost && taxAmount > 0 && (
-                      <div className="rounded-xl border border-amber-500/20 bg-amber-500/5 px-4 py-2.5 space-y-1.5 text-xs">
-                        <div className="flex items-center justify-between">
-                          <span className="text-amber-600 dark:text-amber-400">Impuestos referenciales ({fmtN(totalTaxPct)}%)</span>
-                          <span className="tabular-nums font-medium text-amber-600 dark:text-amber-400">+ {selSym} {fmtN(taxAmount)}</span>
-                        </div>
-                        <div className="flex items-center justify-between border-t border-amber-500/20 pt-1.5">
-                          <span className="font-semibold text-amber-600 dark:text-amber-400">Total con impuestos (referencial)</span>
-                          <span className="tabular-nums font-bold text-amber-600 dark:text-amber-400">{selSym} {fmtN(finalCost)}</span>
-                        </div>
                       </div>
                     )}
                   </div>
                 </div>
-
               </div>
-            </TPCard>
-          );
-        })()}
 
-        {/* ── MODO MULTIPLIER — todo en un solo card ───────────────────── */}
-        {!isService && mode === "MULTIPLIER" && (() => {
-          const mulCurr   = currencies.find(c => c.id === draft.multiplierCurrencyId) ?? currencies.find(c => c.isBase);
-          const selSym    = mulCurr?.symbol ?? baseCurrencySymbol;
-          const baseCurr  = currencies.find(c => c.isBase);
-
-          const taxOptions    = taxes.filter(t => t.calculationType === "PERCENTAGE" && t.rate != null);
-          const selectedTaxes = taxOptions.filter(t => draft.manualTaxIds.includes(t.id));
-          const totalTaxPct   = selectedTaxes.reduce((s, t) => s + parseFloat(t.rate!), 0);
-
-          const rawBase      = (draft.multiplierQuantity ?? 0) * (draft.multiplierValue ?? 0);
-          const adjVal       = Math.abs(draft.manualAdjustmentValue ?? 0);
-          const adjSign      = draft.manualAdjustmentKind === "" ? 0 : draft.manualAdjustmentKind === "SURCHARGE" ? 1 : -1;
-          const adjAmount    = adjSign * (draft.manualAdjustmentType === "PERCENTAGE" ? rawBase * (adjVal / 100) : adjVal);
-          const adjustedCost = rawBase + adjAmount;
-          const taxAmount    = totalTaxPct > 0 ? adjustedCost * (totalTaxPct / 100) : 0;
-          const finalCost    = adjustedCost + taxAmount;
-          const hasFinalCost = rawBase > 0;
-
-          const rate          = mulCurr && !mulCurr.isBase ? (mulCurr.latestRate ?? null) : null;
-          const convertedCost = rate != null ? adjustedCost * rate : null;
-
-          function fmtN(n: number) {
-            return n.toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-          }
-
-          return (
-            <TPCard title="Costo del artículo" right={<span className="text-xs text-muted">Multiplicador</span>}>
-              <div className="space-y-5">
-
-                {/* Selector de método */}
-                <TPField label="¿Cómo se calcula el costo?" hint="Podés cambiar a cálculo manual o por composición metálica.">
-                  <TPComboFixed
-                    value={mode}
-                    onChange={(v) => set("costCalculationMode", v as CostCalculationMode)}
-                    options={costModeOptions}
-                  />
-                </TPField>
-
-                {/* ── Ajuste e impuestos ───────────────── */}
-                <div className="border-t border-border pt-4 space-y-5">
-                  <div className="text-xs font-semibold text-muted uppercase tracking-wide">Ajuste e impuestos</div>
-
-                {/* Costo computado por el backend */}
-                {isEdit && computed && (
-                  <div className={cn(
-                    "rounded-xl border p-3 flex items-start gap-3",
-                    computed.partial ? "border-amber-500/30 bg-amber-500/10" : "border-emerald-500/30 bg-emerald-500/10"
-                  )}>
-                    <div className="shrink-0 mt-0.5">
-                      {computed.partial ? <AlertCircle size={15} className="text-amber-400" /> : <Calculator size={15} className="text-emerald-400" />}
-                    </div>
-                    <div className="flex-1 min-w-0 text-sm">
-                      <span className="font-medium text-text">Costo s/imp: </span>
-                      <span className={computed.partial ? "text-amber-300" : "text-emerald-300"}>
-                        {computed.value != null ? fmtMoney(computed.value) : "—"}
-                      </span>
-                      {article?.computedCostWithTax != null && article.computedCostWithTax !== article.computedCostBase && (
-                        <span className="ml-3 text-sm">
-                          <span className="font-medium text-text">c/imp: </span>
-                          <span className={computed.partial ? "text-amber-300" : "text-emerald-300"}>
-                            {fmtMoney(article.computedCostWithTax)}
-                          </span>
+              {/* ── TOTAL FINAL ───────────────────────────────────── */}
+              {rawBase > 0 ? (
+                <div className="rounded-xl border border-primary/30 bg-primary/5 overflow-hidden">
+                  <div className="px-3 py-2 space-y-1.5">
+                    {metalTotal > 0 && (
+                      <div className="flex items-center justify-between text-xs text-muted">
+                        <span className="flex items-center gap-1.5">
+                          Metal
+                          {metalHasLineAdj && <span className="text-[10px] italic opacity-55">(incl. ajuste de línea)</span>}
                         </span>
-                      )}
-                      {computed.partial && <div className="text-xs text-amber-300/80 mt-0.5">Cálculo parcial — falta configuración.</div>}
-                    </div>
-                    <button type="button" onClick={recomputeCost} disabled={loadingCost}
-                      className="shrink-0 h-7 w-7 rounded-lg border border-border bg-surface2/40 grid place-items-center hover:bg-surface2 transition" title="Recalcular">
-                      {loadingCost ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />}
-                    </button>
-                  </div>
-                )}
-
-                {/* Fila 1 — Base del multiplicador (ancho completo) */}
-                <TPField
-                  label="Base del multiplicador"
-                  hint="¿Sobre qué unidad se calcula el costo? Ej: Gramos, Kilates, Piezas."
-                >
-                  <TPComboCreatable
-                    type="MULTIPLIER_BASE"
-                    items={multiplierBaseItems}
-                    value={draft.multiplierBase}
-                    onChange={(v) => set("multiplierBase", v)}
-                    placeholder="Ej: Gramos, Kilates, Piezas…"
-                    mode={isEdit ? "edit" : "create"}
-                  />
-                </TPField>
-
-                {/* Fila 2 — Moneda (1fr) | Valor por unidad (2fr) | Cantidad (1.5fr) */}
-                <div className="grid grid-cols-1 gap-3 md:items-stretch" style={{ gridTemplateColumns: "1fr 2fr 1.5fr" }}>
-
-                  {/* Moneda */}
-                  <div className="rounded-xl border border-border bg-card p-3 flex flex-col gap-2">
-                    <div className="text-xs font-semibold text-muted uppercase tracking-wide">Moneda</div>
-                    <TPComboFixed
-                      value={draft.multiplierCurrencyId || baseCurrencyId}
-                      onChange={(v) => set("multiplierCurrencyId", v)}
-                      options={currencies.map(c => ({
-                        value: c.id,
-                        label: `${c.code} — ${c.symbol}${c.isBase ? " (base)" : ""}`,
-                      }))}
-                    />
-                    <div className="mt-auto text-[11px] text-muted">
-                      {mulCurr?.isBase ? "Moneda del negocio" : `TC: ${mulCurr?.latestRate ?? "sin cot."}`}
-                    </div>
-                  </div>
-
-                  {/* Valor por unidad */}
-                  <div className="rounded-xl border border-border bg-card p-3 flex flex-col gap-2">
-                    <div className="text-xs font-semibold text-muted uppercase tracking-wide">
-                      Valor por {draft.multiplierBase?.trim() || "unidad"}
-                    </div>
-                    <TPNumberInput
-                      value={draft.multiplierValue}
-                      onChange={(v) => set("multiplierValue", v)}
-                      placeholder="0,00"
-                      min={0}
-                      decimals={2}
-                      leftIcon={<span className="text-sm font-semibold">{selSym}</span>}
-                      className="h-[48px]"
-                      wrapClassName="space-y-0"
-                    />
-                    <div className="mt-auto text-[11px] text-muted">
-                      ¿Cuánto vale cada {draft.multiplierBase?.trim() || "unidad"}?
-                    </div>
-                  </div>
-
-                  {/* Cantidad */}
-                  <div className="rounded-xl border border-border bg-card p-3 flex flex-col gap-2">
-                    <div className="text-xs font-semibold text-muted uppercase tracking-wide">
-                      Cantidad{draft.multiplierBase?.trim() ? ` en ${draft.multiplierBase}` : ""}
-                    </div>
-                    <TPNumberInput
-                      value={draft.multiplierQuantity}
-                      onChange={(v) => set("multiplierQuantity", v)}
-                      placeholder="0,00"
-                      min={0}
-                      decimals={2}
-                      className="h-[48px]"
-                      wrapClassName="space-y-0"
-                    />
-                    <div className="mt-auto text-[11px] text-muted">
-                      ¿Cuántas {draft.multiplierBase?.trim() || "unidades"} tiene?
-                    </div>
-                  </div>
-                </div>
-
-                {/* Aviso de cotización faltante */}
-                {mulCurr && !mulCurr.isBase && mulCurr.latestRate == null && (
-                  <div className="flex items-center gap-2 rounded-lg border border-amber-500/20 bg-amber-500/8 px-3 py-2 text-xs text-amber-700 dark:text-amber-400">
-                    <Info size={12} className="shrink-0" />
-                    {mulCurr.code} no tiene cotización — no se puede convertir a {baseCurr?.code ?? "moneda base"}.
-                  </div>
-                )}
-
-                {/* Fórmula visual */}
-                <div className={cn(
-                  "rounded-xl border px-4 py-3 text-sm flex flex-wrap items-center gap-x-2 gap-y-1 tabular-nums",
-                  rawBase > 0 ? "border-primary/30 bg-primary/5" : "border-dashed border-border bg-surface2/20"
-                )}>
-                  <Calculator size={13} className={rawBase > 0 ? "text-primary shrink-0" : "text-muted shrink-0"} />
-                  <span className="font-medium text-text">{selSym} {fmtN(draft.multiplierValue ?? 0)}</span>
-                  <span className="text-muted">×</span>
-                  <span className="font-medium text-text">{fmtN(draft.multiplierQuantity ?? 0)}</span>
-                  {draft.multiplierBase?.trim() && (
-                    <span className="text-muted lowercase">{draft.multiplierBase}</span>
-                  )}
-                  <span className="text-muted">=</span>
-                  <span className={cn("font-semibold", rawBase > 0 ? "text-text" : "text-muted")}>
-                    {selSym} {fmtN(rawBase)}
-                  </span>
-                  {rate != null && rawBase > 0 && baseCurr && (
-                    <span className="text-muted text-xs ml-auto">≈ {baseCurr.symbol} {fmtN(rawBase * rate)} en {baseCurr.code}</span>
-                  )}
-                </div>
-
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                    <TPField label="Tipo de beneficio o recargo" hint="Beneficio (bonificación) o recargo sobre el costo.">
-                      <TPComboFixed
-                        value={draft.manualAdjustmentKind}
-                        onChange={(v) => {
-                          const kind = v as "" | "BONUS" | "SURCHARGE";
-                          set("manualAdjustmentKind", kind);
-                          if (kind === "") {
-                            set("manualAdjustmentType", "");
-                            set("manualAdjustmentValue", null);
-                          } else if (draft.manualAdjustmentKind === "") {
-                            set("manualAdjustmentType", lastAdjTypeRef.current);
-                          }
-                        }}
-                        options={[
-                          { value: "",          label: "— Sin especificar —" },
-                          { value: "BONUS",     label: "Beneficio" },
-                          { value: "SURCHARGE", label: "Recargo" },
-                        ]}
-                      />
-                    </TPField>
-                    <TPField label="Tipo de valor">
-                      <TPComboFixed
-                        value={draft.manualAdjustmentType || "PERCENTAGE"}
-                        onChange={(v) => {
-                          const t = v as "PERCENTAGE" | "FIXED_AMOUNT";
-                          lastAdjTypeRef.current = t;
-                          set("manualAdjustmentType", t);
-                        }}
-                        disabled={draft.manualAdjustmentKind === ""}
-                        options={[
-                          { value: "PERCENTAGE",   label: "Porcentaje (%)" },
-                          { value: "FIXED_AMOUNT", label: `Monto fijo (${selSym})` },
-                        ]}
-                      />
-                    </TPField>
-                    <TPField
-                      label="Valor"
-                      hint={adjAmount !== 0 ? (adjAmount < 0 ? `Reduce el costo en ${selSym} ${fmtN(Math.abs(adjAmount))}` : `Suma ${selSym} ${fmtN(adjAmount)} al costo`) : undefined}
-                    >
-                      <TPNumberInput
-                        value={draft.manualAdjustmentKind === "" ? 0 : draft.manualAdjustmentValue}
-                        onChange={(v) => set("manualAdjustmentValue", v)}
-                        placeholder="0.00"
-                        decimals={2}
-                        min={0}
-                        disabled={draft.manualAdjustmentKind === ""}
-                        suffix={(draft.manualAdjustmentType || "PERCENTAGE") === "PERCENTAGE" ? <Percent size={12} /> : undefined}
-                        leftIcon={(draft.manualAdjustmentType || "PERCENTAGE") === "FIXED_AMOUNT" ? <span className="text-sm font-semibold">{selSym}</span> : undefined}
-                      />
-                    </TPField>
-                  </div>
-
-                  <TPField label="Impuestos aplicados" hint="Seleccioná los impuestos que afectan el costo de este artículo.">
-                    <TPComboCreatableMulti
-                      type="IVA_CONDITION"
-                      items={taxOptions.map(t => ({
-                        id:       t.id,
-                        label:    t.name,
-                        value:    t.id,
-                        isActive: t.isActive,
-                      }))}
-                      values={draft.manualTaxIds}
-                      onChange={(vals) => set("manualTaxIds", vals)}
-                      mode={isEdit ? "edit" : "create"}
-                      allowCreate={false}
-                      placeholder="Seleccioná impuestos…"
-                    />
-                    {selectedTaxes.length > 0 && (
-                      <p className="mt-1.5 text-xs font-medium text-text">
-                        {selectedTaxes.map((t, i) => {
-                          const pct = t.rate != null ? parseFloat(t.rate!) : 0;
-                          const amt = adjustedCost * (pct / 100);
-                          return (
-                            <span key={t.id}>
-                              {i > 0 && <span className="text-muted mx-1">+</span>}
-                              {t.name}
-                              <span className="text-muted font-normal ml-1">({selSym} {fmtN(amt)})</span>
-                            </span>
-                          );
-                        })}
-                        <span className="ml-2 text-muted font-normal">= {fmtN(totalTaxPct)}% total ({selSym} {fmtN(taxAmount)})</span>
-                      </p>
+                        <span className="tabular-nums font-medium text-text">{selSym} {fmtN(metalTotal)}</span>
+                      </div>
                     )}
-                  </TPField>
-
-                  <div className="border-t border-border pt-5 space-y-2">
-                    <div className={cn(
-                      "rounded-2xl border-2 px-6 py-6 text-center transition",
-                      hasFinalCost
-                        ? "border-primary/40 bg-primary/5"
-                        : "border-dashed border-border bg-surface2/20"
-                    )}>
-                      <div className="text-[11px] font-semibold text-muted uppercase tracking-widest mb-1">
-                        Costo ajustado del artículo
+                    {hechuraTotal > 0 && (
+                      <div className="flex items-center justify-between text-xs text-muted">
+                        <span className="flex items-center gap-1.5">
+                          Hechura
+                          {hechuraHasLineAdj && <span className="text-[10px] italic opacity-55">(incl. ajuste de línea)</span>}
+                        </span>
+                        <span className="tabular-nums font-medium text-text">{selSym} {fmtN(hechuraTotal)}</span>
                       </div>
-                      {hasFinalCost && (
-                        <div className="text-[11px] text-muted flex items-center justify-center gap-1.5 mb-2">
-                          <span>{selSym} {fmtN(rawBase)}</span>
-                          {adjVal !== 0 && (
-                            <span className={cn("font-medium", adjAmount < 0 ? "text-emerald-500" : "text-amber-500")}>
-                              {adjAmount < 0 ? "−" : "+"} {fmtN(Math.abs(adjAmount))}
-                            </span>
-                          )}
-                        </div>
-                      )}
-                      <div className={cn(
-                        "tabular-nums font-semibold",
-                        hasFinalCost ? "text-3xl text-text" : "text-base text-muted font-normal"
-                      )}>
-                        {hasFinalCost
-                          ? `${selSym} ${fmtN(adjustedCost)}`
-                          : "Configurá el multiplicador para calcular"
-                        }
+                    )}
+                    {productTotal > 0 && (
+                      <div className="flex items-center justify-between text-xs text-muted">
+                        <span className="flex items-center gap-1.5">
+                          Productos
+                          {productHasLineAdj && <span className="text-[10px] italic opacity-55">(incl. ajuste de línea)</span>}
+                        </span>
+                        <span className="tabular-nums font-medium text-text">{selSym} {fmtN(productTotal)}</span>
                       </div>
-                      {convertedCost != null && baseCurr && (
-                        <div className="mt-2 text-[11px] text-muted">
-                          ≈ {baseCurr.symbol} {fmtN(convertedCost)} en {baseCurr.code}
-                        </div>
-                      )}
-                      {hasFinalCost && (
-                        <p className="mt-2 text-[11px] text-muted/70">Este valor se guarda como costo del artículo</p>
-                      )}
-                    </div>
-                    {hasFinalCost && taxAmount > 0 && (
-                      <div className="rounded-xl border border-amber-500/20 bg-amber-500/5 px-4 py-2.5 space-y-1.5 text-xs">
-                        <div className="flex items-center justify-between">
-                          <span className="text-amber-600 dark:text-amber-400">Impuestos referenciales ({fmtN(totalTaxPct)}%)</span>
-                          <span className="tabular-nums font-medium text-amber-600 dark:text-amber-400">+ {selSym} {fmtN(taxAmount)}</span>
-                        </div>
-                        <div className="flex items-center justify-between border-t border-amber-500/20 pt-1.5">
-                          <span className="font-semibold text-amber-600 dark:text-amber-400">Total con impuestos (referencial)</span>
-                          <span className="tabular-nums font-bold text-amber-600 dark:text-amber-400">{selSym} {fmtN(finalCost)}</span>
-                        </div>
+                    )}
+                    {serviceTotal > 0 && (
+                      <div className="flex items-center justify-between text-xs text-muted">
+                        <span className="flex items-center gap-1.5">
+                          Servicios
+                          {serviceHasLineAdj && <span className="text-[10px] italic opacity-55">(incl. ajuste de línea)</span>}
+                        </span>
+                        <span className="tabular-nums font-medium text-text">{selSym} {fmtN(serviceTotal)}</span>
+                      </div>
+                    )}
+                    {adjVal !== 0 && (
+                      <div className={cn("flex items-center justify-between text-xs", adjAmount < 0 ? "text-emerald-600 dark:text-emerald-400" : "text-amber-600 dark:text-amber-400")}>
+                        <span>
+                          {adjAmount < 0 ? "Bonificación" : "Recargo"} global
+                          {draft.manualAdjustmentType === "PERCENTAGE" && ` ${adjVal}%`}
+                        </span>
+                        <span className="tabular-nums font-medium">
+                          {adjAmount < 0 ? "−" : "+"} {selSym} {fmtN(Math.abs(adjAmount))}
+                        </span>
+                      </div>
+                    )}
+                    {taxAmount > 0 && (
+                      <div className="flex items-center justify-between text-xs text-muted">
+                        <span>Impuestos ({fmtN(totalTaxPct)}%)</span>
+                        <span className="tabular-nums font-medium text-text">+ {selSym} {fmtN(taxAmount)}</span>
                       </div>
                     )}
                   </div>
+                  <div className="border-t border-primary/20 px-3 py-2 flex items-center justify-between gap-4">
+                    <span className="text-sm font-semibold text-text">
+                      {taxAmount > 0 ? "Costo con impuestos" : "Costo base"}
+                    </span>
+                    <span className="text-xl font-extrabold tabular-nums text-primary shrink-0">
+                      {selSym} {fmtN(finalCost)}
+                    </span>
+                  </div>
                 </div>
+              ) : (
+                <div className="rounded-xl border border-dashed border-border bg-surface2/20 px-5 py-5 text-center">
+                  <p className="text-sm text-muted">Usá los botones de arriba para agregar líneas de costo</p>
+                </div>
+              )}
 
-              </div>
-            </TPCard>
+            </div>
           );
         })()}
+
       </div>
     );
   }
@@ -3863,261 +4647,269 @@ export default function ArticleModal({
 
         {/* ── Generador de variantes (solo si hay ejes configurados) ────── */}
         {variantAxes.length > 0 && (
-          <TPCard>
-            <div className="space-y-5">
-              <p className="text-xs text-muted">
-                Seleccioná los valores para cada eje. El sistema generará todas las combinaciones posibles.
-              </p>
+          <div className="grid grid-cols-1 lg:grid-cols-[2fr_3fr] gap-4 items-start">
 
-              {/* Selector multiselect por eje */}
-              {variantAxes.map((axis, axisIdx) => {
-                const selected = genSelected[axis.id] ?? [];
-                const hasOptions = axisHasOptions(axis);
-                const isFirst = axisIdx === 0;
-                const isLast  = axisIdx === variantAxes.length - 1;
-                return (
-                  <div key={axis.id} className="space-y-2">
-                    <div className="flex items-center gap-1.5 flex-wrap">
-                      {/* Botones de orden — solo visibles cuando hay más de 1 eje */}
-                      {variantAxes.length > 1 && (
-                        <div className="flex flex-col gap-0.5 shrink-0">
-                          <button
-                            type="button"
-                            onClick={() => moveAxisUp(axis.id)}
-                            disabled={isFirst}
-                            title="Mover este eje arriba"
-                            className={cn(
-                              "h-4 w-4 flex items-center justify-center rounded transition-colors",
-                              isFirst
-                                ? "text-muted/30 cursor-not-allowed"
-                                : "text-muted hover:text-text hover:bg-surface2 cursor-pointer"
-                            )}
-                          >
-                            <ArrowUp size={10} />
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => moveAxisDown(axis.id)}
-                            disabled={isLast}
-                            title="Mover este eje abajo"
-                            className={cn(
-                              "h-4 w-4 flex items-center justify-center rounded transition-colors",
-                              isLast
-                                ? "text-muted/30 cursor-not-allowed"
-                                : "text-muted hover:text-text hover:bg-surface2 cursor-pointer"
-                            )}
-                          >
-                            <ArrowDown size={10} />
-                          </button>
-                        </div>
-                      )}
-                      <span className="text-sm font-medium">{axis.definition.name}</span>
-                      {axis.isRequired && <span className="text-primary text-sm leading-none">*</span>}
-                      {/* Indicador de posición */}
-                      {variantAxes.length > 1 && (
-                        <span className="text-[10px] text-muted/50 font-mono">#{axisIdx + 1}</span>
-                      )}
-                      {selected.length > 0 && (() => {
-                        const existingCount = selected.filter(v => isAxisValueExisting(axis.id, v)).length;
-                        const newCount = selected.length - existingCount;
-                        if (existingCount > 0 && newCount > 0) {
-                          return (
-                            <span className="text-xs text-muted">
-                              · <span className="text-emerald-400">{existingCount} creada{existingCount !== 1 ? "s" : ""}</span>
-                              {", "}
-                              {newCount} nueva{newCount !== 1 ? "s" : ""}
-                            </span>
-                          );
-                        }
-                        if (existingCount > 0) {
-                          return <span className="text-xs text-emerald-400">· {existingCount} creada{existingCount !== 1 ? "s" : ""}</span>;
-                        }
-                        return <span className="text-xs text-muted">· {selected.length} seleccionado{selected.length !== 1 ? "s" : ""}</span>;
-                      })()}
-                    </div>
+            {/* ── Columna izquierda: Configuración ─────────────────────── */}
+            <TPCard>
+              <div className="space-y-4">
+                <div>
+                  <p className="text-xs font-semibold text-text mb-0.5">Generador de variantes</p>
+                  <p className="text-xs text-muted">Seleccioná los valores para cada eje. El sistema generará todas las combinaciones posibles.</p>
+                </div>
 
-                    {hasOptions ? (
-                      /* Chips clicables para SELECT / BOOLEAN / MULTISELECT */
-                      <div className="space-y-2">
-                        <div className="flex flex-wrap gap-2">
-                          {genOptionsForAxis(axis).map(opt => {
-                            const checked = selected.includes(opt.value);
-                            const isExisting = isAxisValueExisting(axis.id, opt.value);
-                            const showExt = genSkuMode === "auto";
+                {/* Selector multiselect por eje */}
+                {variantAxes.map((axis, axisIdx) => {
+                  const selected = genSelected[axis.id] ?? [];
+                  const hasOptions = axisHasOptions(axis);
+                  const isFirst = axisIdx === 0;
+                  const isLast  = axisIdx === variantAxes.length - 1;
+                  return (
+                    <div key={axis.id} className="space-y-2">
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        {variantAxes.length > 1 && (
+                          <div className="flex flex-col gap-0.5 shrink-0">
+                            <button
+                              type="button"
+                              onClick={() => moveAxisUp(axis.id)}
+                              disabled={isFirst}
+                              title="Mover este eje arriba"
+                              className={cn(
+                                "h-4 w-4 flex items-center justify-center rounded transition-colors",
+                                isFirst ? "text-muted/30 cursor-not-allowed" : "text-muted hover:text-text hover:bg-surface2 cursor-pointer"
+                              )}
+                            >
+                              <ArrowUp size={10} />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => moveAxisDown(axis.id)}
+                              disabled={isLast}
+                              title="Mover este eje abajo"
+                              className={cn(
+                                "h-4 w-4 flex items-center justify-center rounded transition-colors",
+                                isLast ? "text-muted/30 cursor-not-allowed" : "text-muted hover:text-text hover:bg-surface2 cursor-pointer"
+                              )}
+                            >
+                              <ArrowDown size={10} />
+                            </button>
+                          </div>
+                        )}
+                        <span className="text-sm font-medium">{axis.definition.name}</span>
+                        {axis.isRequired && <span className="text-primary text-sm leading-none">*</span>}
+                        {variantAxes.length > 1 && (
+                          <span className="text-[10px] text-muted/50 font-mono">#{axisIdx + 1}</span>
+                        )}
+                        {selected.length > 0 && (() => {
+                          const existingCount = selected.filter(v => isAxisValueExisting(axis.id, v)).length;
+                          const newCount = selected.length - existingCount;
+                          if (existingCount > 0 && newCount > 0) {
                             return (
-                              <button
-                                key={opt.value}
-                                type="button"
-                                onClick={() => toggleGenValue(axis.id, opt.value, !checked)}
-                                title={isExisting && !checked ? "Este valor ya está en una variante creada" : undefined}
-                                className={cn(
-                                  "flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-sm transition",
-                                  checked && isExisting
-                                    ? "border-emerald-600/40 bg-emerald-500/10 text-emerald-400 font-medium"
-                                    : checked
-                                    ? "border-primary bg-primary/10 text-primary font-medium"
-                                    : isExisting
-                                    ? "border-emerald-600/30 bg-surface2/30 text-muted hover:border-emerald-500/50"
-                                    : "border-border bg-surface2/30 text-text hover:border-primary/50"
-                                )}
-                              >
-                                {checked && <Check size={12} />}
-                                {opt.label}
-                                {/* Badge "Creada" para valores ya existentes (checkeados) */}
-                                {checked && isExisting && (
-                                  <span className="rounded bg-emerald-500/20 px-1 leading-tight text-[10px] text-emerald-400">
-                                    Creada
-                                  </span>
-                                )}
-                                {/* Indicador sutil para valores existentes pero no seleccionados */}
-                                {!checked && isExisting && (
-                                  <span className="rounded bg-emerald-500/10 px-1 leading-tight text-[10px] text-emerald-600">
-                                    En uso
-                                  </span>
-                                )}
-                                {/* Extension de SKU solo para valores aún no creados */}
-                                {!isExisting && showExt && opt.codeExtension ? (
-                                  <span className="rounded bg-primary/20 px-1 leading-tight text-[10px] font-mono font-bold">
-                                    {opt.codeExtension}
-                                  </span>
-                                ) : !isExisting && showExt && (
-                                  <span className="rounded bg-amber-500/20 px-1 leading-tight text-[10px] font-mono text-amber-400" title="Sin código de extensión — usará el nombre como fallback">
-                                    ?
-                                  </span>
-                                )}
-                              </button>
+                              <span className="text-xs text-muted">
+                                · <span className="text-emerald-400">{existingCount} creada{existingCount !== 1 ? "s" : ""}</span>
+                                {", "}
+                                {newCount} nueva{newCount !== 1 ? "s" : ""}
+                              </span>
                             );
-                          })}
+                          }
+                          if (existingCount > 0) {
+                            return <span className="text-xs text-emerald-400">· {existingCount} creada{existingCount !== 1 ? "s" : ""}</span>;
+                          }
+                          return <span className="text-xs text-muted">· {selected.length} seleccionado{selected.length !== 1 ? "s" : ""}</span>;
+                        })()}
+                      </div>
+
+                      {hasOptions ? (
+                        <div className="space-y-2">
+                          <div className="flex flex-wrap gap-2">
+                            {genOptionsForAxis(axis).map(opt => {
+                              const checked = selected.includes(opt.value);
+                              const isExisting = isAxisValueExisting(axis.id, opt.value);
+                              const showExt = genSkuMode === "auto";
+                              return (
+                                <button
+                                  key={opt.value}
+                                  type="button"
+                                  onClick={() => toggleGenValue(axis.id, opt.value, !checked)}
+                                  title={isExisting && !checked ? "Este valor ya está en una variante creada" : undefined}
+                                  className={cn(
+                                    "flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-sm transition",
+                                    checked && isExisting
+                                      ? "border-emerald-600/40 bg-emerald-500/10 text-emerald-400 font-medium"
+                                      : checked
+                                      ? "border-primary bg-primary/10 text-primary font-medium"
+                                      : isExisting
+                                      ? "border-emerald-600/30 bg-surface2/30 text-muted hover:border-emerald-500/50"
+                                      : "border-border bg-surface2/30 text-text hover:border-primary/50"
+                                  )}
+                                >
+                                  {checked && <Check size={12} />}
+                                  {opt.label}
+                                  {checked && isExisting && (
+                                    <span className="rounded bg-emerald-500/20 px-1 leading-tight text-[10px] text-emerald-400">Creada</span>
+                                  )}
+                                  {!checked && isExisting && (
+                                    <span className="rounded bg-emerald-500/10 px-1 leading-tight text-[10px] text-emerald-600">En uso</span>
+                                  )}
+                                  {!isExisting && showExt && opt.codeExtension ? (
+                                    <span className="rounded bg-primary/20 px-1 leading-tight text-[10px] font-mono font-bold">{opt.codeExtension}</span>
+                                  ) : !isExisting && showExt && (
+                                    <span className="rounded bg-amber-500/20 px-1 leading-tight text-[10px] font-mono text-amber-400" title="Sin código de extensión — usará el nombre como fallback">?</span>
+                                  )}
+                                </button>
+                              );
+                            })}
+                          </div>
+                          {selected.filter(v => !isAxisValueExisting(axis.id, v)).length > 1 && (
+                            <div className="space-y-1 pt-1">
+                              <p className="text-[10px] text-muted uppercase tracking-wide font-semibold">Orden de generación (nuevas)</p>
+                              <DndContext sensors={dndSensors} collisionDetection={closestCenter} onDragEnd={(e) => handleAxisOptionDragEnd(axis.id, e)}>
+                                <SortableContext items={selected} strategy={horizontalListSortingStrategy}>
+                                  <div className="flex flex-wrap gap-1.5">
+                                    {selected.map(val => {
+                                      const opt = genOptionsForAxis(axis).find(o => o.value === val);
+                                      return (
+                                        <SortableChip key={val} id={val} label={opt?.label ?? val} existing={isAxisValueExisting(axis.id, val)} />
+                                      );
+                                    })}
+                                  </div>
+                                </SortableContext>
+                              </DndContext>
+                            </div>
+                          )}
                         </div>
-                        {/* Orden de generación (solo si hay nuevos para crear) */}
-                        {selected.filter(v => !isAxisValueExisting(axis.id, v)).length > 1 && (
-                          <div className="space-y-1 pt-1">
-                            <p className="text-[10px] text-muted uppercase tracking-wide font-semibold">Orden de generación (nuevas)</p>
+                      ) : (
+                        <div className="space-y-2">
+                          <div className="flex gap-2">
+                            <TPInput
+                              value={genTagInput[axis.id] ?? ""}
+                              onChange={v => setGenTagInput(prev => ({ ...prev, [axis.id]: v }))}
+                              placeholder={`Valor de ${axis.definition.name}…`}
+                              onKeyDown={(e: React.KeyboardEvent) => {
+                                if (e.key === "Enter") { e.preventDefault(); addGenTag(axis.id); }
+                              }}
+                            />
+                            <TPButton
+                              variant="secondary"
+                              iconLeft={<Plus size={13} />}
+                              onClick={() => addGenTag(axis.id)}
+                              disabled={!(genTagInput[axis.id] ?? "").trim()}
+                            >
+                              Agregar
+                            </TPButton>
+                          </div>
+                          {selected.length > 0 && (
                             <DndContext sensors={dndSensors} collisionDetection={closestCenter} onDragEnd={(e) => handleAxisOptionDragEnd(axis.id, e)}>
                               <SortableContext items={selected} strategy={horizontalListSortingStrategy}>
                                 <div className="flex flex-wrap gap-1.5">
                                   {selected.map(val => {
-                                    const opt = genOptionsForAxis(axis).find(o => o.value === val);
+                                    const isExisting = isAxisValueExisting(axis.id, val);
                                     return (
-                                      <SortableChip
-                                        key={val}
-                                        id={val}
-                                        label={opt?.label ?? val}
-                                        existing={isAxisValueExisting(axis.id, val)}
-                                      />
+                                      <SortableChip key={val} id={val} label={val} existing={isExisting} onRemove={isExisting ? undefined : () => removeGenTag(axis.id, val)} />
                                     );
                                   })}
                                 </div>
                               </SortableContext>
                             </DndContext>
-                          </div>
-                        )}
-                      </div>
-                    ) : (
-                      /* Input + tags arrastrables para TEXT / NUMBER / DATE / etc */
-                      <div className="space-y-2">
-                        <div className="flex gap-2">
-                          <TPInput
-                            value={genTagInput[axis.id] ?? ""}
-                            onChange={v => setGenTagInput(prev => ({ ...prev, [axis.id]: v }))}
-                            placeholder={`Valor de ${axis.definition.name}…`}
-                            onKeyDown={(e: React.KeyboardEvent) => {
-                              if (e.key === "Enter") { e.preventDefault(); addGenTag(axis.id); }
-                            }}
-                          />
-                          <TPButton
-                            variant="secondary"
-                            iconLeft={<Plus size={13} />}
-                            onClick={() => addGenTag(axis.id)}
-                            disabled={!(genTagInput[axis.id] ?? "").trim()}
-                          >
-                            Agregar
-                          </TPButton>
+                          )}
                         </div>
-                        {selected.length > 0 && (
-                          <DndContext sensors={dndSensors} collisionDetection={closestCenter} onDragEnd={(e) => handleAxisOptionDragEnd(axis.id, e)}>
-                            <SortableContext items={selected} strategy={horizontalListSortingStrategy}>
-                              <div className="flex flex-wrap gap-1.5">
-                                {selected.map(val => {
-                                  const isExisting = isAxisValueExisting(axis.id, val);
-                                  return (
-                                    <SortableChip
-                                      key={val}
-                                      id={val}
-                                      label={val}
-                                      existing={isExisting}
-                                      onRemove={isExisting ? undefined : () => removeGenTag(axis.id, val)}
-                                    />
-                                  );
-                                })}
-                              </div>
-                            </SortableContext>
-                          </DndContext>
-                        )}
-                      </div>
-                    )}
+                      )}
 
-                    {selected.length === 0 && (
-                      <p className="text-xs text-amber-500 opacity-80">Seleccioná al menos un valor para este eje.</p>
-                    )}
-                  </div>
-                );
-              })}
-
-              {/* ── Warning: opciones sin codeExtension cuando SKU automático ── */}
-              {genSkuMode === "auto" && (() => {
-                const anyMissing = variantAxes.some(ax =>
-                  genOptionsForAxis(ax).some(o => !o.codeExtension)
-                );
-                if (!anyMissing) return null;
-                return (
-                  <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 flex items-start gap-2 text-xs text-amber-300">
-                    <AlertCircle size={12} className="shrink-0 mt-0.5" />
-                    <div>
-                      <span className="font-medium">Algunas opciones no tienen código de extensión (marcadas con <span className="font-mono bg-amber-500/20 px-1 rounded">?</span>).</span>{" "}
-                      Se usará el nombre con guiones: <span className="font-mono bg-surface2 px-1 rounded text-text">A000-AMARILLO-L</span>.
-                      Para SKUs compactos como <span className="font-mono bg-surface2 px-1 rounded text-text">A000AL</span>, configurá el código en la Biblioteca de atributos.
+                      {selected.length === 0 && (
+                        <p className="text-xs text-amber-500 opacity-80">Seleccioná al menos un valor para este eje.</p>
+                      )}
                     </div>
-                  </div>
-                );
-              })()}
+                  );
+                })}
 
-              {/* ── SKU mode toggle (siempre visible) ─────────────────────── */}
-              <div className="flex items-center pt-2 border-t border-border">
-                <button
-                  type="button"
-                  onClick={() => setGenSkuMode(m => m === "auto" ? "manual" : "auto")}
-                  className="flex items-center gap-2 text-xs text-muted hover:text-text transition"
-                >
-                  <span
-                    className={cn(
-                      "relative inline-flex h-4 w-7 shrink-0 items-center rounded-full transition",
-                      genSkuMode === "auto" ? "bg-primary" : "bg-border"
-                    )}
+                {/* Warning: opciones sin codeExtension */}
+                {genSkuMode === "auto" && (() => {
+                  const anyMissing = variantAxes.some(ax => genOptionsForAxis(ax).some(o => !o.codeExtension));
+                  if (!anyMissing) return null;
+                  return (
+                    <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 flex items-start gap-2 text-xs text-amber-300">
+                      <AlertCircle size={12} className="shrink-0 mt-0.5" />
+                      <div>
+                        <span className="font-medium">Algunas opciones no tienen código de extensión (marcadas con <span className="font-mono bg-amber-500/20 px-1 rounded">?</span>).</span>{" "}
+                        Se usará el nombre con guiones: <span className="font-mono bg-surface2 px-1 rounded text-text">A000-AMARILLO-L</span>.
+                        Para SKUs compactos como <span className="font-mono bg-surface2 px-1 rounded text-text">A000AL</span>, configurá el código en la Biblioteca de atributos.
+                      </div>
+                    </div>
+                  );
+                })()}
+
+                {/* SKU mode toggle + botón crear */}
+                <div className="flex flex-col gap-3 pt-2 border-t border-border">
+                  <button
+                    type="button"
+                    onClick={() => setGenSkuMode(m => m === "auto" ? "manual" : "auto")}
+                    className="flex items-center gap-2 text-xs text-text transition"
                   >
                     <span className={cn(
-                      "inline-block h-3 w-3 transform rounded-full bg-white shadow transition",
-                      genSkuMode === "auto" ? "translate-x-3.5" : "translate-x-0.5"
-                    )} />
-                  </span>
-                  SKU automático
-                </button>
-              </div>
+                      "relative inline-flex h-4 w-7 shrink-0 items-center rounded-full border transition",
+                      genSkuMode === "auto"
+                        ? "bg-primary border-primary"
+                        : "bg-surface2 border-border"
+                    )}>
+                      <span className={cn(
+                        "inline-block h-3 w-3 transform rounded-full shadow transition",
+                        genSkuMode === "auto"
+                          ? "translate-x-3.5 bg-white"
+                          : "translate-x-0.5 bg-muted"
+                      )} />
+                    </span>
+                    SKU automático
+                  </button>
 
-              {/* ── Preview siempre derivado del estado ───────────────────── */}
-              {genCombos.length === 0 ? (
-                <div className="rounded-xl border border-border bg-surface2/30 p-4 text-center text-sm text-muted">
-                  {variantAxes.some(ax => (genSelected[ax.id] ?? []).length > 0)
-                    ? "Seleccioná valores en todos los ejes para ver las combinaciones."
-                    : isEdit && variants.length > 0
-                      ? "Las variantes existentes no tienen atributos guardados. Seleccioná los valores manualmente para ver combinaciones."
-                      : "Seleccioná valores para generar variantes automáticamente."}
+                  {/* Botón crear variantes */}
+                  {(() => {
+                    const missingAxes    = variantAxes.filter(ax => (genSelected[ax.id] ?? []).length === 0);
+                    const validNewCombos = genCombos.filter(c => c.isNew && !c.skuError);
+                    const errorNewCombos = genCombos.filter(c => c.isNew && Boolean(c.skuError));
+                    const allRegenerable = validNewCombos.every(c => c.isRegeneratable);
+                    const validCount     = validNewCombos.length;
+                    if (genCombos.filter(c => c.isNew).length === 0) return null;
+                    return (
+                      <div className="flex flex-col gap-2">
+                        {missingAxes.length > 0 && (
+                          <p className="text-xs text-amber-500 flex items-center gap-1">
+                            <AlertCircle size={11} className="shrink-0" />
+                            {`Falta seleccionar valores para: ${missingAxes.map(a => a.definition.name).join(", ")}`}
+                          </p>
+                        )}
+                        {errorNewCombos.length > 0 && (
+                          <p className="text-xs text-amber-500 flex items-center gap-1">
+                            <AlertCircle size={11} className="shrink-0" />
+                            {validCount > 0
+                              ? `${errorNewCombos.length} combinación${errorNewCombos.length !== 1 ? "es tienen" : " tiene"} SKU duplicado. Podés crear las ${validCount} restantes.`
+                              : `${errorNewCombos.length} combinación${errorNewCombos.length !== 1 ? "es tienen" : " tiene"} SKU duplicado. Corregí los errores para poder crearlas.`
+                            }
+                          </p>
+                        )}
+                        <TPButton
+                          iconLeft={<Sparkles size={13} />}
+                          loading={genBusy}
+                          disabled={validCount === 0 || genBusy || missingAxes.length > 0}
+                          onClick={() => void runGenerate()}
+                        >
+                          {allRegenerable
+                            ? `Regenerar ${validCount} variante${validCount !== 1 ? "s" : ""}`
+                            : `Crear ${validCount} variante${validCount !== 1 ? "s" : ""}`
+                          }
+                        </TPButton>
+                      </div>
+                    );
+                  })()}
                 </div>
-              ) : (
-                <div className="space-y-3 pt-3 border-t border-border">
-                  {/* Resumen compacto */}
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <span className="text-xs font-semibold text-muted uppercase tracking-wide">Resumen:</span>
+              </div>
+            </TPCard>
+
+            {/* ── Columna derecha: Vista previa PRO ────────────────────── */}
+            <TPCard className="flex flex-col min-h-0">
+              {/* Header fijo */}
+              <div className="flex items-center justify-between mb-3 shrink-0">
+                <p className="text-xs font-semibold text-text">Vista previa</p>
+                {genCombos.length > 0 && (
+                  <div className="flex items-center gap-1.5 flex-wrap">
                     {genCombos.filter(c => c.isNew && !c.isRegeneratable).length > 0 && (
                       <span className="rounded-full bg-primary/10 border border-primary/20 px-2 py-0.5 text-xs font-bold text-primary">
                         {genCombos.filter(c => c.isNew && !c.isRegeneratable).length} nuevas
@@ -4130,33 +4922,44 @@ export default function ArticleModal({
                     )}
                     {genCombos.filter(c => !c.isNew).length > 0 && (
                       <span className="rounded-full bg-emerald-500/10 border border-emerald-600/20 px-2 py-0.5 text-xs text-emerald-500">
-                        {genCombos.filter(c => !c.isNew).length} ya existen (se omitirán)
+                        {genCombos.filter(c => !c.isNew).length} ya existen
                       </span>
                     )}
                   </div>
+                )}
+              </div>
 
-                  {/* Sección: combinaciones ya existentes (colapsable visualmente) */}
+              {/* Cuerpo con scroll */}
+              {genCombos.length === 0 ? (
+                <div className="flex flex-col items-center justify-center py-10 gap-3 text-center">
+                  <div className="w-12 h-12 rounded-full bg-surface2 flex items-center justify-center">
+                    <Layers size={22} className="text-muted/40" />
+                  </div>
+                  <p className="text-sm text-muted max-w-[200px]">
+                    {variantAxes.some(ax => (genSelected[ax.id] ?? []).length > 0)
+                      ? "Seleccioná valores en todos los ejes."
+                      : "Seleccioná valores para ver las variantes."}
+                  </p>
+                </div>
+              ) : (
+                <div className="overflow-y-auto max-h-[420px] pr-1 space-y-2">
+
+                  {/* Variantes YA EXISTENTES colapsable */}
                   {genCombos.filter(c => !c.isNew).length > 0 && (
                     <details className="group">
-                      <summary className="cursor-pointer text-xs font-medium text-muted hover:text-text transition-colors list-none flex items-center gap-1">
+                      <summary className="cursor-pointer text-xs font-medium text-muted hover:text-text transition-colors list-none flex items-center gap-1 mb-1">
                         <span className="group-open:hidden">▶</span>
                         <span className="hidden group-open:inline">▼</span>
-                        Ver {genCombos.filter(c => !c.isNew).length} ya existente{genCombos.filter(c => !c.isNew).length !== 1 ? "s" : ""} (se omitirán)
+                        {genCombos.filter(c => !c.isNew).length} ya existente{genCombos.filter(c => !c.isNew).length !== 1 ? "s" : ""} (se omitirán)
                       </summary>
-                      <div className="mt-2 space-y-1 max-h-32 overflow-y-auto pr-1">
+                      <div className="space-y-1.5">
                         {genCombos.filter(c => !c.isNew).map(combo => {
                           const existingVariant = variants.find(v => buildVariantComboKey(v) === combo.key);
                           return (
-                            <div key={combo.key} className="rounded-lg border border-emerald-600/20 bg-emerald-500/5 px-3 py-1.5">
-                              <div className="flex items-center gap-2 text-sm min-w-0">
-                                <Check size={11} className="text-emerald-500 shrink-0" />
-                                <span className="truncate flex-1 text-emerald-400 text-xs font-medium">
-                                  {existingVariant?.name ?? combo.name}
-                                </span>
-                                <span className="font-mono text-[10px] text-muted shrink-0">
-                                  {existingVariant?.code ?? combo.code}
-                                </span>
-                              </div>
+                            <div key={combo.key} className="flex items-center gap-2 rounded-lg border border-emerald-600/20 bg-emerald-500/5 px-3 py-2">
+                              <Check size={11} className="text-emerald-500 shrink-0" />
+                              <span className="truncate flex-1 text-emerald-400 text-xs font-medium">{existingVariant?.name ?? combo.name}</span>
+                              <span className="font-mono text-[10px] text-muted/60 shrink-0">{existingVariant?.code ?? combo.code}</span>
                             </div>
                           );
                         })}
@@ -4164,138 +4967,119 @@ export default function ArticleModal({
                     </details>
                   )}
 
+                  {/* Alert de error al quitar combinación */}
+                  {removeComboAlert && (
+                    <TPAlert tone="warning">
+                      {removeComboAlert}
+                    </TPAlert>
+                  )}
+
+                  {/* Variantes A CREAR — grid de cards */}
                   {genCombos.filter(c => c.isNew).length === 0 ? (
                     <div className="rounded-xl border border-emerald-600/20 bg-emerald-500/5 p-4 text-center text-sm text-emerald-400">
-                      Todas las combinaciones seleccionadas ya existen. No hay nada nuevo para crear.
+                      Todas las combinaciones ya existen. No hay nada nuevo para crear.
                     </div>
                   ) : (
-                    <div className="space-y-2 max-h-64 overflow-y-auto pr-1">
-                      <p className="text-xs font-semibold text-muted uppercase tracking-wide">
-                        A crear ({genCombos.filter(c => c.isNew).length})
-                      </p>
-                      {genCombos.filter(c => c.isNew).map(combo => (
-                        <div
-                          key={combo.key}
-                          className={cn(
-                            "rounded-lg border px-3 py-2 space-y-1.5",
-                            combo.isRegeneratable
-                              ? "border-amber-500/30 bg-amber-500/5"
-                              : "border-primary/20 bg-primary/3"
-                          )}
-                        >
-                          {/* Nombre + chips de atributos */}
-                          <div className="flex items-center gap-2 text-sm min-w-0">
-                            <span className={cn(
-                              "shrink-0",
-                              combo.isRegeneratable ? "text-amber-500" : "text-primary/70"
-                            )}>
-                              {combo.isRegeneratable ? <RefreshCw size={11} /> : <Plus size={11} />}
-                            </span>
-                            <span className="font-medium truncate flex-1 text-sm">{combo.name}</span>
-                            <span className="font-mono text-[10px] text-muted shrink-0 bg-surface2 px-1.5 py-0.5 rounded">{combo.code}</span>
-                            {combo.isRegeneratable && (
-                              <span className="rounded border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-semibold text-amber-400 shrink-0">
-                                Regenerable
-                              </span>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                      {genCombos.filter(c => c.isNew).map((combo, idx) => {
+                        /* Color de acento para el placeholder visual */
+                        const accentColors = [
+                          "bg-violet-500/20 text-violet-400",
+                          "bg-sky-500/20 text-sky-400",
+                          "bg-rose-500/20 text-rose-400",
+                          "bg-amber-500/20 text-amber-400",
+                          "bg-emerald-500/20 text-emerald-400",
+                          "bg-pink-500/20 text-pink-400",
+                        ];
+                        const accent = accentColors[idx % accentColors.length];
+                        return (
+                          <div
+                            key={combo.key}
+                            className={cn(
+                              "group rounded-xl border p-3 space-y-2 transition hover:shadow-md",
+                              combo.isRegeneratable
+                                ? "border-amber-500/30 bg-amber-500/5"
+                                : "border-border bg-surface2/30 hover:border-primary/30"
                             )}
-                          </div>
-                          {/* Atributos de la combinación */}
-                          {combo.attrs.length > 0 && (
-                            <div className="flex gap-1 flex-wrap">
-                              {combo.attrs.map(a => (
-                                <span
-                                  key={a.assignmentId}
-                                  className="rounded border border-border px-1.5 py-0.5 text-[10px] text-muted"
-                                >
-                                  <span className="text-muted/60">{a.axisName}:</span> {a.value}
-                                </span>
-                              ))}
-                            </div>
-                          )}
-                          {/* SKU breakdown (solo si modo auto y hay SKU) */}
-                          {genSkuMode === "auto" && combo.sku && (
-                            <div className="flex items-center gap-1 flex-wrap text-[11px]">
-                              <span className="font-mono rounded bg-surface2 px-1.5 py-0.5 text-text font-semibold">
-                                {(draft.sku || draft.code).toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 10) || "ART"}
-                              </span>
-                              {combo.attrs.map(a => (
-                                <React.Fragment key={a.assignmentId}>
-                                  <span className="text-muted">+</span>
-                                  <span
-                                    className={cn(
-                                      "font-mono rounded px-1.5 py-0.5 font-semibold",
-                                      a.codeExtension
-                                        ? "bg-primary/15 text-primary"
-                                        : "bg-amber-500/15 text-amber-400"
-                                    )}
-                                    title={a.codeExtension
-                                      ? `Código de extensión: ${a.codeExtension}`
-                                      : `Sin código — fallback de "${a.value}"`}
-                                  >
-                                    {a.codeExtension || a.value.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 6) || "X"}
+                          >
+                            {/* Encabezado: icono placeholder + nombre + X */}
+                            <div className="flex items-center gap-2 min-w-0">
+                              <div className={cn("w-8 h-8 rounded-lg shrink-0 flex items-center justify-center text-xs font-bold", accent)}>
+                                {combo.name.charAt(0).toUpperCase()}
+                              </div>
+                              <div className="min-w-0 flex-1">
+                                <p className="text-sm font-semibold truncate text-text leading-tight">{combo.name}</p>
+                                {combo.isRegeneratable && (
+                                  <span className="text-[10px] font-medium text-amber-400 flex items-center gap-0.5">
+                                    <RefreshCw size={9} /> Regenerable
                                   </span>
-                                </React.Fragment>
-                              ))}
-                              <span className="text-muted">=</span>
-                              <span className="font-mono font-bold text-text">{combo.sku}</span>
-                              {!combo.skuUsedExtensions && (
-                                <span className="text-amber-400 text-[10px]">(fallback)</span>
+                                )}
+                              </div>
+                              <button
+                                type="button"
+                                title="Quitar esta combinación"
+                                onClick={() => removeCombo(combo.key)}
+                                className="shrink-0 w-5 h-5 flex items-center justify-center rounded text-muted/50 hover:text-red-400 hover:bg-red-500/10 transition-colors"
+                              >
+                                <X size={12} />
+                              </button>
+                            </div>
+
+                            {/* Chips de atributos */}
+                            {combo.attrs.length > 0 && (
+                              <div className="flex gap-1 flex-wrap">
+                                {combo.attrs.map(a => (
+                                  <span
+                                    key={a.assignmentId}
+                                    className="rounded-full border border-border bg-surface px-2 py-0.5 text-[10px] text-text/70 font-medium"
+                                  >
+                                    {a.value}
+                                  </span>
+                                ))}
+                              </div>
+                            )}
+
+                            {/* Código + SKU */}
+                            <div className="flex items-center gap-2 pt-1 border-t border-border/50">
+                              <span className="text-[10px] text-muted/60 shrink-0">Cód.</span>
+                              <span className="font-mono text-[11px] text-text/80 font-semibold">{combo.code}</span>
+                              {combo.sku && (
+                                <>
+                                  <span className="text-muted/40">·</span>
+                                  <span className="text-[10px] text-muted/60 shrink-0">SKU</span>
+                                  <span
+                                    className="font-mono text-[11px] text-primary font-semibold truncate"
+                                    title={combo.sku}
+                                  >
+                                    {combo.sku}
+                                  </span>
+                                  {combo.skuError && (
+                                    <span className="text-red-400 text-[10px] shrink-0" title={combo.skuError}>⚠</span>
+                                  )}
+                                </>
                               )}
                             </div>
-                          )}
-                          {/* SKU editable */}
-                          <div className="flex items-center gap-2">
-                            <label className="text-xs text-muted w-8 shrink-0">SKU</label>
-                            <div className="flex-1">
+
+                            {/* SKU editable (inline, compacto) */}
+                            <div className="flex items-center gap-1.5">
+                              <label className="text-[10px] text-muted shrink-0">SKU</label>
                               <TPInput
                                 value={combo.sku}
                                 onChange={v => updateComboSku(combo.key, v)}
-                                placeholder="SKU (opcional)"
+                                placeholder="Editar SKU…"
+                                className="!h-6 !text-xs !py-0 !px-2"
                               />
-                              {combo.skuError && (
-                                <p className="text-xs text-red-500 mt-0.5">{combo.skuError}</p>
-                              )}
                             </div>
                           </div>
-                        </div>
-                      ))}
+                        );
+                      })}
                     </div>
                   )}
-
-                  {/* Botón crear (solo cuando hay combinaciones nuevas) */}
-                  {genCombos.filter(c => c.isNew).length > 0 && (() => {
-                    const hasSkuErrors = genCombos.some(c => c.isNew && Boolean(c.skuError));
-                    const missingAxes = variantAxes.filter(ax => (genSelected[ax.id] ?? []).length === 0);
-                    const allRegenerable = genCombos.filter(c => c.isNew).every(c => c.isRegeneratable);
-                    const newCount = genCombos.filter(c => c.isNew).length;
-                    return (
-                      <div className="flex flex-col gap-2 pt-1">
-                        {missingAxes.length > 0 && (
-                          <p className="text-xs text-amber-500 flex items-center gap-1">
-                            <AlertCircle size={11} className="shrink-0" />
-                            {`Falta seleccionar valores para: ${missingAxes.map(a => a.definition.name).join(", ")}`}
-                          </p>
-                        )}
-                        <div className="flex items-center justify-end">
-                          <TPButton
-                            iconLeft={<Sparkles size={13} />}
-                            loading={genBusy}
-                            disabled={hasSkuErrors || genBusy || missingAxes.length > 0}
-                            onClick={() => void runGenerate()}
-                          >
-                            {allRegenerable
-                              ? `Regenerar ${newCount} variante${newCount !== 1 ? "s" : ""}`
-                              : `Crear ${newCount} variante${newCount !== 1 ? "s" : ""}`
-                            }
-                          </TPButton>
-                        </div>
-                      </div>
-                    );
-                  })()}
                 </div>
               )}
-            </div>
-          </TPCard>
+            </TPCard>
+
+          </div>
         )}
 
         {/* ── Variantes creadas ──────────────────────────────────────────── */}
@@ -4355,34 +5139,60 @@ export default function ArticleModal({
           onClose();
         }}
         maxWidth="7xl"
+        className="!max-w-[104rem]"
         busy={busySave}
         onEnter={activeTab !== "variantes" ? handleSave : undefined}
         footer={
-          <div className="flex items-center gap-2 w-full">
-            {isEdit && articleId && (
-              <button
-                type="button"
-                onClick={() => { onClose(); navigate(`/articulos/${articleId}`); }}
-                className="flex items-center gap-1.5 text-xs text-muted hover:text-primary transition-colors"
+          showNoPriceWarning ? (
+            <div className="flex flex-col gap-3 w-full">
+              <TPAlert tone="warning" title="Artículo sin costo">
+                Este artículo tiene costo 0. Podés guardarlo igual, pero revisá su costo porque puede afectar cálculos, márgenes y precios derivados.
+              </TPAlert>
+              <div className="flex justify-end gap-2">
+                <TPButton
+                  variant="secondary"
+                  iconLeft={<X size={14} />}
+                  onClick={() => setShowNoPriceWarning(false)}
+                  disabled={busySave}
+                >
+                  Cancelar
+                </TPButton>
+                <TPButton
+                  onClick={executeSave}
+                  loading={busySave}
+                  iconLeft={<Save size={14} />}
+                >
+                  {isEdit ? "Guardar igual" : "Crear igual"}
+                </TPButton>
+              </div>
+            </div>
+          ) : (
+            <div className="flex items-center gap-2 w-full">
+              {isEdit && articleId && (
+                <button
+                  type="button"
+                  onClick={() => { onClose(); navigate(`/articulos/${articleId}`); }}
+                  className="flex items-center gap-1.5 text-xs text-muted hover:text-primary transition-colors"
+                >
+                  <ExternalLink size={12} />
+                  Página completa
+                </button>
+              )}
+              <div className="flex-1" />
+              <TPButton variant="secondary" iconLeft={<X size={14} />}
+                onClick={() => {
+                  if (draftChanged && !busySave) { setShowUnsavedDialog(true); return; }
+                  onClose();
+                }}
+                disabled={busySave}
               >
-                <ExternalLink size={12} />
-                Página completa
-              </button>
-            )}
-            <div className="flex-1" />
-            <TPButton variant="secondary" iconLeft={<X size={14} />}
-              onClick={() => {
-                if (draftChanged && !busySave) { setShowUnsavedDialog(true); return; }
-                onClose();
-              }}
-              disabled={busySave}
-            >
-              Cancelar
-            </TPButton>
-            <TPButton onClick={handleSave} loading={busySave} iconLeft={<Save size={14} />}>
-              {isEdit ? "Guardar cambios" : "Crear artículo"}
-            </TPButton>
-          </div>
+                Cancelar
+              </TPButton>
+              <TPButton onClick={handleSave} loading={busySave} iconLeft={<Save size={14} />}>
+                {isEdit ? "Guardar cambios" : "Crear artículo"}
+              </TPButton>
+            </div>
+          )
         }
       >
         {loading ? (
@@ -4477,8 +5287,7 @@ export default function ArticleModal({
             </div>
 
             {/* Contenido del tab activo */}
-            {activeTab === "general"   && renderTabGeneral()}
-            {activeTab === "costos"    && renderTabCostos()}
+            {activeTab === "principal" && renderTabPrincipal()}
             {activeTab === "variantes" && renderTabVariantes()}
           </>
         )}
@@ -4489,139 +5298,96 @@ export default function ArticleModal({
         open={varModal}
         title={varEditId ? "Editar identificación de variante" : "Nueva variante"}
         onClose={() => setVarModal(false)}
-        maxWidth={varEditId ? "sm" : "md"}
+        maxWidth="sm"
         busy={busyVar}
         onEnter={saveVariant}
         footer={
           <>
             <TPButton variant="secondary" iconLeft={<X size={14} />} onClick={() => setVarModal(false)} disabled={busyVar}>Cancelar</TPButton>
-            <TPButton onClick={saveVariant} loading={busyVar} iconLeft={varEditId ? <Save size={14} /> : <Plus size={14} />}>{varEditId ? "Guardar" : "Crear"}</TPButton>
+            <TPButton onClick={saveVariant} loading={busyVar} iconLeft={varEditId ? <Save size={14} /> : <Plus size={14} />}>{varEditId ? "Guardar cambios" : "Crear"}</TPButton>
           </>
         }
       >
-        {varEditId ? (
-          /* ── Edición rápida: imagen + SKU + Nombre */
-          <div className="space-y-3">
-            {/* Galería de imágenes de la variante */}
-            {articleId && (() => {
-              const editingVariant = variants.find(v => v.id === varEditId);
-              const varImages = editingVariant?.images ?? [];
-              const mainImg = varImages.find(i => i.isMain) ?? varImages[0] ?? null;
-              const mainSrc = mainImg?.url || editingVariant?.imageUrl || null;
-              return (
-                <div className="space-y-2">
-                  <span className="text-xs font-medium text-muted">Imágenes de variante</span>
-                  <div className="flex gap-3 items-start">
-
-                    {/* ── Imagen principal compacta 80×80 ── */}
-                    <div className="flex flex-col gap-1 shrink-0">
-                      <div className="relative group w-20 h-20 rounded-xl overflow-hidden border border-border bg-surface2">
-                        {mainSrc ? (
-                          <>
-                            <img src={mainSrc} alt="" className="w-full h-full object-cover" />
-                            <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col items-center justify-center gap-1.5">
-                              <label className="flex items-center gap-1 px-2 py-1 rounded-lg bg-white/15 hover:bg-white/25 text-white text-[10px] font-medium cursor-pointer transition-colors">
-                                <Camera size={11} />Cambiar
-                                <input type="file" accept="image/*" hidden
-                                  onChange={(e) => { const f = e.target.files?.[0] ?? null; e.currentTarget.value = ""; if (f) void handleVariantImageFile(f); }}
-                                />
-                              </label>
-                              <button type="button"
-                                onClick={() => void handleVariantImageRemove()}
-                                disabled={busyVarImage}
-                                className="flex items-center gap-1 px-2 py-1 rounded-lg bg-white/15 hover:bg-red-500/60 text-white text-[10px] font-medium transition-colors"
-                              >
-                                {busyVarImage ? <Loader2 size={11} className="animate-spin" /> : <Trash2 size={11} />}
-                                Quitar
-                              </button>
-                            </div>
-                            {busyVarImage && (
-                              <div className="absolute inset-0 bg-black/30 flex items-center justify-center pointer-events-none">
-                                <Loader2 size={18} className="animate-spin text-white" />
-                              </div>
-                            )}
-                          </>
-                        ) : (
-                          <label className="w-full h-full flex flex-col items-center justify-center gap-1 text-muted hover:text-primary cursor-pointer transition-colors">
-                            {busyVarImage
-                              ? <Loader2 size={18} className="animate-spin" />
-                              : <><Package size={22} className="opacity-50" /><span className="text-[10px]">Sin imagen</span></>
-                            }
-                            <input type="file" accept="image/*" hidden
-                              onChange={(e) => { const f = e.target.files?.[0] ?? null; e.currentTarget.value = ""; if (f) void handleVariantImageFile(f); }}
-                            />
-                          </label>
-                        )}
-                      </div>
-
-                      {/* Indicador de origen cuando no hay galería propia */}
-                      {varImages.length === 0 && !!mainSrc && (
-                        <span className="text-[10px] text-muted/70 italic leading-tight">imagen heredada</span>
-                      )}
-                    </div>
-
-                    {/* ── Tira de miniaturas 36×36 ── */}
-                    <div className="flex flex-col gap-1.5">
-                      <div className="flex gap-1 flex-wrap" style={{ maxWidth: 160 }}>
-
-                        {/* Todas las imágenes — principal con ring persistente */}
-                        {varImages.map(img => (
-                          <div
-                            key={img.id}
-                            onClick={() => { if (!img.isMain) void handleVariantSetMainImage(img.id); }}
-                            className={cn(
-                              "relative group w-9 h-9 rounded-lg overflow-hidden border-2 shrink-0 bg-surface2 transition-all",
-                              img.isMain
-                                ? "border-primary cursor-default"
-                                : "border-border hover:border-primary/60 cursor-pointer"
-                            )}
-                          >
-                            <img src={img.url} alt="" className="w-full h-full object-cover" />
-
-                            {/* Badge principal persistente */}
-                            {img.isMain && (
-                              <div className="absolute top-0.5 left-0.5 bg-primary rounded-sm w-3 h-3 flex items-center justify-center">
-                                <Check size={7} className="text-white" strokeWidth={3} />
-                              </div>
-                            )}
-
-                            {/* Overlay hover */}
-                            <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-0.5">
-                              {!img.isMain && (
-                                <button type="button" title="Hacer principal"
-                                  onClick={(e) => { e.stopPropagation(); void handleVariantSetMainImage(img.id); }}
-                                  className="p-0.5 rounded text-white hover:text-primary"
-                                ><Check size={10} /></button>
-                              )}
-                              <button type="button" title="Eliminar"
-                                onClick={(e) => { e.stopPropagation(); void handleVariantImageRemoveById(img.id); }}
-                                className="p-0.5 rounded text-white hover:text-red-400"
-                              ><X size={10} /></button>
-                            </div>
-                          </div>
-                        ))}
-
-                        {/* Botón agregar (oculto al máximo) */}
-                        {varImages.length < 5 && (
-                          <label className="w-9 h-9 rounded-lg border-2 border-dashed border-border flex items-center justify-center text-muted hover:text-primary hover:border-primary transition-colors cursor-pointer shrink-0" title="Agregar imagen">
-                            {busyVarImage ? <Loader2 size={13} className="animate-spin" /> : <Plus size={13} />}
-                            <input type="file" accept="image/*" hidden onChange={(e) => {
-                              const f = e.target.files?.[0] ?? null;
-                              e.currentTarget.value = "";
-                              if (f) void handleVariantImageFile(f);
-                            }} />
-                          </label>
-                        )}
-                      </div>
-
-                      {/* Contador y formato */}
-                      <span className="text-[10px] text-muted">{varImages.length}/5 · PNG, JPG, WebP</span>
-                    </div>
-                  </div>
+        <div className="space-y-3">
+            {/* Galería de imágenes pendientes (modo CREATE, hasta 5, se suben al guardar) */}
+            <div className="space-y-2">
+              <span className="text-xs font-medium text-muted">Imágenes de variante</span>
+              <div className="flex gap-3 items-start">
+                {/* Imagen principal — TPAvatarUploader (local, se sube al guardar) */}
+                <div className="flex flex-col gap-1 shrink-0">
+                  <TPAvatarUploader
+                    src={pendingVarImagePreviews[0] ?? ""}
+                    size={80}
+                    rounded="xl"
+                    fallbackIcon={<Package size={22} className="opacity-50" />}
+                    onUpload={(f) => {
+                      const url = URL.createObjectURL(f);
+                      if (pendingVarImages.length === 0) {
+                        setPendingVarImages([f]);
+                        setPendingVarImagePreviews([url]);
+                      } else {
+                        URL.revokeObjectURL(pendingVarImagePreviews[0] ?? "");
+                        setPendingVarImages(prev => [f, ...prev.slice(1)]);
+                        setPendingVarImagePreviews(prev => [url, ...prev.slice(1)]);
+                      }
+                    }}
+                    onDelete={pendingVarImages.length > 0 ? () => {
+                      setPendingVarImages(prev => prev.filter((_, i) => i !== 0));
+                      setPendingVarImagePreviews(prev => { URL.revokeObjectURL(prev[0] ?? ""); return prev.filter((_, i) => i !== 0); });
+                    } : undefined}
+                    addLabel="Cargar"
+                    editLabel="Cambiar"
+                    deleteLabel="Quitar"
+                  />
                 </div>
-              );
-            })()}
-            <TPField label="SKU" required>
+                {/* Tira de miniaturas */}
+                <div className="flex flex-col gap-1.5">
+                  <div className="flex gap-1 flex-wrap" style={{ maxWidth: 160 }}>
+                    {pendingVarImagePreviews.map((preview, idx) => (
+                      <div
+                        key={idx}
+                        className={cn(
+                          "relative group w-9 h-9 rounded-lg overflow-hidden border-2 shrink-0 bg-surface2",
+                          idx === 0 ? "border-primary cursor-default" : "border-border"
+                        )}
+                      >
+                        <img src={preview} alt="" className="w-full h-full object-cover" />
+                        {idx === 0 && (
+                          <div className="absolute top-0.5 left-0.5 bg-primary rounded-sm w-3 h-3 flex items-center justify-center">
+                            <Check size={7} className="text-white" strokeWidth={3} />
+                          </div>
+                        )}
+                        <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                          <button type="button" title="Eliminar"
+                            onClick={() => {
+                              setPendingVarImages(prev => prev.filter((_, i) => i !== idx));
+                              setPendingVarImagePreviews(prev => { URL.revokeObjectURL(prev[idx] ?? ""); return prev.filter((_, i) => i !== idx); });
+                            }}
+                            className="p-0.5 rounded text-white hover:text-red-400"
+                          ><X size={10} /></button>
+                        </div>
+                      </div>
+                    ))}
+                    {pendingVarImagePreviews.length < 5 && (
+                      <label className="w-9 h-9 rounded-lg border-2 border-dashed border-border flex items-center justify-center text-muted hover:text-primary hover:border-primary transition-colors cursor-pointer shrink-0" title="Agregar imagen">
+                        <Plus size={13} />
+                        <input type="file" accept="image/*" hidden
+                          onChange={(e) => {
+                            const f = e.target.files?.[0] ?? null;
+                            e.currentTarget.value = "";
+                            if (!f) return;
+                            setPendingVarImages(prev => [...prev, f]);
+                            setPendingVarImagePreviews(prev => [...prev, URL.createObjectURL(f)]);
+                          }}
+                        />
+                      </label>
+                    )}
+                  </div>
+                  <span className="text-[10px] text-muted">{pendingVarImagePreviews.length}/5 · Se suben al guardar</span>
+                </div>
+              </div>
+            </div>
+            <TPField label="SKU" required hint="Cada variante debe tener un SKU único">
               <TPInput
                 value={varDraft.sku ?? ""}
                 onChange={(v) => setVarDraft((p) => ({ ...p, sku: v }))}
@@ -4629,11 +5395,26 @@ export default function ArticleModal({
                 data-tp-autofocus="1"
               />
             </TPField>
-            <TPField label="Nombre" required>
+            <TPField label="Nombre" required hint="Dejá vacío para usar el nombre automático desde los atributos">
               <TPInput
                 value={varDraft.name ?? ""}
                 onChange={(v) => setVarDraft((p) => ({ ...p, name: v }))}
-                placeholder="Nombre de la variante"
+                placeholder="Automático desde atributos"
+              />
+            </TPField>
+            <TPField label="Notas" hint="Descripción o notas internas de la variante (opcional)">
+              <TPTextarea
+                value={(varDraft as any).notes ?? ""}
+                onChange={(v) => setVarDraft((p) => ({ ...p, notes: v }))}
+                placeholder="Notas sobre esta variante…"
+                rows={2}
+              />
+            </TPField>
+            <TPField label="Código" required>
+              <TPInput
+                value={varDraft.code}
+                onChange={(v) => setVarDraft((p) => ({ ...p, code: v }))}
+                placeholder="Código de la variante"
               />
             </TPField>
             <TPField label="Punto de reposición" hint="Stock mínimo para alerta">
@@ -4644,74 +5425,15 @@ export default function ArticleModal({
                 min={0}
               />
             </TPField>
-          </div>
-        ) : (
-          /* ── Creación completa ─────────────────────────────────────────── */
-          <div className="space-y-4">
-            <div className="grid grid-cols-2 gap-3">
-              <TPField label="Nombre" required hint="Dejá vacío para usar el nombre automático desde los atributos">
-                <TPInput
-                  value={varDraft.name ?? ""}
-                  onChange={(v) => setVarDraft((p) => ({ ...p, name: v }))}
-                  placeholder="Automático desde atributos"
-                  data-tp-autofocus="1"
-                />
-              </TPField>
-              <TPField label="Código" required>
-                <TPInput
-                  value={varDraft.code}
-                  onChange={(v) => setVarDraft((p) => ({ ...p, code: v }))}
-                  placeholder="Código"
-                />
-              </TPField>
-              <TPField label="SKU">
-                <TPInput
-                  value={varDraft.sku ?? ""}
-                  onChange={(v) => setVarDraft((p) => ({ ...p, sku: v }))}
-                  placeholder="SKU"
-                />
-              </TPField>
-              <TPField label="Costo">
-                <TPNumberInput
-                  value={(varDraft as any).costPrice ?? null}
-                  onChange={(v) => setVarDraft((p) => ({ ...p, costPrice: v }))}
-                  placeholder="0.00"
-                  min={0}
-                />
-              </TPField>
-              <TPField label="Precio override">
-                <TPNumberInput
-                  value={(varDraft as any).priceOverride ?? null}
-                  onChange={(v) => setVarDraft((p) => ({ ...p, priceOverride: v }))}
-                  placeholder="0.00"
-                  min={0}
-                />
-              </TPField>
-              <TPField label="Peso override (g)">
-                <TPNumberInput
-                  value={(varDraft as any).weightOverride ?? null}
-                  onChange={(v) => setVarDraft((p) => ({ ...p, weightOverride: v }))}
-                  placeholder="0.0000"
-                  min={0}
-                />
-              </TPField>
-              <TPField label="Hechura override">
-                <TPNumberInput
-                  value={(varDraft as any).hechuraPriceOverride ?? null}
-                  onChange={(v) => setVarDraft((p) => ({ ...p, hechuraPriceOverride: v }))}
-                  placeholder="0.00"
-                  min={0}
-                />
-              </TPField>
-              <TPField label="Punto de reposición" hint="Stock mínimo para alerta">
-                <TPNumberInput
-                  value={(varDraft as any).reorderPoint ?? null}
-                  onChange={(v) => setVarDraft((p) => ({ ...p, reorderPoint: v }))}
-                  placeholder="0"
-                  min={0}
-                />
-              </TPField>
-            </div>
+            <TPField label="Existencia de apertura" hint="Stock inicial de esta variante">
+              <TPNumberInput
+                value={(varDraft as any).openingStock ?? null}
+                onChange={(v) => setVarDraft((p) => ({ ...p, openingStock: v }))}
+                placeholder="0"
+                min={0}
+                decimals={4}
+              />
+            </TPField>
 
             {/* Atributos de variante (ejes configurados en la categoría) */}
             {variantAxes.length > 0 && (
@@ -4721,13 +5443,9 @@ export default function ArticleModal({
                   <span className="text-xs font-semibold text-muted uppercase tracking-wide">Atributos de variante</span>
                   <div className="h-px flex-1 bg-border" />
                 </div>
-                <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-3">
                   {variantAxes.map(axis => (
-                    <TPField
-                      key={axis.id}
-                      label={axis.definition.name}
-                      required={axis.isRequired}
-                    >
+                    <TPField key={axis.id} label={axis.definition.name} required={axis.isRequired}>
                       {renderVariantAttrInput(axis)}
                     </TPField>
                   ))}
@@ -4735,7 +5453,6 @@ export default function ArticleModal({
               </div>
             )}
           </div>
-        )}
       </Modal>
 
       {/* Confirmación de cambios sin guardar */}
@@ -4748,6 +5465,27 @@ export default function ArticleModal({
         busy={false}
         onClose={() => setShowUnsavedDialog(false)}
         onConfirm={() => { setShowUnsavedDialog(false); onClose(); }}
+      />
+
+      {/* Confirmación de eliminar línea de costo */}
+      <ConfirmDeleteDialog
+        open={confirmDropIdx !== null}
+        title="Eliminar componente de costo"
+        description={(() => {
+          const line = confirmDropIdx !== null ? costLines[confirmDropIdx] : null;
+          if (!line) return "¿Querés eliminar este componente de la composición del costo?";
+          const cfg = TYPE_CFG[line.type];
+          const desc = line.label ? ` — ${line.label}` : "";
+          return `¿Querés eliminar "${cfg.label}${desc}" de la composición del costo? Esto impactará en el total estimado.`;
+        })()}
+        confirmText="Eliminar"
+        onClose={() => setConfirmDropIdx(null)}
+        onConfirm={() => {
+          if (confirmDropIdx !== null) {
+            setCostLines(prev => prev.filter((_, idx) => idx !== confirmDropIdx));
+          }
+          setConfirmDropIdx(null);
+        }}
       />
 
       {/* Confirmación de eliminar variante */}

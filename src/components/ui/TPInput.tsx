@@ -22,6 +22,7 @@ type TPInputProps = Omit<
   wrapClassName?: string;
 
   inputRef?: React.Ref<HTMLInputElement>;
+  noLabelSpace?: boolean;
 };
 
 export default function TPInput({
@@ -43,6 +44,7 @@ export default function TPInput({
 
   disabled,
   inputRef,
+  noLabelSpace: _noLabelSpace,
   ...rest
 }: TPInputProps) {
   const hasLeft = Boolean(leftIcon);

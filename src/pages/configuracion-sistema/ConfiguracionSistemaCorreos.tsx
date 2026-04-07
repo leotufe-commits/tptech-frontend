@@ -143,8 +143,24 @@ export default function ConfiguracionSistemaCorreos() {
                 Editar
               </TPButton>
             </>
-          ) : (
-            <>
+          ) : undefined
+        }
+      >
+        {msg && (
+          <div className="rounded-xl border border-border bg-card px-4 py-3 text-sm text-muted mb-2">
+            {msg}
+          </div>
+        )}
+
+        <PerfilJoyeriaEmailSection
+          emailConfig={emailConfig}
+          setEmailField={setEmailField}
+          readonly={!editing}
+        />
+
+        {editing && (
+          <div className="pt-4">
+            <div className="flex items-center justify-end gap-3">
               <TPButton
                 variant="secondary"
                 type="button"
@@ -164,21 +180,9 @@ export default function ConfiguracionSistemaCorreos() {
               >
                 {saving ? "Guardando…" : "Guardar cambios"}
               </TPButton>
-            </>
-          )
-        }
-      >
-        {msg && (
-          <div className="rounded-xl border border-border bg-card px-4 py-3 text-sm text-muted mb-2">
-            {msg}
+            </div>
           </div>
         )}
-
-        <PerfilJoyeriaEmailSection
-          emailConfig={emailConfig}
-          setEmailField={setEmailField}
-          readonly={!editing}
-        />
       </TPSectionShell>
     </div>
   );

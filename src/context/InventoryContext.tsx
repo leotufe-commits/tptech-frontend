@@ -209,16 +209,9 @@ export function InventoryProvider({ children }: { children: ReactNode }) {
     setLoadingWarehouses(true);
     try {
       // ✅ Warehouses
-      // Preferimos /warehouses/list (POST) porque en TPTech solemos usar POST list
       let rows: any[] = [];
-      try {
-        const r = await apiFetch("/warehouses/list", { method: "POST", body: {} });
-        rows = Array.isArray((r as any)?.rows) ? (r as any).rows : Array.isArray(r) ? (r as any) : [];
-      } catch {
-        // fallback si tu backend está usando GET
-        const r = await apiFetch("/warehouses", { method: "GET" as any });
-        rows = Array.isArray((r as any)?.rows) ? (r as any).rows : Array.isArray(r) ? (r as any) : [];
-      }
+      const r = await apiFetch("/warehouses", { method: "GET" as any });
+      rows = Array.isArray((r as any)?.rows) ? (r as any).rows : Array.isArray(r) ? (r as any) : [];
 
       const normalized = (rows || []).map(normWarehouseRow);
 

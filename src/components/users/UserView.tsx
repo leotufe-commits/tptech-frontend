@@ -17,6 +17,7 @@ import {
   Fingerprint,
   Mail,
   Warehouse,
+  Plus,
 } from "lucide-react";
 
 import { useAuth } from "../../context/AuthContext";
@@ -28,6 +29,10 @@ import { TPSectionShell } from "../ui/TPSectionShell";
 import { TPInfoCard } from "../ui/TPInfoCard";
 
 import { prefetchUserDetail, getRolesCached, getPermsCached } from "./users.data";
+import { uploadUserAttachmentsInstant, deleteUserAttachmentInstant } from "../../services/users";
+import TPAttachmentList from "../ui/TPAttachmentList";
+import ConfirmDeleteDialog from "../ui/ConfirmDeleteDialog";
+import { toast } from "../../lib/toast";
 
 import type { UserDetail, Role, Override } from "../../services/users";
 import type { Permission } from "../../services/permissions";
@@ -131,6 +136,13 @@ export default function UserView() {
   const [perms, setPerms] = useState<Permission[]>([]);
   const [permsLoading, setPermsLoading] = useState(false);
 
+  // Adjuntos
+  const attachInputRef = React.useRef<HTMLInputElement>(null);
+  const [busyUploadAtt, setBusyUploadAtt] = useState(false);
+  const [deleteAttOpen, setDeleteAttOpen] = useState(false);
+  const [deleteAttTarget, setDeleteAttTarget] = useState<string | null>(null);
+  const [deletingAttId, setDeletingAttId] = useState<string | null>(null);
+
   const roleById = useMemo(() => {
     const m = new Map<string, Role>();
     for (const r of roles) m.set(String((r as any).id), r);
@@ -161,10 +173,54 @@ export default function UserView() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [detail, perms]);
 
+  const [localAttachments, setLocalAttachments] = useState<any[]>([]);
+
   const attachments = useMemo(() => {
     const arr = ((detail as any)?.attachments ?? []) as any[];
     return Array.isArray(arr) ? arr : [];
   }, [detail]);
+
+  // Sincronizar adjuntos locales al cargar el detalle
+  React.useEffect(() => {
+    setLocalAttachments(attachments);
+  }, [attachments]);
+
+  async function handleUploadAttachments(files: File[]) {
+    if (!files.length) return;
+    setBusyUploadAtt(true);
+    try {
+      const res = await uploadUserAttachmentsInstant(userId, files);
+      const updated = (res as any)?.data?.attachments ?? (res as any)?.attachments ?? null;
+      if (Array.isArray(updated)) {
+        setLocalAttachments(updated);
+      } else {
+        // reload
+        const d = await prefetchUserDetail(userId);
+        if (d) setLocalAttachments(((d as any)?.attachments ?? []) as any[]);
+      }
+      toast.success(files.length === 1 ? "Adjunto subido." : `${files.length} adjuntos subidos.`);
+    } catch (e: any) {
+      toast.error(e?.message || "Error al subir el archivo.");
+    } finally {
+      setBusyUploadAtt(false);
+    }
+  }
+
+  async function handleDeleteAttachment() {
+    if (!deleteAttTarget) return;
+    setDeletingAttId(deleteAttTarget);
+    try {
+      await deleteUserAttachmentInstant(userId, deleteAttTarget);
+      setLocalAttachments((prev) => prev.filter((a: any) => a.id !== deleteAttTarget));
+      toast.success("Adjunto eliminado.");
+      setDeleteAttOpen(false);
+      setDeleteAttTarget(null);
+    } catch (e: any) {
+      toast.error(e?.message || "Error al eliminar.");
+    } finally {
+      setDeletingAttId(null);
+    }
+  }
 
   async function ensureCatalogs() {
     if (!roles.length) {
@@ -466,37 +522,62 @@ export default function UserView() {
             )}
           </TPSectionShell>
 
-          <TPSectionShell title="Adjuntos" icon={<Paperclip className="h-4 w-4" />}>
-            {attachments.length === 0 ? (
-              <div className="text-sm text-muted">Todavía no hay adjuntos.</div>
-            ) : (
-              <div className="divide-y divide-border rounded-xl border border-border overflow-hidden">
-                {attachments.map((a: any) => {
-                  const fname = safeFileLabel(a.filename);
-                  const meta = [formatBytes(a.size), String(a.mimeType || "")].filter(Boolean).join(" • ");
-                  const url = downloadUrl(a.id);
-
-                  return (
-                    <div key={a.id} className="p-3 flex items-center justify-between gap-3 bg-card">
-                      <div className="min-w-0">
-                        <div className="text-sm font-semibold truncate">{fname}</div>
-                        <div className="text-xs text-muted truncate">{meta || "Archivo"}</div>
-                      </div>
-
-                      {url ? (
-                        <a href={url} className={cn("tp-btn", "shrink-0")} title="Descargar">
-                          Descargar
-                        </a>
-                      ) : null}
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-
-            <div className="mt-3 text-[11px] text-muted">
-              * Esta vista es <b>solo lectura</b>. Para subir/eliminar adjuntos, usá <b>Editar</b>.
-            </div>
+          <TPSectionShell
+            title="Adjuntos"
+            icon={<Paperclip className="h-4 w-4" />}
+            right={
+              <>
+                <input
+                  ref={attachInputRef}
+                  type="file"
+                  multiple
+                  className="hidden"
+                  onChange={(e) => {
+                    const files = Array.from(e.target.files || []);
+                    if (files.length) void handleUploadAttachments(files);
+                    e.target.value = "";
+                  }}
+                />
+                <button
+                  type="button"
+                  disabled={busyUploadAtt}
+                  onClick={() => attachInputRef.current?.click()}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-card px-3 py-1.5 text-xs font-medium text-text hover:bg-surface2 disabled:opacity-50 transition-colors"
+                >
+                  {busyUploadAtt ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <Plus className="h-3.5 w-3.5" />
+                  )}
+                  {busyUploadAtt ? "Subiendo..." : "Agregar"}
+                </button>
+              </>
+            }
+          >
+            <TPAttachmentList
+              items={localAttachments.map((a: any) => ({
+                id: a.id,
+                name: safeFileLabel(a.filename),
+                size: a.size,
+                url: downloadUrl(a.id) || undefined,
+                mimeType: a.mimeType,
+              }))}
+              loading={busyUploadAtt}
+              deletingId={deletingAttId}
+              emptyText="Todavía no hay adjuntos."
+              onView={(it) => { if (it.url) window.open(it.url, "_blank", "noreferrer"); }}
+              onDownload={(it) => { if (it.url) window.location.assign(it.url); }}
+              onDelete={(it) => { setDeleteAttTarget(it.id); setDeleteAttOpen(true); }}
+            />
+            <ConfirmDeleteDialog
+              open={deleteAttOpen}
+              title="Eliminar adjunto"
+              description="¿Estás seguro? Esta acción no se puede deshacer."
+              confirmText="Eliminar"
+              busy={deletingAttId !== null}
+              onClose={() => { if (!deletingAttId) { setDeleteAttOpen(false); setDeleteAttTarget(null); } }}
+              onConfirm={handleDeleteAttachment}
+            />
           </TPSectionShell>
         </div>
       )}

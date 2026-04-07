@@ -55,8 +55,12 @@ import ConfiguracionSistemaCorreos from "./pages/configuracion-sistema/Configura
 import ConfiguracionSistemaPromociones from "./pages/configuracion-sistema/ConfiguracionSistemaPromociones";
 import ConfiguracionSistemaDescuentosCantidad from "./pages/configuracion-sistema/ConfiguracionSistemaDescuentosCantidad";
 import ConfiguracionSistemaEtiquetas from "./pages/configuracion-sistema/ConfiguracionSistemaEtiquetas";
+import ConfiguracionSistemaGruposArticulos from "./pages/configuracion-sistema/ConfiguracionSistemaGruposArticulos";
+import ConfiguracionSistemaPoliticaPrecios from "./pages/configuracion-sistema/ConfiguracionSistemaPoliticaPrecios";
 import DashboardRentabilidad from "./pages/DashboardRentabilidad";
+import PricingSimulator from "./pages/PricingSimulator";
 import EntityDetail from "./pages/entity-detail/EntityDetail";
+import EntityAccountStatement from "./pages/entity-detail/EntityAccountStatement";
 import ArticleDetail from "./pages/article-detail/ArticleDetail";
 
 import ProtectedRoute from "./components/ProtectedRoute";
@@ -137,13 +141,14 @@ const router = createBrowserRouter([
           // ===== PRINCIPAL =====
           { path: "dashboard", element: <Dashboard /> },
           { path: "reportes/rentabilidad", element: <DashboardRentabilidad /> },
+          { path: "herramientas/simulador-precios", element: <PricingSimulator /> },
           { path: "divisas", element: <Divisas /> },
 
           // ===== ARTÍCULOS =====
           { path: "articulos/articulos", element: <InventarioArticulos /> },
           { path: "articulos/:id",       element: <ArticleDetail /> },
           { path: "articulos/compuestos", element: <Placeholder title="Artículos compuestos" /> },
-          { path: "articulos/grupos", element: <Placeholder title="Grupos de artículos" /> },
+          { path: "articulos/grupos", element: <ConfiguracionSistemaGruposArticulos /> },
 
           // ===== INVENTARIO =====
           { path: "inventario/articulos", element: <InventarioArticulos /> },
@@ -211,6 +216,8 @@ const router = createBrowserRouter([
           // ✅ ENTIDADES COMERCIALES — detalle/edición
           { path: "clientes/:id", element: <EntityDetail /> },
           { path: "proveedores/:id", element: <EntityDetail /> },
+          { path: "clientes/:id/extracto", element: <EntityAccountStatement /> },
+          { path: "proveedores/:id/extracto", element: <EntityAccountStatement /> },
 
           // ✅ NUEVAS SECCIONES (placeholders por ahora)
           { path: "configuracion-sistema/impuestos", element: <ConfiguracionSistemaImpuestos /> },
@@ -219,7 +226,9 @@ const router = createBrowserRouter([
           { path: "configuracion-sistema/listas-precios", element: <ConfiguracionSistemaListasPrecios /> },
           { path: "configuracion-sistema/promociones", element: <ConfiguracionSistemaPromociones /> },
           { path: "configuracion-sistema/descuentos-cantidad", element: <ConfiguracionSistemaDescuentosCantidad /> },
+          { path: "configuracion-sistema/politica-precios", element: <ConfiguracionSistemaPoliticaPrecios /> },
           { path: "configuracion-sistema/categorias", element: <ConfiguracionSistemaCategorias /> },
+          { path: "configuracion-sistema/grupos-articulos", element: <ConfiguracionSistemaGruposArticulos /> },
           { path: "configuracion-sistema/correos", element: <ConfiguracionSistemaCorreos /> },
           { path: "configuracion-sistema/numeracion", element: <Placeholder title="Numeración de comprobantes" /> },
           { path: "configuracion-sistema/etiquetas", element: <ConfiguracionSistemaEtiquetas /> },

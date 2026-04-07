@@ -126,10 +126,10 @@ export function catalogHints(key: CatalogType) {
 
     case "MULTIPLIER_BASE":
       return {
-        modalSubtitle: "Definí bases de cálculo para el modo multiplicador (gramos, kilates, unidades, etc.).",
-        nameLabel: "Base",
-        namePlaceholder: "Ej: Gramos, Kilates, Unidades",
-        nameHint: "Nombre visible en el combo de base del multiplicador.",
+        modalSubtitle: "Definí las unidades de peso para los artículos del catálogo (gramos, kilates, onzas, etc.).",
+        nameLabel: "Unidad",
+        namePlaceholder: "Ej: Gramos, Kilates, Onzas",
+        nameHint: "Nombre visible en el selector de unidad de peso del artículo.",
         statusHint: "Desactivá para ocultarla del selector.",
       };
 

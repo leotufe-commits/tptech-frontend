@@ -370,12 +370,14 @@ export function useValuation() {
       }
 
       const r = await runSaving(async () => {
-        await valuation.createMetal(data as any);
+        const resp = await valuation.createMetal(data as any);
         await loadMetals(refetchGenRef.current);
-        return true;
+        return resp?.row ?? null;
       });
 
-      return r.ok ? { ok: true as const } : { ok: false as const, error: r.error };
+      return r.ok
+        ? { ok: true as const, metal: r.data as { id: string; name: string; referenceValue: number } | null }
+        : { ok: false as const, error: r.error };
     },
     [loadMetals, metals, runSaving]
   );

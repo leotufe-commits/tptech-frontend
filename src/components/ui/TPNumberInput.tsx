@@ -357,6 +357,7 @@ export default function TPNumberInput({
             setDraft(raw);
 
             if (raw.trim() === "") {
+              lastEmittedRef.current = null;
               onChange(null);
               return;
             }

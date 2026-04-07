@@ -85,6 +85,17 @@ function applyFields(
   fill("country", user.country as any);
 }
 
+function isDraftEmpty(draft: SellerDraft): boolean {
+  // Solo verificar campos que requieren escritura manual.
+  // Excluir city, province, country, documentType, phoneCountry
+  // porque se auto-completan desde catálogos al abrir el formulario.
+  return [
+    draft.firstName, draft.lastName, draft.email,
+    draft.documentNumber, draft.phoneNumber,
+    draft.street, draft.streetNumber, draft.postalCode,
+  ].every((v) => !String(v ?? "").trim());
+}
+
 function hasConflict(user: UserListItem, draft: SellerDraft): boolean {
   const pairs: [string | undefined, string][] = [
     [user.firstName, draft.firstName],
@@ -210,7 +221,7 @@ export function VendedorForm({
     const user = users.find((u) => u.id === uid);
     if (!user) return;
 
-    if (hasConflict(user, draft)) {
+    if (!isDraftEmpty(draft) && hasConflict(user, draft)) {
       setPendingUser(user);
       return;
     }

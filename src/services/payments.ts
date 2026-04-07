@@ -1,5 +1,6 @@
 // src/services/payments.ts
 import { apiFetch } from "../lib/api";
+import type { CheckoutResult } from "./articles";
 
 /* =========================================================
    TYPES
@@ -108,4 +109,20 @@ export const paymentsApi = {
       method: "DELETE",
       on401: "throw",
     }),
+
+  /** Resuelve ajuste de pago + cuotas sobre un monto dado (sin artículo específico). Usado en Ventas. */
+  checkoutPreview: (opts: {
+    amount: number;
+    paymentMethodId?: string | null;
+    installmentsQty?: number | null;
+  }) => {
+    const qs = new URLSearchParams();
+    qs.set("amount", String(opts.amount));
+    if (opts.paymentMethodId) qs.set("paymentMethodId", opts.paymentMethodId);
+    if (opts.installmentsQty) qs.set("installmentsQty", String(opts.installmentsQty));
+    return apiFetch<CheckoutResult>(`/payments/checkout-preview?${qs.toString()}`, {
+      method: "GET",
+      on401: "throw",
+    });
+  },
 };

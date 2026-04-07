@@ -1,10 +1,10 @@
 // src/components/ui/TPComboFixed.tsx
 import React, { useEffect, useRef, useState } from "react";
 import ReactDOM from "react-dom";
-import { ChevronDown, Check, Search } from "lucide-react";
+import { ChevronDown, Check, Search, Star } from "lucide-react";
 import { cn, TP_INPUT } from "./tp";
 
-type Option = { value: string; label: string; disabled?: boolean; isHeader?: boolean };
+type Option = { value: string; label: string; disabled?: boolean; isHeader?: boolean; isFavorite?: boolean };
 
 type Props = {
   value: string;
@@ -17,6 +17,10 @@ type Props = {
   /** Permite escribir para filtrar opciones */
   searchable?: boolean;
   searchPlaceholder?: string;
+  /** Si se provee, muestra una estrella en cada opción para marcarla como predeterminada */
+  onSetFavorite?: (value: string) => void;
+  /** Valor actualmente marcado como predeterminado (alternativa a isFavorite en cada opción) */
+  favoriteValue?: string | null;
 };
 
 export default function TPComboFixed({
@@ -29,6 +33,8 @@ export default function TPComboFixed({
   className,
   searchable = false,
   searchPlaceholder = "Buscar…",
+  onSetFavorite,
+  favoriteValue,
 }: Props) {
   const [open, setOpen] = useState(false);
   const [activeIndex, setActiveIndex] = useState<number>(-1);
@@ -87,8 +93,9 @@ export default function TPComboFixed({
         setSearchText("");
       }
     }
-    document.addEventListener("mousedown", onDoc);
-    return () => document.removeEventListener("mousedown", onDoc);
+    // capture:true para disparar antes del stopPropagation del Modal
+    document.addEventListener("mousedown", onDoc, true);
+    return () => document.removeEventListener("mousedown", onDoc, true);
   }, []);
 
   /* Cerrar al hacer scroll o resize */
@@ -310,7 +317,7 @@ export default function TPComboFixed({
                 onClick={() => !isOptDisabled && pick(opt.value)}
                 tabIndex={-1}
                 className={cn(
-                  "w-full rounded-xl px-3 py-2 text-left text-sm flex items-center justify-between gap-2 transition",
+                  "w-full rounded-xl px-3 py-2 text-left text-sm flex items-center gap-2 transition",
                   isOptDisabled
                     ? "opacity-40 cursor-not-allowed"
                     : "hover:bg-primary/10 cursor-pointer",
@@ -318,8 +325,31 @@ export default function TPComboFixed({
                   isSelected && "font-semibold"
                 )}
               >
-                <span>{opt.label}</span>
-                {isSelected && <Check size={14} className="shrink-0 text-primary" />}
+                <span className="flex-1">{opt.label}</span>
+                <span className="flex items-center gap-1 shrink-0">
+                  <span className="w-[14px] flex items-center justify-center">
+                    {isSelected && <Check size={14} className="text-primary" />}
+                  </span>
+                  {onSetFavorite && (() => {
+                    const isFav = favoriteValue !== undefined
+                      ? opt.value === favoriteValue
+                      : !!opt.isFavorite;
+                    return (
+                      <span
+                        role="button"
+                        title={isFav ? "Predeterminado para nuevas entidades" : "Usar como predeterminado para nuevas entidades"}
+                        onMouseDown={(e) => { e.stopPropagation(); e.preventDefault(); }}
+                        onClick={(e) => { e.stopPropagation(); onSetFavorite(opt.value); }}
+                        className={cn(
+                          "shrink-0 transition-colors",
+                          isFav ? "text-yellow-400" : "text-muted/30 hover:text-yellow-400"
+                        )}
+                      >
+                        <Star size={13} className={isFav ? "fill-yellow-400" : ""} />
+                      </span>
+                    );
+                  })()}
+                </span>
               </button>
             );
           })

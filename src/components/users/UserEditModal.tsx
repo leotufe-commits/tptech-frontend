@@ -76,6 +76,10 @@ type Props = {
   setFStreet: (v: string) => void;
   fNumber: string;
   setFNumber: (v: string) => void;
+  fFloor: string;
+  setFFloor: (v: string) => void;
+  fApartment: string;
+  setFApartment: (v: string) => void;
   fCity: string;
   setFCity: (v: string) => void;
   fProvince: string;
@@ -227,6 +231,10 @@ export default function UserEditModal(props: Props) {
     setFStreet,
     fNumber,
     setFNumber,
+    fFloor,
+    setFFloor,
+    fApartment,
+    setFApartment,
     fCity,
     setFCity,
     fProvince,
@@ -826,6 +834,8 @@ export default function UserEditModal(props: Props) {
       norm(fDocNumber) !== norm(d.documentNumber) ||
       norm(fStreet) !== norm(d.street) ||
       norm(fNumber) !== norm(d.number) ||
+      norm(fFloor) !== norm(d.floor) ||
+      norm(fApartment) !== norm(d.apartment) ||
       norm(fCity) !== norm(d.city) ||
       norm(fProvince) !== norm(d.province) ||
       norm(fPostalCode) !== norm(d.postalCode) ||
@@ -850,6 +860,8 @@ export default function UserEditModal(props: Props) {
     fDocNumber,
     fStreet,
     fNumber,
+    fFloor,
+    fApartment,
     fCity,
     fProvince,
     fPostalCode,
@@ -1032,6 +1044,10 @@ export default function UserEditModal(props: Props) {
                 setFStreet={setFStreet}
                 fNumber={fNumber}
                 setFNumber={setFNumber}
+                fFloor={fFloor}
+                setFFloor={setFFloor}
+                fApartment={fApartment}
+                setFApartment={setFApartment}
                 fCity={fCity}
                 setFCity={setFCity}
                 fProvince={fProvince}

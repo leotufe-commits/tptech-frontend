@@ -22,6 +22,9 @@ export type TaxRow = {
   fixedAmount: string | null;
   applyOn: TaxApplyOn;
   includedInPrice: boolean;
+  appliesOnSale: boolean;
+  appliesOnPurchase: boolean;
+  isRecoverable: boolean;
   validFrom: string | null;
   validTo: string | null;
   isActive: boolean;
@@ -43,6 +46,9 @@ export type TaxPayload = {
   fixedAmount?: number | null;
   applyOn: TaxApplyOn;
   includedInPrice?: boolean;
+  appliesOnSale?: boolean;
+  appliesOnPurchase?: boolean;
+  isRecoverable?: boolean;
   validFrom?: string | null;
   validTo?: string | null;
   isActive?: boolean;

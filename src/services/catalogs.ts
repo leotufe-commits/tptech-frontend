@@ -12,7 +12,8 @@ export type CatalogType =
   | "ARTICLE_BRAND"
   | "ARTICLE_MANUFACTURER"
   | "UNIT_OF_MEASURE"
-  | "MULTIPLIER_BASE";
+  | "MULTIPLIER_BASE"
+  | "WEIGHT_UNIT";
 
 export type CatalogItem = {
   id: string;

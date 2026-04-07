@@ -26,6 +26,8 @@ export type ExistingBody = {
 
   street: string;
   number: string;
+  floor: string;
+  apartment: string;
   city: string;
   province: string;
   postalCode: string;

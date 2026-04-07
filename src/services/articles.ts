@@ -15,19 +15,149 @@ export type MultiplierBase       = string;
 export type CostLineType         = "METAL" | "HECHURA" | "PRODUCT" | "SERVICE" | "MANUAL";
 
 // ---------------------------------------------------------------------------
+// Pricing preview (motor de pasos)
+// ---------------------------------------------------------------------------
+export type PricingStepStatus = "ok" | "partial" | "missing" | "skipped";
+
+export type PricingAlertLevel = "info" | "warning" | "error";
+
+export type PricingAlert = {
+  code:    string;
+  level:   PricingAlertLevel;
+  message: string;
+};
+
+export type PricingStepResult = {
+  key:      string;
+  label:    string;
+  status:   PricingStepStatus;
+  value:    string | null;
+  message?: string;
+  meta?:    Record<string, unknown>;
+};
+
+export type PricingPolicyResult = {
+  canConfirm:     boolean;
+  blockingAlerts: string[];
+};
+
+// ---------------------------------------------------------------------------
+// Checkout (capa de pago sobre precio comercial)
+// ---------------------------------------------------------------------------
+export type CheckoutStep = {
+  code:         string;
+  label:        string;
+  formula:      string;
+  amount:       number;
+  currencyCode: string;
+};
+
+export type CheckoutResult = {
+  baseAmount:        number;
+  paymentAdjustment: number;
+  finalAmount:       number;
+  installments?:     number;
+  installmentAmount?: number;
+  steps:             CheckoutStep[];
+};
+
+export type TaxBreakdownItem = {
+  taxId:           string;
+  name:            string;
+  code:            string;
+  taxType:         string;
+  calculationType: string;
+  applyOn:         string;
+  /** true cuando la base fue sobreescrita por la configuración de la entidad */
+  applyOnOverriddenByEntity?: boolean;
+  /** Fuente del override: "INDIVIDUAL" (override puntual) o "GLOBAL" (override global de la entidad) */
+  entityOverrideSource?: "INDIVIDUAL" | "GLOBAL";
+  base:            number;
+  baseEstimated:   boolean;
+  rate:            number | null;
+  fixedAmount:     number | null;
+  taxAmount:       number;
+};
+
+export type PricingPreviewResult = {
+  unitPrice:               string | null;
+  basePrice:               string | null;
+  quantityDiscountAmount:  string | null;
+  promotionDiscountAmount: string | null;
+  discountAmount:          string | null;
+  priceSource:             string;
+  baseSource:              string;
+  appliedPriceListId:      string | null;
+  appliedPriceListName:    string | null;
+  appliedPromotionId:      string | null;
+  appliedPromotionName:    string | null;
+  appliedDiscountId:       string | null;
+  marginPercent:           string | null;
+  unitCost:                string | null;
+  unitMargin:              string | null;
+  costPartial:             boolean;
+  costMode:                string;
+  partial:                 boolean;
+  stackingMode:            "CHAINED" | "BEST_OF_QD" | "BEST_OF_PROMO" | "NONE";
+  steps:                   PricingStepResult[];
+  alerts:                  PricingAlert[];
+  policy:                  PricingPolicyResult;
+  checkoutResult?:         CheckoutResult | null;
+  metalHechuraBreakdown?:  {
+    metalCost:        number;
+    metalSale:        number;
+    metalMarginPct:   number;
+    hechuraCost:      number;
+    hechuraSale:      number;
+    hechuraMarginPct: number;
+  } | null;
+  /** Total de impuestos aplicados al precio unitario */
+  taxAmount?:    string;
+  /** Desglose por impuesto */
+  taxBreakdown?: TaxBreakdownItem[];
+  /** Precio unitario + impuestos */
+  totalWithTax?: string | null;
+  /** true cuando la entidad seleccionada tiene impuestos desactivados */
+  taxExemptByEntity?: boolean;
+  /** Costo base sin impuestos de compra (= unitCost, siempre presente cuando hay costo) */
+  costBase?: string | null;
+  /** Suma de impuestos de compra. null cuando no hay impuestos aplicados */
+  costTaxAmount?: string | null;
+  /** Costo total con impuestos de compra (costBase + costTaxAmount) */
+  costWithTax?: string | null;
+  /** Desglose por impuesto de compra */
+  costTaxBreakdown?: PurchaseTaxBreakdownItem[];
+};
+
+export type PurchaseTaxBreakdownItem = {
+  taxId:           string;
+  name:            string;
+  calculationType: string;
+  rate:            number | null;
+  fixedAmount:     number | null;
+  taxAmount:       number;
+};
+
+// ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
+export type QuantityUnit = string;
+
 export type CostLine = {
   id?: string;
   type: CostLineType;
   label: string;
   quantity: number;
+  quantityUnit: QuantityUnit;
   unitValue: number;
   currencyId: string | null;
   mermaPercent: number | null;
   metalVariantId: string | null;
   catalogItemId?: string | null;
   sortOrder: number;
+  lineAdjKind:  string;
+  lineAdjType:  string;
+  lineAdjValue: number | null;
   // Expandidos desde el backend
   currency?: { id: string; code: string; symbol: string } | null;
   metalVariant?: {
@@ -88,10 +218,13 @@ export type ArticleVariant = {
   barcodeSource: BarcodeSource;
   costPrice: string | null;
   reorderPoint: string | null;
+  openingStock: string | null;
   notes: string;
   weightOverride: string | null;
   hechuraPriceOverride: string | null;
   priceOverride: string | null;
+  priceOverrideWithTax?: string | null;
+  costPriceWithTax?: string | null;
   /** URL denormalizada de la imagen principal (para acceso rápido) */
   imageUrl: string;
   /** Galería completa de imágenes (hasta 5) */
@@ -145,6 +278,9 @@ export type ArticleRow = {
   description: string;
   articleType: ArticleType;
   categoryId: string | null;
+  groupId: string | null;
+  groupOrder: number;
+  group: { id: string; name: string; slug: string } | null;
   status: ArticleStatus;
   stockMode: StockMode;
   sku: string;
@@ -160,6 +296,16 @@ export type ArticleRow = {
   showInStore: boolean;
   unitOfMeasure: string;
   reorderPoint: string | null;
+  dimensionLength: string | null;
+  dimensionWidth: string | null;
+  dimensionHeight: string | null;
+  dimensionUnit: string;
+  weight: string | null;
+  weightUnit: string;
+  minSaleQuantity: string | null;
+  maxSaleQuantity: string | null;
+  defaultQuantity: string | null;
+  inventoryAccount: string;
   preferredSupplierId: string | null;
   preferredSupplier: { id: string; displayName: string } | null;
   hechuraPrice: string | null;
@@ -186,12 +332,17 @@ export type ArticleRow = {
   computedCostBase: string | null;
   computedCostWithTax: string | null;
   resolvedSalePrice: string | null;
+  resolvedSalePriceWithTax: string | null;
   resolvedPriceSource: "PROMOTION" | "PRICE_LIST_CATEGORY" | "PRICE_LIST_GENERAL" | "MANUAL_OVERRIDE" | "MANUAL_FALLBACK" | "NONE";
   resolvedPriceName: string | null;
   stockData?: {
     total: number;
     byVariant: { [variantId: string]: number };
   } | null;
+  hasActivePromotion?: boolean;
+  hasQuantityDiscount?: boolean;
+  promotionSummary?: string | null;
+  quantityDiscountSummary?: string | null;
   costComposition?: Array<{
     type: CostLineType;
     label: string;
@@ -314,6 +465,11 @@ export type ArticleListParams = {
   take?: number;
   page?: number;
   pageSize?: number;
+  sortKey?: string;
+  sortDir?: "asc" | "desc";
+  groupId?: string;
+  brand?: string;
+  hasVariants?: boolean;
 };
 
 export type ArticlePayload = {
@@ -322,6 +478,7 @@ export type ArticlePayload = {
   articleType?: ArticleType;
   description?: string;
   categoryId?: string | null;
+  groupId?: string | null;
   status?: ArticleStatus;
   stockMode?: StockMode;
   sku?: string;
@@ -341,6 +498,17 @@ export type ArticlePayload = {
   showInStore?: boolean;
   unitOfMeasure?: string;
   reorderPoint?: number | null;
+  openingStock?: number | null;
+  dimensionLength?: number | null;
+  dimensionWidth?: number | null;
+  dimensionHeight?: number | null;
+  dimensionUnit?: string;
+  weight?: number | null;
+  weightUnit?: string;
+  minSaleQuantity?: number | null;
+  maxSaleQuantity?: number | null;
+  defaultQuantity?: number | null;
+  inventoryAccount?: string;
   hechuraPrice?: number | null;
   hechuraPriceMode?: HechuraPriceMode;
   mermaPercent?: number | null;
@@ -377,6 +545,7 @@ export type VariantPayload = {
   autoBarcode?: boolean;
   costPrice?: number | null;
   reorderPoint?: number | null;
+  openingStock?: number | null;
   notes?: string;
   weightOverride?: number | null;
   hechuraPriceOverride?: number | null;
@@ -469,10 +638,11 @@ export const BARCODE_SOURCE_DESCRIPTIONS: Record<BarcodeSource, string> = {
   CUSTOM: "Ingresá o escaneá el código de barras del producto físico",
 };
 
+/** @deprecated MANUAL y MULTIPLIER son modos heredados — nuevos artículos usan METAL_MERMA_HECHURA */
 export const COST_MODE_LABELS: Record<CostCalculationMode, string> = {
-  MANUAL:              "Costo Simple - Tradicional",
-  MULTIPLIER:          "Costo por Unidad - Gramos, Kilates",
-  METAL_MERMA_HECHURA: "Compuestos - Metal + Hechura, Productos y Servicios",
+  MANUAL:              "Composición del costo",  // legacy: hechura fija
+  MULTIPLIER:          "Composición del costo",  // legacy: hechura por unidad
+  METAL_MERMA_HECHURA: "Composición del costo",
 };
 
 /** @deprecated — las bases ahora son strings libres cargados del catálogo MULTIPLIER_BASE */
@@ -492,16 +662,11 @@ export const ARTICLE_STATUS_COLORS: Record<ArticleStatus, string> = {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-export function fmtMoney(v: string | number | null | undefined): string {
+export function fmtMoney(v: string | number | null | undefined, sym = "$"): string {
   if (v == null || v === "") return "—";
   const n = typeof v === "string" ? parseFloat(v) : v;
   if (!isFinite(n)) return "—";
-  return new Intl.NumberFormat("es-AR", {
-    style: "currency",
-    currency: "ARS",
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  }).format(n);
+  return sym + n.toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
 export function fmtQty(v: string | number | null | undefined): string {
@@ -535,6 +700,11 @@ export const articlesApi = {
     if (params?.pageSize != null) qs.set("pageSize",            String(params.pageSize));
     if (params?.skip != null)     qs.set("skip",                String(params.skip));
     if (params?.take != null)     qs.set("take",                String(params.take));
+    if (params?.sortKey)          qs.set("sortKey",             params.sortKey);
+    if (params?.sortDir)          qs.set("sortDir",             params.sortDir);
+    if (params?.groupId)          qs.set("groupId",             params.groupId);
+    if (params?.brand)            qs.set("brand",               params.brand);
+    if (params?.hasVariants)      qs.set("hasVariants",         "true");
     const query = qs.toString() ? `?${qs.toString()}` : "";
     return apiFetch<ArticleListResponse>(`/articles${query}`, { method: "GET", on401: "throw" });
   },
@@ -664,6 +834,33 @@ export const articlesApi = {
     const query = qs.toString() ? `?${qs.toString()}` : "";
     return apiFetch<import("./sales").SalePriceResult>(
       `/articles/${articleId}/sale-price${query}`,
+      { method: "GET", on401: "throw" }
+    );
+  },
+
+  getPricingPreview: (
+    articleId: string,
+    opts?: {
+      variantId?: string | null;
+      clientId?: string | null;
+      quantity?: number;
+      paymentMethodId?: string | null;
+      installmentsQty?: number | null;
+      priceListId?: string | null;
+      quantityDiscountIds?: string[];
+    }
+  ) => {
+    const qs = new URLSearchParams();
+    if (opts?.clientId)        qs.set("clientId",        opts.clientId);
+    if (opts?.variantId)       qs.set("variantId",       opts.variantId);
+    if (opts?.quantity != null) qs.set("quantity",        String(opts.quantity));
+    if (opts?.paymentMethodId) qs.set("paymentMethodId", opts.paymentMethodId);
+    if (opts?.installmentsQty) qs.set("installmentsQty", String(opts.installmentsQty));
+    if (opts?.priceListId)     qs.set("priceListId",     opts.priceListId);
+    if (opts?.quantityDiscountIds?.length) qs.set("quantityDiscountIds", opts.quantityDiscountIds.join(","));
+    const query = qs.toString() ? `?${qs.toString()}` : "";
+    return apiFetch<PricingPreviewResult>(
+      `/articles/${articleId}/pricing-preview${query}`,
       { method: "GET", on401: "throw" }
     );
   },

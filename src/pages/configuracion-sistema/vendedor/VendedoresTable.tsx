@@ -1,5 +1,6 @@
-import React from "react";
+import React, { useState } from "react";
 import { Plus } from "lucide-react";
+import TPImageLightbox from "../../../components/ui/TPImageLightbox";
 import { TPButton } from "../../../components/ui/TPButton";
 import { TPTableKit, type TPColDef } from "../../../components/ui/TPTableKit";
 import { TPStatusPill } from "../../../components/ui/TPStatusPill";
@@ -56,7 +57,10 @@ export function VendedoresTable({
   onDelete,
   onNewSeller,
 }: Props) {
+  const [lightboxSrc, setLightboxSrc] = useState<string | null>(null);
+
   return (
+    <>
     <TPTableKit
       rows={rows}
       columns={VENDOR_COLS}
@@ -90,11 +94,18 @@ export function VendedoresTable({
               <div className="flex items-center gap-2 min-w-0">
                 <div className="h-8 w-8 rounded-full overflow-hidden border border-border bg-surface shrink-0">
                   {row.avatarUrl ? (
-                    <img
-                      src={row.avatarUrl}
-                      alt={row.displayName}
-                      className="h-full w-full object-cover"
-                    />
+                    <button
+                      type="button"
+                      className="h-full w-full cursor-zoom-in"
+                      onClick={(e) => { e.stopPropagation(); setLightboxSrc(row.avatarUrl); }}
+                      title="Ver imagen"
+                    >
+                      <img
+                        src={row.avatarUrl}
+                        alt={row.displayName}
+                        className="h-full w-full object-cover"
+                      />
+                    </button>
                   ) : (
                     <div className="grid h-full w-full place-items-center text-xs font-bold text-primary bg-primary/10">
                       {row.displayName
@@ -187,5 +198,7 @@ export function VendedoresTable({
         </TPTr>
       )}
     />
+    <TPImageLightbox src={lightboxSrc} onClose={() => setLightboxSrc(null)} />
+    </>
   );
 }

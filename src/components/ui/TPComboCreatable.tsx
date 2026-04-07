@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { ChevronDown, X, Plus } from "lucide-react";
+import { ChevronDown, X, Plus, Star } from "lucide-react";
 import { cn, TP_INPUT } from "./tp";
 import type { CatalogItem, CatalogType } from "../../services/catalogs";
 
@@ -116,7 +116,7 @@ function CreateModal({
   if (!open) return null;
 
   return createPortal(
-    <div className="fixed inset-0 z-[200]">
+    <div className="fixed inset-0 z-[2000]">
       <div className="absolute inset-0 bg-black/40" onMouseDown={onClose} />
       <div className="absolute inset-0 grid place-items-center p-4">
         <div
@@ -233,8 +233,9 @@ function SingleCombo({
       const target = e.target as Node;
       if (!wrapRef.current?.contains(target) && !dropdownRef.current?.contains(target)) setOpen(false);
     }
-    document.addEventListener("mousedown", onDoc);
-    return () => document.removeEventListener("mousedown", onDoc);
+    // capture:true para disparar antes del stopPropagation del Modal
+    document.addEventListener("mousedown", onDoc, true);
+    return () => document.removeEventListener("mousedown", onDoc, true);
   }, []);
 
   useEffect(() => {
@@ -593,8 +594,9 @@ function MultiCombo({
       const target = e.target as Node;
       if (!wrapRef.current?.contains(target) && !dropdownRef.current?.contains(target)) setOpen(false);
     }
-    document.addEventListener("mousedown", onDoc);
-    return () => document.removeEventListener("mousedown", onDoc);
+    // capture:true para disparar antes del stopPropagation del Modal
+    document.addEventListener("mousedown", onDoc, true);
+    return () => document.removeEventListener("mousedown", onDoc, true);
   }, []);
 
   useEffect(() => {
@@ -818,11 +820,14 @@ function MultiCombo({
                     onClick={() => addValue(it.label)}
                     onMouseEnter={() => setActiveIndex(idx)}
                     className={cn(
-                      "w-full rounded-xl px-3 py-2 text-left text-sm hover:bg-primary/10",
+                      "w-full rounded-xl px-3 py-2 text-left text-sm hover:bg-primary/10 flex items-center gap-1.5",
                       idx === activeIndex && "bg-primary/10"
                     )}
                   >
-                    {renderHighlightedLabel(it.label, query)}
+                    <span className="flex-1">{renderHighlightedLabel(it.label, query)}</span>
+                    {it.isFavorite && (
+                      <Star size={11} className="shrink-0 fill-yellow-400 text-yellow-400 opacity-80" />
+                    )}
                   </button>
                 ))}
 

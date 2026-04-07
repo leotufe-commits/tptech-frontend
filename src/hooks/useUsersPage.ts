@@ -231,7 +231,7 @@ export function useUsersPage() {
   const [q, setQ] = useState("");
 
   const [page, setPage] = useState(1);
-  const [limit] = useState(30);
+  const [limit, setLimit] = useState(25);
   const [total, setTotal] = useState(0);
   const totalPages = useMemo(() => Math.max(1, Math.ceil(total / limit)), [total, limit]);
 
@@ -344,6 +344,8 @@ export function useUsersPage() {
 
   const [fStreet, setFStreet] = useState("");
   const [fNumber, setFNumber] = useState("");
+  const [fFloor, setFFloor] = useState("");
+  const [fApartment, setFApartment] = useState("");
   const [fCity, setFCity] = useState("");
   const [fProvince, setFProvince] = useState("");
   const [fPostalCode, setFPostalCode] = useState("");
@@ -473,6 +475,8 @@ export function useUsersPage() {
       fDocNumber: String(fDocNumber ?? ""),
       fStreet: String(fStreet ?? ""),
       fNumber: String(fNumber ?? ""),
+      fFloor: String(fFloor ?? ""),
+      fApartment: String(fApartment ?? ""),
       fCity: String(fCity ?? ""),
       fProvince: String(fProvince ?? ""),
       fPostalCode: String(fPostalCode ?? ""),
@@ -569,7 +573,7 @@ export function useUsersPage() {
     if (!canView) return;
     void load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [canView, q, page]);
+  }, [canView, q, page, limit]);
 
   async function ensureRolesLoaded() {
     if (roles.length > 0) return;
@@ -640,6 +644,8 @@ export function useUsersPage() {
 
     setFStreet("");
     setFNumber("");
+    setFFloor("");
+    setFApartment("");
     setFCity("");
     setFProvince("");
     setFPostalCode("");
@@ -711,6 +717,8 @@ export function useUsersPage() {
 
     setFStreet((d as any).street ?? "");
     setFNumber((d as any).number ?? "");
+    setFFloor((d as any).floor ?? "");
+    setFApartment((d as any).apartment ?? "");
     setFCity((d as any).city ?? "");
     setFProvince((d as any).province ?? "");
     setFPostalCode((d as any).postalCode ?? "");
@@ -1290,6 +1298,8 @@ export function useUsersPage() {
             documentNumber: fDocNumber,
             street: fStreet,
             number: fNumber,
+            floor: fFloor,
+            apartment: fApartment,
             city: fCity,
             province: fProvince,
             postalCode: fPostalCode,
@@ -1368,6 +1378,8 @@ export function useUsersPage() {
         documentNumber: fDocNumber,
         street: fStreet,
         number: fNumber,
+        floor: fFloor,
+        apartment: fApartment,
         city: fCity,
         province: fProvince,
         postalCode: fPostalCode,
@@ -1729,6 +1741,9 @@ export function useUsersPage() {
     totalLabel,
     page,
     setPage,
+    limit,
+    setLimit,
+    total,
     totalPages,
     qUI,
     setQUI,
@@ -1793,6 +1808,10 @@ export function useUsersPage() {
     setFStreet,
     fNumber,
     setFNumber,
+    fFloor,
+    setFFloor,
+    fApartment,
+    setFApartment,
     fCity,
     setFCity,
     fProvince,

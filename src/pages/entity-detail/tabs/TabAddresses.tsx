@@ -315,7 +315,7 @@ export function TabAddresses({
 
       {/* Empty state */}
       {effectiveData.length === 0 && (
-        <div className="flex flex-col items-center gap-1.5 py-5 text-center">
+        <div className="flex flex-col items-center gap-1.5 py-2 text-center">
           <MapPin size={18} className="text-border" />
           <span className="text-xs text-muted">No hay direcciones registradas.</span>
         </div>
@@ -393,6 +393,7 @@ export function TabAddresses({
                 onChange={(v) => set("attn", v)}
                 disabled={busySave}
                 placeholder="Nombre del destinatario"
+                data-tp-autofocus="1"
               />
             </TPField>
             <TPField label="Tipo">
@@ -446,7 +447,7 @@ export function TabAddresses({
                 allowCreate
                 onRefresh={() => void cityCat.refresh()}
                 onCreate={async (label) => { await cityCat.createItem(label); set("city", label); }}
-                mode="edit"
+                mode={modalMode}
               />
             </TPField>
             <TPField label="Provincia / Estado">
@@ -461,7 +462,7 @@ export function TabAddresses({
                 allowCreate
                 onRefresh={() => void provinceCat.refresh()}
                 onCreate={async (label) => { await provinceCat.createItem(label); set("province", label); }}
-                mode="edit"
+                mode={modalMode}
               />
             </TPField>
             <TPField label="País">
@@ -476,7 +477,7 @@ export function TabAddresses({
                 allowCreate
                 onRefresh={() => void countryCat.refresh()}
                 onCreate={async (label) => { await countryCat.createItem(label); set("country", label); }}
-                mode="edit"
+                mode={modalMode}
               />
             </TPField>
           </div>

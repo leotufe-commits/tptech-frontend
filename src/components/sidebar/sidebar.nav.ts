@@ -7,7 +7,6 @@ import {
   ShoppingBag,
   Landmark,
   Settings,
-  BarChart2,
 } from "lucide-react";
 
 // ✅ IMPORT SIN EXTENSIÓN (correcto para Vite + TS)
@@ -35,6 +34,7 @@ export const SIDEBAR_NAV: NavItem[] = [
       { label: "Artículos", to: "/articulos/articulos" },
       { label: "Artículos compuestos", to: "/articulos/compuestos" },
       { label: "Grupos de artículos", to: "/articulos/grupos" },
+      { label: "Simulador de precios", to: "/herramientas/simulador-precios" },
     ],
   },
 
@@ -69,7 +69,8 @@ export const SIDEBAR_NAV: NavItem[] = [
     label: "Compras",
     icon: ShoppingBag,
     children: [
-      { label: "Proveedores", to: "/compras/proveedores" },
+      { label: "Proveedores", to: "/configuracion-sistema/proveedores" },
+      { label: "Compras", to: "/compras/proveedores" },
       { label: "Orden de Compra", to: "/compras/ordenes-compra" },
       { label: "Factura de Proveedor", to: "/compras/facturas-proveedor" },
       { label: "Recepción de Compras", to: "/compras/recepciones" },
@@ -82,14 +83,6 @@ export const SIDEBAR_NAV: NavItem[] = [
   { kind: "divider" },
 
   { kind: "link", label: "Finanzas", to: "/finanzas", icon: Landmark },
-  {
-    kind: "group",
-    label: "Reportes",
-    icon: BarChart2,
-    children: [
-      { label: "Rentabilidad", to: "/reportes/rentabilidad" },
-    ],
-  },
   { kind: "link", label: "Configuración", to: "/configuracion-sistema", icon: Settings },
 ];
 

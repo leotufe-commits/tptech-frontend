@@ -38,6 +38,7 @@ const CURR_COLUMNS: CurrColDef[] = [
 ];
 
 const LS_KEY_CURR = "tptech_col_currencies";
+const LS_KEY_CURR_ORDER = "tptech_col_order_currencies";
 
 
 export default function CurrenciesPanel({
@@ -80,7 +81,28 @@ export default function CurrenciesPanel({
     return Object.fromEntries(CURR_COLUMNS.map((c) => [c.key, c.visible]));
   });
 
-  const visibleCurrCols = CURR_COLUMNS.filter((c) => colVis[c.key] !== false);
+  const [colOrder, setColOrder] = useState<string[]>(() => {
+    try {
+      const saved = localStorage.getItem(LS_KEY_CURR_ORDER);
+      if (saved) return JSON.parse(saved);
+    } catch {}
+    return CURR_COLUMNS.map((c) => c.key);
+  });
+
+  function handleOrderChange(nextOrder: string[]) {
+    setColOrder(nextOrder);
+    try { localStorage.setItem(LS_KEY_CURR_ORDER, JSON.stringify(nextOrder)); } catch {}
+  }
+
+  const orderedCols = useMemo(() => {
+    if (!colOrder.length) return CURR_COLUMNS;
+    const map = new Map(CURR_COLUMNS.map((c) => [c.key, c]));
+    const ordered = colOrder.map((k) => map.get(k)).filter(Boolean) as CurrColDef[];
+    const missing = CURR_COLUMNS.filter((c) => !colOrder.includes(c.key));
+    return [...ordered, ...missing];
+  }, [colOrder]);
+
+  const visibleCurrCols = orderedCols.filter((c) => colVis[c.key] !== false);
   const currColSpan = visibleCurrCols.length;
 
   function toggleCol(key: string, visible: boolean) {
@@ -268,6 +290,8 @@ export default function CurrenciesPanel({
             columns={CURR_COLUMNS.map((c) => ({ key: c.key, label: c.label, canHide: c.canHide }))}
             visibility={colVis}
             onChange={toggleCol}
+            order={colOrder}
+            onOrderChange={handleOrderChange}
           />
           <div className="relative flex-1">
             <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted" />

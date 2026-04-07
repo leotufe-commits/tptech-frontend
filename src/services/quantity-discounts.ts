@@ -8,30 +8,39 @@ export type QuantityDiscountTier = {
   value:  string;
 };
 
+export type QuantityDiscountEvaluationMode = "LINE" | "CATEGORY_TOTAL" | "BRAND_TOTAL" | "GROUP_TOTAL";
+
 export type QuantityDiscountRow = {
-  id:         string;
-  articleId:  string | null;
-  variantId:  string | null;
-  categoryId: string | null;
-  brand:      string | null;
-  isActive:   boolean;
-  sortOrder:  number;
-  deletedAt:  string | null;
-  createdAt:  string;
+  id:             string;
+  articleId:      string | null;
+  variantId:      string | null;
+  categoryId:     string | null;
+  brand:          string | null;
+  groupId:        string | null;
+  isActive:       boolean;
+  isStackable:    boolean;
+  evaluationMode: QuantityDiscountEvaluationMode;
+  sortOrder:      number;
+  deletedAt:      string | null;
+  createdAt:      string;
   article:  { id: string; code: string; name: string } | null;
   variant:  { id: string; code: string; name: string } | null;
   category: { id: string; name: string } | null;
+  group:    { id: string; name: string } | null;
   tiers:    QuantityDiscountTier[];
 };
 
 export type QuantityDiscountPayload = {
-  articleId?:  string | null;
-  variantId?:  string | null;
-  categoryId?: string | null;
-  brand?:      string | null;
-  isActive?:   boolean;
-  sortOrder?:  number;
-  tiers:       { minQty: number; type: PromotionType; value: number }[];
+  articleId?:      string | null;
+  variantId?:      string | null;
+  categoryId?:     string | null;
+  brand?:          string | null;
+  groupId?:        string | null;
+  isActive?:       boolean;
+  isStackable?:    boolean;
+  evaluationMode?: QuantityDiscountEvaluationMode;
+  sortOrder?:      number;
+  tiers:           { minQty: number; type: PromotionType; value: number }[];
 };
 
 export type QuantityDiscountListResult = {

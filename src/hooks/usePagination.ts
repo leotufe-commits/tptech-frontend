@@ -11,6 +11,11 @@ export type PaginationConfig = {
   defaultPageSize?: number;
   /** Opciones disponibles en el selector. Default: [10, 25, 50, 100]. */
   pageSizeOptions?: readonly number[];
+  /**
+   * Clave de localStorage para persistir el pageSize elegido por el usuario.
+   * Ej: "tptech:pageSize:promotions". Si se omite, no se persiste.
+   */
+  storageKey?: string;
   // ── Modo controlado (server-side) ────────────────────────────────────────
   /** Página actual (1-indexed). Activar modo controlado al pasarla. */
   page?: number;
@@ -45,9 +50,18 @@ export type PaginationState =
 export function usePagination(
   pagination?: boolean | PaginationConfig,
 ): PaginationState {
+  // Extraer storageKey antes de los hooks (siempre constante durante el ciclo de vida).
+  const storageKey = (pagination && pagination !== true)
+    ? (pagination as PaginationConfig).storageKey
+    : undefined;
+
   // useState siempre se llama — la lógica condicional va después.
   const [localPage, setLocalPageRaw] = useState(1);
   const [localPageSize, setLocalPageSizeRaw] = useState(() => {
+    if (storageKey) {
+      const saved = parseInt(localStorage.getItem(storageKey) ?? "", 10);
+      if (!isNaN(saved) && saved > 0) return saved;
+    }
     if (!pagination || pagination === true) return 25;
     return (pagination as PaginationConfig).defaultPageSize ?? 25;
   });
@@ -57,7 +71,10 @@ export function usePagination(
   const setLocalPageSize = useCallback((s: number) => {
     setLocalPageSizeRaw(s);
     setLocalPageRaw(1);
-  }, []);
+    if (storageKey) {
+      try { localStorage.setItem(storageKey, String(s)); } catch {}
+    }
+  }, [storageKey]);
 
   // ── Paginación deshabilitada ──────────────────────────────────────────────
   if (!pagination) return { enabled: false };

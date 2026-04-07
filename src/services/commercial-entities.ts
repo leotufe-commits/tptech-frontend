@@ -118,12 +118,79 @@ export type EntityRow = {
   commercialRuleType: CommercialRuleType | null;
   commercialValueType: CommercialValueType | null;
   commercialValue: string | null;
+  taxExempt: boolean;
+  taxApplyOnOverride: string | null;
   isActive: boolean;
   sourceType: EntitySourceType;
   mergedIntoEntityId: string | null;
   hasRelations: boolean;
   createdAt: string;
   updatedAt: string;
+};
+
+// Balance types
+export type AggregatedBalanceUnified = {
+  mode: "UNIFIED";
+  amount: number;
+  currency: string;
+};
+export type AggregatedBalanceBreakdown = {
+  mode: "BREAKDOWN";
+  metals: { metalId: string; gramsPure: number }[];
+  /** Saldo de hechura agrupado por moneda. Positivo = deuda, negativo = saldo a favor. */
+  hechura: { byCurrency: Record<string, number> };
+};
+export type AggregatedBalance = AggregatedBalanceUnified | AggregatedBalanceBreakdown;
+
+export type StatementBalance = {
+  metal: Record<string, number>;
+  hechura: Record<string, number>;
+};
+
+export type StatementMovement = {
+  id: string;
+  date: string;
+  entryType: string;
+  typeLabel: string;
+  reference: string;
+  description: string;
+  isVoided: boolean;
+  metalDelta: Record<string, number>;
+  hechuraDelta: Record<string, number>;
+  runningMetal: Record<string, number>;
+  runningHechura: Record<string, number>;
+};
+
+export type AccountStatement = {
+  entity: {
+    id: string;
+    displayName: string;
+    code: string;
+    documentNumber: string;
+    email: string;
+    balanceType: string;
+  };
+  period: {
+    from: string | null;
+    to: string | null;
+    generatedAt: string;
+  };
+  openingBalance: StatementBalance;
+  movements: StatementMovement[];
+  closingBalance: StatementBalance;
+};
+
+export type BalanceEntryRow = {
+  id: string;
+  role: string;
+  entryType: string;
+  amount: string;
+  currency: string;
+  documentRef: string;
+  notes: string;
+  createdAt: string;
+  voidedAt: string | null;
+  breakdownSnapshot: unknown;
 };
 
 // Detail — full entity with all relations
@@ -137,6 +204,8 @@ export type EntityDetail = EntityRow & {
   commercialRules: EntityCommercialRule[];
   taxOverrides: EntityTaxOverride[];
   attachments: EntityAttachment[];
+  balance: AggregatedBalance | null;
+  balanceEntries: BalanceEntryRow[];
 };
 
 // List response (paginated)
@@ -225,6 +294,8 @@ export type EntityPayload = {
   paymentTerm?: string;
   creditLimitClient?: string | null;
   creditLimitSupplier?: string | null;
+  taxExempt?: boolean;
+  taxApplyOnOverride?: string | null;
   notes?: string;
 };
 
@@ -373,6 +444,22 @@ export const commercialEntitiesApi = {
     remove: (entityId: string, overrideId: string) =>
       apiFetch<{ id: string }>(`/commercial-entities/${entityId}/tax-overrides/${overrideId}`, { method: "DELETE", on401: "throw" }),
   },
+
+  // Account Statement
+  getAccountStatement: (entityId: string, params: { from?: string; to?: string }) => {
+    const qs = new URLSearchParams();
+    if (params.from) qs.set("from", params.from);
+    if (params.to) qs.set("to", params.to);
+    const query = qs.toString() ? `?${qs.toString()}` : "";
+    return apiFetch<AccountStatement>(`/commercial-entities/${entityId}/account-statement${query}`, { method: "GET", on401: "throw" });
+  },
+
+  emailStatement: (entityId: string, body: { recipientEmail: string; from?: string; to?: string }) =>
+    apiFetch(`/commercial-entities/${entityId}/account-statement/email`, {
+      method: "POST",
+      body: JSON.stringify(body),
+      on401: "throw",
+    }),
 };
 
 // ---------------------------------------------------------------------------

@@ -1,9 +1,8 @@
 // src/components/valuation/modals/MetalsAndVariantsPanel.tsx
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
 import {
-  ArrowDown,
-  ArrowUp,
   ChevronRight,
+  GripVertical,
   Loader2,
   Plus,
   X,
@@ -77,57 +76,14 @@ const REF_COLUMNS: ColDef<RefSortKey>[] = [
 ];
 
 const VAR_COL_LS_KEY = "tptech_col_variants";
+const VAR_COL_ORDER_LS_KEY = "tptech_col_order_variants";
 
-function IconBtn({
-  title,
-  onClick,
-  disabled,
-  children,
-}: {
-  title: string;
-  onClick: (e: React.MouseEvent) => void;
-  disabled?: boolean;
-  children: React.ReactNode;
-}) {
-  return (
-    <TPButton
-      variant="secondary"
-      onClick={onClick}
-      disabled={disabled}
-      title={title}
-      className="h-9 w-9 !p-0 grid place-items-center"
-    >
-      {children}
-    </TPButton>
-  );
-}
-export default function MetalsAndVariantsPanel({
-  loading,
-  saving,
-  metals,
 
-  baseCurrencySymbol,
+export type MetalsAndVariantsPanelHandle = {
+  selectMetal: (id: string) => void;
+};
 
-  getVariants,
-  createVariant: _createVariant, // compat (no se usa acá)
-  toggleVariantActive,
-  setFavoriteVariant,
-
-  onOpenMetalCreate,
-  onOpenVariantCreate,
-  onSelectedMetalChange,
-
-  onOpenMetalEdit,
-  onToggleMetal,
-  onDeleteMetal,
-
-  onMoveMetal,
-  getMetalRefHistory,
-
-  onDeleteVariant,
-  onOpenVariantView,
-  onOpenVariantEdit,
-}: {
+type MetalsAndVariantsPanelProps = {
   loading: boolean;
   saving: boolean;
   metals: MetalRow[];
@@ -185,12 +141,36 @@ export default function MetalsAndVariantsPanel({
 
   onOpenVariantView?: (variant: VariantRow) => void;
   onOpenVariantEdit?: (variant: VariantRow) => void;
-}) {
+};
+
+const MetalsAndVariantsPanel = forwardRef(function MetalsAndVariantsPanel({
+  loading,
+  saving,
+  metals,
+  baseCurrencySymbol,
+  getVariants,
+  createVariant: _createVariant,
+  toggleVariantActive,
+  setFavoriteVariant,
+  onOpenMetalCreate,
+  onOpenVariantCreate,
+  onSelectedMetalChange,
+  onOpenMetalEdit,
+  onToggleMetal,
+  onDeleteMetal,
+  onMoveMetal,
+  getMetalRefHistory,
+  onDeleteVariant,
+  onOpenVariantView,
+  onOpenVariantEdit,
+}: MetalsAndVariantsPanelProps, ref: React.ForwardedRef<MetalsAndVariantsPanelHandle>) {
   /* =========================
      UI state
   ========================= */
   const [qMetal, setQMetal] = useState("");
   const [selectedMetalId, setSelectedMetalId] = useState("");
+  const [metalDragIdx, setMetalDragIdx] = useState<number | null>(null);
+  const [metalOverIdx, setMetalOverIdx] = useState<number | null>(null);
 
   const [variantsLoading, setVariantsLoading] = useState(false);
   const [variants, setVariants] = useState<VariantRow[]>([]);
@@ -216,7 +196,29 @@ export default function MetalsAndVariantsPanel({
       return next;
     });
   }
-  const visibleVarCols = VAR_COLUMNS.filter((c) => varColVis[c.key] !== false);
+
+  const [varColOrder, setVarColOrder] = useState<string[]>(() => {
+    try {
+      const saved = localStorage.getItem(VAR_COL_ORDER_LS_KEY);
+      if (saved) return JSON.parse(saved);
+    } catch {}
+    return VAR_COLUMNS.map((c) => c.key);
+  });
+
+  function handleVarOrderChange(nextOrder: string[]) {
+    setVarColOrder(nextOrder);
+    try { localStorage.setItem(VAR_COL_ORDER_LS_KEY, JSON.stringify(nextOrder)); } catch {}
+  }
+
+  const orderedVarCols = useMemo(() => {
+    if (!varColOrder.length) return VAR_COLUMNS;
+    const map = new Map(VAR_COLUMNS.map((c) => [c.key, c]));
+    const ordered = varColOrder.map((k) => map.get(k)).filter(Boolean) as ColDef<VarSortKey>[];
+    const missing = VAR_COLUMNS.filter((c) => !varColOrder.includes(c.key));
+    return [...ordered, ...missing];
+  }, [varColOrder]);
+
+  const visibleVarCols = orderedVarCols.filter((c) => varColVis[c.key] !== false);
   const varColSpan = visibleVarCols.length;
   const visibleRefCols = REF_COLUMNS.filter((c) => c.visible);
 
@@ -246,6 +248,11 @@ export default function MetalsAndVariantsPanel({
     setSelectedMetalId(String((metals[0] as any).id));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [metals.length]);
+
+  // exposé imperativo para que el padre pueda seleccionar un metal sin binding reactivo
+  useImperativeHandle(ref, () => ({
+    selectMetal: (id: string) => setSelectedMetalId(id),
+  }));
 
   // notify parent selection
   useEffect(() => {
@@ -433,16 +440,16 @@ export default function MetalsAndVariantsPanel({
 
   const baseSym = String(baseCurrencySymbol || "").trim();
 
-  const ref = toNum((selectedMetal as any)?.referenceValue, NaN);
+  const metalRef = toNum((selectedMetal as any)?.referenceValue, NaN);
 
   function suggestedOf(v: any) {
     const s = toNum((v as any)?.suggestedPrice, NaN);
     if (Number.isFinite(s)) return s;
 
     const p = toNum((v as any)?.purity, NaN);
-    if (!Number.isFinite(ref) || !Number.isFinite(p)) return NaN;
+    if (!Number.isFinite(metalRef) || !Number.isFinite(p)) return NaN;
     if (p <= 0 || p > 1) return NaN;
-    return ref * p;
+    return metalRef * p;
   }
 
   function finalSellOf(v: any) {
@@ -501,28 +508,16 @@ export default function MetalsAndVariantsPanel({
     return r;
   }
 
-  async function onToggleMetalClick(e: React.MouseEvent, m: MetalRow) {
-    e.stopPropagation();
-    if (!onToggleMetal) return;
-    const next = !(m as any).isActive;
-    await onToggleMetal((m as any).id, next);
-  }
 
-  function onEditMetalClick(e: React.MouseEvent, m: MetalRow) {
-    e.stopPropagation();
-    onOpenMetalEdit?.(m);
-  }
-
-  async function onDeleteMetalClick(e: React.MouseEvent, m: MetalRow) {
-    e.stopPropagation();
-    if (!onDeleteMetal) return;
-    await onDeleteMetal(m);
-  }
-
-  async function onMoveMetalClick(e: React.MouseEvent, m: MetalRow, dir: "UP" | "DOWN") {
-    e.stopPropagation();
-    if (!onMoveMetal) return;
-    await onMoveMetal((m as any).id, dir);
+  async function onMetalDrop(fromIdx: number, toIdx: number) {
+    if (!onMoveMetal || fromIdx === toIdx) return;
+    const m = metalsFiltered[fromIdx] as any;
+    const steps = Math.abs(toIdx - fromIdx);
+    const dir = toIdx < fromIdx ? "UP" : "DOWN";
+    for (let i = 0; i < steps; i++) {
+      const r = await onMoveMetal(m.id, dir);
+      if (!r.ok) break;
+    }
   }
 
   function symbolText(m: any) {
@@ -765,26 +760,38 @@ export default function MetalsAndVariantsPanel({
                   const refv = m.referenceValue;
                   const refText = refv != null && Number.isFinite(Number(refv)) ? fmtMoneySmart(baseSym, refv) : "—";
 
-                  const canUp = idx > 0;
-                  const canDown = idx < metalsFiltered.length - 1;
-
                   const vCount = typeof variantsCountByMetal[m.id] === "number" ? variantsCountByMetal[m.id] : null;
                   const hasNoVariants = vCount === 0;
+                  const isDraggingThis = metalDragIdx === idx;
+                  const isOverThis = metalOverIdx === idx && metalDragIdx !== null && metalDragIdx !== idx;
 
                   return (
                     <div
                       key={m.id}
-                      role="button"
-                      tabIndex={0}
+                      draggable={!!onMoveMetal && !saving}
+                      onDragStart={(e) => { e.stopPropagation(); setMetalDragIdx(idx); }}
+                      onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); setMetalOverIdx(idx); }}
+                      onDragEnd={() => {
+                        if (metalDragIdx !== null && metalOverIdx !== null && metalDragIdx !== metalOverIdx) {
+                          void onMetalDrop(metalDragIdx, metalOverIdx);
+                        }
+                        setMetalDragIdx(null);
+                        setMetalOverIdx(null);
+                      }}
+                      onDragLeave={() => setMetalOverIdx(null)}
                       onClick={() => setSelectedMetalId(m.id)}
                       onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") setSelectedMetalId(m.id); }}
+                      role="button"
+                      tabIndex={0}
                       className={cn(
-                        "w-full rounded-2xl border p-3 text-left transition relative overflow-hidden cursor-pointer",
+                        "w-full rounded-2xl border p-3 text-left transition relative cursor-pointer",
                         "focus-visible:outline-none",
                         active
                           ? "border-primary/50 bg-surface2"
                           : "border-border bg-card hover:bg-surface2",
-                        !isActive && "opacity-60"
+                        !isActive && "opacity-60",
+                        isDraggingThis && "opacity-40 scale-[0.98]",
+                        isOverThis && "border-primary ring-1 ring-primary/30"
                       )}
                       aria-current={active ? "page" : undefined}
                     >
@@ -793,7 +800,16 @@ export default function MetalsAndVariantsPanel({
                         <TPStatusPill active={isActive} />
                       </div>
 
-                      <div className="flex items-start gap-3 min-w-0 pr-14">
+                      <div className="flex items-start gap-2 min-w-0 pr-14">
+                        {onMoveMetal && (
+                          <div
+                            className="shrink-0 mt-1 cursor-grab active:cursor-grabbing text-muted/40 hover:text-muted"
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            <GripVertical size={14} />
+                          </div>
+                        )}
+
                         <div
                           className={cn(
                             "grid h-10 w-10 place-items-center rounded-xl border bg-bg font-bold shrink-0",
@@ -820,29 +836,17 @@ export default function MetalsAndVariantsPanel({
                         </div>
                       </div>
 
-                      <div className="mt-3 -mx-1 px-1 max-w-full overflow-x-auto" style={{ WebkitOverflowScrolling: "touch" as any }}>
-                        <div className="min-w-max flex items-center justify-between gap-2">
-                          <div className="flex items-center gap-2">
-                            <IconBtn title="Subir" onClick={(e) => onMoveMetalClick(e, m, "UP")} disabled={saving || !onMoveMetal || !canUp}>
-                              <ArrowUp className="h-4 w-4" />
-                            </IconBtn>
+                      <div className="mt-3 -mx-1 px-1 max-w-full overflow-x-auto overflow-y-visible py-1" style={{ WebkitOverflowScrolling: "touch" as any }}>
+                        <div className="min-w-max flex items-center justify-end gap-2">
+                          <TPRowActions
+                            onView={() => void openRefHistory(null, m)}
+                            onEdit={() => onOpenMetalEdit?.(m)}
+                            onToggle={() => { if (onToggleMetal) void onToggleMetal((m as any).id, !isActive); }}
+                            isActive={isActive}
+                            onDelete={onDeleteMetal ? () => void onDeleteMetal!(m) : undefined}
+                          />
 
-                            <IconBtn title="Bajar" onClick={(e) => onMoveMetalClick(e, m, "DOWN")} disabled={saving || !onMoveMetal || !canDown}>
-                              <ArrowDown className="h-4 w-4" />
-                            </IconBtn>
-                          </div>
-
-                          <div className="flex items-center justify-end gap-2">
-                              <TPRowActions
-                              onView={() => void openRefHistory(null, m)}
-                              onEdit={() => onOpenMetalEdit?.(m)}
-                              onToggle={() => { if (onToggleMetal) void onToggleMetal((m as any).id, !isActive); }}
-                              isActive={isActive}
-                              onDelete={onDeleteMetal ? () => void onDeleteMetal!(m) : undefined}
-                            />
-
-                            <ChevronRight size={18} className={cn(active ? "text-text" : "text-muted")} />
-                          </div>
+                          <ChevronRight size={18} className={cn(active ? "text-text" : "text-muted")} />
                         </div>
                       </div>
                     </div>
@@ -867,6 +871,8 @@ export default function MetalsAndVariantsPanel({
                   columns={VAR_COLUMNS.map((c) => ({ key: c.key, label: c.label, canHide: c.canHide }))}
                   visibility={varColVis}
                   onChange={toggleVarCol}
+                  order={varColOrder}
+                  onOrderChange={handleVarOrderChange}
                 />
                 <div className="flex-1 min-w-0">
                   <TPSearchInput
@@ -950,60 +956,71 @@ export default function MetalsAndVariantsPanel({
 
                             return (
                               <TPTr key={v.id} className={!isActive ? "opacity-60" : undefined} onClick={onOpenVariantView ? () => onOpenVariantView(v) : undefined}>
-                                <TPTd label="Variante" className="text-left">
-                                  <div className="font-semibold text-text">{v.name}</div>
-                                  <div className="text-xs text-muted">SKU: {v.sku}</div>
-                                  {Number.isFinite(sf) && Math.abs(sf - 1) > 0.000001 && (
-                                    <div className="mt-1 text-xs text-muted">
-                                      Factor:{" "}
-                                      <span className="tabular-nums text-text">{fmtNumber2(sf)}</span>
-                                    </div>
-                                  )}
-                                </TPTd>
-
-                                {varColVis["purity"] !== false && (
-                                  <TPTd label="Pureza / Ley" className="text-right tabular-nums">
-                                    <div className="text-text">{fmtPurity3(v.purity)}</div>
-                                    <div className="text-xs text-muted">{leyTxt === "—" ? "—" : `${leyTxt}/1000`}</div>
-                                  </TPTd>
-                                )}
-
-                                {varColVis["values"] !== false && (
-                                  <TPTd label="Valores" className="text-left">
-                                    {showTwoValues ? (
-                                      <>
-                                        <div className="text-sm font-semibold text-text tabular-nums">{fmtMoneySmart(baseSym, sell)}</div>
-                                        <div className="text-xs text-muted tabular-nums line-through">{fmtMoneySmart(baseSym, sug)}</div>
-                                      </>
-                                    ) : (
-                                      <div className="text-sm text-text tabular-nums">
-                                        {Number.isFinite(sell) ? fmtMoneySmart(baseSym, sell) : fmtMoneySmart(baseSym, sug)}
-                                      </div>
-                                    )}
-                                  </TPTd>
-                                )}
-
-                                {varColVis["status"] !== false && (
-                                  <TPTd label="Estado" className="text-left">
-                                    <TPStatusPill active={isActive} activeLabel="Activa" inactiveLabel="Inactiva" />
-                                  </TPTd>
-                                )}
-
-                                <TPTd label="Acciones" className="text-right">
-                                  {/* eslint-disable-next-line jsx-a11y/click-events-have-key-events */}
-                                  <div onClick={(e) => e.stopPropagation()}>
-                                    <TPRowActions
-                                      onFavorite={() => void onFavorite(v)}
-                                      isFavorite={isFav}
-                                      busyFavorite={lockActions}
-                                      onView={onOpenVariantView ? () => onOpenVariantView(v) : undefined}
-                                      onEdit={onOpenVariantEdit ? () => onOpenVariantEdit(v) : undefined}
-                                      onToggle={() => void onToggleVariant(v as any)}
-                                      isActive={isActive}
-                                      onDelete={onDeleteVariant ? () => void onAskDeleteVariant(v as any) : undefined}
-                                    />
-                                  </div>
-                                </TPTd>
+                                {visibleVarCols.map((col) => {
+                                  switch (col.key) {
+                                    case "name":
+                                      return (
+                                        <TPTd key="name" label="Variante" className="text-left">
+                                          <div className="font-semibold text-text">{v.name}</div>
+                                          <div className="text-xs text-muted">SKU: {v.sku}</div>
+                                          {Number.isFinite(sf) && Math.abs(sf - 1) > 0.000001 && (
+                                            <div className="mt-1 text-xs text-muted">
+                                              Factor:{" "}
+                                              <span className="tabular-nums text-text">{fmtNumber2(sf)}</span>
+                                            </div>
+                                          )}
+                                        </TPTd>
+                                      );
+                                    case "purity":
+                                      return (
+                                        <TPTd key="purity" label="Pureza / Ley" className="text-right tabular-nums">
+                                          <div className="text-text">{fmtPurity3(v.purity)}</div>
+                                          <div className="text-xs text-muted">{leyTxt === "—" ? "—" : `${leyTxt}/1000`}</div>
+                                        </TPTd>
+                                      );
+                                    case "values":
+                                      return (
+                                        <TPTd key="values" label="Valores" className="text-left">
+                                          {showTwoValues ? (
+                                            <>
+                                              <div className="text-sm font-semibold text-text tabular-nums">{fmtMoneySmart(baseSym, sell)}</div>
+                                              <div className="text-xs text-muted tabular-nums line-through">{fmtMoneySmart(baseSym, sug)}</div>
+                                            </>
+                                          ) : (
+                                            <div className="text-sm text-text tabular-nums">
+                                              {Number.isFinite(sell) ? fmtMoneySmart(baseSym, sell) : fmtMoneySmart(baseSym, sug)}
+                                            </div>
+                                          )}
+                                        </TPTd>
+                                      );
+                                    case "status":
+                                      return (
+                                        <TPTd key="status" label="Estado" className="text-left">
+                                          <TPStatusPill active={isActive} activeLabel="Activa" inactiveLabel="Inactiva" />
+                                        </TPTd>
+                                      );
+                                    case "actions":
+                                      return (
+                                        <TPTd key="actions" label="Acciones" className="text-right">
+                                          {/* eslint-disable-next-line jsx-a11y/click-events-have-key-events */}
+                                          <div onClick={(e) => e.stopPropagation()}>
+                                            <TPRowActions
+                                              onFavorite={() => void onFavorite(v)}
+                                              isFavorite={isFav}
+                                              busyFavorite={lockActions}
+                                              onView={onOpenVariantView ? () => onOpenVariantView(v) : undefined}
+                                              onEdit={onOpenVariantEdit ? () => onOpenVariantEdit(v) : undefined}
+                                              onToggle={() => void onToggleVariant(v as any)}
+                                              isActive={isActive}
+                                              onDelete={onDeleteVariant ? () => void onAskDeleteVariant(v as any) : undefined}
+                                            />
+                                          </div>
+                                        </TPTd>
+                                      );
+                                    default:
+                                      return null;
+                                  }
+                                })}
                               </TPTr>
                             );
                           })
@@ -1199,4 +1216,6 @@ export default function MetalsAndVariantsPanel({
       </ModalShell>
     </section>
   );
-}
+});
+
+export default MetalsAndVariantsPanel;

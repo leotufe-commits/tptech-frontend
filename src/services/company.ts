@@ -1,6 +1,42 @@
 // tptech-frontend/src/services/company.ts
 import { apiFetch } from "../lib/api";
 
+// ---------------------------------------------------------------------------
+// Política de alertas de precio
+// ---------------------------------------------------------------------------
+
+export type PricingPolicyConfig = {
+  pricingLowMarginWarningPercent:  number | null;
+  pricingLowMarginBlockPercent:    number | null;
+  pricingBlockLossSale:            boolean;
+  pricingBlockZeroOrNegativePrice: boolean;
+  pricingBlockPartialData:         boolean;
+};
+
+export async function fetchPricingPolicyConfig(): Promise<PricingPolicyConfig> {
+  const data = await apiFetch<{ jewelry: any }>("/company/me", { method: "GET" });
+  const j = data.jewelry;
+  return {
+    pricingLowMarginWarningPercent:  j.pricingLowMarginWarningPercent  != null ? parseFloat(j.pricingLowMarginWarningPercent)  : null,
+    pricingLowMarginBlockPercent:    j.pricingLowMarginBlockPercent    != null ? parseFloat(j.pricingLowMarginBlockPercent)    : null,
+    pricingBlockLossSale:            j.pricingBlockLossSale            ?? false,
+    pricingBlockZeroOrNegativePrice: j.pricingBlockZeroOrNegativePrice ?? false,
+    pricingBlockPartialData:         j.pricingBlockPartialData         ?? false,
+  };
+}
+
+export async function updatePricingPolicyConfig(patch: Partial<PricingPolicyConfig>): Promise<PricingPolicyConfig> {
+  const data = await apiFetch<{ jewelry: any }>("/company/me", { method: "PATCH", body: patch });
+  const j = data.jewelry;
+  return {
+    pricingLowMarginWarningPercent:  j.pricingLowMarginWarningPercent  != null ? parseFloat(j.pricingLowMarginWarningPercent)  : null,
+    pricingLowMarginBlockPercent:    j.pricingLowMarginBlockPercent    != null ? parseFloat(j.pricingLowMarginBlockPercent)    : null,
+    pricingBlockLossSale:            j.pricingBlockLossSale            ?? false,
+    pricingBlockZeroOrNegativePrice: j.pricingBlockZeroOrNegativePrice ?? false,
+    pricingBlockPartialData:         j.pricingBlockPartialData         ?? false,
+  };
+}
+
 export type CompanySecuritySettings = {
   quickSwitchEnabled: boolean;
   pinLockEnabled: boolean;

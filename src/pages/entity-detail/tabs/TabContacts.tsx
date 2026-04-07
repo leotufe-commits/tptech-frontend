@@ -272,7 +272,7 @@ export function TabContacts({
 
       {/* Empty state */}
       {effectiveData.length === 0 && (
-        <div className="flex flex-col items-center gap-1.5 py-5 text-center">
+        <div className="flex flex-col items-center gap-1.5 py-2 text-center">
           <Users size={18} className="text-border" />
           <span className="text-xs text-muted">No hay contactos registrados.</span>
         </div>
@@ -350,7 +350,7 @@ export function TabContacts({
         <div className="space-y-4 p-1">
           <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
             <TPField label="Nombre">
-              <TPInput value={draft.firstName} onChange={(v) => set("firstName", v)} disabled={busySave} placeholder="Juan" />
+              <TPInput value={draft.firstName} onChange={(v) => set("firstName", v)} disabled={busySave} placeholder="Juan" data-tp-autofocus="1" />
             </TPField>
             <TPField
               label="Apellido"
@@ -381,7 +381,7 @@ export function TabContacts({
                     allowCreate
                     onRefresh={() => void prefixCat.refresh()}
                     onCreate={async (label) => { await prefixCat.createItem(label); set("phonePrefix", label); }}
-                    mode="edit"
+                    mode={modalMode}
                   />
                 </div>
                 <div className="flex-1">

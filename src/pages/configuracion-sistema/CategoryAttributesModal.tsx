@@ -7,7 +7,25 @@ import {
   Tags,
   GitBranch,
   PlusCircle,
+  GripVertical,
 } from "lucide-react";
+
+import {
+  DndContext,
+  closestCenter,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from "@dnd-kit/core";
+import {
+  SortableContext,
+  useSortable,
+  verticalListSortingStrategy,
+  arrayMove,
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
+import { restrictToVerticalAxis, restrictToParentElement } from "@dnd-kit/modifiers";
 
 import { cn } from "../../components/ui/tp";
 import { Modal } from "../../components/ui/Modal";
@@ -41,6 +59,83 @@ function TypePill({ inputType }: { inputType: CategoryAttribute["inputType"] }) 
     >
       {INPUT_TYPE_LABELS[inputType]}
     </span>
+  );
+}
+
+/* =========================================================
+   SortableAttrRow — fila arrastrable (solo atributos directos)
+========================================================= */
+interface SortableAttrRowProps {
+  attr: CategoryAttribute;
+  busyRemoveId: string | null;
+  onRemoveClick: (attr: CategoryAttribute) => void;
+}
+
+function SortableAttrRow({ attr, busyRemoveId, onRemoveClick }: SortableAttrRowProps) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
+    useSortable({ id: attr.id });
+
+  const style: React.CSSProperties = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.45 : 1,
+    position: "relative",
+    zIndex: isDragging ? 50 : undefined,
+  };
+
+  return (
+    <div
+      ref={setNodeRef}
+      style={style}
+      className="flex items-center gap-2 px-3 py-2.5 bg-card"
+    >
+      {/* Handle de drag */}
+      <button
+        type="button"
+        {...attributes}
+        {...listeners}
+        className="cursor-grab active:cursor-grabbing text-muted/40 hover:text-muted shrink-0 touch-none select-none"
+        aria-label="Arrastrar para reordenar"
+        title="Arrastrar para reordenar"
+      >
+        <GripVertical size={14} />
+      </button>
+
+      {/* Datos del atributo */}
+      <div className="flex-1 min-w-0 flex items-center gap-2 flex-wrap">
+        <TypePill inputType={attr.inputType} />
+        <span className="text-sm font-medium text-text truncate">{attr.name}</span>
+        {attr.options && attr.options.length > 0 && (
+          <span className="inline-flex items-center gap-1 rounded-full bg-surface2 px-2 py-0.5 text-xs text-muted">
+            <Tags size={10} />
+            {attr.options.length}
+          </span>
+        )}
+      </div>
+
+      {/* Badge Directo */}
+      <span className="inline-flex items-center shrink-0 rounded-full bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary">
+        Directo
+      </span>
+
+      {/* Botón Quitar */}
+      <TPButton
+        variant="ghost"
+        iconLeft={
+          busyRemoveId === attr.id ? (
+            <Loader2 size={13} className="animate-spin" />
+          ) : (
+            <X size={13} />
+          )
+        }
+        onClick={() => onRemoveClick(attr)}
+        disabled={busyRemoveId === attr.id}
+        className="h-8 px-2.5 text-xs text-muted hover:text-red-400 shrink-0"
+        title="Quitar asignación directa"
+      >
+        Quitar
+      </TPButton>
+    </div>
   );
 }
 
@@ -80,6 +175,12 @@ export function CategoryAttributesModal({
   const [busyAssignId, setBusyAssignId] = useState<string | null>(null); // def.id
   const [busyRemoveId, setBusyRemoveId] = useState<string | null>(null); // attr.id
   const [deleteAttr, setDeleteAttr] = useState<CategoryAttribute | null>(null);
+  const [reordering, setReordering] = useState(false);
+
+  /* --- DnD sensors -------------------------------------- */
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 5 } })
+  );
 
   /* =========================================================
      Carga
@@ -125,6 +226,37 @@ export function CategoryAttributesModal({
   }, [open]);
 
   /* =========================================================
+     Drag & Drop — reordenamiento de atributos directos
+  ========================================================= */
+  async function handleDragEnd(event: DragEndEvent) {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+
+    const oldIndex = ownAttrs.findIndex((a) => a.id === active.id);
+    const newIndex = ownAttrs.findIndex((a) => a.id === over.id);
+    if (oldIndex === -1 || newIndex === -1) return;
+
+    const reordered = arrayMove(ownAttrs, oldIndex, newIndex);
+    // Actualización optimista inmediata
+    setOwnAttrs(reordered);
+
+    setReordering(true);
+    try {
+      await Promise.all(
+        reordered.map((attr, idx) =>
+          categoryAttributesApi.update(attr.id, { sortOrder: (idx + 1) * 10 })
+        )
+      );
+    } catch (e: any) {
+      toast.error(e?.message || "Error al guardar el orden.");
+      // Revertir al orden previo
+      setOwnAttrs(ownAttrs);
+    } finally {
+      setReordering(false);
+    }
+  }
+
+  /* =========================================================
      Computed
   ========================================================= */
   const assignedDefIds = new Set(ownAttrs.map((a) => a.definitionId));
@@ -152,6 +284,9 @@ export function CategoryAttributesModal({
         INPUT_TYPE_LABELS[d.inputType].toLowerCase().includes(availableQ.toLowerCase())
       )
     : available;
+
+  // DnD solo activo cuando no hay búsqueda (no tiene sentido reordenar filtrando)
+  const isDndActive = !assignedQ.trim();
 
   /* =========================================================
      Acciones
@@ -219,68 +354,136 @@ export function CategoryAttributesModal({
           <p className="text-center text-sm text-muted py-4">Sin resultados.</p>
         ) : (
           <div className="rounded-xl border border-border divide-y divide-border overflow-hidden">
-            {filteredAssigned.map((attr) => (
-              <div
-                key={attr.id}
-                className={cn(
-                  "flex items-center gap-2 px-3 py-2.5",
-                  attr.inherited && "opacity-80"
-                )}
-              >
-                {/* Datos del atributo */}
-                <div className="flex-1 min-w-0 flex items-center gap-2 flex-wrap">
-                  <TypePill inputType={attr.inputType} />
-                  <span className="text-sm font-medium text-text truncate">{attr.name}</span>
-                  {attr.options && attr.options.length > 0 && (
-                    <span className="inline-flex items-center gap-1 rounded-full bg-surface2 px-2 py-0.5 text-xs text-muted">
-                      <Tags size={10} />
-                      {attr.options.length}
+            {isDndActive ? (
+              /* ── Modo DnD: directos arrastrables + heredados fijos abajo ── */
+              <>
+                <DndContext
+                  sensors={sensors}
+                  collisionDetection={closestCenter}
+                  onDragEnd={handleDragEnd}
+                  modifiers={[restrictToVerticalAxis, restrictToParentElement]}
+                >
+                  <SortableContext
+                    items={ownAttrs.map((a) => a.id)}
+                    strategy={verticalListSortingStrategy}
+                  >
+                    {ownAttrs.map((attr) => (
+                      <SortableAttrRow
+                        key={attr.id}
+                        attr={attr}
+                        busyRemoveId={busyRemoveId}
+                        onRemoveClick={setDeleteAttr}
+                      />
+                    ))}
+                  </SortableContext>
+                </DndContext>
+
+                {/* Atributos heredados (no arrastrables) */}
+                {inheritedAttrs.map((attr) => (
+                  <div
+                    key={attr.id}
+                    className="flex items-center gap-2 px-3 py-2.5 opacity-80"
+                  >
+                    {/* Espaciador — alinea con el handle de directos */}
+                    <span className="w-[14px] shrink-0" />
+
+                    <div className="flex-1 min-w-0 flex items-center gap-2 flex-wrap">
+                      <TypePill inputType={attr.inputType} />
+                      <span className="text-sm font-medium text-text truncate">{attr.name}</span>
+                      {attr.options && attr.options.length > 0 && (
+                        <span className="inline-flex items-center gap-1 rounded-full bg-surface2 px-2 py-0.5 text-xs text-muted">
+                          <Tags size={10} />
+                          {attr.options.length}
+                        </span>
+                      )}
+                    </div>
+
+                    <span className="inline-flex items-center gap-1 shrink-0 rounded-full bg-surface2 border border-border px-2 py-0.5 text-xs text-muted">
+                      <GitBranch size={10} />
+                      {attr.sourceCategoryName
+                        ? `Heredado de: ${attr.sourceCategoryName}`
+                        : "Heredado"}
+                    </span>
+
+                    <span
+                      className="text-xs text-muted shrink-0 px-2.5"
+                      title="Los atributos heredados se administran desde la categoría padre"
+                    >
+                      —
+                    </span>
+                  </div>
+                ))}
+              </>
+            ) : (
+              /* ── Modo búsqueda: filas planas sin DnD ── */
+              filteredAssigned.map((attr) => (
+                <div
+                  key={attr.id}
+                  className={cn(
+                    "flex items-center gap-2 px-3 py-2.5",
+                    attr.inherited && "opacity-80"
+                  )}
+                >
+                  <div className="flex-1 min-w-0 flex items-center gap-2 flex-wrap">
+                    <TypePill inputType={attr.inputType} />
+                    <span className="text-sm font-medium text-text truncate">{attr.name}</span>
+                    {attr.options && attr.options.length > 0 && (
+                      <span className="inline-flex items-center gap-1 rounded-full bg-surface2 px-2 py-0.5 text-xs text-muted">
+                        <Tags size={10} />
+                        {attr.options.length}
+                      </span>
+                    )}
+                  </div>
+
+                  {attr.inherited ? (
+                    <span className="inline-flex items-center gap-1 shrink-0 rounded-full bg-surface2 border border-border px-2 py-0.5 text-xs text-muted">
+                      <GitBranch size={10} />
+                      {attr.sourceCategoryName
+                        ? `Heredado de: ${attr.sourceCategoryName}`
+                        : "Heredado"}
+                    </span>
+                  ) : (
+                    <span className="inline-flex items-center shrink-0 rounded-full bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary">
+                      Directo
+                    </span>
+                  )}
+
+                  {!attr.inherited ? (
+                    <TPButton
+                      variant="ghost"
+                      iconLeft={
+                        busyRemoveId === attr.id ? (
+                          <Loader2 size={13} className="animate-spin" />
+                        ) : (
+                          <X size={13} />
+                        )
+                      }
+                      onClick={() => setDeleteAttr(attr)}
+                      disabled={busyRemoveId === attr.id}
+                      className="h-8 px-2.5 text-xs text-muted hover:text-red-400 shrink-0"
+                      title="Quitar asignación directa"
+                    >
+                      Quitar
+                    </TPButton>
+                  ) : (
+                    <span
+                      className="text-xs text-muted shrink-0 px-2.5"
+                      title="Los atributos heredados se administran desde la categoría padre"
+                    >
+                      —
                     </span>
                   )}
                 </div>
+              ))
+            )}
+          </div>
+        )}
 
-                {/* Badge de origen */}
-                {attr.inherited ? (
-                  <span className="inline-flex items-center gap-1 shrink-0 rounded-full bg-surface2 border border-border px-2 py-0.5 text-xs text-muted">
-                    <GitBranch size={10} />
-                    {attr.sourceCategoryName
-                      ? `Heredado de: ${attr.sourceCategoryName}`
-                      : "Heredado"}
-                  </span>
-                ) : (
-                  <span className="inline-flex items-center shrink-0 rounded-full bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary">
-                    Directo
-                  </span>
-                )}
-
-                {/* Acción — solo en directos */}
-                {!attr.inherited ? (
-                  <TPButton
-                    variant="ghost"
-                    iconLeft={
-                      busyRemoveId === attr.id ? (
-                        <Loader2 size={13} className="animate-spin" />
-                      ) : (
-                        <X size={13} />
-                      )
-                    }
-                    onClick={() => setDeleteAttr(attr)}
-                    disabled={busyRemoveId === attr.id}
-                    className="h-8 px-2.5 text-xs text-muted hover:text-red-400 shrink-0"
-                    title="Quitar asignación directa"
-                  >
-                    Quitar
-                  </TPButton>
-                ) : (
-                  <span
-                    className="text-xs text-muted shrink-0 px-2.5"
-                    title="Los atributos heredados se administran desde la categoría padre"
-                  >
-                    —
-                  </span>
-                )}
-              </div>
-            ))}
+        {/* Indicador de guardado de orden */}
+        {reordering && (
+          <div className="flex items-center gap-1.5 mt-2 text-xs text-muted">
+            <Loader2 size={12} className="animate-spin" />
+            Guardando orden…
           </div>
         )}
       </TPCard>

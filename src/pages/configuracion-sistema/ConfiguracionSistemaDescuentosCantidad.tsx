@@ -2,8 +2,10 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useConfirmDelete } from "../../hooks/useConfirmDelete";
 import {
+  Eye,
   Layers,
   PackagePlus,
+  Pencil,
   Plus,
   Save,
   SlidersHorizontal,
@@ -15,6 +17,7 @@ import { cn } from "../../components/ui/tp";
 import { TPSectionShell } from "../../components/ui/TPSectionShell";
 import { TPButton } from "../../components/ui/TPButton";
 import { TPField } from "../../components/ui/TPField";
+import { TPCheckbox } from "../../components/ui/TPCheckbox";
 import { Modal } from "../../components/ui/Modal";
 import ConfirmDeleteDialog from "../../components/ui/ConfirmDeleteDialog";
 import { TPTr, TPTd } from "../../components/ui/TPTable";
@@ -32,6 +35,7 @@ import {
   type QuantityDiscountRow,
   type QuantityDiscountTier,
   type QuantityDiscountPayload,
+  type QuantityDiscountEvaluationMode,
 } from "../../services/quantity-discounts";
 import { articlesApi } from "../../services/articles";
 import type { PromotionType } from "../../services/promotions";
@@ -39,11 +43,14 @@ import { PROMOTION_TYPE_LABELS } from "../../services/promotions";
 import type { ArticleRow, ArticleVariant } from "../../services/articles";
 import { categoriesApi } from "../../services/categories";
 import type { CategoryRow } from "../../services/categories";
+import { getCurrencies, type CurrencyRow } from "../../services/valuation";
+import { articleGroupsApi } from "../../services/article-groups";
+import type { ArticleGroupRow } from "../../services/article-groups";
 
 /* =========================================================
    Tipos locales
 ========================================================= */
-type ScopeMode = "all" | "category" | "brand" | "article_variant";
+type ScopeMode = "all" | "category" | "brand" | "article_variant" | "group";
 
 type TierDraft = {
   key:    string;
@@ -55,11 +62,11 @@ type TierDraft = {
 /* =========================================================
    Helpers de visualización
 ========================================================= */
-function tierValueDisplay(t: Pick<QuantityDiscountTier, "type" | "value">): string {
+function tierValueDisplay(t: Pick<QuantityDiscountTier, "type" | "value">, baseSym = "$"): string {
   const v = parseFloat(t.value);
   if (isNaN(v)) return "—";
   if (t.type === "PERCENTAGE") return `${v.toLocaleString("es-AR")}%`;
-  return `$${v.toLocaleString("es-AR", { minimumFractionDigits: 2 })}`;
+  return `${baseSym} ${v.toLocaleString("es-AR", { minimumFractionDigits: 2 })}`;
 }
 
 function qtyDisplay(minQty: string | number): string {
@@ -73,8 +80,19 @@ function rowScopeLabel(row: QuantityDiscountRow): string {
   if (row.article)  return `${row.article.name} (${row.article.code})`;
   if (row.category) return `Categ.: ${row.category.name}`;
   if (row.brand)    return `Marca: ${row.brand}`;
+  if (row.group)    return `Grupo: ${row.group.name}`;
   return "Todos los artículos";
 }
+
+/* =========================================================
+   Modo de evaluación
+========================================================= */
+const EVALUATION_MODE_LABELS: Record<QuantityDiscountEvaluationMode, string> = {
+  LINE:           "Por línea",
+  CATEGORY_TOTAL: "Por suma en categoría",
+  BRAND_TOTAL:    "Por suma en marca",
+  GROUP_TOTAL:    "Por suma en grupo",
+};
 
 /* =========================================================
    Badges
@@ -84,13 +102,13 @@ const TYPE_COLORS: Record<PromotionType, string> = {
   PERCENTAGE: "bg-blue-500/15 text-blue-600 dark:text-blue-400",
 };
 
-function TypeBadge({ type }: { type: PromotionType }) {
+function TypeBadge({ type, baseSym = "$" }: { type: PromotionType; baseSym?: string }) {
   return (
     <span className={cn(
       "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium whitespace-nowrap",
       TYPE_COLORS[type]
     )}>
-      {type === "PERCENTAGE" ? "%" : "$"} {PROMOTION_TYPE_LABELS[type]}
+      {type === "PERCENTAGE" ? "%" : baseSym} {PROMOTION_TYPE_LABELS[type]}
     </span>
   );
 }
@@ -100,13 +118,14 @@ function ScopeBadge({ row }: { row: QuantityDiscountRow }) {
   if (row.article)  return <span className="inline-flex items-center rounded-full bg-sky-500/15 text-sky-600 dark:text-sky-400 px-2 py-0.5 text-[11px] font-medium whitespace-nowrap">Artículo</span>;
   if (row.category) return <span className="inline-flex items-center rounded-full bg-purple-500/15 text-purple-600 dark:text-purple-400 px-2 py-0.5 text-[11px] font-medium whitespace-nowrap">Categoría</span>;
   if (row.brand)    return <span className="inline-flex items-center rounded-full bg-orange-500/15 text-orange-600 dark:text-orange-400 px-2 py-0.5 text-[11px] font-medium whitespace-nowrap">Marca</span>;
+  if (row.group)    return <span className="inline-flex items-center rounded-full bg-indigo-500/15 text-indigo-600 dark:text-indigo-400 px-2 py-0.5 text-[11px] font-medium whitespace-nowrap">Grupo</span>;
   return <span className="inline-flex items-center rounded-full bg-gray-500/10 text-muted px-2 py-0.5 text-[11px] font-medium whitespace-nowrap">Global</span>;
 }
 
 /* =========================================================
    Resumen de tramos (para tabla)
 ========================================================= */
-function TiersSummary({ tiers }: { tiers: QuantityDiscountTier[] }) {
+function TiersSummary({ tiers, baseSym = "$" }: { tiers: QuantityDiscountTier[]; baseSym?: string }) {
   if (!tiers || tiers.length === 0) return <span className="text-xs text-muted italic">Sin tramos</span>;
   const sorted = [...tiers].sort((a, b) => parseFloat(a.minQty) - parseFloat(b.minQty));
   const visible = sorted.slice(0, 2);
@@ -114,7 +133,7 @@ function TiersSummary({ tiers }: { tiers: QuantityDiscountTier[] }) {
     <div className="flex flex-col gap-0.5">
       {visible.map((t) => (
         <span key={t.id} className="text-xs text-text tabular-nums whitespace-nowrap">
-          ≥{qtyDisplay(t.minQty)} → {tierValueDisplay(t)}
+          ≥{qtyDisplay(t.minQty)} → {tierValueDisplay(t, baseSym)}
         </span>
       ))}
       {sorted.length > 2 && (
@@ -164,20 +183,23 @@ type FormErrors = {
 
 function validate(
   scope: ScopeMode,
-  selectedCategoryId: string,
-  selectedBrand: string,
-  selectedArticle: ArticleRow | null,
+  selectedCategoryIds: string[],
+  selectedBrands: string[],
+  selectedArticles: ArticleRow[],
   selectedVariant: ArticleVariant | null,
   tiers: TierDraft[],
+  selectedGroupIds?: string[],
 ): FormErrors {
   const errors: FormErrors = {};
 
-  if (scope === "category" && !selectedCategoryId) {
-    errors.scope = "Seleccioná una categoría.";
-  } else if (scope === "brand" && !selectedBrand) {
-    errors.scope = "Seleccioná una marca.";
-  } else if (scope === "article_variant" && !selectedArticle) {
-    errors.scope = "Seleccioná un artículo.";
+  if (scope === "category" && selectedCategoryIds.length === 0) {
+    errors.scope = "Seleccioná al menos una categoría.";
+  } else if (scope === "brand" && selectedBrands.length === 0) {
+    errors.scope = "Seleccioná al menos una marca.";
+  } else if (scope === "article_variant" && selectedArticles.length === 0) {
+    errors.scope = "Seleccioná al menos un artículo.";
+  } else if (scope === "group" && (!selectedGroupIds || selectedGroupIds.length === 0)) {
+    errors.scope = "Seleccioná al menos un grupo.";
   }
 
   if (tiers.length === 0) {
@@ -248,18 +270,32 @@ export default function ConfiguracionSistemaDescuentosCantidad() {
   const [formErrors, setFormErrors] = useState<FormErrors>({});
 
   /* ---- alcance ---- */
-  const [scopeMode,          setScopeMode]          = useState<ScopeMode>("all");
-  const [selectedCategoryId, setSelectedCategoryId] = useState("");
-  const [selectedBrand,      setSelectedBrand]      = useState("");
-  const [selectedArticle,    setSelectedArticle]    = useState<ArticleRow | null>(null);
-  const [selectedVariant,    setSelectedVariant]    = useState<ArticleVariant | null>(null);
-  const [variants,           setVariants]           = useState<ArticleVariant[]>([]);
-  const [loadingVariants,    setLoadingVariants]    = useState(false);
+  const [scopeMode,           setScopeMode]           = useState<ScopeMode>("all");
+  const [selectedCategoryIds, setSelectedCategoryIds] = useState<string[]>([]);
+  const [selectedBrands,      setSelectedBrands]      = useState<string[]>([]);
+  const [selectedArticles,    setSelectedArticles]    = useState<ArticleRow[]>([]);
+  const [selectedVariant,     setSelectedVariant]     = useState<ArticleVariant | null>(null);
+  const [variants,            setVariants]            = useState<ArticleVariant[]>([]);
+  const [loadingVariants,     setLoadingVariants]     = useState(false);
 
   /* ---- tramos ---- */
   const [tiers, setTiers] = useState<TierDraft[]>([
     { key: "t0", minQty: null, type: "PERCENTAGE", value: null },
   ]);
+
+  /* ---- modo de evaluación ---- */
+  const [evaluationMode,    setEvaluationMode]    = useState<QuantityDiscountEvaluationMode>("LINE");
+  const [defaultEvalMode,   setDefaultEvalMode]   = useState<QuantityDiscountEvaluationMode | null>(
+    () => localStorage.getItem("tptech_default_qd_evalMode") as QuantityDiscountEvaluationMode | null
+  );
+
+  function handleSetDefaultEvalMode(v: string) {
+    localStorage.setItem("tptech_default_qd_evalMode", v);
+    setDefaultEvalMode(v as QuantityDiscountEvaluationMode);
+  }
+
+  /* ---- acumulabilidad ---- */
+  const [isStackable, setIsStackable] = useState(false);
 
   /* ---- orden ---- */
   const [sortOrderNum, setSortOrderNum] = useState<number | null>(0);
@@ -268,10 +304,20 @@ export default function ConfiguracionSistemaDescuentosCantidad() {
   const [allCategories, setAllCategories] = useState<CategoryRow[]>([]);
   const [allBrands,     setAllBrands]     = useState<string[]>([]);
   const [allArticles,   setAllArticles]   = useState<ArticleRow[]>([]);
+  const [allGroups,     setAllGroups]     = useState<ArticleGroupRow[]>([]);
+
+  /* ---- grupo seleccionado ---- */
+  const [selectedGroupIds, setSelectedGroupIds] = useState<string[]>([]);
 
   /* ---- modal ver ---- */
   const [viewOpen,   setViewOpen]   = useState(false);
   const [viewTarget, setViewTarget] = useState<QuantityDiscountRow | null>(null);
+
+  /* ---- moneda base ---- */
+  const [currencies, setCurrencies] = useState<CurrencyRow[]>([]);
+  const baseCurrency = currencies.find((c) => c.isBase);
+  const baseCurrencySymbol = baseCurrency?.symbol ?? "$";
+  const baseCurrencyCode   = baseCurrency?.code   ?? "";
 
   const { askDelete, dialogProps: deleteDialogProps } = useConfirmDelete();
 
@@ -302,17 +348,24 @@ export default function ConfiguracionSistemaDescuentosCantidad() {
     articlesApi.list({ take: 500, status: "ACTIVE" })
       .then((res) => setAllArticles(res.rows ?? []))
       .catch(() => {});
+    articleGroupsApi.list()
+      .then((res) => setAllGroups((Array.isArray(res) ? res : []).filter((g) => g.isActive && !g.deletedAt)))
+      .catch(() => {});
+    getCurrencies()
+      .then((res: any) => setCurrencies(Array.isArray(res) ? res : (res?.rows ?? [])))
+      .catch(() => {});
   }, []);
 
-  /* ---- variantes cuando cambia el artículo ---- */
+  /* ---- variantes cuando cambia el artículo seleccionado (solo si hay exactamente uno) ---- */
+  const singleArticle = selectedArticles.length === 1 ? selectedArticles[0] : null;
   useEffect(() => {
-    if (!selectedArticle) { setVariants([]); setSelectedVariant(null); return; }
+    if (!singleArticle) { setVariants([]); setSelectedVariant(null); return; }
     setLoadingVariants(true);
-    articlesApi.variants.list(selectedArticle.id)
+    articlesApi.variants.list(singleArticle.id)
       .then((v) => setVariants((v ?? []).filter((x: ArticleVariant) => x.isActive)))
       .catch(() => setVariants([]))
       .finally(() => setLoadingVariants(false));
-  }, [selectedArticle]);
+  }, [singleArticle]);
 
   /* ---- filtrado y ordenamiento ---- */
   const filteredRows = useMemo(() => {
@@ -324,7 +377,8 @@ export default function ConfiguracionSistemaDescuentosCantidad() {
         (r.article?.code ?? "").toLowerCase().includes(s) ||
         (r.variant?.name ?? "").toLowerCase().includes(s) ||
         (r.category?.name ?? "").toLowerCase().includes(s) ||
-        (r.brand ?? "").toLowerCase().includes(s)
+        (r.brand ?? "").toLowerCase().includes(s) ||
+        (r.group?.name ?? "").toLowerCase().includes(s)
       );
     }
     if (filterActive !== "") {
@@ -363,11 +417,12 @@ export default function ConfiguracionSistemaDescuentosCantidad() {
   /* ---- reset scope ---- */
   function resetScope() {
     setScopeMode("all");
-    setSelectedCategoryId("");
-    setSelectedBrand("");
-    setSelectedArticle(null);
+    setSelectedCategoryIds([]);
+    setSelectedBrands([]);
+    setSelectedArticles([]);
     setSelectedVariant(null);
     setVariants([]);
+    setSelectedGroupIds([]);
   }
 
   /* ---- abrir modal crear ---- */
@@ -376,6 +431,8 @@ export default function ConfiguracionSistemaDescuentosCantidad() {
     resetScope();
     setTiers([{ key: "t0", minQty: null, type: "PERCENTAGE", value: null }]);
     setSortOrderNum(0);
+    setIsStackable(false);
+    setEvaluationMode(defaultEvalMode ?? "LINE");
     setSubmitted(false);
     setFormErrors({});
     setEditOpen(true);
@@ -387,34 +444,42 @@ export default function ConfiguracionSistemaDescuentosCantidad() {
 
     if (row.variantId) {
       setScopeMode("article_variant");
-      setSelectedArticle(row.article ? { id: row.articleId!, code: row.article.code, name: row.article.name } as ArticleRow : null);
+      setSelectedArticles(row.article ? [{ id: row.articleId!, code: row.article.code, name: row.article.name } as ArticleRow] : []);
       setSelectedVariant(row.variant ? { id: row.variantId, code: row.variant.code, name: row.variant.name } as ArticleVariant : null);
-      setSelectedCategoryId("");
-      setSelectedBrand("");
+      setSelectedCategoryIds([]);
+      setSelectedBrands([]);
     } else if (row.articleId) {
       setScopeMode("article_variant");
-      setSelectedArticle(row.article ? { id: row.articleId, code: row.article.code, name: row.article.name } as ArticleRow : null);
+      setSelectedArticles(row.article ? [{ id: row.articleId, code: row.article.code, name: row.article.name } as ArticleRow] : []);
       setSelectedVariant(null);
-      setSelectedCategoryId("");
-      setSelectedBrand("");
+      setSelectedCategoryIds([]);
+      setSelectedBrands([]);
     } else if (row.categoryId) {
       setScopeMode("category");
-      setSelectedCategoryId(row.categoryId);
-      setSelectedArticle(null);
+      setSelectedCategoryIds([row.categoryId]);
+      setSelectedArticles([]);
       setSelectedVariant(null);
-      setSelectedBrand("");
+      setSelectedBrands([]);
     } else if (row.brand) {
       setScopeMode("brand");
-      setSelectedBrand(row.brand);
-      setSelectedCategoryId("");
-      setSelectedArticle(null);
+      setSelectedBrands([row.brand]);
+      setSelectedCategoryIds([]);
+      setSelectedArticles([]);
       setSelectedVariant(null);
+    } else if (row.groupId) {
+      setScopeMode("group");
+      setSelectedGroupIds([row.groupId]);
+      setSelectedCategoryIds([]);
+      setSelectedArticles([]);
+      setSelectedVariant(null);
+      setSelectedBrands([]);
     } else {
       setScopeMode("all");
-      setSelectedCategoryId("");
-      setSelectedArticle(null);
+      setSelectedCategoryIds([]);
+      setSelectedArticles([]);
       setSelectedVariant(null);
-      setSelectedBrand("");
+      setSelectedBrands([]);
+      setSelectedGroupIds([]);
     }
 
     const sortedTiers = [...(row.tiers ?? [])].sort((a, b) => parseFloat(a.minQty) - parseFloat(b.minQty));
@@ -430,6 +495,8 @@ export default function ConfiguracionSistemaDescuentosCantidad() {
     );
 
     setSortOrderNum(row.sortOrder ?? 0);
+    setIsStackable(row.isStackable ?? true);
+    setEvaluationMode(row.evaluationMode ?? "LINE");
     setSubmitted(false);
     setFormErrors({});
     setEditOpen(true);
@@ -444,7 +511,7 @@ export default function ConfiguracionSistemaDescuentosCantidad() {
   /* ---- guardar ---- */
   async function handleSave() {
     setSubmitted(true);
-    const errors = validate(scopeMode, selectedCategoryId, selectedBrand, selectedArticle, selectedVariant, tiers);
+    const errors = validate(scopeMode, selectedCategoryIds, selectedBrands, selectedArticles, selectedVariant, tiers, selectedGroupIds);
     setFormErrors(errors);
     if (Object.keys(errors).length > 0) return;
 
@@ -453,24 +520,53 @@ export default function ConfiguracionSistemaDescuentosCantidad() {
       .sort((a, b) => (a.minQty ?? 0) - (b.minQty ?? 0))
       .map((t) => ({ minQty: t.minQty!, type: t.type, value: t.value! }));
 
-    const payload: QuantityDiscountPayload = {
-      articleId:  scopeMode === "article_variant" ? (selectedArticle?.id ?? null) : null,
-      variantId:  scopeMode === "article_variant" ? (selectedVariant?.id ?? null) : null,
-      categoryId: scopeMode === "category" ? selectedCategoryId || null : null,
-      brand:      scopeMode === "brand" ? selectedBrand || null : null,
-      isActive:   true,
-      sortOrder:  sortOrderNum ?? 0,
-      tiers:      validTiers,
+    const basePayload = {
+      isActive:    true,
+      isStackable,
+      evaluationMode,
+      sortOrder:   sortOrderNum ?? 0,
+      tiers:       validTiers,
     };
+
+    // Construir una lista de payloads: uno por cada ID seleccionado
+    // En edición siempre es un solo registro; en creación puede ser N
+    function buildPayloads(): QuantityDiscountPayload[] {
+      if (scopeMode === "category") {
+        const ids = editingId ? [selectedCategoryIds[0]] : selectedCategoryIds;
+        return ids.filter(Boolean).map(id => ({ ...basePayload, categoryId: id, articleId: null, variantId: null, brand: null, groupId: null }));
+      }
+      if (scopeMode === "brand") {
+        const vals = editingId ? [selectedBrands[0]] : selectedBrands;
+        return vals.filter(Boolean).map(v => ({ ...basePayload, brand: v, articleId: null, variantId: null, categoryId: null, groupId: null }));
+      }
+      if (scopeMode === "group") {
+        const ids = editingId ? [selectedGroupIds[0]] : selectedGroupIds;
+        return ids.filter(Boolean).map(id => ({ ...basePayload, groupId: id, articleId: null, variantId: null, categoryId: null, brand: null }));
+      }
+      if (scopeMode === "article_variant") {
+        const arts = editingId ? selectedArticles.slice(0, 1) : selectedArticles;
+        return arts.map(art => ({
+          ...basePayload,
+          articleId: art.id,
+          variantId: selectedVariant?.id ?? null,
+          categoryId: null, brand: null, groupId: null,
+        }));
+      }
+      // "all"
+      return [{ ...basePayload, articleId: null, variantId: null, categoryId: null, brand: null, groupId: null }];
+    }
+
+    const payloads = buildPayloads();
+    if (payloads.length === 0) return;
 
     try {
       setBusySave(true);
       if (editingId) {
-        await quantityDiscountsApi.update(editingId, payload);
+        await quantityDiscountsApi.update(editingId, payloads[0]);
         toast.success("Descuento actualizado.");
       } else {
-        await quantityDiscountsApi.create(payload);
-        toast.success("Descuento creado.");
+        await Promise.all(payloads.map(p => quantityDiscountsApi.create(p)));
+        toast.success(payloads.length > 1 ? `${payloads.length} descuentos creados.` : "Descuento creado.");
       }
       closeEdit();
       await load();
@@ -537,52 +633,17 @@ export default function ConfiguracionSistemaDescuentosCantidad() {
         onSort={toggleSort}
         loading={loading}
         emptyText={q || filterActive ? "Sin resultados para la búsqueda." : "No hay reglas de descuento. Creá la primera."}
+        pagination={{ storageKey: "tptech:pageSize:quantityDiscounts" }}
         countLabel={(n) => `${n} ${n === 1 ? "regla" : "reglas"}`}
         actions={
-          <div className="flex items-center gap-2">
-            <TPButton
-              variant="secondary"
-              iconLeft={<SlidersHorizontal size={14} />}
-              onClick={() => setShowFilters((v) => !v)}
-              className={showFilters ? "border-primary/40 text-primary" : ""}
-            >
-              <span className="hidden sm:inline">Filtros</span>
-            </TPButton>
-            <TPButton
-              variant="primary"
-              iconLeft={<PackagePlus size={15} />}
-              onClick={openCreate}
-            >
-              Nueva regla
-            </TPButton>
-          </div>
+          <TPButton
+            variant="primary"
+            iconLeft={<PackagePlus size={15} />}
+            onClick={openCreate}
+          >
+            Nueva regla
+          </TPButton>
         }
-        belowHeader={showFilters ? (
-          <div className="px-4 py-3 border-b border-border flex flex-wrap gap-3 items-end bg-surface/50">
-            <div className="w-44">
-              <TPField label="Estado">
-                <TPComboFixed
-                  value={filterActive}
-                  onChange={(v) => setFilterActive(v as "" | "true" | "false")}
-                  options={[
-                    { value: "",      label: "Todos" },
-                    { value: "true",  label: "Activo" },
-                    { value: "false", label: "Inactivo" },
-                  ]}
-                />
-              </TPField>
-            </div>
-            {filterActive && (
-              <TPButton
-                variant="ghost"
-                iconLeft={<X size={13} />}
-                onClick={() => setFilterActive("")}
-              >
-                Limpiar
-              </TPButton>
-            )}
-          </div>
-        ) : undefined}
         renderRow={(row, vis) => (
           <TPTr key={row.id} className={cn(!row.isActive && "opacity-60")}>
             {vis.alcance && (
@@ -595,7 +656,7 @@ export default function ConfiguracionSistemaDescuentosCantidad() {
             )}
             {vis.tramos && (
               <TPTd>
-                <TiersSummary tiers={row.tiers ?? []} />
+                <TiersSummary tiers={row.tiers ?? []} baseSym={baseCurrencySymbol} />
               </TPTd>
             )}
             {vis.estado && (
@@ -634,9 +695,10 @@ export default function ConfiguracionSistemaDescuentosCantidad() {
         title={editingId ? "Editar regla de descuento" : "Nueva regla de descuento"}
         onClose={closeEdit}
         maxWidth="xl"
+        className="h-[calc(100vh-3rem)]"
         footer={
           <div className="flex justify-end gap-2">
-            <TPButton variant="ghost" onClick={closeEdit} disabled={busySave}>Cancelar</TPButton>
+            <TPButton variant="ghost" onClick={closeEdit} disabled={busySave} iconLeft={<X size={14} />}>Cancelar</TPButton>
             <TPButton variant="primary" onClick={handleSave} loading={busySave} iconLeft={<Save size={14} />}>
               {editingId ? "Guardar cambios" : "Crear regla"}
             </TPButton>
@@ -652,16 +714,22 @@ export default function ConfiguracionSistemaDescuentosCantidad() {
                 <TPComboFixed
                   value={scopeMode}
                   onChange={(v) => {
-                    setScopeMode(v as ScopeMode);
-                    setSelectedCategoryId("");
-                    setSelectedBrand("");
-                    setSelectedArticle(null);
+                    const newScope = v as ScopeMode;
+                    setScopeMode(newScope);
+                    setSelectedCategoryIds([]);
+                    setSelectedBrands([]);
+                    setSelectedArticles([]);
                     setSelectedVariant(null);
                     setVariants([]);
+                    // Resetear modo de evaluación si el nuevo scope no lo soporta
+                    if (newScope !== "category") setEvaluationMode((prev) => prev === "CATEGORY_TOTAL" ? "LINE" : prev);
+                    if (newScope !== "brand")    setEvaluationMode((prev) => prev === "BRAND_TOTAL"    ? "LINE" : prev);
+                    if (newScope !== "group")    setEvaluationMode((prev) => prev === "GROUP_TOTAL"    ? "LINE" : prev);
                   }}
                   disabled={busySave}
                   options={[
                     { value: "all",             label: "Todos los artículos" },
+                    { value: "group",           label: "Grupo de artículos" },
                     { value: "category",        label: "Categoría" },
                     { value: "brand",           label: "Marca" },
                     { value: "article_variant", label: "Artículos y variantes" },
@@ -683,23 +751,32 @@ export default function ConfiguracionSistemaDescuentosCantidad() {
 
             {/* Categoría */}
             {scopeMode === "category" && (
-              <TPField label="Categoría" required error={submitted ? formErrors.scope : undefined}>
+              <TPField
+                label="Categoría"
+                required
+                error={submitted ? formErrors.scope : undefined}
+                hint={!editingId ? "Podés seleccionar varias — se creará una regla por categoría" : undefined}
+              >
                 <CategoryTreePicker
                   categories={allCategories}
-                  value={selectedCategoryId ? [selectedCategoryId] : []}
-                  onChange={(ids) => setSelectedCategoryId(ids[0] ?? "")}
+                  value={selectedCategoryIds}
+                  onChange={setSelectedCategoryIds}
                   disabled={busySave}
-                  single
                 />
               </TPField>
             )}
 
             {/* Marca */}
             {scopeMode === "brand" && (
-              <TPField label="Marca" required error={submitted ? formErrors.scope : undefined}>
+              <TPField
+                label="Marca"
+                required
+                error={submitted ? formErrors.scope : undefined}
+                hint={!editingId ? "Podés seleccionar varias — se creará una regla por marca" : undefined}
+              >
                 <TPComboMulti
-                  value={selectedBrand ? [selectedBrand] : []}
-                  onChange={(vals) => setSelectedBrand(vals[vals.length - 1] ?? "")}
+                  value={selectedBrands}
+                  onChange={setSelectedBrands}
                   options={brandOptions}
                   placeholder="Buscar marca…"
                   disabled={busySave}
@@ -710,14 +787,18 @@ export default function ConfiguracionSistemaDescuentosCantidad() {
             {/* Artículo o Variante */}
             {scopeMode === "article_variant" && (
               <>
-                <TPField label="Artículo" required error={submitted && !selectedArticle ? formErrors.scope : undefined}>
+                <TPField
+                  label="Artículo"
+                  required
+                  error={submitted && selectedArticles.length === 0 ? formErrors.scope : undefined}
+                  hint={!editingId ? "Podés seleccionar varios — se creará una regla por artículo" : undefined}
+                >
                   <TPComboMulti
-                    value={selectedArticle ? [selectedArticle.id] : []}
+                    value={selectedArticles.map(a => a.id)}
                     onChange={(ids) => {
-                      const id = ids[ids.length - 1] ?? null;
-                      const art = allArticles.find((a) => a.id === id) ?? null;
-                      setSelectedArticle(art);
-                      setSelectedVariant(null);
+                      const arts = ids.map(id => allArticles.find(a => a.id === id)).filter(Boolean) as ArticleRow[];
+                      setSelectedArticles(arts);
+                      if (arts.length !== 1) setSelectedVariant(null);
                     }}
                     options={articleOptions}
                     placeholder="Buscar artículo…"
@@ -725,8 +806,9 @@ export default function ConfiguracionSistemaDescuentosCantidad() {
                   />
                 </TPField>
 
-                {scopeMode === "article_variant" && selectedArticle && (
-                  <TPField label="Variante" required error={submitted && !selectedVariant ? formErrors.scope : undefined}>
+                {/* Variante: solo disponible cuando hay exactamente un artículo seleccionado */}
+                {selectedArticles.length === 1 && (
+                  <TPField label="Variante" error={submitted && !selectedVariant ? formErrors.scope : undefined}>
                     {loadingVariants ? (
                       <p className="text-sm text-muted">Cargando variantes…</p>
                     ) : variants.length === 0 ? (
@@ -748,9 +830,64 @@ export default function ConfiguracionSistemaDescuentosCantidad() {
                 )}
               </>
             )}
+
+            {/* Grupo de artículos */}
+            {scopeMode === "group" && (
+              <TPField
+                label="Grupo"
+                required
+                error={submitted ? formErrors.scope : undefined}
+                hint={!editingId ? "Podés seleccionar varios — se creará una regla por grupo" : undefined}
+              >
+                {allGroups.length === 0 ? (
+                  <p className="text-sm text-muted italic">No hay grupos de artículos activos.</p>
+                ) : (
+                  <TPComboMulti
+                    value={selectedGroupIds}
+                    onChange={setSelectedGroupIds}
+                    options={allGroups.map((g) => ({ value: g.id, label: g.name }))}
+                    placeholder="Seleccionar grupo…"
+                    disabled={busySave}
+                  />
+                )}
+              </TPField>
+            )}
           </ModalSection>
 
-          {/* ---- BLOQUE 2: Tramos ---- */}
+          {/* ---- BLOQUE 2: Tipo de conteo ---- */}
+          {(scopeMode === "category" || scopeMode === "brand" || scopeMode === "group") && (
+            <ModalSection title="Tipo de conteo de unidades">
+              <TPField
+                label="Tipo de conteo de unidades"
+                hint="Define si el descuento se aplica por cantidad de un mismo producto o sumando varios productos."
+              >
+                <TPComboFixed
+                  value={evaluationMode}
+                  onChange={(v) => setEvaluationMode(v as QuantityDiscountEvaluationMode)}
+                  disabled={busySave}
+                  favoriteValue={defaultEvalMode}
+                  onSetFavorite={handleSetDefaultEvalMode}
+                  options={[
+                    { value: "LINE",           label: "Por producto (cada uno por separado)" },
+                    ...(scopeMode === "category" ? [{ value: "CATEGORY_TOTAL", label: "Sumando productos de la categoría" }] : []),
+                    ...(scopeMode === "brand"    ? [{ value: "BRAND_TOTAL",    label: "Sumando productos de la marca" }]    : []),
+                    ...(scopeMode === "group"    ? [{ value: "GROUP_TOTAL",    label: "Sumando productos del grupo" }]      : []),
+                  ]}
+                />
+              </TPField>
+              <p className="text-xs text-muted/70">
+                {evaluationMode === "LINE"
+                  ? "Cada producto se cuenta por separado. El descuento se activa cuando ese producto supera la cantidad mínima del tramo."
+                  : evaluationMode === "CATEGORY_TOTAL"
+                    ? "Se suman las cantidades de todos los productos de la misma categoría en el comprobante. El descuento aplica a todos cuando el total alcanza el tramo."
+                    : evaluationMode === "GROUP_TOTAL"
+                      ? "Se suman las cantidades de todos los productos del mismo grupo en el comprobante. El descuento aplica a todos cuando el total alcanza el tramo."
+                      : "Se suman las cantidades de todos los productos de la misma marca en el comprobante. El descuento aplica a todos cuando el total alcanza el tramo."}
+              </p>
+            </ModalSection>
+          )}
+
+          {/* ---- BLOQUE 4: Tramos ---- */}
           <ModalSection title="Tramos de descuento">
             {submitted && formErrors.tiers && (
               <p className="text-xs text-red-500">{formErrors.tiers}</p>
@@ -781,7 +918,7 @@ export default function ConfiguracionSistemaDescuentosCantidad() {
                           disabled={busySave}
                           options={[
                             { value: "PERCENTAGE", label: "Porcentaje (%)" },
-                            { value: "FIXED",      label: "Monto fijo ($)" },
+                            { value: "FIXED",      label: `Monto fijo (${baseCurrencyCode || "$"})` },
                           ]}
                         />
                       </TPField>
@@ -796,8 +933,13 @@ export default function ConfiguracionSistemaDescuentosCantidad() {
                           placeholder={tier.type === "PERCENTAGE" ? "10" : "500"}
                           disabled={busySave}
                           suffix={tier.type === "PERCENTAGE" ? "%" : undefined}
-                          leftIcon={tier.type === "FIXED" ? "$" : undefined}
+                          leftIcon={tier.type === "FIXED" ? <span className="text-[11px] font-semibold text-muted">{baseCurrencySymbol}</span> : undefined}
                         />
+                        {tier.type === "FIXED" && (
+                          <p className="text-xs text-muted mt-1.5">
+                            El importe corresponde a la moneda base del sistema{baseCurrencyCode ? ` (${baseCurrencyCode})` : ""}.
+                          </p>
+                        )}
                       </TPField>
                     </div>
 
@@ -837,7 +979,7 @@ export default function ConfiguracionSistemaDescuentosCantidad() {
                       Desde <strong>{qtyDisplay(t.minQty ?? 0)}</strong> unidades →{" "}
                       {t.type === "PERCENTAGE"
                         ? <strong>{t.value}% de descuento</strong>
-                        : <strong>${(t.value ?? 0).toLocaleString("es-AR")} por unidad</strong>}
+                        : <strong>{baseCurrencySymbol} {(t.value ?? 0).toLocaleString("es-AR")} por unidad</strong>}
                     </p>
                   ))
                 }
@@ -845,6 +987,20 @@ export default function ConfiguracionSistemaDescuentosCantidad() {
             )}
           </ModalSection>
 
+          {/* ---- BLOQUE 5: Acumulabilidad ---- */}
+          <ModalSection title="Acumulabilidad">
+            <TPCheckbox
+              checked={isStackable}
+              onChange={setIsStackable}
+              disabled={busySave}
+              label={<span className="text-sm text-text">Acumulable con otros beneficios</span>}
+            />
+            <p className="text-xs text-muted ml-6">
+              {isStackable
+                ? "Este descuento se puede combinar con promociones activas. Ambos se aplican en cadena."
+                : "Si también aplica una promoción, se calculan por separado y solo se aplica el que deje el menor precio final."}
+            </p>
+          </ModalSection>
 
         </div>
       </Modal>
@@ -859,9 +1015,9 @@ export default function ConfiguracionSistemaDescuentosCantidad() {
         maxWidth="sm"
         footer={
           <div className="flex justify-end gap-2">
-            <TPButton variant="ghost" onClick={() => setViewOpen(false)}>Cerrar</TPButton>
+            <TPButton variant="ghost" onClick={() => setViewOpen(false)} iconLeft={<X size={14} />}>Cerrar</TPButton>
             {viewTarget && (
-              <TPButton variant="primary" onClick={() => { setViewOpen(false); openEdit(viewTarget); }}>
+              <TPButton variant="primary" onClick={() => { setViewOpen(false); openEdit(viewTarget); }} iconLeft={<Pencil size={14} />}>
                 Editar
               </TPButton>
             )}
@@ -871,7 +1027,12 @@ export default function ConfiguracionSistemaDescuentosCantidad() {
         {viewTarget && (
           <div className="text-sm">
             <DetailRow label="Alcance"><ScopeBadge row={viewTarget} /></DetailRow>
-            <DetailRow label="Destino">{rowScopeLabel(viewTarget)}</DetailRow>
+            <DetailRow label="Destino">
+              {viewTarget.group
+                ? <span>{viewTarget.group.name}</span>
+                : rowScopeLabel(viewTarget)}
+            </DetailRow>
+            <DetailRow label="Modo de evaluación">{EVALUATION_MODE_LABELS[viewTarget.evaluationMode ?? "LINE"]}</DetailRow>
             <DetailRow label="Estado"><TPStatusPill active={viewTarget.isActive} /></DetailRow>
             <DetailRow label="Orden">{viewTarget.sortOrder}</DetailRow>
 
@@ -884,10 +1045,10 @@ export default function ConfiguracionSistemaDescuentosCantidad() {
                     .map((t) => (
                       <div key={t.id} className="flex items-center justify-between px-3 py-2 bg-surface border border-border rounded-lg">
                         <div className="flex items-center gap-2">
-                          <TypeBadge type={t.type} />
+                          <TypeBadge type={t.type} baseSym={baseCurrencySymbol} />
                           <span className="text-sm text-muted tabular-nums">≥ {qtyDisplay(t.minQty)}</span>
                         </div>
-                        <span className="text-sm font-semibold text-text">{tierValueDisplay(t)}</span>
+                        <span className="text-sm font-semibold text-text">{tierValueDisplay(t, baseCurrencySymbol)}</span>
                       </div>
                     ))
                   }

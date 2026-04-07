@@ -10,7 +10,6 @@ import {
   Package,
   Plus,
   Save,
-  SlidersHorizontal,
   X,
 } from "lucide-react";
 
@@ -31,6 +30,7 @@ import TPComboFixed from "../../components/ui/TPComboFixed";
 import TPComboMulti from "../../components/ui/TPComboMulti";
 import type { ComboMultiOption } from "../../components/ui/TPComboMulti";
 import TPNumberInput from "../../components/ui/TPNumberInput";
+import TPAmountInput, { type AmountType } from "../../components/ui/TPAmountInput";
 import TPDateRangeInline from "../../components/ui/TPDateRangeInline";
 import { CategoryTreePicker } from "../../components/ui/CategoryTreePicker";
 
@@ -48,11 +48,13 @@ import { articlesApi } from "../../services/articles";
 import type { ArticleRow } from "../../services/articles";
 import { categoriesApi } from "../../services/categories";
 import type { CategoryRow } from "../../services/categories";
+import { articleGroupsApi } from "../../services/article-groups";
+import type { ArticleGroupRow } from "../../services/article-groups";
 
 /* Variante enriquecida con referencia al artículo padre */
 type VariantOption = ComboMultiOption & { articleId: string };
 
-type ScopeMode = "all" | "category" | "article_variant" | "brand";
+type ScopeMode = "all" | "category" | "article_variant" | "brand" | "group";
 
 /* =========================================================
    Label maps
@@ -184,6 +186,7 @@ const EMPTY_DRAFT = {
   validFrom:     "",
   validTo:       "",
   untilStockEnd: false,
+  isStackable:   false,
   isActive:      true,
   notes:         "",
 };
@@ -204,7 +207,8 @@ function validate(
   variantIds: string[],
   showVariantPicker: boolean,
   categoryIds: string[],
-  brands: string[]
+  brands: string[],
+  groupIds: string[]
 ): FormErrors {
   const errors: FormErrors = {};
   if (!draft.name.trim()) errors.name = "El nombre es obligatorio.";
@@ -219,8 +223,21 @@ function validate(
     errors.scope = "Seleccioná al menos una variante, o desactivá el filtro por variante.";
   } else if (scope === "brand" && brands.length === 0) {
     errors.scope = "Seleccioná al menos una marca.";
+  } else if (scope === "group" && groupIds.length === 0) {
+    errors.scope = "Seleccioná al menos un grupo.";
   }
   return errors;
+}
+
+/* =========================================================
+   Mapeo PromotionType ↔ AmountType
+   PromotionType usa "FIXED"; TPAmountInput usa "FIXED_AMOUNT"
+========================================================= */
+function toAmountType(t: PromotionType): AmountType {
+  return t === "FIXED" ? "FIXED_AMOUNT" : "PERCENTAGE";
+}
+function toPromotionType(t: AmountType): PromotionType {
+  return t === "FIXED_AMOUNT" ? "FIXED" : "PERCENTAGE";
 }
 
 /* =========================================================
@@ -251,17 +268,7 @@ export default function ConfiguracionSistemaPromociones() {
   const [q, setQ]             = useState("");
 
   /* ---- filtros adicionales ---- */
-  const [filterType,    setFilterType]    = useState<PromotionType | "">("");
-  const [filterActive,  setFilterActive]  = useState<"" | "true" | "false">("");
   const [filterVigencia, setFilterVigencia] = useState<VigenciaState | "">("");
-  const [showFilters,   setShowFilters]   = useState(false);
-
-  const activeFilterCount = [filterType, filterActive, filterVigencia].filter(Boolean).length;
-  function clearFilters() {
-    setFilterType("");
-    setFilterActive("");
-    setFilterVigencia("");
-  }
 
   /* ---- sort ---- */
   type SortKey = "name" | "type" | "priority" | "createdAt";
@@ -286,6 +293,7 @@ export default function ConfiguracionSistemaPromociones() {
   const [allCategories, setAllCategories] = useState<CategoryRow[]>([]);
   const [allBrands, setAllBrands]         = useState<string[]>([]);
   const [allArticles, setAllArticles]     = useState<ArticleRow[]>([]);
+  const [allGroups,   setAllGroups]       = useState<ArticleGroupRow[]>([]);
 
   /* ---- selector de alcance ---- */
   const [scopeMode, setScopeMode]                   = useState<ScopeMode>("all");
@@ -296,6 +304,7 @@ export default function ConfiguracionSistemaPromociones() {
   const [selectedVariantIds, setSelectedVariantIds]   = useState<string[]>([]);
   const [loadingVariants, setLoadingVariants]         = useState(false);
   const [showVariantPicker, setShowVariantPicker]     = useState(false);
+  const [selectedGroupIds, setSelectedGroupIds]       = useState<string[]>([]);
 
   /* ---- modal ver ---- */
   const [viewOpen,   setViewOpen]   = useState(false);
@@ -331,6 +340,9 @@ export default function ConfiguracionSistemaPromociones() {
       .catch(() => {});
     articlesApi.list({ take: 500, status: "ACTIVE" })
       .then((res) => setAllArticles(res.rows ?? []))
+      .catch(() => {});
+    articleGroupsApi.list()
+      .then((res) => setAllGroups((Array.isArray(res) ? res : []).filter((g) => g.isActive && !g.deletedAt)))
       .catch(() => {});
   }, []);
 
@@ -381,11 +393,6 @@ export default function ConfiguracionSistemaPromociones() {
         return false;
       });
     }
-    if (filterType)   filtered = filtered.filter((r) => r.type === filterType);
-    if (filterActive !== "") {
-      const want = filterActive === "true";
-      filtered = filtered.filter((r) => r.isActive === want);
-    }
     if (filterVigencia !== "") {
       filtered = filtered.filter((r) => vigenciaState(r) === filterVigencia);
     }
@@ -398,7 +405,7 @@ export default function ConfiguracionSistemaPromociones() {
       if (sortKey === "createdAt")return a.createdAt.localeCompare(b.createdAt) * mul;
       return 0;
     });
-  }, [rows, q, filterType, filterActive, filterVigencia, sortKey, sortDir]);
+  }, [rows, q, filterVigencia, sortKey, sortDir]);
 
   /* ---- helpers draft ---- */
   function patchDraft(patch: Partial<Draft>) {
@@ -418,6 +425,7 @@ export default function ConfiguracionSistemaPromociones() {
     setVariantOptions([]);
     setSelectedVariantIds([]);
     setShowVariantPicker(false);
+    setSelectedGroupIds([]);
     setSubmitted(false);
     setFormErrors({});
     setEditOpen(true);
@@ -436,16 +444,19 @@ export default function ConfiguracionSistemaPromociones() {
       validFrom:     formatISOtoDateInput(row.validFrom),
       validTo:       formatISOtoDateInput(row.validTo),
       untilStockEnd: row.untilStockEnd,
+      isStackable:   row.isStackable ?? true,
       isActive:      row.isActive,
       notes:         row.notes ?? "",
     });
-    // Inferir modo de alcance desde el campo scope (4 opciones en UI)
+    // Inferir modo de alcance desde el campo scope (5 opciones en UI)
     if (row.scope === "ARTICLE" || row.scope === "VARIANT") {
       setScopeMode("article_variant");
     } else if (row.scope === "CATEGORY") {
       setScopeMode("category");
     } else if (row.scope === "BRAND") {
       setScopeMode("brand");
+    } else if (row.scope === "GROUP") {
+      setScopeMode("group");
     } else {
       setScopeMode("all");
     }
@@ -453,6 +464,7 @@ export default function ConfiguracionSistemaPromociones() {
     // Inicializar selectores desde las tablas junction
     setSelectedCategoryIds(row.categories.map((c) => c.categoryId));
     setSelectedBrands(row.brands.map((b) => b.brand));
+    setSelectedGroupIds((row.groups ?? []).map((g) => g.groupId));
 
     if (row.scope === "VARIANT") {
       // Para variantes: reconstruir los artículos padre desde las variantes
@@ -489,15 +501,16 @@ export default function ConfiguracionSistemaPromociones() {
   /* ---- guardar ---- */
   async function handleSave() {
     setSubmitted(true);
-    const errors = validate(draft, valueNum, scopeMode, selectedArticles, selectedVariantIds, showVariantPicker, selectedCategoryIds, selectedBrands);
+    const errors = validate(draft, valueNum, scopeMode, selectedArticles, selectedVariantIds, showVariantPicker, selectedCategoryIds, selectedBrands, selectedGroupIds);
     setFormErrors(errors);
     if (Object.keys(errors).length > 0) return;
 
-    // Resolver scope backend desde las 4 opciones UI
+    // Resolver scope backend desde las 5 opciones UI
     let scope: PromotionScope;
     if (scopeMode === "all")            scope = "ALL";
     else if (scopeMode === "category")  scope = "CATEGORY";
     else if (scopeMode === "brand")     scope = "BRAND";
+    else if (scopeMode === "group")     scope = "GROUP";
     else if (showVariantPicker && selectedVariantIds.length > 0) scope = "VARIANT";
     else                                scope = "ARTICLE";
 
@@ -510,10 +523,12 @@ export default function ConfiguracionSistemaPromociones() {
       variantIds:    scope === "VARIANT"  ? selectedVariantIds : [],
       categoryIds:   scope === "CATEGORY" ? selectedCategoryIds : [],
       brands:        scope === "BRAND"    ? selectedBrands : [],
+      groupIds:      scope === "GROUP"    ? selectedGroupIds : [],
       priority:      priorityNum ?? 0,
       validFrom:     draft.validFrom || null,
       validTo:       draft.validTo   || null,
       untilStockEnd: draft.untilStockEnd,
+      isStackable:   draft.isStackable,
       isActive:      draft.isActive,
       notes:         draft.notes.trim(),
     };
@@ -576,60 +591,19 @@ export default function ConfiguracionSistemaPromociones() {
         onSort={(key) => toggleSort(key as SortKey)}
         loading={loading}
         emptyText={
-          q || filterType || filterActive || filterVigencia
+          q || filterVigencia
             ? "No hay resultados para esos filtros."
             : "Todavía no hay promociones. Creá la primera."
         }
-        pagination
+        pagination={{ storageKey: "tptech:pageSize:promotions" }}
         countLabel={(n) => `${n} ${n === 1 ? "promoción" : "promociones"}`}
         responsive="stack"
         actions={
           <div className="flex items-center gap-2">
-            <TPButton
-              variant="secondary"
-              iconLeft={<SlidersHorizontal size={14} />}
-              onClick={() => setShowFilters((v) => !v)}
-              className={cn((showFilters || activeFilterCount > 0) && "border-primary/40 text-primary")}
-            >
-              <span className="hidden sm:inline">Filtros</span>
-              {activeFilterCount > 0 && (
-                <span className="bg-primary text-primary-foreground rounded-full px-1.5 py-0.5 text-[10px] font-bold leading-none ml-0.5">
-                  {activeFilterCount}
-                </span>
-              )}
-            </TPButton>
-            <TPButton variant="primary" iconLeft={<Plus size={16} />} onClick={openCreate}>
-              Nueva promoción
-            </TPButton>
-          </div>
-        }
-        belowHeader={showFilters ? (
-          <div className="px-4 pb-4 pt-3 border-b border-border bg-surface/30">
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-              <TPComboFixed
-                value={filterType}
-                onChange={(v) => setFilterType(v as PromotionType | "")}
-                placeholder="Tipo: todos"
-                options={[
-                  { value: "", label: "Tipo: todos" },
-                  { value: "FIXED",      label: "Monto fijo ($)" },
-                  { value: "PERCENTAGE", label: "Porcentaje (%)" },
-                ]}
-              />
-              <TPComboFixed
-                value={filterActive}
-                onChange={(v) => setFilterActive(v as "" | "true" | "false")}
-                placeholder="Estado: todos"
-                options={[
-                  { value: "",      label: "Estado: todos" },
-                  { value: "true",  label: "Activas" },
-                  { value: "false", label: "Inactivas" },
-                ]}
-              />
+            <div className="w-44">
               <TPComboFixed
                 value={filterVigencia}
                 onChange={(v) => setFilterVigencia(v as VigenciaState | "")}
-                placeholder="Vigencia: todas"
                 options={[
                   { value: "",          label: "Vigencia: todas" },
                   { value: "active",    label: "Vigentes" },
@@ -639,20 +613,11 @@ export default function ConfiguracionSistemaPromociones() {
                 ]}
               />
             </div>
-            {activeFilterCount > 0 && (
-              <div className="mt-3 flex justify-end">
-                <TPButton
-                  variant="ghost"
-                  iconLeft={<X size={11} />}
-                  onClick={clearFilters}
-                  className="text-xs text-muted hover:text-primary"
-                >
-                  Limpiar filtros
-                </TPButton>
-              </div>
-            )}
+            <TPButton variant="primary" iconLeft={<Plus size={16} />} onClick={openCreate}>
+              Nueva promoción
+            </TPButton>
           </div>
-        ) : undefined}
+        }
         onRowClick={(row) => openView(row)}
         renderRow={(row, vis) => (
           <TPTr key={row.id} className={!row.isActive ? "opacity-60" : undefined}>
@@ -692,6 +657,8 @@ export default function ConfiguracionSistemaPromociones() {
                         ? row.categories.map((c) => c.category.name).join(", ") || "—"
                         : row.scope === "BRAND"
                         ? row.brands.map((b) => b.brand).join(", ") || "—"
+                        : row.scope === "GROUP"
+                        ? (row.groups ?? []).map((g) => g.group.name).join(", ") || "—"
                         : "—"}
                     </span>
                   </div>
@@ -785,8 +752,8 @@ export default function ConfiguracionSistemaPromociones() {
       >
         <div className="space-y-6">
 
-          {/* Bloque 1: Nombre + Tipo + Valor + Prioridad */}
-          <ModalSection title="Descripción y descuento">
+          {/* A: Identidad */}
+          <ModalSection title="Identidad">
             <div className="grid gap-3" style={{ gridTemplateColumns: "1fr 100px" }}>
               <TPField label="Nombre" required error={errors.name}>
                 <TPInput
@@ -797,7 +764,7 @@ export default function ConfiguracionSistemaPromociones() {
                   data-tp-autofocus="1"
                 />
               </TPField>
-              <TPField label="Prioridad">
+              <TPField label="Prioridad" hint="Menor = más prioridad">
                 <TPNumberInput
                   value={priorityNum}
                   onChange={setPriorityNum}
@@ -809,43 +776,38 @@ export default function ConfiguracionSistemaPromociones() {
                 />
               </TPField>
             </div>
-            <div className="grid grid-cols-2 gap-3">
-              <TPField label="Tipo de descuento">
-                <TPComboFixed
-                  value={draft.type}
-                  onChange={(v) => patchDraft({ type: v as PromotionType })}
-                  disabled={busySave}
-                  options={[
-                    { value: "PERCENTAGE", label: "Porcentaje (%)" },
-                    { value: "FIXED",      label: "Monto fijo ($)" },
-                  ]}
-                />
-              </TPField>
-              <TPField
-                label={draft.type === "PERCENTAGE" ? "% Descuento" : "Monto ($)"}
-                required
-                error={errors.value}
-              >
-                <TPNumberInput
-                  value={valueNum}
-                  onChange={setValueNum}
-                  decimals={2}
-                  step={1}
-                  min={0}
-                  placeholder={draft.type === "PERCENTAGE" ? "15" : "500"}
-                  disabled={busySave}
-                  suffix={draft.type === "PERCENTAGE" ? "%" : undefined}
-                  leftIcon={draft.type === "FIXED" ? "$" : undefined}
-                />
-              </TPField>
-            </div>
-            <p className="text-xs text-muted -mt-1">
-              {draft.type === "PERCENTAGE" && valueNum != null && valueNum > 0
-                ? `Descuento del ${valueNum}% sobre el precio de venta. Menor número de prioridad = mayor precedencia.`
-                : draft.type === "FIXED" && valueNum != null && valueNum > 0
-                  ? `Se resta $${valueNum.toLocaleString("es-AR")} al precio de venta. Menor número de prioridad = mayor precedencia.`
-                  : "Menor número de prioridad = mayor precedencia sobre otras promociones activas."}
-            </p>
+          </ModalSection>
+
+          {/* B: Valor del descuento */}
+          <ModalSection title="Valor del descuento">
+            <TPField
+              label="Descuento"
+              required
+              error={errors.value}
+              hint={
+                draft.type === "PERCENTAGE" && valueNum != null && valueNum > 0
+                  ? `Descuento del ${valueNum}% sobre el precio de venta`
+                  : draft.type === "FIXED" && valueNum != null && valueNum > 0
+                    ? `Se resta $${valueNum.toLocaleString("es-AR")} al precio de venta`
+                    : undefined
+              }
+            >
+              <TPAmountInput
+                value={valueNum}
+                onChange={setValueNum}
+                decimals={2}
+                min={0}
+                placeholder={draft.type === "PERCENTAGE" ? "15" : "500"}
+                type={toAmountType(draft.type)}
+                onTypeChange={(t) => patchDraft({ type: toPromotionType(t) })}
+                disabled={busySave}
+              />
+              {draft.type === "FIXED" && (
+                <p className="text-xs text-muted mt-1.5">
+                  El importe corresponde a la moneda base del sistema.
+                </p>
+              )}
+            </TPField>
           </ModalSection>
 
           {/* Bloque 2: Alcance */}
@@ -861,10 +823,12 @@ export default function ConfiguracionSistemaPromociones() {
                   setVariantOptions([]);
                   setSelectedVariantIds([]);
                   setShowVariantPicker(false);
+                  setSelectedGroupIds([]);
                 }}
                 disabled={busySave}
                 options={[
                   { value: "all",            label: "Todos los artículos" },
+                  { value: "group",          label: "Grupos de artículos" },
                   { value: "category",       label: "Categorías" },
                   { value: "brand",          label: "Marcas" },
                   { value: "article_variant",label: "Artículos y variantes" },
@@ -971,11 +935,31 @@ export default function ConfiguracionSistemaPromociones() {
               </TPField>
             )}
 
+            {/* Grupos de artículos */}
+            {scopeMode === "group" && (
+              <TPField label="Grupos" required error={submitted ? errors.scope : undefined}>
+                {allGroups.length === 0 ? (
+                  <p className="text-xs text-muted py-2 italic">
+                    No hay grupos de artículos activos.
+                  </p>
+                ) : (
+                  <TPComboMulti
+                    value={selectedGroupIds}
+                    onChange={setSelectedGroupIds}
+                    options={allGroups.map((g) => ({ value: g.id, label: g.name }))}
+                    placeholder="Seleccionar grupos…"
+                    disabled={busySave}
+                  />
+                )}
+              </TPField>
+            )}
+
             {/* Info: una promo puede incluir múltiples items */}
             {scopeMode !== "all" && (() => {
               const count =
                 scopeMode === "category"       ? selectedCategoryIds.length :
                 scopeMode === "brand"          ? selectedBrands.length :
+                scopeMode === "group"          ? selectedGroupIds.length :
                 scopeMode === "article_variant" && showVariantPicker ? selectedVariantIds.length :
                 scopeMode === "article_variant" ? selectedArticles.length : 0;
               if (count <= 1) return null;
@@ -1030,7 +1014,24 @@ export default function ConfiguracionSistemaPromociones() {
             )}
           </ModalSection>
 
-          {/* Bloque 4: Notas */}
+          {/* E: Acumulabilidad */}
+          <ModalSection title="Acumulabilidad">
+            <div className="space-y-1.5">
+              <TPCheckbox
+                checked={draft.isStackable}
+                onChange={(v) => patchDraft({ isStackable: v })}
+                disabled={busySave}
+                label={<span className="text-sm text-text">Acumulable con otros beneficios</span>}
+              />
+              <p className="text-xs text-muted ml-6">
+                {draft.isStackable
+                  ? "Se puede combinar con descuentos por cantidad. Ambos se aplican en cadena."
+                  : "Si también aplica un descuento por cantidad, se toma el que deje el menor precio final."}
+              </p>
+            </div>
+          </ModalSection>
+
+          {/* F: Notas */}
           <ModalSection title="Notas internas">
             <TPTextarea
               value={draft.notes}
@@ -1106,6 +1107,13 @@ export default function ConfiguracionSistemaPromociones() {
                   <span className="text-[10px] uppercase font-semibold text-muted block">Marcas</span>
                   {viewTarget.brands.map((b) => (
                     <div key={b.brand} className="text-sm"><strong>{b.brand}</strong></div>
+                  ))}
+                </div>
+              ) : viewTarget.scope === "GROUP" ? (
+                <div className="text-right">
+                  <span className="text-[10px] uppercase font-semibold text-muted block">Grupos</span>
+                  {(viewTarget.groups ?? []).map((g) => (
+                    <div key={g.groupId} className="text-sm"><strong>{g.group.name}</strong></div>
                   ))}
                 </div>
               ) : null}

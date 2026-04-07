@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
 import { useParams, useNavigate, useLocation } from "react-router-dom";
-import { ArrowLeft, Pencil, X, Check, FileText, Receipt, CreditCard, Mail, Phone, Plus, Building2, MapPin, Users, Tag, Receipt as ReceiptIcon, StickyNote, Paperclip, Loader2, MoreVertical, Trash2, Power, PowerOff, UserPlus, ShoppingCart, ShoppingBag, Banknote, BarChart2, Percent, Link2 } from "lucide-react";
+import { ArrowLeft, Pencil, X, Check, FileText, Receipt, CreditCard, Mail, Phone, Plus, Building2, MapPin, Users, Tag, Receipt as ReceiptIcon, StickyNote, Paperclip, Loader2, MoreVertical, Trash2, Power, PowerOff, UserPlus, ShoppingCart, ShoppingBag, Banknote, BarChart2, Percent, Link2, ArrowLeftRight } from "lucide-react";
 
 import { TPCard } from "../../components/ui/TPCard";
 import { TPField } from "../../components/ui/TPField";
@@ -34,8 +34,10 @@ import {
   type CommercialApplyOn,
   type CommercialRuleType,
   type CommercialValueType,
+  type AggregatedBalance,
 } from "../../services/commercial-entities";
 import { priceListsApi, type PriceListRow } from "../../services/price-lists";
+import { purchasesService } from "../../services/purchases";
 import { listCurrencies, type CurrencyRow } from "../../services/valuation";
 
 import TPComboFixed from "../../components/ui/TPComboFixed";
@@ -50,6 +52,7 @@ import { TabContacts } from "./tabs/TabContacts";
 import TabMerma from "./tabs/TabMerma";
 import TabRelations from "./tabs/TabRelations";
 import EntityEditModal from "../configuracion-sistema/clientes/EntityEditModal";
+import { SupplierCrossSettlementModal } from "../../components/valuation/modals/SupplierCrossSettlementModal";
 
 // ---------------------------------------------------------------------------
 // Phone helpers
@@ -433,8 +436,10 @@ function TabBalance({
   entity: EntityDetailType;
   onUpdate: (updated: EntityDetailType) => void;
 }) {
+  const navigate = useNavigate();
   const [editing, setEditing]                     = useState(false);
   const [busy, setBusy]                           = useState(false);
+  const [showCrossModal, setShowCrossModal]        = useState(false);
   const [balanceType, setBalanceType]             = useState<BalanceType>(entity.balanceType);
   const [creditLimitClient, setCreditLimitClient] = useState<number | null>(
     entity.creditLimitClient != null ? parseFloat(entity.creditLimitClient) : null
@@ -561,13 +566,410 @@ function TabBalance({
         )}
       </TPCard>
 
-      {/* Aviso sobre movimientos pendientes */}
-      <TPAlert tone="neutral" title="Movimientos de cuenta corriente">
-        Los débitos, créditos, facturas y pagos de esta entidad estarán disponibles
-        cuando se implemente el módulo de Comprobantes.
-      </TPAlert>
+      {/* Saldo actual */}
+      {entity.balance && (
+        <BalanceDisplay
+          balance={entity.balance}
+          entityId={entity.isSupplier ? entity.id : undefined}
+          isSupplier={entity.isSupplier}
+          onCreditApplied={() => onUpdate({ ...entity })}
+        />
+      )}
+
+      {/* Link al extracto de cuenta y liquidación cruzada */}
+      <div className="flex justify-end gap-2">
+        <TPButton
+          variant="secondary"
+          onClick={() => navigate(`/${entity.isClient ? "clientes" : "proveedores"}/${entity.id}/extracto`)}
+        >
+          <FileText size={14} className="mr-1" /> Ver extracto de cuenta
+        </TPButton>
+        {entity.isSupplier && (
+          <TPButton variant="secondary" onClick={() => setShowCrossModal(true)}>
+            <ArrowLeftRight size={14} className="mr-1" /> Liquidación cruzada
+          </TPButton>
+        )}
+      </div>
+
+      {/* Movimientos recientes */}
+      {entity.balanceEntries && entity.balanceEntries.length > 0 && (
+        <BalanceEntriesTable entries={entity.balanceEntries} balance={entity.balance} />
+      )}
+
+      {(!entity.balance || (entity.balanceEntries?.length ?? 0) === 0) && (
+        <TPAlert tone="neutral" title="Sin movimientos">
+          Aún no hay movimientos en esta cuenta corriente. Se registrarán automáticamente
+          al confirmar ventas o compras.
+        </TPAlert>
+      )}
+
+      {showCrossModal && entity.isSupplier && (
+        <SupplierCrossSettlementModal
+          supplierId={entity.id}
+          onClose={() => setShowCrossModal(false)}
+          onSuccess={() => { setShowCrossModal(false); onUpdate({ ...entity }); }}
+        />
+      )}
 
     </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// BalanceDisplay — tarjetas de saldo según modo
+// ---------------------------------------------------------------------------
+
+function fmtGrams(v: number) {
+  return v.toLocaleString("es-AR", { minimumFractionDigits: 3, maximumFractionDigits: 3 }) + " g";
+}
+function fmtMoney(v: number) {
+  return v.toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+function BalanceDisplay({
+  balance,
+  entityId,
+  isSupplier,
+  onCreditApplied,
+}: {
+  balance: AggregatedBalance;
+  entityId?: string;
+  isSupplier?: boolean;
+  onCreditApplied?: () => void;
+}) {
+  const [showCreditModal, setShowCreditModal] = useState(false);
+
+  if (balance.mode === "UNIFIED") {
+    const isPositive = balance.amount >= 0;
+    return (
+      <TPCard className="p-4">
+        <div className="text-xs font-semibold text-muted uppercase tracking-wide mb-3">Saldo unificado</div>
+        <div className="flex items-end gap-3">
+          <span className={`text-3xl font-bold tabular-nums ${isPositive ? "text-text" : "text-red-500"}`}>
+            {isPositive ? "" : "−"}${fmtMoney(Math.abs(balance.amount))}
+          </span>
+          <span className="text-xs text-muted mb-1">moneda base</span>
+        </div>
+      </TPCard>
+    );
+  }
+
+  // BREAKDOWN
+  const hasMetals         = balance.metals.length > 0;
+  const hechuraEntries    = Object.entries(balance.hechura.byCurrency).filter(([, v]) => v !== 0);
+  const hasHechura        = hechuraEntries.length > 0;
+  const hasNegativeCredit =
+    isSupplier &&
+    (balance.metals.some((m) => m.gramsPure < 0) ||
+      hechuraEntries.some(([, v]) => v < 0));
+
+  return (
+    <div className="space-y-3">
+      {/* Metal */}
+      {hasMetals && (
+        <TPCard className="p-4">
+          <div className="flex items-center gap-2 mb-3">
+            <div className="w-2 h-2 rounded-full bg-amber-500" />
+            <span className="text-xs font-semibold text-amber-700 dark:text-amber-400 uppercase tracking-wide">
+              Metal — saldo en gramos puros
+            </span>
+          </div>
+          <div className="space-y-2">
+            {balance.metals.map((m) => (
+              <div key={m.metalId} className="flex items-center justify-between py-2 border-b border-border/50 last:border-0">
+                <span className="text-sm text-muted font-mono text-xs">Metal {m.metalId.slice(-8)}</span>
+                <span className={`text-xl font-bold tabular-nums ${m.gramsPure >= 0 ? "text-amber-600 dark:text-amber-400" : "text-red-500"}`}>
+                  {fmtGrams(m.gramsPure)}
+                </span>
+              </div>
+            ))}
+          </div>
+          <div className="mt-2 text-[10px] text-muted/70 italic">
+            Gramos puros acumulados — no convertibles a dinero automáticamente.
+          </div>
+        </TPCard>
+      )}
+
+      {/* Hechura por moneda */}
+      {(hasHechura || !hasMetals) && (
+        <TPCard className="p-4">
+          <div className="flex items-center gap-2 mb-3">
+            <div className="w-2 h-2 rounded-full bg-sky-500" />
+            <span className="text-xs font-semibold text-sky-700 dark:text-sky-400 uppercase tracking-wide">
+              Hechura — saldo en dinero
+            </span>
+          </div>
+          {hechuraEntries.length === 0 ? (
+            <span className="text-sm text-muted">Sin saldo monetario.</span>
+          ) : (
+            <div className="space-y-2">
+              {hechuraEntries.map(([currency, amount]) => (
+                <div key={currency} className="flex items-end gap-3">
+                  <span className={`text-3xl font-bold tabular-nums ${amount >= 0 ? "text-text" : "text-red-500"}`}>
+                    {amount >= 0 ? "" : "−"}${fmtMoney(Math.abs(amount))}
+                  </span>
+                  <span className="text-xs text-muted mb-1">{currency}</span>
+                  {amount < 0 && (
+                    <span className="text-[10px] text-emerald-600 dark:text-emerald-400 mb-1 ml-1">
+                      saldo a favor
+                    </span>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </TPCard>
+      )}
+
+      {!hasMetals && !hasHechura && (
+        <TPCard className="p-4 text-center text-sm text-muted">Sin saldo acumulado.</TPCard>
+      )}
+
+      {/* Botón aplicar saldo a favor */}
+      {hasNegativeCredit && entityId && (
+        <div className="flex justify-end">
+          <TPButton variant="secondary" onClick={() => setShowCreditModal(true)}>
+            <Banknote size={14} className="mr-1" /> Aplicar saldo a favor
+          </TPButton>
+        </div>
+      )}
+
+      {showCreditModal && entityId && (
+        <SupplierCreditModal
+          supplierId={entityId}
+          balance={balance as import("../../services/commercial-entities").AggregatedBalanceBreakdown}
+          onClose={() => setShowCreditModal(false)}
+          onSuccess={() => { setShowCreditModal(false); onCreditApplied?.(); }}
+        />
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// SupplierCreditModal — aplica saldo a favor del proveedor
+// ---------------------------------------------------------------------------
+function SupplierCreditModal({
+  supplierId,
+  balance,
+  onClose,
+  onSuccess,
+}: {
+  supplierId: string;
+  balance: import("../../services/commercial-entities").AggregatedBalanceBreakdown;
+  onClose: () => void;
+  onSuccess: () => void;
+}) {
+  const [mode, setMode]       = useState<"MONEY" | "METAL">("MONEY");
+  const [currency, setCurrency] = useState<string>(() => {
+    const neg = Object.entries(balance.hechura.byCurrency).find(([, v]) => v < 0);
+    return neg ? neg[0] : "ARS";
+  });
+  const [amount, setAmount]   = useState<number | null>(null);
+  const [metalId, setMetalId] = useState("");
+  const [variantId, setVariantId] = useState("");
+  const [gramsPure, setGramsPure] = useState<number | null>(null);
+  const [note, setNote]       = useState("");
+  const [busy, setBusy]       = useState(false);
+
+  // Monedas con crédito disponible
+  const creditCurrencies = Object.entries(balance.hechura.byCurrency)
+    .filter(([, v]) => v < 0)
+    .map(([c, v]) => ({ value: c, label: `${c} (saldo: ${fmtMoney(Math.abs(v))})` }));
+
+  // Metales con crédito disponible
+  const creditMetals = balance.metals.filter((m) => m.gramsPure < 0);
+
+  async function apply() {
+    if (mode === "MONEY" && (!amount || amount <= 0)) {
+      toast.error("Ingresá un monto válido."); return;
+    }
+    if (mode === "METAL" && (!gramsPure || gramsPure <= 0 || !metalId)) {
+      toast.error("Completá los datos del metal."); return;
+    }
+    setBusy(true);
+    try {
+      await purchasesService.applyCredit(supplierId, {
+        note: note || "Aplicación de saldo a favor",
+        components: mode === "MONEY"
+          ? [{ componentType: "MONEY", amount: amount!, currency }]
+          : [{ componentType: "METAL", metalId, variantId, gramsOriginal: gramsPure! / 0.75, purity: 0.75, gramsPure: gramsPure! }],
+      });
+      toast.success("Saldo a favor aplicado correctamente.");
+      onSuccess();
+    } catch (e: any) {
+      toast.error(e?.message || "Error al aplicar el saldo.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Modal open onClose={onClose} title="Aplicar saldo a favor" maxWidth="sm">
+      <div className="space-y-4 p-4">
+        <TPField label="Tipo de aplicación">
+          <TPSelect
+            value={mode}
+            onChange={(v) => setMode(v as "MONEY" | "METAL")}
+            options={[
+              { value: "MONEY", label: "Dinero (hechura)" },
+              { value: "METAL", label: "Metal (gramos)" },
+            ]}
+          />
+        </TPField>
+
+        {mode === "MONEY" && (
+          <>
+            {creditCurrencies.length > 0 && (
+              <TPField label="Moneda">
+                <TPSelect
+                  value={currency}
+                  onChange={setCurrency}
+                  options={creditCurrencies}
+                />
+              </TPField>
+            )}
+            <TPField label="Monto a aplicar">
+              <TPNumberInput
+                value={amount}
+                onChange={setAmount}
+                decimals={2}
+                min={0.01}
+                placeholder="0.00"
+              />
+            </TPField>
+          </>
+        )}
+
+        {mode === "METAL" && (
+          <>
+            {creditMetals.length > 0 && (
+              <TPField label="Metal con crédito disponible">
+                <TPSelect
+                  value={metalId}
+                  onChange={(v) => { setMetalId(v); setVariantId(v); }}
+                  options={creditMetals.map((m) => ({
+                    value: m.metalId,
+                    label: `${m.metalId.slice(-8)} (crédito: ${fmtGrams(Math.abs(m.gramsPure))})`,
+                  }))}
+                />
+              </TPField>
+            )}
+            <TPField label="Gramos puros a aplicar">
+              <TPNumberInput
+                value={gramsPure}
+                onChange={setGramsPure}
+                decimals={4}
+                min={0.0001}
+                placeholder="0.0000"
+              />
+            </TPField>
+          </>
+        )}
+
+        <TPField label="Nota">
+          <TPInput value={note} onChange={setNote} placeholder="Aplicación de saldo a favor" />
+        </TPField>
+
+        <div className="flex justify-end gap-2 pt-2">
+          <TPButton variant="secondary" onClick={onClose} disabled={busy}>Cancelar</TPButton>
+          <TPButton onClick={apply} disabled={busy}>
+            {busy ? "Aplicando…" : "Aplicar saldo"}
+          </TPButton>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// BalanceEntriesTable — historial de movimientos
+// ---------------------------------------------------------------------------
+
+const ENTRY_TYPE_LABELS: Record<string, string> = {
+  INVOICE:     "Factura",
+  PAYMENT:     "Pago",
+  CREDIT_NOTE: "Nota de crédito",
+  DEBIT_NOTE:  "Nota de débito",
+  ADJUSTMENT:  "Ajuste",
+};
+const ROLE_LABELS: Record<string, string> = {
+  CLIENT:   "Cliente",
+  SUPPLIER: "Proveedor",
+};
+
+function BalanceEntriesTable({
+  entries,
+  balance,
+}: {
+  entries: EntityDetailType["balanceEntries"];
+  balance: AggregatedBalance | null;
+}) {
+  const isBreakdown = balance?.mode === "BREAKDOWN";
+
+  return (
+    <TPCard className="overflow-hidden p-0">
+      <div className="px-4 py-3 border-b border-border">
+        <span className="text-sm font-semibold">Movimientos de cuenta corriente</span>
+        <span className="ml-2 text-xs text-muted">({entries.length})</span>
+      </div>
+      <div className="overflow-x-auto">
+        <table className="w-full text-xs min-w-[520px]">
+          <thead>
+            <tr className="bg-surface2/60 border-b border-border">
+              <th className="text-left px-3 py-2 font-medium text-muted">Tipo</th>
+              <th className="text-left px-3 py-2 font-medium text-muted">Rol</th>
+              <th className="text-left px-3 py-2 font-medium text-muted">Ref.</th>
+              <th className="text-right px-3 py-2 font-medium text-muted">
+                {isBreakdown ? "Metal / Hechura" : "Importe"}
+              </th>
+              <th className="text-left px-3 py-2 font-medium text-muted">Fecha</th>
+              <th className="text-left px-3 py-2 font-medium text-muted">Estado</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-border">
+            {entries.slice(0, 50).map((entry) => {
+              const snap = entry.breakdownSnapshot as any;
+              const isVoided = entry.voidedAt != null;
+              return (
+                <tr key={entry.id} className={isVoided ? "opacity-40 line-through" : "hover:bg-surface2/20"}>
+                  <td className="px-3 py-2">{ENTRY_TYPE_LABELS[entry.entryType] ?? entry.entryType}</td>
+                  <td className="px-3 py-2 text-muted">{ROLE_LABELS[entry.role] ?? entry.role}</td>
+                  <td className="px-3 py-2 font-mono text-muted text-[10px]">{entry.documentRef || "—"}</td>
+                  <td className="px-3 py-2 text-right tabular-nums">
+                    {snap ? (
+                      <div className="space-y-0.5">
+                        {(snap.metals ?? []).map((m: any, i: number) => (
+                          <div key={i} className="text-amber-600 dark:text-amber-400 font-medium">
+                            {fmtGrams(m.gramsPure)}
+                          </div>
+                        ))}
+                        {snap.hechura?.amount != null && snap.hechura.amount !== 0 && (
+                          <div className="text-sky-600 dark:text-sky-400">
+                            ${fmtMoney(snap.hechura.amount)}
+                          </div>
+                        )}
+                      </div>
+                    ) : (
+                      <span className="font-semibold">${fmtMoney(parseFloat(entry.amount))}</span>
+                    )}
+                  </td>
+                  <td className="px-3 py-2 text-muted">
+                    {new Date(entry.createdAt).toLocaleDateString("es-AR")}
+                  </td>
+                  <td className="px-3 py-2">
+                    {isVoided
+                      ? <span className="text-red-500 text-[10px]">Anulado</span>
+                      : <span className="text-emerald-600 dark:text-emerald-400 text-[10px]">Activo</span>
+                    }
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </TPCard>
   );
 }
 

@@ -341,7 +341,7 @@ function RatesEditor({
                   value={rate.name}
                   onChange={(v) => patchRate(idx, { name: v })}
                   disabled={disabled}
-                  placeholder="Nombre de envío"
+                  placeholder="Nombre de tarifa (ej: Capital, Interior, GBA)"
                   className="text-sm font-medium"
                 />
                 {isDuplicate && (
@@ -390,7 +390,7 @@ function RatesEditor({
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 px-4 py-3 border-t border-border/60">
-              <TPField label="Zonas / Ciudades">
+              <TPField label="Zonas / Ciudades" hint="Ciudades o zonas cubiertas. Si dejás vacío, aplica a cualquier destino.">
                 <TPComboCreatableMulti
                   type="CITY"
                   items={cityItems}
@@ -406,7 +406,7 @@ function RatesEditor({
                 />
               </TPField>
 
-              <TPField label="Provincia">
+              <TPField label="Provincia" hint="Filtrá por provincia. Opcional; si está vacío aplica a todas.">
                 <TPComboCreatableMulti
                   type="PROVINCE"
                   items={provinceItems}
@@ -422,7 +422,7 @@ function RatesEditor({
                 />
               </TPField>
 
-              <TPField label="Países">
+              <TPField label="Países" hint="Para envíos internacionales. Opcional.">
                 <TPComboCreatableMulti
                   type="COUNTRY"
                   items={countryItems}
@@ -440,7 +440,17 @@ function RatesEditor({
             </div>
 
             <div className="flex flex-col sm:flex-row gap-3 px-4 py-3 border-t border-border/60">
-              <TPField label="Modo de cálculo" className="sm:w-[200px] shrink-0">
+              <TPField
+                label="Modo de cálculo"
+                className="sm:w-[200px] shrink-0"
+                hint={
+                  rate.calculationMode === "FIXED"
+                    ? "Precio único sin importar el peso ni el destino."
+                    : rate.calculationMode === "BY_WEIGHT"
+                    ? "El costo varía según el peso del paquete."
+                    : "Precio fijo para las zonas indicadas arriba."
+                }
+              >
                 <TPComboFixed
                   value={rate.calculationMode}
                   onChange={(v) =>
@@ -462,7 +472,7 @@ function RatesEditor({
               </TPField>
 
               {rate.calculationMode === "FIXED" && (
-                <TPField label="Precio fijo" className="flex-1">
+                <TPField label="Precio fijo" className="flex-1" hint="Importe cobrado siempre, sin importar el peso ni la distancia.">
                   <TPNumberInput
                     value={rate.fixedPrice ? parseFloat(rate.fixedPrice) : null}
                     onChange={(v) =>
@@ -481,7 +491,7 @@ function RatesEditor({
 
               {rate.calculationMode === "BY_WEIGHT" && (
                 <div className="flex flex-1 flex-wrap gap-3">
-                  <TPField label="Por kg" className="w-[140px]">
+                  <TPField label="Por kg" className="w-[140px]" hint="Precio por cada kilogramo del paquete.">
                     <TPNumberInput
                       value={
                         rate.pricePerKg ? parseFloat(rate.pricePerKg) : null
@@ -501,7 +511,7 @@ function RatesEditor({
                     />
                   </TPField>
 
-                  <TPField label="Peso mín (kg)" className="w-[120px]">
+                  <TPField label="Peso mín (kg)" className="w-[120px]" hint="Dejá vacío para sin mínimo.">
                     <TPNumberInput
                       value={rate.minWeight ? parseFloat(rate.minWeight) : null}
                       onChange={(v) =>
@@ -518,7 +528,7 @@ function RatesEditor({
                     />
                   </TPField>
 
-                  <TPField label="Peso máx (kg)" className="w-[120px]">
+                  <TPField label="Peso máx (kg)" className="w-[120px]" hint="Dejá vacío para sin límite.">
                     <TPNumberInput
                       value={rate.maxWeight ? parseFloat(rate.maxWeight) : null}
                       onChange={(v) =>
@@ -538,7 +548,7 @@ function RatesEditor({
               )}
 
               {rate.calculationMode === "BY_ZONE" && (
-                <TPField label="Precio por zona" className="flex-1">
+                <TPField label="Precio por zona" className="flex-1" hint="Importe fijo para las zonas y ciudades indicadas en esta tarifa.">
                   <TPNumberInput
                     value={rate.fixedPrice ? parseFloat(rate.fixedPrice) : null}
                     onChange={(v) =>
@@ -1119,9 +1129,45 @@ export default function ConfiguracionSistemaEnvios() {
       >
         <div className="space-y-4">
 
-          {editTarget && draft.type === "PICKUP" && (
+          {!editTarget && (
+            <TPCard title="Tipo de transportista">
+              <TPField
+                label="Tipo"
+                hint={
+                  draft.type === "PICKUP"
+                    ? "El cliente retira el pedido en la sucursal. Sin costo de envío."
+                    : "El transportista lleva el pedido al domicilio del cliente."
+                }
+              >
+                <TPComboFixed
+                  value={draft.type}
+                  onChange={(v) =>
+                    patchDraft({
+                      type: v as ShippingCarrierType,
+                      warehouseId: "",
+                    })
+                  }
+                  options={[
+                    { value: "DELIVERY", label: "Envío a domicilio" },
+                    { value: "PICKUP", label: "Retiro en sucursal" },
+                  ]}
+                  disabled={busySave}
+                />
+              </TPField>
+            </TPCard>
+          )}
+
+          {draft.type === "PICKUP" && (
             <TPCard title="Almacén de retiro">
-              <TPField label="Almacén" required error={errors.warehouseId}>
+              <p className="text-xs text-muted mb-3">
+                Indicá desde qué sucursal retira el cliente. La dirección del almacén se muestra al confirmar el pedido.
+              </p>
+              <TPField
+                label="Almacén"
+                required
+                error={errors.warehouseId}
+                hint="Si necesitás un almacén nuevo, crealo primero desde Inventario → Almacenes."
+              >
                 <TPComboFixed
                   value={draft.warehouseId}
                   onChange={(v) => patchDraft({ warehouseId: v })}
@@ -1137,7 +1183,16 @@ export default function ConfiguracionSistemaEnvios() {
 
           <TPCard title="Transportista" collapsible>
             <div className="space-y-4">
-              <TPField label="Nombre" required error={errors.name}>
+              <TPField
+                label="Nombre"
+                required
+                error={errors.name}
+                hint={
+                  isPickupDraft
+                    ? "Nombre visible para el cliente al elegir esta opción de retiro."
+                    : "Nombre del transportista tal como aparecerá en el pedido."
+                }
+              >
                 <TPInput
                   value={draft.name}
                   onChange={(v) => patchDraft({ name: v })}
@@ -1155,6 +1210,9 @@ export default function ConfiguracionSistemaEnvios() {
 
           {!isPickupDraft && (
             <TPCard title="Tarifas">
+              <p className="text-xs text-muted mb-3">
+                Cada tarifa define un costo de envío para un destino y modo de cálculo. Podés tener varias tarifas activas al mismo tiempo.
+              </p>
               <RatesEditor
                 rates={ratesDraft}
                 onChange={setRatesDraft}
@@ -1180,6 +1238,9 @@ export default function ConfiguracionSistemaEnvios() {
           {!isPickupDraft && (
             <TPCard title="Envío gratuito">
               <div className="space-y-3">
+                <p className="text-xs text-muted">
+                  Si el total del pedido supera el monto indicado, el envío se aplica sin costo automáticamente.
+                </p>
                 <TPCheckbox
                   checked={draft.hasFreeShipping}
                   onChange={(v) => {
@@ -1192,13 +1253,16 @@ export default function ConfiguracionSistemaEnvios() {
                   disabled={busySave}
                   label={
                     <span className="text-sm text-text">
-                      ¿Tiene envío gratuito?
+                      Activar envío gratuito por monto mínimo
                     </span>
                   }
                 />
 
                 {draft.hasFreeShipping && (
-                  <TPField label="Envío gratis a partir de">
+                  <TPField
+                    label="Envío gratis a partir de"
+                    hint="Si el pedido iguala o supera este importe, el envío es gratuito."
+                  >
                     <TPNumberInput
                       value={freeShippingNum}
                       onChange={(v) => {

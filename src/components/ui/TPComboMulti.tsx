@@ -77,8 +77,9 @@ export default function TPComboMulti({
         setSearchText("");
       }
     }
-    document.addEventListener("mousedown", onDoc);
-    return () => document.removeEventListener("mousedown", onDoc);
+    // capture:true para disparar antes del stopPropagation del Modal
+    document.addEventListener("mousedown", onDoc, true);
+    return () => document.removeEventListener("mousedown", onDoc, true);
   }, []);
 
   /* ---- reposicionar en scroll/resize ---- */

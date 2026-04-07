@@ -137,6 +137,48 @@ export type SaleDetail = SaleRow & {
   saleTotals: SaleTotals | null;
 };
 
+// ─── Sale Preview ─────────────────────────────────────────────────────────────
+
+export type SalePreviewLineInput = {
+  articleId: string;
+  variantId?: string | null;
+  quantity:  number;
+};
+
+export type SalePreviewInput = {
+  lines:            SalePreviewLineInput[];
+  clientId?:        string | null;
+  paymentMethodId?: string | null;
+  installmentsQty?: number;
+};
+
+export type SalePreviewLine = {
+  articleId:            string;
+  variantId:            string | null;
+  quantity:             number;
+  unitPrice:            number | null;
+  lineSubtotal:         number | null;
+  priceSource:          string;
+  appliedPriceListId:   string | null;
+  appliedPriceListName: string | null;
+  appliedPromotionId:   string | null;
+  appliedPromotionName: string | null;
+  appliedDiscountId:    string | null;
+  unitCost:             number | null;
+  costPartial:          boolean;
+  costMode:             string;
+  policy: { canConfirm: boolean; blockingAlerts: string[] };
+};
+
+import type { CheckoutResult } from "./articles";
+
+export type SalePreviewResult = {
+  lines:          SalePreviewLine[];
+  subtotal:       number;
+  checkoutResult: CheckoutResult | null;
+  total:          number;
+};
+
 // ─── Payloads ─────────────────────────────────────────────────────────────────
 export type SaleLineInput = {
   articleId: string;
@@ -269,4 +311,12 @@ export const salesApi = {
     const qs = date ? `?date=${encodeURIComponent(date)}` : "";
     return apiFetch<CajaDaySummary>(`/sales/caja${qs}`, { on401: "throw" });
   },
+
+  /** Resuelve precios y checkout para el carrito sin crear la venta. */
+  preview: (data: SalePreviewInput) =>
+    apiFetch<SalePreviewResult>("/sales/preview", {
+      method: "POST",
+      body: data,
+      on401: "throw",
+    }),
 };

@@ -1,7 +1,7 @@
 import { apiFetch } from "../lib/api";
 
 export type PromotionType  = "FIXED" | "PERCENTAGE";
-export type PromotionScope = "ALL" | "ARTICLE" | "VARIANT" | "CATEGORY" | "BRAND";
+export type PromotionScope = "ALL" | "ARTICLE" | "VARIANT" | "CATEGORY" | "BRAND" | "GROUP";
 
 export type PromotionRow = {
   id:           string;
@@ -13,6 +13,7 @@ export type PromotionRow = {
   validTo:      string | null;
   untilStockEnd: boolean;
   priority:     number;
+  isStackable:  boolean;
   isActive:     boolean;
   notes:        string;
   deletedAt:    string | null;
@@ -21,6 +22,7 @@ export type PromotionRow = {
   variants:   { variantId: string; variant: { id: string; code: string; name: string; articleId: string; article: { id: string; code: string; name: string } | null } }[];
   categories: { categoryId: string; category: { id: string; name: string } }[];
   brands:     { brand: string }[];
+  groups:     { groupId: string; group: { id: string; name: string } }[];
 };
 
 export type PromotionPayload = {
@@ -32,10 +34,12 @@ export type PromotionPayload = {
   variantIds?:   string[];
   categoryIds?:  string[];
   brands?:       string[];
+  groupIds?:     string[];
   validFrom?:    string | null;
   validTo?:      string | null;
   untilStockEnd?: boolean;
   priority?:     number;
+  isStackable?:  boolean;
   isActive?:     boolean;
   notes?:        string;
 };
@@ -58,6 +62,7 @@ export const PROMOTION_SCOPE_LABELS: Record<PromotionScope, string> = {
   VARIANT:  "Variantes",
   CATEGORY: "Categorías",
   BRAND:    "Marcas",
+  GROUP:    "Grupos",
 };
 
 export const promotionsApi = {

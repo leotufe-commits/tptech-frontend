@@ -114,10 +114,22 @@ export function usePerfilJoyeria() {
   );
 
   // ================== HIDRATACIÓN ==================
+  // Refs para leer el valor actual de isEditMode y dirty sin agregarlos como deps del efecto.
+  // Esto evita que el efecto se re-ejecute en cada keystroke del usuario.
+  const isEditModeRef = useRef(isEditMode);
+  isEditModeRef.current = isEditMode;
+  const dirtyRef = useRef(dirty);
+  dirtyRef.current = dirty;
+
   useEffect(() => {
     if (!jewelryFromContext) return;
 
     setServerJewelry(jewelryFromContext);
+
+    // Si el usuario está editando con cambios no guardados, NO sobreescribir el formulario.
+    // Caso: subir logo cambia updatedAt → refresh() actualiza jewelryFromContext →
+    // sin esta guarda, todos los campos (incluyendo notes) se resetearían a los valores de DB.
+    if (isEditModeRef.current && dirtyRef.current) return;
 
     const d = jewelryToDraft(jewelryFromContext);
     setExisting(d.existing);
@@ -240,14 +252,14 @@ export function usePerfilJoyeria() {
       setDirty(false);
       setMsg("Guardado correctamente ✅");
 
-      await refresh();
+      await refresh({ force: true, silent: true });
       goToViewMode();
     } catch (e: any) {
       setMsg(e?.message || "Error al guardar.");
     } finally {
       setSaving(false);
     }
-  }, [existing, company, isEditMode, refresh, goToViewMode]);
+  }, [existing, company, emailConfig, isEditMode, refresh, goToViewMode]);
 
   const uploadLogoInstant = useCallback(
     async (file: File) => {
@@ -283,15 +295,17 @@ export function usePerfilJoyeria() {
         const updated = normalizeJewelryResponse(resp) as JewelryProfile;
         setServerJewelry(updated);
 
-        const d = jewelryToDraft(updated);
-        setExisting(d.existing);
-        setCompany(d.company);
+        // Solo actualizar logoUrl — no sobreescribir el resto del formulario con datos de DB.
+        // El logo upload solo cambia logoUrl en el servidor; los demás campos del usuario
+        // (como notes) pueden tener ediciones no guardadas que deben preservarse.
+        setCompany((p) => p ? { ...p, logoUrl: String(updated?.logoUrl || "") } : p);
 
         devLog("[DBG LOGO] 1/upload resp logoUrl:", updated?.logoUrl);
         notifyLogoChanged(String(updated?.logoUrl || ""));
         devLog("[DBG LOGO] 2/event dispatched, calling refresh()");
-        // Refresca AuthContext para que sidebar y favicon lean el logo actualizado
-        refresh().then(() => {
+        // silent:true → no dispara setLoading(true) → evita el flash de loading que
+        // desmontaría el formulario y confundiría al usuario con pérdida de datos
+        refresh({ silent: true }).then(() => {
           devLog("[DBG LOGO] 5/refresh() done");
         }).catch(() => {});
         setMsg("Logo actualizado ✅");
@@ -333,7 +347,7 @@ export function usePerfilJoyeria() {
         on401: "throw",
       });
 
-      refresh().catch(() => {});
+      refresh({ silent: true }).catch(() => {});
       setMsg("Logo eliminado ✅");
     } catch (e: any) {
       devLog("deleteLogoInstant error", e);
@@ -386,7 +400,7 @@ export function usePerfilJoyeria() {
             ? `Adjuntados ${okFiles.length} archivo(s). Se omitieron ${rejected.length} por tamaño.`
             : "Adjuntos cargados ✅"
         );
-        refresh().catch(() => {});
+        refresh({ silent: true }).catch(() => {});
       } catch (e: any) {
         devLog("uploadAttachmentsInstant error", e);
         setMsg(e?.message || "No se pudieron subir los adjuntos.");
@@ -421,7 +435,7 @@ export function usePerfilJoyeria() {
         });
 
         setMsg("Adjunto eliminado ✅");
-        refresh().catch(() => {});
+        refresh({ silent: true }).catch(() => {});
       } catch (e: any) {
         devLog("deleteSavedAttachment error", e);
         setMsg(e?.message || "No se pudo eliminar el adjunto.");
@@ -447,7 +461,12 @@ export function usePerfilJoyeria() {
 
   const phone = `${String(existing?.phoneCountry || "").trim()} ${String(existing?.phoneNumber || "").trim()}`.trim();
 
-  const addressLine = [existing?.street, existing?.number].filter(Boolean).join(" ");
+  const addressLine = [
+    existing?.street,
+    existing?.number,
+    existing?.floor  ? `Piso ${existing.floor}`  : null,
+    existing?.apartment ? `Dpto. ${existing.apartment}` : null,
+  ].filter(Boolean).join(" ");
   const addressMeta = [existing?.city, existing?.province, existing?.postalCode, existing?.country].filter(Boolean).join(" • ");
 
   const catIva = cats["IVA_CONDITION"] ?? [];

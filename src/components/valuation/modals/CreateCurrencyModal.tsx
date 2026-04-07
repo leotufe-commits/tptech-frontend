@@ -188,7 +188,7 @@ export default function CreateCurrencyModal({
     <Modal
       open={open}
       title={title}
-      maxWidth="md"
+      maxWidth="xl"
       hideHeaderClose
       onClose={() => {
         if (busy) return;
@@ -254,22 +254,6 @@ export default function CreateCurrencyModal({
             ) : null}
 
             <TPInput
-              label="Código *"
-              value={codeNorm}
-              onChange={(v) => setCode(v)}
-              placeholder="ARS"
-              autoFocus
-              disabled={busy}
-              maxLength={6}
-              onKeyDown={onKeyDownEnter as any}
-              onFocus={(e) => {
-                try {
-                  (e.target as HTMLInputElement)?.select?.();
-                } catch {}
-              }}
-            />
-
-            <TPInput
               label="Nombre *"
               value={name}
               onChange={setName}
@@ -283,19 +267,37 @@ export default function CreateCurrencyModal({
               }}
             />
 
-            <TPInput
-              label="Símbolo *"
-              value={symbol}
-              onChange={setSymbol}
-              placeholder="$"
-              disabled={busy}
-              onKeyDown={onKeyDownEnter as any}
-              onFocus={(e) => {
-                try {
-                  (e.target as HTMLInputElement)?.select?.();
-                } catch {}
-              }}
-            />
+            <div className="grid grid-cols-2 gap-4">
+              <TPInput
+                label="Código *"
+                value={codeNorm}
+                onChange={(v) => setCode(v)}
+                placeholder="ARS"
+                autoFocus
+                disabled={busy}
+                maxLength={6}
+                onKeyDown={onKeyDownEnter as any}
+                onFocus={(e) => {
+                  try {
+                    (e.target as HTMLInputElement)?.select?.();
+                  } catch {}
+                }}
+              />
+
+              <TPInput
+                label="Símbolo *"
+                value={symbol}
+                onChange={setSymbol}
+                placeholder="$"
+                disabled={busy}
+                onKeyDown={onKeyDownEnter as any}
+                onFocus={(e) => {
+                  try {
+                    (e.target as HTMLInputElement)?.select?.();
+                  } catch {}
+                }}
+              />
+            </div>
 
             {/* ✅ SOLO CREAR y NO primera moneda: rate inicial */}
             {showInitialRate ? (

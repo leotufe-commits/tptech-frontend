@@ -66,6 +66,29 @@ const APPLY_ON_LABELS: Record<TaxApplyOn, string> = {
 };
 
 /* =========================================================
+   Aplicación — selector unificado
+========================================================= */
+type AppliesScope = "BOTH" | "SALE" | "PURCHASE";
+
+const APPLIES_OPTIONS: { value: string; label: string }[] = [
+  { value: "BOTH",     label: "Ventas y compras" },
+  { value: "SALE",     label: "Solo ventas" },
+  { value: "PURCHASE", label: "Solo compras" },
+];
+
+function scopeFromFlags(sale: boolean, purchase: boolean): AppliesScope {
+  if (sale && !purchase) return "SALE";
+  if (!sale && purchase) return "PURCHASE";
+  return "BOTH";
+}
+
+function flagsFromScope(scope: AppliesScope): { appliesOnSale: boolean; appliesOnPurchase: boolean } {
+  if (scope === "SALE")     return { appliesOnSale: true,  appliesOnPurchase: false };
+  if (scope === "PURCHASE") return { appliesOnSale: false, appliesOnPurchase: true };
+  return { appliesOnSale: true, appliesOnPurchase: true };
+}
+
+/* =========================================================
    Draft vacío
 ========================================================= */
 const EMPTY_DRAFT = {
@@ -77,6 +100,8 @@ const EMPTY_DRAFT = {
   fixedAmount: "",
   applyOn: "TOTAL" as TaxApplyOn,
   includedInPrice: false,
+  appliesScope: "BOTH" as AppliesScope,
+  isRecoverable: false,
   validFrom: "",
   validTo: "",
   isActive: true,
@@ -336,6 +361,21 @@ export default function ConfiguracionSistemaImpuestos() {
   const [cloningId, setCloningId] = useState<string | null>(null);
   const [favoritingId, setFavoritingId] = useState<string | null>(null);
 
+  /* ---- favorito aplicación (default para nuevos impuestos) ---- */
+  const [defaultAppliesScope, setDefaultAppliesScope] = useState<AppliesScope | null>(
+    () => (localStorage.getItem("tptech.taxDefaults.appliesScope") as AppliesScope) ?? null
+  );
+  function handleSetDefaultAppliesScope(val: string) {
+    const v = val as AppliesScope;
+    if (defaultAppliesScope === v) {
+      localStorage.removeItem("tptech.taxDefaults.appliesScope");
+      setDefaultAppliesScope(null);
+    } else {
+      localStorage.setItem("tptech.taxDefaults.appliesScope", v);
+      setDefaultAppliesScope(v);
+    }
+  }
+
   /* ---- carga inicial ---- */
   async function load() {
     try {
@@ -391,7 +431,8 @@ export default function ConfiguracionSistemaImpuestos() {
   /* ---- abrir modal crear ---- */
   function openCreate() {
     setEditTarget(null);
-    setDraft(EMPTY_DRAFT);
+    const defScope = (localStorage.getItem("tptech.taxDefaults.appliesScope") as AppliesScope) ?? "BOTH";
+    setDraft({ ...EMPTY_DRAFT, appliesScope: defScope });
     setRateNum(null);
     setFixedAmountNum(null);
     setSubmitted(false);
@@ -413,6 +454,8 @@ export default function ConfiguracionSistemaImpuestos() {
       fixedAmount: row.fixedAmount != null ? String(parseFloat(row.fixedAmount)) : "",
       applyOn: row.applyOn,
       includedInPrice: row.includedInPrice,
+      appliesScope: scopeFromFlags(row.appliesOnSale, row.appliesOnPurchase),
+      isRecoverable: row.isRecoverable,
       validFrom: formatISOtoDateInput(row.validFrom),
       validTo: formatISOtoDateInput(row.validTo),
       isActive: row.isActive,
@@ -463,6 +506,8 @@ export default function ConfiguracionSistemaImpuestos() {
           : null,
       applyOn: currentDraft.applyOn,
       includedInPrice: currentDraft.includedInPrice,
+      ...flagsFromScope(currentDraft.appliesScope),
+      isRecoverable: currentDraft.isRecoverable,
       validFrom: currentDraft.validFrom || null,
       validTo: currentDraft.validTo || null,
       isActive: currentDraft.isActive,
@@ -847,6 +892,32 @@ export default function ConfiguracionSistemaImpuestos() {
             </div>
           </ModalSection>
 
+          {/* ---- Sección: Aplicación ---- */}
+          <ModalSection title="Aplicación">
+            <div className="space-y-3">
+              <TPField label="Aplica en">
+                <TPComboFixed
+                  value={draft.appliesScope}
+                  onChange={(v) => patchDraft({ appliesScope: v as AppliesScope })}
+                  options={APPLIES_OPTIONS}
+                  disabled={busySave}
+                  onSetFavorite={handleSetDefaultAppliesScope}
+                  favoriteValue={defaultAppliesScope ?? undefined}
+                />
+              </TPField>
+              <TPCheckbox
+                checked={draft.isRecoverable}
+                onChange={(v) => patchDraft({ isRecoverable: v })}
+                disabled={busySave}
+                label={
+                  <span className="text-sm text-text">
+                    Recuperable (ej: IVA Crédito Fiscal — no suma al costo)
+                  </span>
+                }
+              />
+            </div>
+          </ModalSection>
+
           {/* ---- Sección: Vigencia ---- */}
           <ModalSection title="Vigencia">
             <TPDateRangeInline
@@ -924,6 +995,15 @@ export default function ConfiguracionSistemaImpuestos() {
             </DetailRow>
             <DetailRow label="Incluido en precio">
               {viewTarget.includedInPrice ? "Sí" : "No"}
+            </DetailRow>
+            <DetailRow label="Aplica en ventas">
+              {viewTarget.appliesOnSale ? "Sí" : "No"}
+            </DetailRow>
+            <DetailRow label="Aplica en compras">
+              {viewTarget.appliesOnPurchase ? "Sí" : "No"}
+            </DetailRow>
+            <DetailRow label="Recuperable">
+              {viewTarget.isRecoverable ? "Sí" : "No"}
             </DetailRow>
             <DetailRow label="Válido desde">
               {viewTarget.validFrom ? formatDate(viewTarget.validFrom) : <span className="text-muted italic">Sin fecha</span>}

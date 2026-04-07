@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
-  Check, X, User, Building2,
+  Check, X, User, Building2, ChevronDown,
 } from "lucide-react";
 import { TabAddresses } from "../../entity-detail/tabs/TabAddresses";
 import { TabContacts } from "../../entity-detail/tabs/TabContacts";
@@ -34,7 +34,10 @@ import {
   type CommercialApplyOn,
   type CommercialRuleType,
   type CommercialValueType,
+  type EntityTaxOverride,
+  type TaxOverrideMode,
 } from "../../../services/commercial-entities";
+import { taxesApi, type TaxRow } from "../../../services/taxes";
 import { priceListsApi, type PriceListRow } from "../../../services/price-lists";
 import { MermaBlock } from "./MermaBlock";
 import { listCurrencies, type CurrencyRow } from "../../../services/valuation";
@@ -68,6 +71,8 @@ type Draft = {
   creditLimitSupplier: number | null;
   priceListId: string | null;
   currencyId: string | null;
+  taxExempt: boolean;
+  taxApplyOnOverride: string;
   notes: string;
 };
 
@@ -93,7 +98,7 @@ function emptyDraft(isClientCtx: boolean, isSupplierCtx: boolean): Draft {
     balanceType: "UNIFIED",
     commercialApplyOn: "", commercialRuleType: "", commercialValueType: "", commercialValue: null,
     creditLimitClient: null, creditLimitSupplier: null,
-    priceListId: null, currencyId: null, notes: "",
+    priceListId: null, currencyId: null, taxExempt: false, taxApplyOnOverride: "", notes: "",
   };
 }
 
@@ -123,6 +128,8 @@ function entityToDraft(e: EntityDetailType): Draft {
     creditLimitSupplier: e.creditLimitSupplier != null ? parseFloat(e.creditLimitSupplier) : null,
     priceListId: e.priceListId,
     currencyId: e.currencyId,
+    taxExempt: e.taxExempt ?? false,
+    taxApplyOnOverride: e.taxApplyOnOverride ?? "",
     notes: e.notes,
   };
 }
@@ -201,11 +208,35 @@ export default function EntityEditModal({
   // CREATE-only: merma drafts
   const [mermaDrafts, setMermaDrafts] = useState<MermaOverrideDraft[]>([]);
 
+  // UX — secciones avanzadas colapsables (cerradas por defecto)
+  const [advancedFiscalOpen, setAdvancedFiscalOpen] = useState(false);
+  const [advancedCommercialOpen, setAdvancedCommercialOpen] = useState(false);
+
+  // Tax overrides (EDIT mode only)
+  const [taxOverrides, setTaxOverrides] = useState<EntityTaxOverride[]>([]);
+  const [availableTaxes, setAvailableTaxes] = useState<TaxRow[]>([]);
+  const [overrideFormOpen, setOverrideFormOpen] = useState(false);
+  const [overrideFormTaxId, setOverrideFormTaxId] = useState("");
+  const [overrideFormMode, setOverrideFormMode] = useState<TaxOverrideMode | "">("");
+  const [overrideFormApplyOn, setOverrideFormApplyOn] = useState("");
+  const [busyOverride, setBusyOverride] = useState(false);
+
   // Catalogs
   const docTypeCat    = useCatalog("DOCUMENT_TYPE");
   const ivaCat        = useCatalog("IVA_CONDITION");
   const paymentTermCat = useCatalog("PAYMENT_TERM");
   const prefixCat     = useCatalog("PHONE_PREFIX");
+
+  // Default balance type — persisted in localStorage, solo afecta nuevas entidades
+  const LS_KEY_BALANCE = "tptech_default_balance_type";
+  const [defaultBalanceType, setDefaultBalanceType] = useState<BalanceType | null>(
+    () => (localStorage.getItem(LS_KEY_BALANCE) as BalanceType | null)
+  );
+
+  function handleSetDefaultBalanceType(val: string) {
+    if (defaultBalanceType === val) { localStorage.removeItem(LS_KEY_BALANCE); setDefaultBalanceType(null); }
+    else { localStorage.setItem(LS_KEY_BALANCE, val); setDefaultBalanceType(val as BalanceType); }
+  }
 
   // Lists
   const [priceLists, setPriceLists] = useState<PriceListRow[]>([]);
@@ -225,12 +256,25 @@ export default function EntityEditModal({
     setLiveAddresses([]);
     setLiveContacts([]);
     setMermaDrafts([]);
+    setTaxOverrides([]);
+    setOverrideFormOpen(false);
+    setOverrideFormTaxId("");
+    setOverrideFormMode("");
+    setOverrideFormApplyOn("");
     if (avatarPreview.startsWith("blob:")) URL.revokeObjectURL(avatarPreview);
     setAvatarPreview("");
     setAvatarFile(null);
 
     if (mode === "CREATE") {
-      setDraft(emptyDraft(isClientContext, isSupplierContext));
+      const storedBalance = localStorage.getItem(LS_KEY_BALANCE) as BalanceType | null;
+      setDraft({
+        ...emptyDraft(isClientContext, isSupplierContext),
+        documentType: docTypeCat.favoriteItem?.label ?? "",
+        ivaCondition:  ivaCat.favoriteItem?.label ?? "",
+        paymentTerm:   paymentTermCat.favoriteItem?.label ?? "",
+        phonePrefix:   prefixCat.favoriteItem?.label ?? "",
+        ...(storedBalance ? { balanceType: storedBalance } : {}),
+      });
       setEntity(null);
     } else if (mode === "EDIT" && entityId) {
       setEntity(null);
@@ -245,12 +289,14 @@ export default function EntityEditModal({
           setAttachmentsLoaded(true);
           setLiveAddresses(e.addresses ?? []);
           setLiveContacts(e.contacts ?? []);
+          setTaxOverrides(e.taxOverrides ?? []);
         })
         .catch(() => toast.error("Error al cargar la entidad."))
         .finally(() => setLoading(false));
     }
 
     priceListsApi.list().then((rows) => setPriceLists(rows.filter((p) => p.isActive))).catch(() => {});
+    taxesApi.list().then((rows) => setAvailableTaxes(rows.filter((t) => t.isActive))).catch(() => {});
     listCurrencies().then((resp: any) => {
       const list: CurrencyRow[] = resp?.rows ?? resp ?? [];
       setCurrencies(list.filter((c) => c.isActive));
@@ -276,6 +322,48 @@ export default function EntityEditModal({
       setLiveAddresses(e.addresses ?? []);
       setLiveContacts(e.contacts ?? []);
     } catch {}
+  }
+
+  // ── Tax Overrides (EDIT mode) ───────────────────────────────────────────────
+  async function handleSaveOverride() {
+    if (!entity || !overrideFormTaxId || !overrideFormMode) return;
+    setBusyOverride(true);
+    try {
+      const saved = await commercialEntitiesApi.taxOverrides.upsert(entity.id, {
+        taxId: overrideFormTaxId,
+        overrideMode: overrideFormMode as TaxOverrideMode,
+        applyOn: (overrideFormApplyOn || null) as any,
+        notes: "",
+      });
+      setTaxOverrides((prev) => {
+        const idx = prev.findIndex((o) => o.taxId === saved.taxId);
+        if (idx >= 0) { const n = [...prev]; n[idx] = saved; return n; }
+        return [...prev, saved];
+      });
+      setOverrideFormOpen(false);
+      setOverrideFormTaxId("");
+      setOverrideFormMode("");
+      setOverrideFormApplyOn("");
+      toast.success("Override guardado.");
+    } catch (e: any) {
+      toast.error(e?.message || "Error al guardar override.");
+    } finally {
+      setBusyOverride(false);
+    }
+  }
+
+  async function handleDeleteOverride(overrideId: string) {
+    if (!entity) return;
+    setBusyOverride(true);
+    try {
+      await commercialEntitiesApi.taxOverrides.remove(entity.id, overrideId);
+      setTaxOverrides((prev) => prev.filter((o) => o.id !== overrideId));
+      toast.success("Override eliminado.");
+    } catch (e: any) {
+      toast.error(e?.message || "Error al eliminar override.");
+    } finally {
+      setBusyOverride(false);
+    }
   }
 
   // ── Avatar ──────────────────────────────────────────────────────────────────
@@ -370,6 +458,8 @@ export default function EntityEditModal({
       commercialValue: d.commercialValue != null ? String(d.commercialValue) : null,
       creditLimitClient: d.creditLimitClient != null ? String(d.creditLimitClient) : null,
       creditLimitSupplier: d.creditLimitSupplier != null ? String(d.creditLimitSupplier) : null,
+      taxExempt: d.taxExempt,
+      taxApplyOnOverride: d.taxApplyOnOverride || null,
       notes: d.notes.trim(),
     };
 
@@ -511,68 +601,66 @@ export default function EntityEditModal({
             </div>
           </div>
 
-          {/* ── Tipo de entidad ──────────────────────────────────────────── */}
-          <div className="rounded-xl border border-border/50 bg-card p-4 space-y-3">
-            <div className="flex gap-2">
-              {(
-                [
-                  { value: "PERSON",  icon: <User size={14} />,      label: "Persona física" },
-                  { value: "COMPANY", icon: <Building2 size={14} />, label: "Empresa" },
-                ] as const
-              ).map((opt) => {
-                const active = draft.entityType === opt.value;
-                return (
-                  <button
-                    key={opt.value}
-                    type="button"
-                    disabled={busy}
-                    onClick={() => set("entityType", opt.value as EntityType)}
-                    className={cn(
-                      "flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-medium transition-all focus:outline-none border",
-                      active
-                        ? "border-primary bg-primary/10 text-primary font-semibold shadow-sm"
-                        : "border-border text-muted hover:text-text hover:bg-surface2",
-                      busy && "cursor-not-allowed opacity-60"
-                    )}
-                  >
-                    {opt.icon}
-                    {opt.label}
-                  </button>
-                );
-              })}
-            </div>
-
-            {!isRoleFixed && (
-              <div className="flex flex-wrap gap-4">
-                <TPCheckbox
-                  checked={draft.isClient}
-                  onChange={(v) => set("isClient", v)}
-                  disabled={busy}
-                  label={<span className="text-sm">Es cliente</span>}
-                />
-                <TPCheckbox
-                  checked={draft.isSupplier}
-                  onChange={(v) => set("isSupplier", v)}
-                  disabled={busy}
-                  label={<span className="text-sm">Es proveedor</span>}
-                />
-                {submitted && !draft.isClient && !draft.isSupplier && (
-                  <div className="text-xs text-red-500 w-full">Debe ser cliente, proveedor o ambos.</div>
-                )}
-              </div>
-            )}
-          </div>
-
-          {/* ── Identidad + Fiscal + Contacto ────────────────────────────── */}
+          {/* ── Bloque 1: Identificación ─────────────────────────────────── */}
           <div className="rounded-xl border border-border/50 bg-card p-4 space-y-4">
             <SectionHead
-              title={personIsPrimary ? "Datos personales" : "Datos de la empresa"}
-              micro={personIsPrimary
-                ? "Nombre, apellido e información tributaria del titular"
-                : "Nombre comercial, razón social e información tributaria"}
+              title="Identificación"
+              micro={personIsPrimary ? "Tipo, nombre, documento y contacto principal" : "Tipo, razón social, documento y contacto principal"}
             />
 
-            {/* Campos principales — misma grilla 2 col para ambos tipos */}
+            {/* Tipo de entidad + rol */}
+            <div className="space-y-3">
+              <div className="flex gap-2">
+                {(
+                  [
+                    { value: "PERSON",  icon: <User size={14} />,      label: "Persona física" },
+                    { value: "COMPANY", icon: <Building2 size={14} />, label: "Empresa" },
+                  ] as const
+                ).map((opt) => {
+                  const active = draft.entityType === opt.value;
+                  return (
+                    <button
+                      key={opt.value}
+                      type="button"
+                      disabled={busy}
+                      onClick={() => set("entityType", opt.value as EntityType)}
+                      className={cn(
+                        "flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-medium transition-all focus:outline-none border",
+                        active
+                          ? "border-primary bg-primary/10 text-primary font-semibold shadow-sm"
+                          : "border-border text-muted hover:text-text hover:bg-surface2",
+                        busy && "cursor-not-allowed opacity-60"
+                      )}
+                    >
+                      {opt.icon}
+                      {opt.label}
+                    </button>
+                  );
+                })}
+              </div>
+
+              {!isRoleFixed && (
+                <div className="flex flex-wrap gap-4">
+                  <TPCheckbox
+                    checked={draft.isClient}
+                    onChange={(v) => set("isClient", v)}
+                    disabled={busy}
+                    label={<span className="text-sm">Es cliente</span>}
+                  />
+                  <TPCheckbox
+                    checked={draft.isSupplier}
+                    onChange={(v) => set("isSupplier", v)}
+                    disabled={busy}
+                    label={<span className="text-sm">Es proveedor</span>}
+                  />
+                  {submitted && !draft.isClient && !draft.isSupplier && (
+                    <div className="text-xs text-red-500 w-full">Debe ser cliente, proveedor o ambos.</div>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* Nombre / razón social */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               {personIsPrimary ? (
                 <>
@@ -666,109 +754,263 @@ export default function EntityEditModal({
                   placeholder="contacto@empresa.com"
                 />
               </TPField>
-              <TPField label="Teléfono">
-                <div className="flex gap-2">
-                  <div className="w-28 shrink-0">
-                    <TPComboCreatable
-                      type="PHONE_PREFIX"
-                      items={prefixCat.items}
-                      loading={prefixCat.loading}
-                      value={draft.phonePrefix}
-                      onChange={(v) => set("phonePrefix", v)}
-                      placeholder="+54"
-                      disabled={busy}
-                      allowCreate
-                      onRefresh={() => void prefixCat.refresh()}
-                      onCreate={async (label) => { await prefixCat.createItem(label); set("phonePrefix", label); }}
-                      mode={comboMode}
-                    />
-                  </div>
-                  <div className="flex-1">
-                    <TPInput
-                      value={draft.phoneNumber}
-                      onChange={(v) => set("phoneNumber", v)}
-                      disabled={busy}
-                      placeholder="11 1234 5678"
-                    />
-                  </div>
+              <div className="flex gap-2 items-end">
+                <div className="w-28 shrink-0">
+                  <TPComboCreatable
+                    label="Prefijo"
+                    type="PHONE_PREFIX"
+                    items={prefixCat.items}
+                    loading={prefixCat.loading}
+                    value={draft.phonePrefix}
+                    onChange={(v) => set("phonePrefix", v)}
+                    placeholder="+54"
+                    disabled={busy}
+                    allowCreate
+                    onRefresh={() => void prefixCat.refresh()}
+                    onCreate={async (label) => { await prefixCat.createItem(label); set("phonePrefix", label); }}
+                    mode={comboMode}
+                  />
                 </div>
-              </TPField>
+                <div className="flex-1">
+                  <TPInput
+                    label="Teléfono"
+                    value={draft.phoneNumber}
+                    onChange={(v) => set("phoneNumber", v)}
+                    disabled={busy}
+                    placeholder="11 1234 5678"
+                  />
+                </div>
+              </div>
             </div>
           </div>
 
-          {/* ── Ubicaciones ─────────────────────────────────────────────── */}
-          <div className="rounded-xl border border-border/50 bg-card p-4 space-y-3">
-            <SectionHead
-              title="Ubicaciones y domicilios"
-              micro="Fiscal, comercial, entrega u otras"
-            />
-            {mode === "CREATE" ? (
-              <TabAddresses
-                offlineItems={offlineAddresses}
-                onOfflineItemsChange={setOfflineAddresses}
-                contacts={offlineContacts}
-                entityName={draft.entityType === "COMPANY" ? draft.tradeName : [draft.firstName, draft.lastName].filter(Boolean).join(" ")}
-                hideCountLabel
-              />
-            ) : (
-              <TabAddresses
-                entityId={entity?.id}
-                data={liveAddresses}
-                contacts={liveContacts}
-                entityName={entity ? (entity.entityType === "COMPANY" ? entity.tradeName : [entity.firstName, entity.lastName].filter(Boolean).join(" ")) : ""}
-                onReload={reloadLive}
-                hideCountLabel
-              />
-            )}
+          {/* ── Bloque 2: Información fiscal ─────────────────────────────── */}
+          <div className="rounded-xl border border-border/50 bg-card px-4 py-3 space-y-2">
+            <p className="text-[11px] text-muted">
+              Define cómo se aplican los impuestos a esta entidad.
+              {isSupplierContext && !isClientContext && (
+                <span className="ml-1">Se aplicará en compras cuando esté disponible.</span>
+              )}
+            </p>
+            <div className="flex flex-col gap-1.5">
+              <div className="flex items-center gap-3">
+                <TPCheckbox
+                  checked={draft.taxExempt}
+                  onChange={(v) => { set("taxExempt", v); if (v) { set("taxApplyOnOverride", ""); setAdvancedFiscalOpen(false); } }}
+                  disabled={busy}
+                />
+                <span className="text-sm font-medium text-text">Exento de impuestos</span>
+              </div>
+
+              {/* Opciones avanzadas de impuestos — colapsadas por defecto */}
+              {!draft.taxExempt && (
+                <div>
+                  <button
+                    type="button"
+                    onClick={() => setAdvancedFiscalOpen(v => !v)}
+                    className="flex items-center gap-1 text-[11px] text-muted/60 hover:text-muted transition-colors py-0.5 select-none"
+                  >
+                    <ChevronDown size={11} className={cn("transition-transform duration-150", advancedFiscalOpen && "rotate-180")} />
+                    Configuración avanzada
+                    {(draft.taxApplyOnOverride || taxOverrides.length > 0) && (
+                      <span className="ml-1 w-1.5 h-1.5 rounded-full bg-primary/70 shrink-0" title="Hay configuración activa" />
+                    )}
+                  </button>
+
+                  {advancedFiscalOpen && (
+                    <div className="mt-1.5 space-y-3">
+                      <TPField label="Base de cálculo global" hint="Reemplaza la base predeterminada de cada impuesto para esta entidad. Dejalo en blanco si no necesitás cambiar nada.">
+                        <TPComboFixed
+                          value={draft.taxApplyOnOverride}
+                          onChange={(v) => set("taxApplyOnOverride", v)}
+                          disabled={busy}
+                          options={[
+                            { value: "",                         label: "Heredar de cada impuesto (por defecto)" },
+                            { value: "TOTAL",                    label: "Total del precio" },
+                            { value: "METAL",                    label: "Solo el componente metal" },
+                            { value: "HECHURA",                  label: "Solo la hechura / mano de obra" },
+                            { value: "METAL_Y_HECHURA",          label: "Metal + hechura" },
+                            { value: "SUBTOTAL_BEFORE_DISCOUNT", label: "Subtotal antes de descuentos" },
+                            { value: "SUBTOTAL_AFTER_DISCOUNT",  label: "Subtotal después de descuentos" },
+                          ]}
+                        />
+                      </TPField>
+
+                      {/* Override por impuesto puntual — solo EDIT */}
+                      {mode === "EDIT" && (
+                        <div className="rounded-lg border border-border/40 bg-muted/5 p-3 space-y-2">
+                          <div className="flex items-center justify-between">
+                            <div className="text-xs font-semibold text-text">Por impuesto</div>
+                            {!overrideFormOpen && (
+                              <TPButton variant="secondary" onClick={() => setOverrideFormOpen(true)} disabled={busyOverride} className="text-xs py-1 px-2 h-auto">
+                                + Agregar
+                              </TPButton>
+                            )}
+                          </div>
+
+                          {/* Lista de overrides existentes */}
+                          {taxOverrides.length > 0 && (
+                            <div className="space-y-1">
+                              {taxOverrides.map((ov) => {
+                                const taxName = availableTaxes.find((t) => t.id === ov.taxId)?.name ?? ov.taxId;
+                                const modeLabel = ov.overrideMode === "EXEMPT" ? "Exento" : ov.overrideMode === "CUSTOM_RATE" ? "Tasa personalizada" : "Heredar";
+                                const applyOnLabel: Record<string, string> = {
+                                  TOTAL: "Total", METAL: "Metal", HECHURA: "Hechura",
+                                  METAL_Y_HECHURA: "Metal+Hechura",
+                                  SUBTOTAL_BEFORE_DISCOUNT: "Antes descuento",
+                                  SUBTOTAL_AFTER_DISCOUNT: "Después descuento",
+                                };
+                                return (
+                                  <div key={ov.id} className="flex items-center justify-between gap-2 px-2 py-1.5 rounded-md bg-surface2/50 text-xs">
+                                    <div className="flex items-center gap-1.5 min-w-0 flex-1">
+                                      <span className="font-medium truncate">{taxName}</span>
+                                      <span className="text-muted">→</span>
+                                      <span className={cn(ov.overrideMode === "EXEMPT" ? "text-amber-600 font-medium" : "text-text")}>
+                                        {modeLabel}
+                                      </span>
+                                      {ov.overrideMode !== "EXEMPT" && ov.applyOn && (
+                                        <span className="text-muted">({applyOnLabel[ov.applyOn] ?? ov.applyOn})</span>
+                                      )}
+                                    </div>
+                                    <button
+                                      type="button"
+                                      onClick={() => handleDeleteOverride(ov.id)}
+                                      disabled={busyOverride}
+                                      className="text-muted hover:text-red-500 transition-colors disabled:opacity-50 shrink-0"
+                                      title="Eliminar override"
+                                    >
+                                      <X size={13} />
+                                    </button>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          )}
+
+                          {/* Mini-formulario para nuevo override */}
+                          {overrideFormOpen && (
+                            <div className="rounded-md border border-border/50 bg-card p-3 space-y-2">
+                              <div className="grid grid-cols-3 gap-2">
+                                <TPField label="Impuesto">
+                                  <TPComboFixed
+                                    value={overrideFormTaxId}
+                                    onChange={setOverrideFormTaxId}
+                                    disabled={busyOverride}
+                                    searchable
+                                    searchPlaceholder="Buscar…"
+                                    options={[
+                                      { value: "", label: "— Seleccionar —" },
+                                      ...availableTaxes
+                                        .filter((t) => !taxOverrides.find((o) => o.taxId === t.id))
+                                        .map((t) => ({ value: t.id, label: t.name })),
+                                    ]}
+                                  />
+                                </TPField>
+                                <TPField label="Modo">
+                                  <TPComboFixed
+                                    value={overrideFormMode}
+                                    onChange={(v) => { setOverrideFormMode(v as TaxOverrideMode | ""); if (v === "EXEMPT") setOverrideFormApplyOn(""); }}
+                                    disabled={busyOverride}
+                                    options={[
+                                      { value: "",        label: "— Seleccionar —" },
+                                      { value: "EXEMPT",  label: "Exento (omitir)" },
+                                      { value: "INHERIT", label: "Heredar (base personalizada)" },
+                                    ]}
+                                  />
+                                </TPField>
+                                <TPField label="Base">
+                                  <TPComboFixed
+                                    value={overrideFormApplyOn}
+                                    onChange={setOverrideFormApplyOn}
+                                    disabled={busyOverride || overrideFormMode === "EXEMPT"}
+                                    options={[
+                                      { value: "",                         label: "Heredar global" },
+                                      { value: "TOTAL",                    label: "Total" },
+                                      { value: "METAL",                    label: "Metal" },
+                                      { value: "HECHURA",                  label: "Hechura" },
+                                      { value: "METAL_Y_HECHURA",          label: "Metal+Hechura" },
+                                      { value: "SUBTOTAL_BEFORE_DISCOUNT", label: "Antes descuento" },
+                                      { value: "SUBTOTAL_AFTER_DISCOUNT",  label: "Después descuento" },
+                                    ]}
+                                  />
+                                </TPField>
+                              </div>
+                              <div className="flex gap-2 justify-end">
+                                <TPButton variant="ghost" onClick={() => { setOverrideFormOpen(false); setOverrideFormTaxId(""); setOverrideFormMode(""); setOverrideFormApplyOn(""); }} disabled={busyOverride} className="text-xs py-1 px-2 h-auto">
+                                  Cancelar
+                                </TPButton>
+                                <TPButton variant="primary" onClick={handleSaveOverride} disabled={busyOverride || !overrideFormTaxId || !overrideFormMode} loading={busyOverride} className="text-xs py-1 px-2 h-auto">
+                                  <Check size={12} /> Guardar
+                                </TPButton>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
           </div>
 
-          {/* ── Contactos adicionales ────────────────────────────────────── */}
-          <div className="rounded-xl border border-border/50 bg-card p-4 space-y-3">
-            <SectionHead
-              title="Contactos adicionales"
-              micro="Personas adicionales vinculadas a esta entidad"
-            />
-            {mode === "CREATE" ? (
-              <TabContacts
-                offlineItems={offlineContacts}
-                onOfflineItemsChange={setOfflineContacts}
-                hideCountLabel
+          {/* ── Bloque 3: Ubicaciones y Contactos — 2 columnas ──────────── */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="rounded-xl border border-border/50 bg-card p-3 space-y-2">
+              <SectionHead
+                title="Ubicaciones"
+                micro="Fiscal, comercial, entrega u otras"
               />
-            ) : (
-              <TabContacts
-                entityId={entity?.id}
-                data={liveContacts}
-                onReload={reloadLive}
-                hideCountLabel
+              {mode === "CREATE" ? (
+                <TabAddresses
+                  offlineItems={offlineAddresses}
+                  onOfflineItemsChange={setOfflineAddresses}
+                  contacts={offlineContacts}
+                  entityName={draft.entityType === "COMPANY" ? draft.tradeName : [draft.firstName, draft.lastName].filter(Boolean).join(" ")}
+                  hideCountLabel
+                />
+              ) : (
+                <TabAddresses
+                  entityId={entity?.id}
+                  data={liveAddresses}
+                  contacts={liveContacts}
+                  entityName={entity ? (entity.entityType === "COMPANY" ? entity.tradeName : [entity.firstName, entity.lastName].filter(Boolean).join(" ")) : ""}
+                  onReload={reloadLive}
+                  hideCountLabel
+                />
+              )}
+            </div>
+
+            <div className="rounded-xl border border-border/50 bg-card p-3 space-y-2">
+              <SectionHead
+                title="Contactos adicionales"
+                micro="Personas vinculadas a esta entidad"
               />
-            )}
+              {mode === "CREATE" ? (
+                <TabContacts
+                  offlineItems={offlineContacts}
+                  onOfflineItemsChange={setOfflineContacts}
+                  hideCountLabel
+                />
+              ) : (
+                <TabContacts
+                  entityId={entity?.id}
+                  data={liveContacts}
+                  onReload={reloadLive}
+                  hideCountLabel
+                />
+              )}
+            </div>
           </div>
 
-          {/* ── Comercial ────────────────────────────────────────────────── */}
+          {/* ── Bloque 4: Condiciones comerciales ───────────────────────── */}
           <div className="rounded-xl border border-border/50 bg-card p-4 space-y-4">
             <SectionHead
-              title="Comercial"
-              micro="Lista de precios, moneda y cuenta corriente"
+              title="Condiciones comerciales"
+              micro="Precios, moneda, cuenta corriente y condiciones de pago"
             />
             <div className="space-y-3">
-              {/* Lista de precios — ancho completo */}
-              {showPriceList && (
-                <TPField label="Lista de precios" hint="Si no se asigna, se usa la lista favorita o general del sistema.">
-                  <TPComboFixed
-                    value={draft.priceListId ?? ""}
-                    onChange={(v) => set("priceListId", v || null)}
-                    disabled={busy}
-                    searchable
-                    searchPlaceholder="Buscar lista…"
-                    options={[
-                      { value: "", label: "— Heredar del sistema —" },
-                      ...priceLists.map((p) => ({ value: p.id, label: p.name })),
-                    ]}
-                  />
-                </TPField>
-              )}
-
-              {/* Fila 1: Moneda | Tipo de saldo | Base de impuestos */}
+              {/* Moneda | Tipo de saldo | Término de pago */}
               <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                 <TPField label="Moneda" hint="Si no se asigna, se usa la moneda base del sistema.">
                   <TPComboFixed
@@ -789,37 +1031,56 @@ export default function EntityEditModal({
                     onChange={(v) => set("balanceType", v as BalanceType)}
                     disabled={busy}
                     options={[
-                      { value: "UNIFIED",   label: "Unificado" },
-                      { value: "BREAKDOWN", label: "Desglosado" },
+                      { value: "UNIFIED",   label: "Unificado",  isFavorite: defaultBalanceType === "UNIFIED" },
+                      { value: "BREAKDOWN", label: "Desglosado", isFavorite: defaultBalanceType === "BREAKDOWN" },
                     ]}
+                    onSetFavorite={handleSetDefaultBalanceType}
                   />
                 </TPField>
-                <TPField label="Base de impuestos" hint="Base sobre la que se calculan los impuestos por defecto.">
-                  <TPComboFixed
-                    value={draft.commercialApplyOn}
-                    onChange={(v) => set("commercialApplyOn", v as CommercialApplyOn | "")}
+                <TPField label="Término de pago">
+                  <TPComboCreatable
+                    type="PAYMENT_TERM"
+                    items={paymentTermCat.items}
+                    loading={paymentTermCat.loading}
+                    value={draft.paymentTerm}
+                    onChange={(v) => set("paymentTerm", v)}
+                    placeholder="Contado, 30 días…"
                     disabled={busy}
-                    options={[
-                      { value: "",                label: "— Sin especificar —" },
-                      { value: "TOTAL",           label: "Total" },
-                      { value: "METAL",           label: "Precio metal" },
-                      { value: "HECHURA",         label: "Solo hechura" },
-                      { value: "METAL_Y_HECHURA", label: "Metal y hechura" },
-                    ]}
+                    allowCreate
+                    onRefresh={() => void paymentTermCat.refresh()}
+                    onCreate={async (label) => { await paymentTermCat.createItem(label); set("paymentTerm", label); }}
+                    mode={comboMode}
                   />
                 </TPField>
               </div>
 
-              {/* Fila 2: Tipo de beneficio/recargo | Tipo de valor | Valor */}
+              {/* Lista de precios */}
+              {showPriceList && (
+                <TPField label="Lista de precios" hint="Si no se asigna, se usa la lista favorita o general del sistema.">
+                  <TPComboFixed
+                    value={draft.priceListId ?? ""}
+                    onChange={(v) => set("priceListId", v || null)}
+                    disabled={busy}
+                    searchable
+                    searchPlaceholder="Buscar lista…"
+                    options={[
+                      { value: "", label: "— Heredar del sistema —" },
+                      ...priceLists.map((p) => ({ value: p.id, label: p.name })),
+                    ]}
+                  />
+                </TPField>
+              )}
+
+              {/* Ajuste comercial | Tipo de valor | Valor */}
               <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                <TPField label="Tipo de beneficio o recargo" hint="Beneficio (bonificación) o recargo por defecto.">
+                <TPField label="Ajuste comercial" hint="Descuento reduce el precio; recargo lo aumenta.">
                   <TPComboFixed
                     value={draft.commercialRuleType}
                     onChange={(v) => set("commercialRuleType", v as CommercialRuleType | "")}
                     disabled={busy}
                     options={[
-                      { value: "",          label: "— Sin especificar —" },
-                      { value: "BONUS",     label: "Beneficio" },
+                      { value: "",          label: "— Sin ajuste —" },
+                      { value: "DISCOUNT",  label: "Descuento" },
                       { value: "SURCHARGE", label: "Recargo" },
                     ]}
                   />
@@ -836,7 +1097,7 @@ export default function EntityEditModal({
                     ]}
                   />
                 </TPField>
-                <TPField label="Valor" hint="Porcentaje o monto fijo del beneficio o recargo.">
+                <TPField label="Valor">
                   <TPNumberInput
                     value={draft.commercialValue}
                     onChange={(v) => set("commercialValue", v)}
@@ -853,33 +1114,53 @@ export default function EntityEditModal({
                 </TPField>
               </div>
 
-              {/* Término de pago */}
-              <TPField label="Término de pago" hint="Condición de pago habitual para esta entidad.">
-                <TPComboCreatable
-                  type="PAYMENT_TERM"
-                  items={paymentTermCat.items}
-                  loading={paymentTermCat.loading}
-                  value={draft.paymentTerm}
-                  onChange={(v) => set("paymentTerm", v)}
-                  placeholder="Contado, 30 días…"
-                  disabled={busy}
-                  allowCreate
-                  onRefresh={() => void paymentTermCat.refresh()}
-                  onCreate={async (label) => { await paymentTermCat.createItem(label); set("paymentTerm", label); }}
-                  mode={comboMode}
-                />
-              </TPField>
+              {/* Base del ajuste — opción avanzada colapsable */}
+              {draft.commercialRuleType && (
+                <div>
+                  <button
+                    type="button"
+                    onClick={() => setAdvancedCommercialOpen(v => !v)}
+                    className="flex items-center gap-1.5 text-xs text-muted hover:text-text transition-colors py-1 select-none"
+                  >
+                    <ChevronDown size={12} className={cn("transition-transform duration-150", advancedCommercialOpen && "rotate-180")} />
+                    Opciones avanzadas del ajuste
+                    {draft.commercialApplyOn && (
+                      <span className="ml-1 w-1.5 h-1.5 rounded-full bg-primary/70 shrink-0" title="Hay configuración activa" />
+                    )}
+                  </button>
+                  {advancedCommercialOpen && (
+                    <div className="mt-2">
+                      <TPField label="Aplicar el ajuste sobre" hint="Por defecto se aplica sobre el precio total. Solo cambiá esto si necesitás aplicar el descuento solo al componente metal o hechura.">
+                        <TPComboFixed
+                          value={draft.commercialApplyOn}
+                          onChange={(v) => set("commercialApplyOn", v as CommercialApplyOn | "")}
+                          disabled={busy}
+                          options={[
+                            { value: "",                label: "Precio total (por defecto)" },
+                            { value: "TOTAL",           label: "Precio total" },
+                            { value: "METAL",           label: "Solo el componente metal" },
+                            { value: "HECHURA",         label: "Solo la hechura / mano de obra" },
+                            { value: "METAL_Y_HECHURA", label: "Metal + hechura" },
+                          ]}
+                        />
+                      </TPField>
+                    </div>
+                  )}
+                </div>
+              )}
 
-              {/* ── Merma por variante ──────────────────────────────────── */}
-              <MermaBlock
-                entityId={mode === "EDIT" ? (entityId ?? null) : null}
-                isClient={draft.isClient}
-                isSupplier={draft.isSupplier}
-                hasRelations={mode === "EDIT" ? (entity?.hasRelations ?? false) : false}
-                disabled={busy}
-                drafts={mode === "CREATE" ? mermaDrafts : undefined}
-                onDraftsChange={mode === "CREATE" ? setMermaDrafts : undefined}
-              />
+              {/* Merma — separada visualmente */}
+              <div className="border-t border-border/40 pt-3">
+                <MermaBlock
+                  entityId={mode === "EDIT" ? (entityId ?? null) : null}
+                  isClient={draft.isClient}
+                  isSupplier={draft.isSupplier}
+                  hasRelations={mode === "EDIT" ? (entity?.hasRelations ?? false) : false}
+                  disabled={busy}
+                  drafts={mode === "CREATE" ? mermaDrafts : undefined}
+                  onDraftsChange={mode === "CREATE" ? setMermaDrafts : undefined}
+                />
+              </div>
             </div>
           </div>
 

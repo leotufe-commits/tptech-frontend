@@ -9,6 +9,7 @@ export type PriceListMode = "MARGIN_TOTAL" | "METAL_HECHURA" | "COST_PER_GRAM";
 export type RoundingTarget = "NONE" | "METAL" | "FINAL_PRICE";
 export type RoundingMode = "NONE" | "INTEGER" | "DECIMAL_1" | "DECIMAL_2" | "TEN" | "HUNDRED";
 export type RoundingDirection = "NEAREST" | "UP" | "DOWN";
+export type RoundingApplyOn = "PRICE" | "NET" | "TOTAL";
 
 export type PriceListRow = {
   id: string;
@@ -30,6 +31,7 @@ export type PriceListRow = {
   roundingTarget: RoundingTarget;
   roundingMode: RoundingMode;
   roundingDirection: RoundingDirection;
+  roundingApplyOn: RoundingApplyOn;
   roundingModeHechura?: RoundingMode;
   roundingDirectionHechura?: RoundingDirection;
   roundingValueMetal: string | null;
@@ -62,6 +64,7 @@ export type PriceListPayload = {
   roundingTarget?: RoundingTarget;
   roundingMode?: RoundingMode;
   roundingDirection?: RoundingDirection;
+  roundingApplyOn?: RoundingApplyOn;
   roundingModeHechura?: RoundingMode;
   roundingDirectionHechura?: RoundingDirection;
   roundingValueMetal?: string | null;

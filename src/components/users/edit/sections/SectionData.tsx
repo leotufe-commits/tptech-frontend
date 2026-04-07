@@ -49,6 +49,10 @@ type Props = {
   setFStreet: (v: string) => void;
   fNumber: string;
   setFNumber: (v: string) => void;
+  fFloor: string;
+  setFFloor: (v: string) => void;
+  fApartment: string;
+  setFApartment: (v: string) => void;
   fCity: string;
   setFCity: (v: string) => void;
   fProvince: string;
@@ -135,6 +139,10 @@ export default function SectionData(props: Props) {
     setFStreet,
     fNumber,
     setFNumber,
+    fFloor,
+    setFFloor,
+    fApartment,
+    setFApartment,
     fCity,
     setFCity,
     fProvince,
@@ -369,7 +377,7 @@ export default function SectionData(props: Props) {
 
           <div className="md:col-span-2">
             <TPComboCreatable
-              label="Tel. país"
+              label="Prefijo"
               mode={isCreate ? "create" : "edit"}
               type="PHONE_PREFIX"
               items={prefixCat.items}
@@ -410,7 +418,15 @@ export default function SectionData(props: Props) {
                   <TPInput label="Número" value={fNumber} onChange={setFNumber} disabled={modalBusy} />
                 </div>
 
-                <div className="md:col-span-2">
+                <div className="md:col-span-1">
+                  <TPInput label="Piso" value={fFloor} onChange={setFFloor} placeholder="3" disabled={modalBusy} />
+                </div>
+
+                <div className="md:col-span-1">
+                  <TPInput label="Dpto." value={fApartment} onChange={setFApartment} placeholder="A" disabled={modalBusy} />
+                </div>
+
+                <div className="md:col-span-3">
                   <TPInput
                     label="Código postal"
                     value={fPostalCode}
@@ -419,7 +435,7 @@ export default function SectionData(props: Props) {
                   />
                 </div>
 
-                <div className="md:col-span-4">
+                <div className="md:col-span-3">
                   <TPComboCreatable
                     label="Ciudad"
                     mode={isCreate ? "create" : "edit"}
@@ -439,7 +455,7 @@ export default function SectionData(props: Props) {
                   />
                 </div>
 
-                <div className="md:col-span-4">
+                <div className="md:col-span-3">
                   <TPComboCreatable
                     label="Provincia"
                     mode={isCreate ? "create" : "edit"}
@@ -459,7 +475,7 @@ export default function SectionData(props: Props) {
                   />
                 </div>
 
-                <div className="md:col-span-4">
+                <div className="md:col-span-3">
                   <TPComboCreatable
                     label="País"
                     mode={isCreate ? "create" : "edit"}

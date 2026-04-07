@@ -1,15 +1,17 @@
 // src/components/ui/CostCompositionTable.tsx
-import React, { useState, useRef, useEffect } from "react";
-import ReactDOM from "react-dom";
+import React, { useState, useEffect } from "react";
 import {
   Gem, Plus, X, Wrench, Package, Layers, DollarSign,
-  Calculator, ChevronDown, Trash2, GripVertical,
+  Calculator, Trash2, GripVertical, AlertTriangle,
 } from "lucide-react";
-import TPNumberInput from "./TPNumberInput";
-import TPComboFixed  from "./TPComboFixed";
-import TPInput       from "./TPInput";
-import { cn }        from "./tp";
-import type { CostLine, CostLineType } from "../../services/articles";
+import TPNumberInput    from "./TPNumberInput";
+import TPAdjTypeButton from "./TPAdjTypeButton";
+import TPComboFixed    from "./TPComboFixed";
+import TPInput         from "./TPInput";
+import TPCurrencyPill  from "./TPCurrencyPill";
+import ArticleSearchSelect from "./ArticleSearchSelect";
+import { cn } from "./tp";
+import type { CostLine, CostLineType, ArticleRow } from "../../services/articles";
 import ConfirmDeleteDialog from "./ConfirmDeleteDialog";
 import {
   DndContext,
@@ -34,6 +36,8 @@ export type MetalVariantOption = {
   id: string;
   label: string;
   latestQuotePrice: number | null;
+  isFavorite?: boolean;
+  metalId?: string;
 };
 
 export type CurrencyOption = {
@@ -47,8 +51,17 @@ export type CurrencyOption = {
 export type CatalogItemOption = {
   id: string;
   label: string;
+  sku?: string | null;
+  stock?: number | null;
+  /** Costo en moneda BASE (para sincronización automática con cotización).
+   *  Viene de computedCostBase del backend. Puede ser null si no hay tasa cargada. */
   costPrice: number | null;
   salePrice: number | null;
+  /** Moneda original del costo (solo artículos MANUAL en divisa extranjera) */
+  manualCurrencyId?: string | null;
+  /** Costo en moneda ORIGINAL del artículo (para carga inicial sin conversión).
+   *  Solo presente en artículos MANUAL. Puede diferir de costPrice si costPrice está en base. */
+  costPriceNative?: number | null;
 };
 
 type Props = {
@@ -74,11 +87,11 @@ export const TYPE_CFG: Record<CostLineType, {
   rowBorder: string;
   icon: React.ReactNode;
 }> = {
-  METAL:   { label: "Metal",    badge: "bg-amber-500/15 text-amber-400 border-amber-500/30",    rowBg: "bg-amber-500/[0.04]",   rowBorder: "border-amber-500/20",    icon: <Gem      size={10} /> },
-  HECHURA: { label: "Hechura",  badge: "bg-blue-500/15  text-blue-400  border-blue-500/30",     rowBg: "bg-blue-500/[0.04]",    rowBorder: "border-blue-500/20",     icon: <Wrench   size={10} /> },
-  PRODUCT: { label: "Producto", badge: "bg-violet-500/15 text-violet-400 border-violet-500/30", rowBg: "bg-violet-500/[0.04]",  rowBorder: "border-violet-500/20",   icon: <Package  size={10} /> },
-  SERVICE: { label: "Servicio", badge: "bg-emerald-500/15 text-emerald-400 border-emerald-500/30", rowBg: "bg-emerald-500/[0.04]", rowBorder: "border-emerald-500/20", icon: <Layers size={10} /> },
-  MANUAL:  { label: "Manual",   badge: "bg-slate-500/15  text-slate-400  border-slate-500/30",  rowBg: "bg-slate-500/[0.04]",   rowBorder: "border-slate-500/20",    icon: <DollarSign size={10} /> },
+  METAL:   { label: "Metal",    badge: "bg-amber-500/15 text-amber-400 border-amber-500/30",    rowBg: "bg-amber-500/[0.08]",   rowBorder: "border-amber-500/30",    icon: <Gem      size={10} /> },
+  HECHURA: { label: "Hechura",  badge: "bg-blue-500/15  text-blue-400  border-blue-500/30",     rowBg: "bg-blue-500/[0.08]",    rowBorder: "border-blue-500/30",     icon: <Wrench   size={10} /> },
+  PRODUCT: { label: "Producto", badge: "bg-violet-500/15 text-violet-400 border-violet-500/30", rowBg: "bg-violet-500/[0.08]",  rowBorder: "border-violet-500/30",   icon: <Package  size={10} /> },
+  SERVICE: { label: "Servicio", badge: "bg-emerald-500/15 text-emerald-400 border-emerald-500/30", rowBg: "bg-emerald-500/[0.08]", rowBorder: "border-emerald-500/30", icon: <Layers size={10} /> },
+  MANUAL:  { label: "Manual",   badge: "bg-slate-500/15  text-slate-400  border-slate-500/30",  rowBg: "bg-slate-500/[0.08]",   rowBorder: "border-slate-500/30",    icon: <DollarSign size={10} /> },
 };
 
 export const TYPE_OPTIONS: { value: CostLineType; label: string }[] = [
@@ -89,22 +102,38 @@ export const TYPE_OPTIONS: { value: CostLineType; label: string }[] = [
 ];
 
 // ---------------------------------------------------------------------------
-// Layout: grid fijo 8 columnas (handle + 7 originales)
-// [handle 20px] [badge 96px] [moneda 72px] [desc minmax(96px,1fr)] [qty 180px] [op 20px] [price 180px] [result+x 180px]
+// Layout: grid fijo 9 columnas (handle + 8)
+// [handle 20px] [badge 96px] [moneda 72px] [desc minmax(96px,1fr)] [qty 160px] [op 20px] [price 160px] [adj 180px] [result+x 150px]
 // ---------------------------------------------------------------------------
-const GRID = "grid grid-cols-[20px_96px_72px_minmax(96px,1fr)_180px_20px_180px_180px] items-center gap-x-2";
+const GRID = "grid grid-cols-[20px_96px_72px_minmax(276px,4fr)_160px_20px_160px_210px_150px] items-center gap-x-6";
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 function emptyLine(type: CostLineType, defaults: Partial<CostLine> = {}): CostLine {
-  return { type, label: type === "HECHURA" ? "Hechura / Mano de Obra" : "", quantity: 1, unitValue: 0, currencyId: null, mermaPercent: null, metalVariantId: null, sortOrder: 0, ...defaults };
+  return { type, label: type === "HECHURA" ? "Hechura / Mano de Obra" : "", quantity: 1, unitValue: 0, currencyId: null, mermaPercent: null, metalVariantId: null, sortOrder: 0, lineAdjKind: "", lineAdjType: "", lineAdjValue: null, ...defaults };
+}
+
+export function applyLineAdj(base: number, kind: string, type: string, val: number | null): number {
+  if (!kind || !type || val == null) return base;
+  if (type === "PERCENTAGE") {
+    return Math.max(0, base * (kind === "BONUS" ? (1 - val / 100) : (1 + val / 100)));
+  }
+  if (type === "FIXED_AMOUNT") {
+    return Math.max(0, base + (kind === "BONUS" ? -val : val));
+  }
+  return base;
 }
 
 function lineRawSubtotal(line: CostLine): number | null {
   if (!line.quantity || !line.unitValue) return null;
-  if (line.type === "METAL") return line.quantity * (1 + (line.mermaPercent ?? 0) / 100) * line.unitValue;
-  return line.quantity * line.unitValue;
+  let raw: number;
+  if (line.type === "METAL") {
+    raw = line.quantity * (1 + (line.mermaPercent ?? 0) / 100) * line.unitValue;
+  } else {
+    raw = line.quantity * line.unitValue;
+  }
+  return applyLineAdj(raw, line.lineAdjKind ?? "", line.lineAdjType ?? "", line.lineAdjValue ?? null);
 }
 
 function lineSubtotal(line: CostLine, currencies: CurrencyOption[], baseCurrencyId: string): number | null {
@@ -123,67 +152,7 @@ function fmtNum(v: number, decimals = 2) {
   return v.toLocaleString("es-AR", { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
 }
 
-// ---------------------------------------------------------------------------
-// CurrencyPill — dropdown compacto con portal
-// ---------------------------------------------------------------------------
-function CurrencyPill({ value, onChange, currencies, baseCurrencyId }: {
-  value: string; onChange: (id: string) => void; currencies: CurrencyOption[]; baseCurrencyId: string;
-}) {
-  const [open, setOpen] = useState(false);
-  const btnRef = useRef<HTMLButtonElement>(null);
-  const [pos, setPos]   = useState({ top: 0, left: 0 });
-  const curr = currencies.find(c => c.id === value) ?? currencies.find(c => c.id === baseCurrencyId);
 
-  useEffect(() => {
-    if (!open) return;
-    const h = () => setOpen(false);
-    document.addEventListener("mousedown", h);
-    return () => document.removeEventListener("mousedown", h);
-  }, [open]);
-
-  if (currencies.length <= 1) {
-    return (
-      <span className="inline-flex items-center justify-center px-2 h-8 rounded-lg bg-surface2/40 border border-border text-xs font-semibold text-muted w-full">
-        {curr?.code ?? "—"}
-      </span>
-    );
-  }
-
-  function openMenu(e: React.MouseEvent) {
-    e.stopPropagation();
-    const r = btnRef.current?.getBoundingClientRect();
-    if (r) setPos({ top: r.bottom + 4, left: r.left });
-    setOpen(v => !v);
-  }
-
-  return (
-    <>
-      <button
-        ref={btnRef} type="button" onClick={openMenu} title="Cambiar moneda"
-        className="inline-flex items-center justify-center gap-0.5 px-2 h-8 rounded-lg border border-border bg-surface2/40 text-xs font-semibold text-text hover:bg-surface2 hover:border-primary/40 transition w-full"
-      >
-        {curr?.code ?? "—"} <ChevronDown size={9} className="text-muted" />
-      </button>
-      {open && ReactDOM.createPortal(
-        <div
-          onMouseDown={e => e.stopPropagation()}
-          style={{ top: pos.top, left: pos.left, position: "fixed", zIndex: 9999, minWidth: 120 }}
-          className="rounded-xl border border-border bg-card shadow-lg py-1 overflow-hidden"
-        >
-          {currencies.map(c => (
-            <button key={c.id} type="button" onClick={() => { onChange(c.id); setOpen(false); }}
-              className={cn("w-full flex items-center gap-2 px-3 py-1.5 text-xs hover:bg-surface2 transition text-left", c.id === value ? "font-semibold text-primary" : "text-text")}
-            >
-              <span className="font-semibold w-8 shrink-0">{c.code}</span>
-              <span className="text-muted">{c.symbol}</span>
-            </button>
-          ))}
-        </div>,
-        document.body
-      )}
-    </>
-  );
-}
 
 // ---------------------------------------------------------------------------
 // SortableRow — fila arrastrable
@@ -211,6 +180,44 @@ function SortableRow({
     attributes, listeners, setNodeRef, transform, transition, isDragging,
   } = useSortable({ id });
 
+  // Estado del artículo seleccionado para PRODUCT/SERVICE
+  const [artRow, setArtRow] = useState<ArticleRow | null>(() => {
+    if (!line.catalogItemId) return null;
+    // Inicializar desde la lista pre-cargada si está disponible
+    const items = line.type === "PRODUCT" ? productItems : serviceItems;
+    const found = items?.find(i => i.id === line.catalogItemId);
+    if (!found) return null;
+    return {
+      id: found.id,
+      name: found.label,
+      sku: found.sku ?? "",
+      costPrice: found.costPrice != null ? String(found.costPrice) : null,
+      stockMode: "NONE",
+      stockData: found.stock != null ? { total: found.stock } : null,
+    } as unknown as ArticleRow;
+  });
+
+  // Sincronizar artRow cuando cambia el catálogo (p.ej. tras guardar un artículo referenciado)
+  useEffect(() => {
+    if (!line.catalogItemId) return;
+    const items = line.type === "PRODUCT" ? productItems : serviceItems;
+    const found = items.find(i => i.id === line.catalogItemId);
+    if (!found) return;
+    setArtRow(prev => {
+      // Solo actualizar si algún dato relevante cambió (evita re-renders innecesarios)
+      const newCost = found.costPrice != null ? String(found.costPrice) : null;
+      if (prev?.id === found.id && prev?.name === found.label && (prev as any)?.costPrice === newCost) return prev;
+      return {
+        id: found.id,
+        name: found.label,
+        sku: found.sku ?? "",
+        costPrice: newCost,
+        stockMode: "NONE",
+        stockData: found.stock != null ? { total: found.stock } : null,
+      } as unknown as ArticleRow;
+    });
+  }, [line.catalogItemId, line.type, productItems, serviceItems]);
+
   const style: React.CSSProperties = {
     transform: CSS.Transform.toString(transform),
     transition,
@@ -224,6 +231,8 @@ function SortableRow({
     ? currencies.find(c => c.id === line.currencyId)
     : currencies.find(c => c.id === baseCurrencyId);
   const lineSym  = lineCurr?.symbol ?? baseCurrencySymbol;
+  // Aviso: moneda no base sin cotización → el subtotal no se puede convertir
+  const hasRateIssue = !!line.currencyId && line.currencyId !== baseCurrencyId && !lineCurr?.latestRate;
   const items    = line.type === "PRODUCT" ? productItems : serviceItems;
 
   // Cambia cuando cambia la referencia → fuerza remount de TPNumberInput (unitValue)
@@ -240,7 +249,7 @@ function SortableRow({
     <div
       ref={setNodeRef}
       style={style}
-      className={cn(GRID, "rounded-xl border px-2 py-1.5", cfg.rowBg, cfg.rowBorder)}
+      className={cn(GRID, "rounded-xl border px-2 py-1.5", cfg.rowBg, hasRateIssue ? "border-amber-500/50 bg-amber-500/[0.06]" : cfg.rowBorder)}
     >
       {/* Col 0 — Drag handle */}
       <button
@@ -259,7 +268,7 @@ function SortableRow({
       </span>
 
       {/* Col 2 — Moneda */}
-      <CurrencyPill
+      <TPCurrencyPill
         value={line.currencyId ?? baseCurrencyId}
         onChange={(newId) => {
           const oldId = line.currencyId ?? baseCurrencyId;
@@ -317,35 +326,45 @@ function SortableRow({
         />
       )}
       {(line.type === "PRODUCT" || line.type === "SERVICE") && (
-        <TPComboFixed
-          value={line.catalogItemId ?? ""}
-          onChange={(v) => {
-            const catalogItemId = v || null;
-            const item = items.find(i => i.id === catalogItemId);
-            const rawPrice = item?.costPrice ?? null;
+        <ArticleSearchSelect
+          selected={artRow}
+          articleType={line.type}
+          placeholder={line.type === "PRODUCT" ? "Buscar producto…" : "Buscar servicio…"}
+          onSelect={(row) => {
+            setArtRow(row);
+            // row es ArticleRow, que tiene:
+            //   costPrice         → valor en moneda ORIGINAL (USD 9 para artículo MANUAL en USD)
+            //   manualCurrencyId  → moneda del costo MANUAL (USD_ID o null)
+            //   computedCostBase  → equivalente en moneda BASE (ARS); puede ser null sin tasa
+
+            const sourceCurrId =
+              row.manualCurrencyId && row.manualCurrencyId !== baseCurrencyId
+                ? row.manualCurrencyId
+                : baseCurrencyId;
+
             let unitValue: number;
-            if (rawPrice != null) {
-              // Precio disponible → convertir si la línea usa moneda distinta a la base
-              const lineCurrId = line.currencyId ?? baseCurrencyId;
-              if (lineCurrId !== baseCurrencyId) {
-                const rate = currencies.find(c => c.id === lineCurrId)?.latestRate ?? null;
-                unitValue = rate != null ? Math.round((rawPrice / rate) * 10000) / 10000 : rawPrice;
-              } else {
-                unitValue = rawPrice;
-              }
+            if (sourceCurrId !== baseCurrencyId) {
+              // Artículo con costo en divisa extranjera (MANUAL USD):
+              // row.costPrice ya está en la moneda original (USD 9) → usar directamente.
+              // NO dividir por tasa: el valor ya NO está en moneda base.
+              const native = row.costPrice != null ? parseFloat(String(row.costPrice)) : null;
+              unitValue = native != null && Number.isFinite(native) ? native : 0;
             } else {
-              // Sin precio → limpiar el campo (no heredar precio de ítem anterior)
-              unitValue = 0;
+              // Artículo en moneda base (MANUAL ARS, MULTIPLIER, METAL_MERMA_HECHURA, etc.):
+              // Preferir computedCostBase (ya incorpora ajustes y modo de cálculo).
+              // Fallback a costPrice si computedCostBase no está disponible.
+              const base = row.computedCostBase != null ? parseFloat(String(row.computedCostBase)) : null;
+              const cp   = row.costPrice       != null ? parseFloat(String(row.costPrice))        : null;
+              unitValue = (base != null && Number.isFinite(base) && base > 0)
+                ? base
+                : (cp   != null && Number.isFinite(cp)   && cp   > 0 ? cp : 0);
             }
-            update(idx, {
-              catalogItemId,
-              label: item?.label ?? (item as any)?.name ?? line.label,
-              unitValue,
-            });
+            update(idx, { catalogItemId: row.id, label: row.name, unitValue, currencyId: sourceCurrId });
           }}
-          options={[{ value: "", label: "— Sin seleccionar —" }, ...items.map(i => ({ value: i.id, label: i.label ?? (i as any).name ?? i.id }))]}
-          placeholder={line.type === "PRODUCT" ? "Buscar producto..." : "Buscar servicio..."}
-          searchable
+          onClear={() => {
+            setArtRow(null);
+            update(idx, { catalogItemId: null, label: "", unitValue: 0 });
+          }}
         />
       )}
 
@@ -356,6 +375,7 @@ function SortableRow({
         placeholder="0.00"
         min={0}
         decimals={2}
+        step={line.type === "METAL" ? 0.1 : 1}
         suffix={line.type === "METAL" ? <span className="text-[10px] text-muted">g</span> : undefined}
         wrapClassName="space-y-0"
       />
@@ -364,43 +384,90 @@ function SortableRow({
       <span className="text-muted text-xs text-center select-none">×</span>
 
       {/* Col 6 — Precio unitario */}
-      <div className="space-y-0.5">
-        <TPNumberInput
-          key={`uv-${unitValueKey}-${line.currencyId ?? "base"}`}
-          value={line.unitValue}
-          onChange={(v) => update(idx, { unitValue: v ?? 0 })}
-          placeholder="0.00"
-          min={0}
-          decimals={2}
-          leftIcon={<span className="text-[11px] font-semibold text-muted">{lineSym}</span>}
-          wrapClassName="space-y-0"
-        />
-        {line.type === "METAL" && (() => {
-          const mv = metalVariants.find(m => m.id === line.metalVariantId);
-          if (!mv?.latestQuotePrice) return null;
-          const stored  = line.unitValue ?? 0;
-          const current = mv.latestQuotePrice;
-          if (Math.abs(current - stored) < 0.005) return null;
-          const diff = current - stored;
-          return (
-            <div className="flex items-center gap-1 text-[10px] leading-tight">
-              <span className="text-amber-400/80">Cot: {lineSym} {fmtNum(current)}</span>
-              <span className={diff > 0 ? "text-emerald-400" : "text-red-400"}>
-                ({diff > 0 ? "+" : ""}{fmtNum(diff, 2)})
-              </span>
-            </div>
-          );
-        })()}
-      </div>
+      <TPNumberInput
+        key={`uv-${unitValueKey}-${line.currencyId ?? "base"}`}
+        value={line.unitValue}
+        onChange={(v) => update(idx, { unitValue: v ?? 0 })}
+        placeholder="0.00"
+        min={0}
+        decimals={2}
+        leftIcon={<span className="text-[11px] font-semibold text-muted">{lineSym}</span>}
+        wrapClassName="space-y-0"
+      />
 
-      {/* Col 7 — Subtotal + eliminar */}
+      {/* Col 7 — Ajuste por línea (entre precio y subtotal) */}
+      {!line.lineAdjKind ? (
+        <button
+          type="button"
+          onClick={() => update(idx, { lineAdjKind: "BONUS", lineAdjType: "PERCENTAGE", lineAdjValue: null })}
+          title="Agregar bonificación o recargo"
+          className="w-full h-[42px] rounded-xl border border-dashed border-border/40 text-muted/25 hover:text-muted/60 hover:border-border/70 transition flex items-center justify-center"
+        >
+          <Plus size={13} />
+        </button>
+      ) : (
+        <div className="flex items-center gap-1">
+          {/* ± — alterna entre Bonificación y Recargo */}
+          <button
+            type="button"
+            title={line.lineAdjKind === "SURCHARGE" ? "Recargo — click para cambiar a bonificación" : "Bonificación — click para cambiar a recargo"}
+            onClick={() => update(idx, { lineAdjKind: line.lineAdjKind === "SURCHARGE" ? "BONUS" : "SURCHARGE" })}
+            className={cn(
+              "h-[42px] w-9 shrink-0 rounded-xl border flex items-center justify-center text-sm font-bold transition-colors select-none",
+              line.lineAdjKind === "SURCHARGE"
+                ? "text-amber-600 dark:text-amber-400 bg-amber-500/10 border-amber-500/30"
+                : "text-emerald-500 dark:text-emerald-400 bg-emerald-500/10 border-emerald-500/30"
+            )}
+          >
+            ±
+          </button>
+          {/* Input del monto */}
+          <div className="flex-1 min-w-0">
+            <TPNumberInput
+              value={line.lineAdjValue}
+              onChange={v => update(idx, { lineAdjValue: v ?? null })}
+              min={0}
+              decimals={2}
+              wrapClassName="space-y-0"
+              suffix={line.lineAdjType === "PERCENTAGE" ? <span className="text-[11px] font-bold">%</span> : undefined}
+              leftIcon={line.lineAdjType === "FIXED_AMOUNT" ? <span className="text-[11px] font-semibold text-muted">{lineSym}</span> : undefined}
+            />
+          </div>
+          {/* % / $ toggle */}
+          <TPAdjTypeButton
+            value={(line.lineAdjType || "PERCENTAGE") as "PERCENTAGE" | "FIXED_AMOUNT"}
+            onChange={t => update(idx, { lineAdjType: t })}
+          />
+          {/* Quitar */}
+          <button
+            type="button"
+            onClick={() => update(idx, { lineAdjKind: "", lineAdjType: "", lineAdjValue: null })}
+            title="Quitar ajuste"
+            className="text-muted/30 hover:text-red-400 transition shrink-0"
+          >
+            <X size={9} />
+          </button>
+        </div>
+      )}
+
+      {/* Col 8 — Subtotal + eliminar */}
       <div className="flex items-center justify-end gap-1.5">
-        <span className={cn(
-          "tabular-nums text-sm font-semibold whitespace-nowrap text-right",
-          rawSub != null && rawSub > 0 ? "text-text" : "text-muted/30"
-        )}>
-          {rawSub != null && rawSub > 0 ? `${lineSym} ${fmtNum(rawSub)}` : "—"}
-        </span>
+        {hasRateIssue ? (
+          <span
+            className="inline-flex items-center gap-1 text-xs text-amber-400 tabular-nums whitespace-nowrap"
+            title={`${lineCurr?.code ?? "Moneda"} sin cotización — el subtotal no puede convertirse a ${baseCurrencySymbol}`}
+          >
+            <AlertTriangle size={11} className="shrink-0" />
+            Sin cotización
+          </span>
+        ) : (
+          <span className={cn(
+            "tabular-nums text-sm font-semibold whitespace-nowrap text-right",
+            rawSub != null && rawSub > 0 ? "text-text" : "text-muted/30"
+          )}>
+            {rawSub != null && rawSub > 0 ? `${lineSym} ${fmtNum(rawSub)}` : "—"}
+          </span>
+        )}
         <button
           type="button"
           onClick={() => onRemoveRequest(idx)}
@@ -451,7 +518,9 @@ export default function CostCompositionTable({
 
   const metalTotal   = lines.filter(l => l.type === "METAL")  .reduce((s, l) => s + (lineSubtotal(l, currencies, baseCurrencyId) ?? 0), 0);
   const hechuraTotal = lines.filter(l => l.type === "HECHURA").reduce((s, l) => s + (lineSubtotal(l, currencies, baseCurrencyId) ?? 0), 0);
-  const othersTotal  = lines.filter(l => l.type !== "METAL" && l.type !== "HECHURA").reduce((s, l) => s + (lineSubtotal(l, currencies, baseCurrencyId) ?? 0), 0);
+  const productTotal = lines.filter(l => l.type === "PRODUCT").reduce((s, l) => s + (lineSubtotal(l, currencies, baseCurrencyId) ?? 0), 0);
+  const serviceTotal = lines.filter(l => l.type === "SERVICE").reduce((s, l) => s + (lineSubtotal(l, currencies, baseCurrencyId) ?? 0), 0);
+  const manualTotal  = lines.filter(l => l.type === "MANUAL") .reduce((s, l) => s + (lineSubtotal(l, currencies, baseCurrencyId) ?? 0), 0);
   const hasLines = lines.length > 0;
 
   const pendingLine = confirmRemoveIdx !== null ? lines[confirmRemoveIdx] : null;
@@ -469,6 +538,7 @@ export default function CostCompositionTable({
           <div className="text-[10px] font-semibold text-muted uppercase tracking-wide text-center">Cantidad</div>
           <div />
           <div className="text-[10px] font-semibold text-muted uppercase tracking-wide text-center">Precio unit.</div>
+          <div className="text-[10px] font-semibold text-muted uppercase tracking-wide text-center">Bonif./Recargo</div>
           <div className="text-[10px] font-semibold text-muted uppercase tracking-wide text-right pr-8">Subtotal</div>
         </div>
       )}
@@ -517,7 +587,7 @@ export default function CostCompositionTable({
         <div className="mt-2">
           {metalTotal > 0 && (
             <div className={cn(GRID, "px-2 py-0.5")}>
-              <div className="col-span-7 flex items-center gap-1.5 text-xs text-amber-400 justify-end pr-2">
+              <div className="col-span-8 flex items-center gap-1.5 text-xs text-amber-400 justify-end pr-2">
                 <Gem size={10} /> Subtotal metal
               </div>
               <div className="text-right pr-8 text-xs tabular-nums text-muted font-medium">
@@ -527,7 +597,7 @@ export default function CostCompositionTable({
           )}
           {hechuraTotal > 0 && (
             <div className={cn(GRID, "px-2 py-0.5")}>
-              <div className="col-span-7 flex items-center gap-1.5 text-xs text-blue-400 justify-end pr-2">
+              <div className="col-span-8 flex items-center gap-1.5 text-xs text-blue-400 justify-end pr-2">
                 <Wrench size={10} /> Subtotal hechura
               </div>
               <div className="text-right pr-8 text-xs tabular-nums text-muted font-medium">
@@ -535,22 +605,42 @@ export default function CostCompositionTable({
               </div>
             </div>
           )}
-          {othersTotal > 0 && (
+          {productTotal > 0 && (
             <div className={cn(GRID, "px-2 py-0.5")}>
-              <div className="col-span-7 flex items-center gap-1.5 text-xs text-muted justify-end pr-2">
+              <div className="col-span-8 flex items-center gap-1.5 text-xs text-violet-400 justify-end pr-2">
+                <Package size={10} /> Subtotal productos
+              </div>
+              <div className="text-right pr-8 text-xs tabular-nums text-muted font-medium">
+                {baseCurrencySymbol} {fmtNum(productTotal)}
+              </div>
+            </div>
+          )}
+          {serviceTotal > 0 && (
+            <div className={cn(GRID, "px-2 py-0.5")}>
+              <div className="col-span-8 flex items-center gap-1.5 text-xs text-emerald-400 justify-end pr-2">
+                <Layers size={10} /> Subtotal servicios
+              </div>
+              <div className="text-right pr-8 text-xs tabular-nums text-muted font-medium">
+                {baseCurrencySymbol} {fmtNum(serviceTotal)}
+              </div>
+            </div>
+          )}
+          {manualTotal > 0 && (
+            <div className={cn(GRID, "px-2 py-0.5")}>
+              <div className="col-span-8 flex items-center gap-1.5 text-xs text-muted justify-end pr-2">
                 <DollarSign size={10} /> Subtotal otros
               </div>
               <div className="text-right pr-8 text-xs tabular-nums text-muted font-medium">
-                {baseCurrencySymbol} {fmtNum(othersTotal)}
+                {baseCurrencySymbol} {fmtNum(manualTotal)}
               </div>
             </div>
           )}
           <div className={cn(GRID, "px-2 pt-2 border-t border-border mt-1")}>
-            <div className="col-span-7 flex items-center gap-1.5 text-sm font-semibold text-text justify-end pr-2">
+            <div className="col-span-8 flex items-center gap-1.5 text-sm font-semibold text-text justify-end pr-2">
               <Calculator size={13} /> Total estimado
             </div>
             <div className="text-right pr-8 text-sm tabular-nums font-semibold text-emerald-400">
-              {baseCurrencySymbol} {fmtNum(metalTotal + hechuraTotal + othersTotal)}
+              {baseCurrencySymbol} {fmtNum(metalTotal + hechuraTotal + productTotal + serviceTotal + manualTotal)}
             </div>
           </div>
         </div>

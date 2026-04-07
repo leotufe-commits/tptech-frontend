@@ -1,5 +1,6 @@
 // src/pages/configuracion-sistema/clientes/EntidadesTable.tsx
 import React, { useState } from "react";
+import TPImageLightbox from "../../../components/ui/TPImageLightbox";
 import { Plus, Upload, Combine, Link2, Link, Trash2, Clock, RefreshCw, ArrowUpDown } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { TPButton } from "../../../components/ui/TPButton";
@@ -10,8 +11,23 @@ import { TPTr, TPTd } from "../../../components/ui/TPTable";
 import { TPBadge } from "../../../components/ui/TPBadges";
 import { TPCheckbox } from "../../../components/ui/TPCheckbox";
 import ConfirmDeleteDialog from "../../../components/ui/ConfirmDeleteDialog";
-import type { EntityRow } from "../../../services/commercial-entities";
+import type { EntityRow, CommercialRuleType } from "../../../services/commercial-entities";
 import type { SortKey } from "./clientes.types";
+
+const RULE_LABEL: Record<CommercialRuleType, string> = {
+  DISCOUNT:  "Desc.",
+  BONUS:     "Bonif.",
+  SURCHARGE: "Recargo",
+};
+
+function formatCommercialRule(row: EntityRow): string | null {
+  if (!row.commercialRuleType || !row.commercialValue) return null;
+  const type  = RULE_LABEL[row.commercialRuleType] ?? row.commercialRuleType;
+  const value = row.commercialValueType === "PERCENTAGE"
+    ? `${parseFloat(row.commercialValue).toFixed(1)}%`
+    : `$${parseFloat(row.commercialValue).toLocaleString("es-AR")}`;
+  return `${type} ${value}`;
+}
 
 const SORT_MENU_ITEMS: TPSortMenuItem[] = [
   { key: "displayName", label: "Nombre",              icon: <ArrowUpDown size={14} /> },
@@ -83,6 +99,7 @@ export function EntidadesTable({
   const navigate = useNavigate();
 
   // ── Selección masiva ──────────────────────────────────────────────────────
+  const [lightboxSrc, setLightboxSrc]         = useState<string | null>(null);
   const [selectionMode, setSelectionMode]     = useState(false);
   const [selectedIds, setSelectedIds]         = useState<Set<string>>(new Set());
   const [bulkConfirmOpen, setBulkConfirmOpen] = useState(false);
@@ -179,7 +196,14 @@ export function EntidadesTable({
                 <div className="flex items-center gap-2 min-w-0">
                   <div className="h-8 w-8 rounded-full overflow-hidden border border-border bg-surface shrink-0">
                     {row.avatarUrl ? (
-                      <img src={row.avatarUrl} alt={row.displayName} className="h-full w-full object-cover" />
+                      <button
+                        type="button"
+                        className="h-full w-full cursor-zoom-in"
+                        onClick={(e) => { e.stopPropagation(); setLightboxSrc(row.avatarUrl); }}
+                        title="Ver imagen"
+                      >
+                        <img src={row.avatarUrl} alt={row.displayName} className="h-full w-full object-cover" />
+                      </button>
                     ) : (
                       <div className="grid h-full w-full place-items-center text-xs font-bold text-primary bg-primary/10">
                         {row.displayName.split(/[\s,]+/).slice(0, 2).map((w) => w[0]).join("").toUpperCase() || "?"}
@@ -253,6 +277,27 @@ export function EntidadesTable({
               </TPTd>
             )}
 
+            {/* Regla comercial */}
+            {vis.regla && (
+              <TPTd className="hidden lg:table-cell">
+                {(() => {
+                  const label = formatCommercialRule(row);
+                  return label
+                    ? <TPBadge tone="primary" size="sm">{label}</TPBadge>
+                    : <span className="text-sm text-muted/40">—</span>;
+                })()}
+              </TPTd>
+            )}
+
+            {/* Exento IVA */}
+            {vis.exento && (
+              <TPTd className="hidden lg:table-cell">
+                {row.taxExempt
+                  ? <TPBadge tone="warning" size="sm">Exento</TPBadge>
+                  : <span className="text-sm text-muted/40">—</span>}
+              </TPTd>
+            )}
+
             {/* Estado */}
             {vis.estado && (
               <TPTd className="hidden md:table-cell">
@@ -292,6 +337,7 @@ export function EntidadesTable({
         onClose={() => { if (!bulkBusy) setBulkConfirmOpen(false); }}
         onConfirm={confirmBulkDelete}
       />
+      <TPImageLightbox src={lightboxSrc} onClose={() => setLightboxSrc(null)} />
     </>
   );
 }

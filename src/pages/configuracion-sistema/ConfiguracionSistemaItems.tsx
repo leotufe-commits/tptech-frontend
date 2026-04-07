@@ -1,5 +1,6 @@
 // tptech-frontend/src/pages/configuracion-sistema/ConfiguracionSistemaItems.tsx
 import React, { useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import {
   ChevronRight,
   Plus,
@@ -139,8 +140,8 @@ export default function ConfiguracionSistemaItems() {
       },
       {
         key: "MULTIPLIER_BASE",
-        title: "Bases del multiplicador",
-        desc: "Unidades base para el modo de costo multiplicador (Gramos, Kilates, Unidades…).",
+        title: "Unidades de peso",
+        desc: "Unidades para expresar el peso de los artículos y calcular costos (Gramos, Kilates, Onzas…).",
         group: "Artículos",
         icon: <CalculatorIcon size={18} />,
       },
@@ -148,7 +149,9 @@ export default function ConfiguracionSistemaItems() {
     []
   );
 
-  const [selected, setSelected] = useState<CatalogType>("IVA_CONDITION");
+  const [searchParams] = useSearchParams();
+  const initialType = (searchParams.get("type") as CatalogType | null) ?? "IVA_CONDITION";
+  const [selected, setSelected] = useState<CatalogType>(initialType);
   const [q, setQ] = useState("");
 
   const current = catalogs.find((c) => c.key === selected)!;

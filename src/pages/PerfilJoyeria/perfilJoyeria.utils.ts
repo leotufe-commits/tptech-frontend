@@ -99,6 +99,8 @@ export function jewelryToDraft(j: any): { existing: ExistingBody; company: Compa
       phoneNumber: s(j?.phoneNumber),
       street: s(j?.street),
       number: s(j?.number),
+      floor: s(j?.floor),
+      apartment: s(j?.apartment),
       city: s(j?.city),
       province: s(j?.province),
       postalCode: s(j?.postalCode),

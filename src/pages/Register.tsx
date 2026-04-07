@@ -17,6 +17,8 @@ type FormState = {
   phoneNumber: string;
   street: string;
   number: string;
+  floor: string;
+  apartment: string;
   city: string;
   province: string;
   postalCode: string;
@@ -55,6 +57,8 @@ export default function Register() {
     phoneNumber: "",
     street: "",
     number: "",
+    floor: "",
+    apartment: "",
     city: "",
     province: "",
     postalCode: "",
@@ -139,6 +143,8 @@ export default function Register() {
           phoneNumber: form.phoneNumber.trim(),
           street: form.street.trim(),
           number: form.number.trim(),
+          floor: form.floor.trim(),
+          apartment: form.apartment.trim(),
           city: form.city.trim(),
           province: form.province.trim(),
           postalCode: form.postalCode.trim(),
@@ -249,27 +255,29 @@ export default function Register() {
                   />
                 </TPField>
 
-                <div className="md:col-span-2">
-                  <TPField label="Teléfono" required>
-                    <div className="flex gap-3">
+                <div className="md:col-span-2 grid grid-cols-4 gap-3">
+                  <div className="col-span-1">
+                    <TPField label="Prefijo" required>
                       <TPInput
                         value={form.phoneCountry}
                         onChange={(v) => update("phoneCountry", v)}
                         placeholder="+54"
                         disabled={loading}
-                        className="!w-24 !flex-none shrink-0"
                         error={req(form.phoneCountry)}
                       />
+                    </TPField>
+                  </div>
+                  <div className="col-span-3">
+                    <TPField label="Teléfono" required>
                       <TPInput
                         value={form.phoneNumber}
                         onChange={(v) => update("phoneNumber", v)}
                         placeholder="9 11 1234 5678"
                         disabled={loading}
-                        className="flex-1 min-w-0"
                         error={req(form.phoneNumber)}
                       />
-                    </div>
-                  </TPField>
+                    </TPField>
+                  </div>
                 </div>
               </div>
             </section>
@@ -278,8 +286,10 @@ export default function Register() {
             <section>
               <h2 className="text-sm font-semibold text-text">Dirección</h2>
 
-              <div className="mt-4 grid grid-cols-1 md:grid-cols-3 gap-4">
-                <div className="md:col-span-2">
+              <div className="mt-4 grid grid-cols-1 md:grid-cols-12 gap-4">
+
+                {/* Fila 1: Calle + Número */}
+                <div className="md:col-span-8">
                   <TPField label="Calle" required>
                     <TPInput
                       value={form.street}
@@ -291,47 +301,79 @@ export default function Register() {
                   </TPField>
                 </div>
 
-                <TPField label="Número" required>
-                  <TPInput
-                    value={form.number}
-                    onChange={(v) => update("number", v)}
-                    placeholder="1234"
-                    disabled={loading}
-                    error={req(form.number)}
-                  />
-                </TPField>
+                <div className="md:col-span-4">
+                  <TPField label="Número" required>
+                    <TPInput
+                      value={form.number}
+                      onChange={(v) => update("number", v)}
+                      placeholder="1234"
+                      disabled={loading}
+                      error={req(form.number)}
+                    />
+                  </TPField>
+                </div>
 
-                <TPField label="Ciudad" required>
-                  <TPInput
-                    value={form.city}
-                    onChange={(v) => update("city", v)}
-                    placeholder="Ciudad"
-                    disabled={loading}
-                    error={req(form.city)}
-                  />
-                </TPField>
-
-                <TPField label="Provincia" required>
-                  <TPInput
-                    value={form.province}
-                    onChange={(v) => update("province", v)}
-                    placeholder="Provincia"
-                    disabled={loading}
-                    error={req(form.province)}
-                  />
-                </TPField>
-
-                <TPField label="Código Postal" required>
-                  <TPInput
-                    value={form.postalCode}
-                    onChange={(v) => update("postalCode", v)}
-                    placeholder="C1000"
-                    disabled={loading}
-                    error={req(form.postalCode)}
-                  />
-                </TPField>
+                {/* Fila 2: Piso + Dpto. + Código Postal */}
+                <div className="md:col-span-3">
+                  <TPField label="Piso">
+                    <TPInput
+                      value={form.floor}
+                      onChange={(v) => update("floor", v)}
+                      placeholder="3"
+                      disabled={loading}
+                    />
+                  </TPField>
+                </div>
 
                 <div className="md:col-span-3">
+                  <TPField label="Dpto.">
+                    <TPInput
+                      value={form.apartment}
+                      onChange={(v) => update("apartment", v)}
+                      placeholder="A"
+                      disabled={loading}
+                    />
+                  </TPField>
+                </div>
+
+                <div className="md:col-span-6">
+                  <TPField label="Código Postal" required>
+                    <TPInput
+                      value={form.postalCode}
+                      onChange={(v) => update("postalCode", v)}
+                      placeholder="C1000"
+                      disabled={loading}
+                      error={req(form.postalCode)}
+                    />
+                  </TPField>
+                </div>
+
+                {/* Fila 3: Ciudad + Provincia + País */}
+                <div className="md:col-span-4">
+                  <TPField label="Ciudad" required>
+                    <TPInput
+                      value={form.city}
+                      onChange={(v) => update("city", v)}
+                      placeholder="Ciudad"
+                      disabled={loading}
+                      error={req(form.city)}
+                    />
+                  </TPField>
+                </div>
+
+                <div className="md:col-span-4">
+                  <TPField label="Provincia" required>
+                    <TPInput
+                      value={form.province}
+                      onChange={(v) => update("province", v)}
+                      placeholder="Provincia"
+                      disabled={loading}
+                      error={req(form.province)}
+                    />
+                  </TPField>
+                </div>
+
+                <div className="md:col-span-4">
                   <TPField label="País" required>
                     <TPInput
                       value={form.country}
@@ -342,6 +384,7 @@ export default function Register() {
                     />
                   </TPField>
                 </div>
+
               </div>
             </section>
 

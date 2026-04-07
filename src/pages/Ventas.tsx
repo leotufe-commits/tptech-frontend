@@ -14,7 +14,11 @@ import {
   CreditCard,
   RefreshCw,
   ChevronRight,
+  ChevronDown,
   Package,
+  Info,
+  ShieldAlert,
+  Calculator,
 } from "lucide-react";
 
 import { articlesApi, variantLabel } from "../services/articles";
@@ -23,9 +27,13 @@ import type {
   ArticleVariant,
   ArticleDetail,
   ArticleStock,
+  PricingPreviewResult,
+  PricingAlert,
+  PricingPolicyResult,
+  CheckoutResult,
 } from "../services/articles";
 import { salesApi } from "../services/sales";
-import type { SaleLineInput, AddPaymentPayload, SaleDetail, SalePriceSource } from "../services/sales";
+import type { SaleLineInput, AddPaymentPayload, SaleDetail, SalePriceSource, SalePreviewResult } from "../services/sales";
 import { paymentsApi } from "../services/payments";
 import type { PaymentMethodRow } from "../services/payments";
 import { apiFetch } from "../lib/api";
@@ -74,6 +82,139 @@ type WarehouseOption = {
 };
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
+function fmtAmt(v: string | null): string {
+  if (v == null) return "—";
+  const n = parseFloat(v);
+  return Number.isFinite(n)
+    ? n.toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+    : "—";
+}
+
+function PriceBreakdownPanel({ data }: { data: PricingPreviewResult }) {
+  const hasQtyDisc   = data.quantityDiscountAmount != null && parseFloat(data.quantityDiscountAmount) > 0;
+  const hasPromo     = data.promotionDiscountAmount != null && parseFloat(data.promotionDiscountAmount) > 0;
+  const hasDiscount  = hasQtyDisc || hasPromo;
+  const marginNum    = data.marginPercent != null ? parseFloat(data.marginPercent) : null;
+
+  // Obtener fórmulas desde steps
+  const steps = data.steps ?? [];
+  const plStep = steps.find(s => s.key === "PRICE_LIST");
+  const qdStep = steps.find(s => s.key === "QUANTITY_DISCOUNT");
+  const prStep = steps.find(s => s.key === "PROMOTION");
+
+  function getFormula(step: typeof plStep): string | null {
+    if (!step?.meta) return null;
+    const m = step.meta;
+    if (step.key === "PRICE_LIST" && m.mode)
+      return `${m.mode}${m.source ? ` · fuente ${String(m.source).toLowerCase()}` : ""}`;
+    if (step.key === "QUANTITY_DISCOUNT" && m.type)
+      return `${m.type === "PERCENTAGE" ? `${m.value}%` : `$${m.value}`} · cant. ${m.quantity}`;
+    if (step.key === "PROMOTION" && m.type)
+      return `${m.type === "PERCENTAGE" ? `${m.value}%` : `$${m.value}`}`;
+    return null;
+  }
+
+  return (
+    <div className="mt-2 rounded-lg border border-gray-100 bg-gray-50 overflow-hidden text-xs">
+      {/* Precio base */}
+      <div className="flex items-start justify-between gap-2 px-3 py-1.5">
+        <div className="min-w-0">
+          <span className="text-gray-600 font-medium">
+            {data.baseSource === "PRICE_LIST"
+              ? `Lista${data.appliedPriceListName ? ` "${data.appliedPriceListName}"` : ""}`
+              : data.baseSource === "MANUAL_OVERRIDE" ? "Precio manual"
+              : data.baseSource === "MANUAL_FALLBACK" ? "Precio base"
+              : data.baseSource === "PRICE_LIST"      ? "Override variante"
+              : "Precio base"}
+          </span>
+          {plStep && getFormula(plStep) && (
+            <div className="text-[10px] text-gray-400 font-mono">{getFormula(plStep)}</div>
+          )}
+        </div>
+        <span className="tabular-nums text-gray-700 font-semibold shrink-0">
+          ${fmtAmt(data.basePrice)}
+        </span>
+      </div>
+
+      {/* Descuento por cantidad */}
+      {hasQtyDisc && (
+        <div className="flex items-start justify-between gap-2 px-3 py-1 border-t border-gray-100">
+          <div className="min-w-0">
+            <span className="text-orange-600 font-medium">Desc. cantidad</span>
+            {qdStep && getFormula(qdStep) && (
+              <div className="text-[10px] text-gray-400 font-mono">{getFormula(qdStep)}</div>
+            )}
+          </div>
+          <span className="tabular-nums text-emerald-600 font-semibold shrink-0">
+            −${fmtAmt(data.quantityDiscountAmount)}
+          </span>
+        </div>
+      )}
+
+      {/* Promoción */}
+      {hasPromo && (
+        <div className="flex items-start justify-between gap-2 px-3 py-1 border-t border-gray-100">
+          <div className="min-w-0">
+            <span className="text-red-600 font-medium">
+              🏷 {data.appliedPromotionName ?? "Promoción"}
+            </span>
+            {prStep && getFormula(prStep) && (
+              <div className="text-[10px] text-gray-400 font-mono">{getFormula(prStep)}</div>
+            )}
+          </div>
+          <span className="tabular-nums text-emerald-600 font-semibold shrink-0">
+            −${fmtAmt(data.promotionDiscountAmount)}
+          </span>
+        </div>
+      )}
+
+      {/* Total */}
+      <div className={`flex items-center justify-between gap-2 px-3 py-1.5 ${hasDiscount ? "border-t-2 border-gray-200 bg-white" : "border-t border-gray-100"}`}>
+        <span className="font-semibold text-gray-800">Total</span>
+        <span className="tabular-nums font-bold text-indigo-700">${fmtAmt(data.unitPrice)}</span>
+      </div>
+
+      {/* Margen */}
+      {marginNum != null && data.unitCost != null && (
+        <div className="flex items-center justify-between gap-2 px-3 py-1 border-t border-gray-100 bg-white">
+          <span className="text-gray-400">Margen</span>
+          <div className="flex items-center gap-1.5">
+            <span className={`tabular-nums font-semibold ${marginNum < 0 ? "text-red-500" : marginNum < 10 ? "text-amber-600" : "text-green-600"}`}>
+              {marginNum.toFixed(1)}%
+            </span>
+            <span className="text-gray-400 text-[10px]">
+              · ${fmtAmt(data.unitMargin)} ud.
+            </span>
+          </div>
+        </div>
+      )}
+
+      {/* Parcial */}
+      {(data.partial || data.costPartial) && (
+        <div className="flex items-center gap-1 px-3 py-1 border-t border-amber-100 bg-amber-50 text-[10px] text-amber-600">
+          <Info size={10} className="shrink-0" />
+          {data.partial ? "Precio estimado (datos incompletos)" : "Costo parcial"}
+        </div>
+      )}
+
+      {/* Alertas de negocio */}
+      {(data.alerts ?? []).filter(a => a.level === "error" || a.code === "PARTIAL_DATA").map((alert: PricingAlert, i: number) => (
+        <div
+          key={i}
+          className={`flex items-start gap-1.5 px-3 py-1.5 border-t text-[10px] ${
+            alert.level === "error"
+              ? "border-red-100 bg-red-50 text-red-600"
+              : "border-amber-100 bg-amber-50 text-amber-600"
+          }`}
+        >
+          <Info size={10} className="shrink-0 mt-0.5" />
+          <span>{alert.message}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function lineTotal(line: CartLine) {
   return Math.round(line.quantity * line.unitPrice * (1 - line.discountPct / 100) * 100) / 100;
 }
@@ -87,6 +228,17 @@ function fmt(n: number) {
 }
 
 /** Label legible de variante: muestra ejes de variante (Rojo · M) o SKU si hay */
+
+function blockingAlertLabel(code: string): string {
+  switch (code) {
+    case "LOSS_SALE":             return "Venta a pérdida (precio < costo)";
+    case "ZERO_OR_NEGATIVE_PRICE":return "Precio cero o negativo";
+    case "LOW_MARGIN":            return "Margen por debajo del mínimo permitido";
+    case "PARTIAL_DATA":          return "Datos de costo incompletos";
+    case "COST_UNRESOLVED":       return "Costo del artículo no disponible";
+    default:                      return code;
+  }
+}
 
 // ─── Component ────────────────────────────────────────────────────────────────
 export default function Ventas() {
@@ -102,6 +254,10 @@ export default function Ventas() {
 
   // ── Cart ───────────────────────────────────────────────────────────────────
   const [cart, setCart] = useState<CartLine[]>([]);
+  /** Mapa de desglose de precio por clave de línea */
+  const [pricingMap, setPricingMap] = useState<Record<string, PricingPreviewResult>>({});
+  /** Clave de línea cuyo desglose está expandido */
+  const [expandedPricingKey, setExpandedPricingKey] = useState<string | null>(null);
 
   // ── Client ────────────────────────────────────────────────────────────────
   const [clientSearch, setClientSearch] = useState("");
@@ -116,6 +272,12 @@ export default function Ventas() {
 
   // ── Payment methods ───────────────────────────────────────────────────────
   const [paymentMethods, setPaymentMethods] = useState<PaymentMethodRow[]>([]);
+
+  // ── Sales preview (total con pago — backend es fuente de verdad) ──────────
+  const [previewPMId,         setPreviewPMId]         = useState<string>("");
+  const [previewInstallments, setPreviewInstallments] = useState<number>(0);
+  const [salesPreview,        setSalesPreview]        = useState<SalePreviewResult | null>(null);
+  const [salesPreviewLoading, setSalesPreviewLoading] = useState(false);
 
   // ── Variant picker ────────────────────────────────────────────────────────
   const [variantPickerArticle,   setVariantPickerArticle]   = useState<ArticleRow | null>(null);
@@ -161,6 +323,32 @@ export default function Ventas() {
       })
       .catch(() => {});
   }, []);
+
+  // ─── Sales preview — backend resuelve TODO: precios + subtotal + checkout ───
+  useEffect(() => {
+    if (cart.length === 0) {
+      setSalesPreview(null);
+      return;
+    }
+    const t = setTimeout(() => {
+      setSalesPreviewLoading(true);
+      salesApi
+        .preview({
+          lines: cart.map((l) => ({
+            articleId: l.articleId,
+            variantId: l.variantId,
+            quantity:  l.quantity,
+          })),
+          clientId:        selectedClient?.id ?? null,
+          paymentMethodId: previewPMId   || null,
+          installmentsQty: previewInstallments || 0,
+        })
+        .then(setSalesPreview)
+        .catch(() => setSalesPreview(null))
+        .finally(() => setSalesPreviewLoading(false));
+    }, 400);
+    return () => clearTimeout(t);
+  }, [cart, selectedClient, previewPMId, previewInstallments]);
 
   // ─── Cargar detalle + stock al abrir el picker de variantes ─────────────
   useEffect(() => {
@@ -294,8 +482,9 @@ export default function Ventas() {
 
   // ─── Resolve sale price and add to cart ───────────────────────────────────
   async function resolveAndAdd(article: ArticleRow, variant: ArticleVariant | null) {
+    const lineKey = `${article.id}__${variant?.id ?? ""}`;
     try {
-      const result = await articlesApi.getSalePrice(article.id, {
+      const result = await articlesApi.getPricingPreview(article.id, {
         clientId:  selectedClient?.id ?? null,
         variantId: variant?.id ?? null,
         quantity:  1,
@@ -306,10 +495,11 @@ export default function Ventas() {
       const unitCost = result.unitCost != null ? parseFloat(result.unitCost) : null;
       addToCart(
         article, variant, price,
-        result.priceSource, result.appliedPromotionName, result.appliedPriceListName,
+        result.priceSource as any, result.appliedPromotionName, result.appliedPriceListName,
         result.appliedPromotionId, result.appliedDiscountId, result.appliedPriceListId,
         unitCost, result.costPartial, result.costMode
       );
+      setPricingMap(prev => ({ ...prev, [lineKey]: result }));
     } catch {
       const price = parseFloat(variant?.priceOverride ?? article.salePrice ?? "0") || 0;
       addToCart(article, variant, price, "", null, null, null, null, null, null, true, "NONE");
@@ -328,7 +518,7 @@ export default function Ventas() {
   // ─── Refresh price when quantity changes ──────────────────────────────────
   async function refreshLinePrice(key: string, articleId: string, variantId: string | null, qty: number) {
     try {
-      const result = await articlesApi.getSalePrice(articleId, {
+      const result = await articlesApi.getPricingPreview(articleId, {
         clientId:  selectedClient?.id ?? null,
         variantId: variantId ?? null,
         quantity:  qty,
@@ -344,7 +534,7 @@ export default function Ventas() {
                 unitCost:    newCost,
                 costPartial: result.costPartial,
                 costMode:    result.costMode,
-                priceSource:         result.priceSource,
+                priceSource:         result.priceSource as any,
                 appliedPromotionName: result.appliedPromotionName,
                 appliedPriceListName: result.appliedPriceListName,
                 appliedPromotionId:  result.appliedPromotionId,
@@ -353,6 +543,7 @@ export default function Ventas() {
               }
             : l
         ));
+        setPricingMap(prev => ({ ...prev, [key]: result }));
       }
     } catch { /* keep existing price */ }
   }
@@ -380,6 +571,8 @@ export default function Ventas() {
 
   function clearCart() {
     setCart([]);
+    setPricingMap({});
+    setExpandedPricingKey(null);
     setSelectedClient(null);
     setNotes("");
     setCurrentSale(null);
@@ -441,7 +634,13 @@ export default function Ventas() {
       setPayingAmount(sub);
       setPaymentModalOpen(true);
     } catch (e: any) {
-      toast.error(e?.message ?? "Error al confirmar la venta.");
+      if (e?.status === 422 && e?.data?.blockingAlerts) {
+        const codes: string[] = e.data.blockingAlerts;
+        const labels = codes.map(blockingAlertLabel).join(", ");
+        toast.error(`Venta bloqueada: ${labels}`);
+      } else {
+        toast.error(e?.message ?? "Error al confirmar la venta.");
+      }
     } finally {
       setConfirming(false);
     }
@@ -508,6 +707,13 @@ export default function Ventas() {
     const hasPartial = cart.some((l) => l.costPartial);
     return { revenue, cost, margin, marginPct, linesWithoutCost: cart.length - linesWithCost.length, hasPartial };
   })();
+
+  // Líneas bloqueadas por política de precios
+  const blockedLines = cart.filter(l => pricingMap[l.key]?.policy?.canConfirm === false);
+  const hasBlocked = blockedLines.length > 0;
+  const allBlockingCodes = hasBlocked
+    ? [...new Set(blockedLines.flatMap(l => pricingMap[l.key]?.policy?.blockingAlerts ?? []))]
+    : [];
 
   // ─── Render ───────────────────────────────────────────────────────────────
   return (
@@ -763,7 +969,47 @@ export default function Ventas() {
                     {line.priceSource === "VARIANT_OVERRIDE" && (
                       <span className="text-xs bg-teal-100 text-teal-700 px-1.5 py-0.5 rounded">Precio variante</span>
                     )}
+                    {/* Botón de desglose */}
+                    {pricingMap[line.key] && (
+                      <button
+                        type="button"
+                        className="flex items-center gap-0.5 text-[10px] text-gray-400 hover:text-indigo-500 transition-colors ml-auto"
+                        onClick={() => setExpandedPricingKey(k => k === line.key ? null : line.key)}
+                        title="Ver detalle de precio"
+                      >
+                        {expandedPricingKey === line.key
+                          ? <ChevronDown size={11} />
+                          : <ChevronRight size={11} />}
+                        Detalle
+                      </button>
+                    )}
+                    {/* Botón analizar en simulador */}
+                    <a
+                      href={`/herramientas/simulador-precios?articleId=${line.articleId}${line.variantId ? `&variantId=${line.variantId}` : ""}&quantity=${line.quantity}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex items-center gap-0.5 text-[10px] text-gray-400 hover:text-indigo-500 transition-colors"
+                      title="Analizar precio en simulador"
+                    >
+                      <Calculator size={11} />
+                      Analizar
+                    </a>
                   </div>
+
+                  {/* Indicador de línea bloqueada por política */}
+                  {pricingMap[line.key]?.policy?.canConfirm === false && (
+                    <div className="flex items-center gap-1 mt-1 text-[10px] text-red-600 font-medium">
+                      <ShieldAlert size={10} className="shrink-0" />
+                      <span>
+                        {(pricingMap[line.key].policy.blockingAlerts ?? []).map(blockingAlertLabel).join(" · ")}
+                      </span>
+                    </div>
+                  )}
+
+                  {/* Panel de desglose expandible */}
+                  {expandedPricingKey === line.key && pricingMap[line.key] && (
+                    <PriceBreakdownPanel data={pricingMap[line.key]} />
+                  )}
 
                   {/* Price + discount */}
                   <div className="flex items-center gap-2 mt-1.5">
@@ -898,15 +1144,113 @@ export default function Ventas() {
               </div>
             );
           })()}
+
+          {/* Selector de forma de cobro — inputs al preview */}
+          {cart.length > 0 && (
+            <div className="mt-2 mb-2 space-y-1.5">
+              <div className="flex items-center gap-1.5 mb-1">
+                <CreditCard className="w-3.5 h-3.5 text-gray-400 shrink-0" />
+                <span className="text-xs text-gray-500 font-medium">Forma de cobro</span>
+              </div>
+              <select
+                className="w-full text-xs border border-gray-200 rounded-lg px-2.5 py-1.5 focus:outline-none focus:ring-1 focus:ring-indigo-400 bg-white"
+                value={previewPMId}
+                onChange={e => { setPreviewPMId(e.target.value); setPreviewInstallments(0); }}
+              >
+                <option value="">Sin ajuste de pago</option>
+                {paymentMethods.map(pm => (
+                  <option key={pm.id} value={pm.id}>{pm.name}</option>
+                ))}
+              </select>
+
+              {/* Cuotas — solo si el medio tiene planes activos */}
+              {previewPMId && (() => {
+                const pm = paymentMethods.find(p => p.id === previewPMId);
+                const plans = pm?.installmentPlans?.filter(p => p.isActive) ?? [];
+                if (!plans.length) return null;
+                return (
+                  <select
+                    className="w-full text-xs border border-gray-200 rounded-lg px-2.5 py-1.5 focus:outline-none focus:ring-1 focus:ring-indigo-400 bg-white"
+                    value={previewInstallments}
+                    onChange={e => setPreviewInstallments(parseInt(e.target.value, 10) || 0)}
+                  >
+                    <option value={0}>Sin cuotas</option>
+                    {plans.map(plan => (
+                      <option key={plan.installments} value={plan.installments}>
+                        {plan.installments} {plan.installments === 1 ? "cuota" : "cuotas"}
+                        {parseFloat(plan.interestRate) > 0 ? ` (+${plan.interestRate}%)` : " sin interés"}
+                      </option>
+                    ))}
+                  </select>
+                );
+              })()}
+
+              {/* Cargando preview */}
+              {salesPreviewLoading && (
+                <div className="flex items-center gap-1.5 text-xs text-gray-400 py-1">
+                  <RefreshCw className="w-3 h-3 animate-spin" /> Calculando…
+                </div>
+              )}
+
+              {/* Desglose ajuste de pago */}
+              {!salesPreviewLoading && salesPreview?.checkoutResult && salesPreview.checkoutResult.paymentAdjustment !== 0 && (
+                <div className="rounded-lg border border-gray-100 bg-white overflow-hidden text-xs">
+                  <div className="flex justify-between items-center px-3 py-1.5 border-b border-gray-100">
+                    <span className="text-gray-500">Precio comercial</span>
+                    <span className="tabular-nums text-gray-700">${fmt(salesPreview.checkoutResult.baseAmount)}</span>
+                  </div>
+                  <div className="flex justify-between items-center px-3 py-1.5">
+                    <span className={salesPreview.checkoutResult.paymentAdjustment > 0 ? "text-amber-600" : "text-emerald-600"}>
+                      {salesPreview.checkoutResult.paymentAdjustment > 0 ? "Recargo" : "Descuento"}
+                    </span>
+                    <span className={`tabular-nums font-medium ${salesPreview.checkoutResult.paymentAdjustment > 0 ? "text-amber-600" : "text-emerald-600"}`}>
+                      {salesPreview.checkoutResult.paymentAdjustment > 0 ? "+" : ""}${fmt(salesPreview.checkoutResult.paymentAdjustment)}
+                    </span>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
           <div className="flex justify-between items-center mb-3">
             <span className="font-semibold text-gray-800">Total</span>
-            <span className="font-bold text-xl text-indigo-700">${fmt(subtotal)}</span>
+            <div className="text-right">
+              {salesPreview ? (
+                <>
+                  <span className="font-bold text-xl text-indigo-700">${fmt(salesPreview.total)}</span>
+                  {salesPreview.checkoutResult?.installments != null && salesPreview.checkoutResult.installmentAmount != null && (
+                    <div className="text-xs text-indigo-500 font-medium">
+                      {salesPreview.checkoutResult.installments}x ${fmt(salesPreview.checkoutResult.installmentAmount)}
+                    </div>
+                  )}
+                </>
+              ) : (
+                <span className="font-bold text-xl text-indigo-700">${fmt(subtotal)}</span>
+              )}
+            </div>
           </div>
+
+          {hasBlocked && (
+            <div className="mb-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2.5">
+              <div className="flex items-center gap-1.5 mb-1">
+                <ShieldAlert size={13} className="text-red-500 shrink-0" />
+                <span className="text-xs font-semibold text-red-700">Venta bloqueada por política de precios</span>
+              </div>
+              <ul className="space-y-0.5">
+                {allBlockingCodes.map(code => (
+                  <li key={code} className="text-[11px] text-red-600 flex items-center gap-1">
+                    <span className="w-1 h-1 rounded-full bg-red-400 shrink-0" />
+                    {blockingAlertLabel(code)}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
 
           <TPButton
             variant="primary"
             className="w-full justify-center"
-            disabled={cart.length === 0}
+            disabled={cart.length === 0 || hasBlocked}
             loading={confirming}
             onClick={handleConfirmAndPay}
           >

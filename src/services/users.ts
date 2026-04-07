@@ -50,6 +50,8 @@ export type UserListItem = {
   phoneNumber?: string;
   street?: string;
   number?: string;
+  floor?: string;
+  apartment?: string;
   city?: string;
   province?: string;
   postalCode?: string;
@@ -106,6 +108,8 @@ export type UserDetail = {
 
   street?: string;
   number?: string;
+  floor?: string;
+  apartment?: string;
   city?: string;
   province?: string;
   postalCode?: string;
@@ -175,6 +179,8 @@ export type UpdateUserProfileBody = {
 
   street?: string;
   number?: string;
+  floor?: string;
+  apartment?: string;
   city?: string;
   province?: string;
   postalCode?: string;

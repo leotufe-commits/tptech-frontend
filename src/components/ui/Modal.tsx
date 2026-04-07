@@ -270,7 +270,8 @@ export function Modal({
     // guard (si algo roba foco después)
     const start = Date.now();
     const guard = window.setInterval(() => {
-      if (!isTopMost) return;
+      // Leer el stack en tiempo real para evitar stale closure cuando otro modal se abre encima
+      if (__tp_modal_stack[__tp_modal_stack.length - 1] !== instanceId) return;
       if (Date.now() - start > 800) {
         window.clearInterval(guard);
         return;
@@ -285,15 +286,19 @@ export function Modal({
       window.clearTimeout(t2);
       window.clearInterval(guard);
     };
-  }, [open, isTopMost]);
+  }, [open, instanceId]);
 
   useEffect(() => {
     if (!open) return;
 
     function onKeyDown(e: KeyboardEvent) {
+      // Leer el stack en tiempo real: evita que el trap de un modal inferior (con isTopMost
+      // stale=true de su último render) intercepte Tab/Esc/Enter cuando hay un modal encima.
+      const liveIsTopMost = __tp_modal_stack[__tp_modal_stack.length - 1] === instanceId;
+
       // ✅ TAB trap
       if (e.key === "Tab") {
-        if (!isTopMost) return;
+        if (!liveIsTopMost) return;
 
         const root = modalRef.current;
         if (!root) return;
@@ -332,7 +337,7 @@ export function Modal({
 
       // ✅ ESC cerrar
       if (e.key === "Escape") {
-        if (!isTopMost) return;
+        if (!liveIsTopMost) return;
 
         if (busy) {
           e.preventDefault();
@@ -347,7 +352,7 @@ export function Modal({
 
       // ✅ ENTER acción primaria
       if (e.key === "Enter") {
-        if (!isTopMost) return;
+        if (!liveIsTopMost) return;
         if (busy) return;
         if (drag.current.active) return;
         if (!onEnter) return;
@@ -376,7 +381,7 @@ export function Modal({
 
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [open, onClose, isTopMost, busy, onEnter]);
+  }, [open, onClose, instanceId, busy, onEnter]);
 
   // ✅ si el foco se va afuera, lo devolvemos al modal
   function onFocusCapture() {

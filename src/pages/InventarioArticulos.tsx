@@ -20,9 +20,11 @@ import {
   Box,
   Wrench,
   Gem,
+  Calculator,
 } from "lucide-react";
 
 import { cn } from "../components/ui/tp";
+import TPImageLightbox from "../components/ui/TPImageLightbox";
 import { TPSectionShell }  from "../components/ui/TPSectionShell";
 import { TPButton }        from "../components/ui/TPButton";
 import { TPSearchInput }   from "../components/ui/TPSearchInput";
@@ -39,6 +41,7 @@ import { TPColumnPicker, type ColPickerDef } from "../components/ui/TPColumnPick
 import { TPPagination } from "../components/ui/TPPagination";
 import ConfirmDeleteDialog from "../components/ui/ConfirmDeleteDialog";
 import TPSelect from "../components/ui/TPSelect";
+import { SortArrows } from "../components/ui/TPSort";
 
 import { toast } from "../lib/toast";
 import {
@@ -58,6 +61,7 @@ import {
   fmtQty,
 } from "../services/articles";
 import { categoriesApi, type CategoryRow } from "../services/categories";
+import { articleGroupsApi, type ArticleGroupRow } from "../services/article-groups";
 
 /* =========================================================
    Tipos del árbol
@@ -85,23 +89,52 @@ type AnyNode = ArticleNode | VariantNode;
    Columnas opcionales
 ========================================================= */
 const COL_DEFS: ColPickerDef[] = [
-  { key: "tipo",     label: "Tipo" },
-  { key: "estado",   label: "Estado" },
-  { key: "cost",     label: "Costo s/imp" },
-  { key: "costTax",  label: "Costo c/imp" },
-  { key: "price",    label: "Precio venta" },
-  { key: "stock",    label: "Stock" },
-  { key: "supplier", label: "Proveedor" },
+  // Visibles por defecto
+  { key: "tipo",         label: "Tipo" },
+  { key: "estado",       label: "Estado" },
+  { key: "category",     label: "Categoría" },
+  { key: "supplier",     label: "Proveedor" },
+  { key: "cost",         label: "Costo" },
+  { key: "price",        label: "Precio" },
+  { key: "margen",       label: "Margen %" },
+  { key: "stock",        label: "Stock" },
+  // Ocultas por defecto
+  { key: "group",        label: "Grupo" },
+  { key: "brand",        label: "Marca" },
+  { key: "manufacturer", label: "Fabricante" },
+  { key: "sku",          label: "SKU" },
+  { key: "code",         label: "Código" },
+  { key: "promo",        label: "Promociones" },
+  { key: "discount",     label: "Desc. cantidad" },
+  { key: "costMode",     label: "Modo de costo" },
+  { key: "taxes",        label: "Impuestos de compra" },
+  { key: "hasVariants",  label: "Tiene variantes" },
+  { key: "showInStore",  label: "Visible en tienda" },
+  { key: "returnable",   label: "Acepta dev." },
+  { key: "fav",          label: "Favorito" },
+  { key: "updatedAt",    label: "Última act." },
 ];
 
 // Ocultas por defecto
 const COL_VIS_DEFAULTS: Record<string, boolean> = {
-  costTax:  false,
-  supplier: false,
+  group:        false,
+  brand:        false,
+  manufacturer: false,
+  sku:          false,
+  code:         false,
+  promo:        false,
+  discount:     false,
+  costMode:     false,
+  taxes:        false,
+  hasVariants:  false,
+  showInStore:  false,
+  returnable:   false,
+  fav:          false,
+  updatedAt:    false,
 };
 
-const COL_LS_KEY       = "tptech_col_inventario_articulos_v5";
-const COL_ORDER_LS_KEY = "tptech_col_order_inventario_articulos_v5";
+const COL_LS_KEY       = "tptech_col_inventario_articulos_v9";
+const COL_ORDER_LS_KEY = "tptech_col_order_inventario_articulos_v9";
 
 function loadColVis(): Record<string, boolean> {
   try {
@@ -168,21 +201,11 @@ type CostCompositionLine = NonNullable<ArticleRow["costComposition"]>[number];
 function CostCellContent({ row }: { row: ArticleRow }) {
   const lines: CostCompositionLine[] = row.costComposition ?? [];
   const metalLines = lines.filter((l) => l.type === "METAL");
-  const otherLines = lines.filter((l) => l.type !== "METAL");
-  const hasBreakdown = lines.length > 0;
+  const hasBreakdown = metalLines.length > 0;
   const hasTotal = row.computedCostBase != null;
 
   if (!hasBreakdown && !hasTotal) {
     return <span className="text-muted/40">—</span>;
-  }
-
-  function lineLabel(l: CostCompositionLine): string {
-    if (l.label) return l.label;
-    if (l.type === "HECHURA")  return "Hechura";
-    if (l.type === "MANUAL")   return "Manual";
-    if (l.type === "PRODUCT")  return "Producto";
-    if (l.type === "SERVICE")  return "Servicio";
-    return l.type;
   }
 
   return (
@@ -200,16 +223,6 @@ function CostCellContent({ row }: { row: ArticleRow }) {
               </span>
             </div>
           ))}
-          {otherLines.map((l, i) => {
-            const total = parseFloat(l.quantity) * parseFloat(l.unitValue);
-            const code = l.currency?.code ?? "ARS";
-            return (
-              <div key={`o${i}`} className="flex items-baseline justify-between gap-3 text-xs text-muted">
-                <span className="shrink-0 text-muted/70">{lineLabel(l)}</span>
-                <span className="tabular-nums">{code} {fmtNum(total)}</span>
-              </div>
-            );
-          })}
         </div>
       )}
 
@@ -221,12 +234,18 @@ function CostCellContent({ row }: { row: ArticleRow }) {
       {/* ── Totales ── */}
       {hasTotal ? (
         <div className="space-y-0.5">
-          <div className="text-sm font-semibold tabular-nums">
-            ARS {fmtNum(row.computedCostBase)}
-          </div>
-          {row.computedCostWithTax != null && (
-            <div className="text-xs text-muted tabular-nums">
-              c/imp ARS {fmtNum(row.computedCostWithTax)}
+          {row.computedCostWithTax != null ? (
+            <>
+              <div className="text-sm font-semibold tabular-nums">
+                ARS {fmtNum(row.computedCostWithTax)}
+              </div>
+              <div className="text-xs text-muted tabular-nums">
+                Base: {fmtNum(row.computedCostBase ?? "0")} · Imp.: +{fmtNum((parseFloat(row.computedCostWithTax ?? "0") - parseFloat(row.computedCostBase ?? "0")).toString())}
+              </div>
+            </>
+          ) : (
+            <div className="text-sm font-semibold tabular-nums">
+              ARS {fmtNum(row.computedCostBase)}
             </div>
           )}
         </div>
@@ -325,26 +344,74 @@ const PRICE_SOURCE_CONFIG: Record<PriceSourceKey, {
 };
 
 function PriceCellContent({ row }: { row: ArticleRow }) {
-  const src   = (row.resolvedPriceSource ?? "NONE") as PriceSourceKey;
-  const price = row.resolvedSalePrice;
-  const name  = row.resolvedPriceName;
-  const cfg   = PRICE_SOURCE_CONFIG[src] ?? PRICE_SOURCE_CONFIG.NONE;
+  const src          = (row.resolvedPriceSource ?? "NONE") as PriceSourceKey;
+  const price        = row.resolvedSalePrice;
+  const priceWithTax = row.resolvedSalePriceWithTax;
+  const name         = row.resolvedPriceName;
+  const cfg          = PRICE_SOURCE_CONFIG[src] ?? PRICE_SOURCE_CONFIG.NONE;
 
   if (!price || src === "NONE") {
     return <span className="text-muted/40">—</span>;
   }
 
+  const labelColor =
+    src === "PROMOTION"           ? "text-emerald-400" :
+    src === "PRICE_LIST_CATEGORY" ? "text-primary"     :
+    src === "MANUAL_OVERRIDE" || src === "MANUAL_FALLBACK" ? "text-amber-300" :
+    "text-muted";
+
   return (
-    <div className="text-right space-y-1">
-      {/* Fuente del precio */}
-      <div>
-        <TPBadge tone={cfg.tone} size="sm">
-          {name ? `${cfg.label}: ${name}` : cfg.label}
-        </TPBadge>
+    <div className="text-right space-y-0.5">
+      {/* Fuente del precio — texto fino */}
+      <div className={cn("text-[11px] font-normal leading-tight truncate max-w-[200px] ml-auto", labelColor, "opacity-80")}>
+        {name ? `${cfg.label}: ${name}` : cfg.label}
       </div>
-      {/* Importe */}
-      <div className="text-sm font-semibold tabular-nums text-text">
-        ARS {fmtNum(price)}
+      {/* Importe principal */}
+      {priceWithTax != null ? (
+        <>
+          <div className="text-sm font-semibold tabular-nums text-text">
+            ARS {fmtNum(priceWithTax)}
+          </div>
+          <div className="text-xs text-muted tabular-nums">
+            Neto: {fmtNum(price)} · Imp.: +{fmtNum(parseFloat(priceWithTax) - parseFloat(price))}
+          </div>
+        </>
+      ) : (
+        <div className="text-sm font-semibold tabular-nums text-text">
+          ARS {fmtNum(price)}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* =========================================================
+   MarginCellContent — columna de margen % (precio vs costo)
+========================================================= */
+function MarginCellContent({ row }: { row: ArticleRow }) {
+  const price = row.resolvedSalePrice;
+  const cost  = row.computedCostBase;
+  if (!price || !cost) return <span className="text-muted/40">—</span>;
+
+  const p = parseFloat(price);
+  const c = parseFloat(cost);
+  if (!isFinite(p) || !isFinite(c) || c === 0) return <span className="text-muted/40">—</span>;
+
+  const margin = ((p - c) / c) * 100;
+  const isNeg  = margin < 0;
+  const abs    = Math.abs(margin);
+  const label  = `${isNeg ? "-" : "+"}${abs.toFixed(1)}%`;
+
+  return (
+    <div className="text-right">
+      <span className={cn(
+        "tabular-nums text-sm font-semibold",
+        isNeg ? "text-red-500 dark:text-red-400" : "text-emerald-600 dark:text-emerald-400",
+      )}>
+        {label}
+      </span>
+      <div className="text-[10px] text-muted/60 tabular-nums mt-0.5">
+        {fmtNum(p - c)} dif.
       </div>
     </div>
   );
@@ -357,19 +424,37 @@ export default function InventarioArticulos() {
   const navigate = useNavigate();
 
   /* ── datos ─────────────────────────────────────────────────────────────── */
+  const [lightboxSrc, setLightboxSrc] = useState<string | null>(null);
   const [rows,    setRows]    = useState<ArticleRow[]>([]);
   const [total,   setTotal]   = useState(0);
   const [loading, setLoading] = useState(false);
   const [categories, setCategories] = useState<CategoryRow[]>([]);
+  const [groups,     setGroups]     = useState<ArticleGroupRow[]>([]);
 
   /* ── paginación ─────────────────────────────────────────────────────────── */
   const [page,     setPage]     = useState(1);
-  const [pageSize, setPageSize] = useState(50);
+  const [pageSize, setPageSize] = useState(() => {
+    const saved = parseInt(localStorage.getItem("tptech:pageSize:articles") ?? "", 10);
+    return !isNaN(saved) && saved > 0 ? saved : 50;
+  });
 
   /* ── filtros rápidos ───────────────────────────────────────────────────── */
   const [q,        setQ]       = useState("");
   const [barcodeQ, setBarcodeQ] = useState("");
   const [onlyFav,  setOnlyFav] = useState(false);
+
+  /* ── ordenamiento ──────────────────────────────────────────────────────── */
+  const [sortKey, setSortKey] = useState<string>("name");
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
+
+  function toggleSort(key: string) {
+    if (sortKey === key) {
+      setSortDir(d => d === "asc" ? "desc" : "asc");
+    } else {
+      setSortKey(key);
+      setSortDir("asc");
+    }
+  }
 
   /* ── filtros avanzados ─────────────────────────────────────────────────── */
   const [filtersOpen,          setFiltersOpen]          = useState(false);
@@ -380,6 +465,9 @@ export default function InventarioArticulos() {
   const [filterSku,            setFilterSku]            = useState("");
   const [filterShowInStore,    setFilterShowInStore]    = useState(false);
   const [filterSupplierId,     setFilterSupplierId]     = useState("");
+  const [filterGroupId,        setFilterGroupId]        = useState("");
+  const [filterBrand,          setFilterBrand]          = useState("");
+  const [filterHasVariants,    setFilterHasVariants]    = useState(false);
 
   /* ── árbol ─────────────────────────────────────────────────────────────── */
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
@@ -513,11 +601,16 @@ export default function InventarioArticulos() {
         sku:                 filterSku || undefined,
         showInStore:         filterShowInStore || undefined,
         preferredSupplierId: filterSupplierId || undefined,
+        groupId:             filterGroupId || undefined,
+        brand:               filterBrand || undefined,
+        hasVariants:         filterHasVariants || undefined,
         isFavorite:          onlyFav || undefined,
         showInActive:        filterStatus !== "" || undefined,
         barcode:             opts.barcode,
         page:                opts.pg,
         pageSize:            opts.ps,
+        sortKey,
+        sortDir,
       });
       setRows(res.rows);
       setTotal(res.total);
@@ -541,7 +634,8 @@ export default function InventarioArticulos() {
     void fetchArticles({ pg: pageRef.current, ps: pageSizeRef.current, ...opts });
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [q, filterType, filterCategoryId, filterStatus, filterStockMode, filterSku,
-      filterShowInStore, filterSupplierId, onlyFav]);
+      filterShowInStore, filterSupplierId, filterGroupId, filterBrand, filterHasVariants,
+      onlyFav, sortKey, sortDir]);
 
   // Carga inicial
   useEffect(() => { void fetchArticles({ pg: 1, ps: pageSize }); }, []);
@@ -552,19 +646,20 @@ export default function InventarioArticulos() {
     const t = setTimeout(() => void fetchArticles({ pg: 1, ps: pageSizeRef.current }), 300);
     return () => clearTimeout(t);
   }, [q, filterType, filterCategoryId, filterStatus, filterStockMode, filterSku,
-      filterShowInStore, filterSupplierId, onlyFav]);
+      filterShowInStore, filterSupplierId, filterGroupId, filterBrand, filterHasVariants,
+      onlyFav, sortKey, sortDir]);
 
-  // Cargar categorías para el filtro
+  // Cargar categorías y grupos para los filtros
   useEffect(() => {
-    categoriesApi.list()
-      .then((rows) => setCategories(rows))
-      .catch(() => {});
+    categoriesApi.list().then((rows) => setCategories(rows)).catch(() => {});
+    articleGroupsApi.list().then((rows) => setGroups(rows)).catch(() => {});
   }, []);
 
   /* ── árbol ─────────────────────────────────────────────────────────────── */
   const isSearching = q.length > 0 || filterType !== "" || filterCategoryId !== ""
     || filterStatus !== "" || filterStockMode !== "" || filterSku !== ""
-    || filterShowInStore || filterSupplierId !== "" || onlyFav;
+    || filterShowInStore || filterSupplierId !== "" || filterGroupId !== ""
+    || filterBrand !== "" || filterHasVariants || onlyFav;
 
   const flatNodes = useMemo<AnyNode[]>(() => {
     const nodes: AnyNode[] = [];
@@ -676,14 +771,16 @@ export default function InventarioArticulos() {
   function handlePageSizeChange(s: number) {
     setPageSize(s);
     setPage(1);
+    try { localStorage.setItem("tptech:pageSize:articles", String(s)); } catch {}
     void fetchArticles({ pg: 1, ps: s });
   }
 
   /* ── filtros activos count ──────────────────────────────────────────────── */
   const activeFilterCount = [
     filterType, filterCategoryId, filterStatus, filterStockMode, filterSku, filterSupplierId,
-    barcodeQ,
+    filterGroupId, filterBrand, barcodeQ,
     filterShowInStore ? "1" : "",
+    filterHasVariants ? "1" : "",
   ].filter(Boolean).length;
 
   /* ── helpers columnas ────────────────────────────────────────────────────── */
@@ -699,7 +796,14 @@ export default function InventarioArticulos() {
         {/* Imagen 48×48 */}
         <div className="shrink-0">
           {row.mainImageUrl ? (
-            <img src={row.mainImageUrl} alt="" className="w-12 h-12 rounded-lg object-cover border border-border" />
+            <button
+              type="button"
+              className="cursor-zoom-in rounded-lg overflow-hidden"
+              onClick={(e) => { e.stopPropagation(); setLightboxSrc(row.mainImageUrl); }}
+              title="Ver imagen"
+            >
+              <img src={row.mainImageUrl} alt="" className="w-12 h-12 rounded-lg object-cover border border-border" />
+            </button>
           ) : (
             <div className="w-12 h-12 rounded-lg bg-surface2 border border-border flex items-center justify-center">
               <ArticleTypeIcon type={row.articleType} />
@@ -738,16 +842,26 @@ export default function InventarioArticulos() {
             )}
           </div>
 
-          {/* Línea 3: categoría · proveedor */}
-          <div className="flex items-center gap-1.5 mt-1 flex-wrap text-xs text-muted">
-            {row.category && <span className="text-muted/70">{row.category.name}</span>}
-            {isVisible("supplier") && row.preferredSupplier && (
-              <>
-                <span className="text-muted/30">·</span>
-                <span className="text-muted/70">{row.preferredSupplier.displayName}</span>
-              </>
-            )}
-          </div>
+          {/* Línea 3: badges de beneficios activos */}
+          {(row.hasActivePromotion || row.hasQuantityDiscount) && (
+            <div className="flex items-center gap-1.5 mt-1 flex-wrap">
+              {row.hasActivePromotion && (
+                <TPBadge tone="warning" size="sm" title={row.promotionSummary ?? "Tiene una promoción activa"}>
+                  Promo
+                </TPBadge>
+              )}
+              {row.hasQuantityDiscount && (
+                <TPBadge tone="info" size="sm" title={row.quantityDiscountSummary ?? "Tiene descuento por cantidad"}>
+                  x Cantidad
+                </TPBadge>
+              )}
+            </div>
+          )}
+
+          {/* Línea 4: categoría (siempre inline cuando no hay columna dedicada) */}
+          {!isVisible("category") && row.category && (
+            <div className="mt-1 text-xs text-muted/70">{row.category.name}</div>
+          )}
         </div>
       </div>
     );
@@ -768,15 +882,21 @@ export default function InventarioArticulos() {
         {/* Imagen variante 36×36 */}
         <div className="shrink-0">
           {displayImgSrc ? (
-            <img
-              src={displayImgSrc}
-              alt=""
-              className={cn(
-                "w-9 h-9 rounded-md object-cover border border-border",
-                isImgFallback && "opacity-35"
-              )}
-              title={isImgFallback ? "Imagen del artículo padre" : undefined}
-            />
+            <button
+              type="button"
+              className="cursor-zoom-in rounded-md overflow-hidden"
+              onClick={(e) => { e.stopPropagation(); setLightboxSrc(displayImgSrc); }}
+              title={isImgFallback ? "Ver imagen del artículo padre" : "Ver imagen"}
+            >
+              <img
+                src={displayImgSrc}
+                alt=""
+                className={cn(
+                  "w-9 h-9 rounded-md object-cover border border-border",
+                  isImgFallback && "opacity-35"
+                )}
+              />
+            </button>
           ) : (
             <div className="w-9 h-9 rounded-md bg-surface2 border border-border flex items-center justify-center">
               <Layers size={12} className="text-muted" />
@@ -802,7 +922,10 @@ export default function InventarioArticulos() {
             )}
             {Array.isArray(vv.attributeValues) && vv.attributeValues.length > 0 && (
               <span className="text-muted/70">
-                · {vv.attributeValues.map((av: any) => av.value).join(" · ")}
+                · {(vv.attributeValues as any[])
+                    .filter((av) => av.value)
+                    .map((av) => av.assignment?.definition?.name ? `${av.assignment.definition.name}: ${av.value}` : av.value)
+                    .join(" · ")}
               </span>
             )}
           </div>
@@ -814,9 +937,20 @@ export default function InventarioArticulos() {
   /* ── columnas TPTreeTable ─────────────────────────────────────────────────── */
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const treeColumns = useMemo<TreeColDef[]>(() => {
+    const SortHeader = ({ colKey, label }: { colKey: string; label: string }) => (
+      <button
+        type="button"
+        onClick={() => toggleSort(colKey)}
+        className="flex items-center gap-1 text-xs cursor-pointer hover:text-text transition-colors select-none"
+      >
+        {label}
+        <SortArrows active={sortKey === colKey} dir={sortDir} />
+      </button>
+    );
+
     const mainCol: TreeColDef = {
       key: "main",
-      header: "Artículo",
+      header: <SortHeader colKey="name" label="Artículo" />,
       renderCell: (raw) => {
         const node = raw as AnyNode;
         return node.kind === "article"
@@ -891,24 +1025,39 @@ export default function InventarioArticulos() {
           const vv = node.variant;
           return (
             <div className="text-right">
-              {vv.costPrice
-                ? <span className="tabular-nums text-sm">{fmtMoney(vv.costPrice)}</span>
-                : <span className="text-muted/40 italic text-xs">hered.</span>}
+              {vv.costPrice ? (
+                <>
+                  <div className="text-[10px] text-muted/70 mb-0.5">Costo propio</div>
+                  {vv.costPriceWithTax ? (
+                    <>
+                      <div className="text-sm font-semibold tabular-nums">{fmtMoney(vv.costPriceWithTax)}</div>
+                      <div className="text-xs text-muted tabular-nums">
+                        Base: {fmtNum(vv.costPrice)} · Imp.: +{fmtNum((parseFloat(vv.costPriceWithTax) - parseFloat(vv.costPrice)).toString())}
+                      </div>
+                    </>
+                  ) : (
+                    <span className="tabular-nums text-sm">{fmtMoney(vv.costPrice)}</span>
+                  )}
+                </>
+              ) : (
+                <>
+                  <div className="text-[10px] text-muted/70 mb-0.5">Heredado</div>
+                  {node.row.computedCostWithTax ? (
+                    <>
+                      <div className="text-sm tabular-nums text-muted">{fmtMoney(node.row.computedCostWithTax)}</div>
+                      <div className="text-xs text-muted/60 tabular-nums">
+                        Base: {fmtNum(node.row.computedCostBase!)} · Imp.: +{fmtNum((parseFloat(node.row.computedCostWithTax) - parseFloat(node.row.computedCostBase!)).toString())}
+                      </div>
+                    </>
+                  ) : node.row.computedCostBase ? (
+                    <span className="tabular-nums text-sm text-muted">{fmtMoney(node.row.computedCostBase)}</span>
+                  ) : (
+                    <span className="text-muted/40 italic text-xs">—</span>
+                  )}
+                </>
+              )}
             </div>
           );
-        },
-      },
-      costTax: {
-        key: "costTax",
-        header: <span className="text-xs">c/imp</span>,
-        visible: isVisible("costTax"),
-        className: "text-right w-28 align-top",
-        renderCell: (raw) => {
-          const node = raw as AnyNode;
-          if (node.kind !== "article") return null;
-          return node.row.computedCostWithTax != null
-            ? <span className="tabular-nums text-sm">{fmtMoney(node.row.computedCostWithTax)}</span>
-            : <span className="text-muted/40">—</span>;
         },
       },
       price: {
@@ -924,36 +1073,281 @@ export default function InventarioArticulos() {
             return (
               <div className="text-right">
                 <div className="text-[10px] text-muted/70 mb-0.5">Precio propio</div>
-                <span className="tabular-nums text-sm font-medium text-primary">
-                  ARS {fmtNum(vv.priceOverride)}
-                </span>
+                {vv.priceOverrideWithTax ? (
+                  <>
+                    <div className="text-sm font-semibold tabular-nums text-primary">ARS {fmtNum(vv.priceOverrideWithTax)}</div>
+                    <div className="text-xs text-muted tabular-nums">
+                      Neto: {fmtNum(vv.priceOverride)} · Imp.: +{fmtNum((parseFloat(vv.priceOverrideWithTax) - parseFloat(vv.priceOverride)).toString())}
+                    </div>
+                  </>
+                ) : (
+                  <span className="tabular-nums text-sm font-medium text-primary">ARS {fmtNum(vv.priceOverride)}</span>
+                )}
               </div>
             );
           }
-          const parentPrice = node.row.resolvedSalePrice;
-          if (parentPrice) {
+          const parentPriceWithTax = node.row.resolvedSalePriceWithTax;
+          const parentPrice        = node.row.resolvedSalePrice;
+          const displayPrice       = parentPriceWithTax ?? parentPrice;
+          if (displayPrice) {
             return (
               <div className="text-right">
                 <div className="text-[10px] text-muted/70 mb-0.5">Del artículo</div>
-                <span className="tabular-nums text-sm text-muted">
-                  ARS {fmtNum(parentPrice)}
-                </span>
+                <span className="tabular-nums text-sm text-muted">ARS {fmtNum(displayPrice)}</span>
+                {parentPriceWithTax && parentPrice && (
+                  <div className="text-xs text-muted/60 tabular-nums">
+                    Neto: {fmtNum(parentPrice)} · Imp.: +{fmtNum((parseFloat(parentPriceWithTax) - parseFloat(parentPrice)).toString())}
+                  </div>
+                )}
               </div>
             );
           }
-          return <span className="text-muted/40 italic text-xs">hered.</span>;
+          return <span className="text-muted/40 text-xs">—</span>;
+        },
+      },
+      margen: {
+        key: "margen",
+        header: <span className="text-xs">Margen %</span>,
+        visible: isVisible("margen"),
+        className: "text-right w-28 align-top",
+        renderCell: (raw) => {
+          const node = raw as AnyNode;
+          if (node.kind === "variant") return <span className="text-muted/40 text-xs">—</span>;
+          return <MarginCellContent row={node.row} />;
+        },
+      },
+      supplier: {
+        key: "supplier",
+        header: <SortHeader colKey="supplier" label="Proveedor" />,
+        visible: isVisible("supplier"),
+        className: "align-top w-36",
+        renderCell: (raw) => {
+          const node = raw as AnyNode;
+          if (node.kind === "variant") return <span className="text-muted/40 text-xs">—</span>;
+          const s = node.row.preferredSupplier;
+          return s
+            ? <span className="text-xs text-muted">{s.displayName}</span>
+            : <span className="text-muted/30 text-xs">—</span>;
+        },
+      },
+      category: {
+        key: "category",
+        header: <SortHeader colKey="category" label="Categoría" />,
+        visible: isVisible("category"),
+        className: "align-top w-36",
+        renderCell: (raw) => {
+          const node = raw as AnyNode;
+          if (node.kind === "variant") return <span className="text-muted/40 text-xs">—</span>;
+          const c = node.row.category;
+          return c
+            ? <span className="text-xs text-muted">{c.name}</span>
+            : <span className="text-muted/30 text-xs">—</span>;
+        },
+      },
+      group: {
+        key: "group",
+        header: <SortHeader colKey="group" label="Grupo" />,
+        visible: isVisible("group"),
+        className: "align-top w-32",
+        renderCell: (raw) => {
+          const node = raw as AnyNode;
+          if (node.kind === "variant") return <span className="text-muted/40 text-xs">—</span>;
+          const g = node.row.group;
+          return g
+            ? <span className="text-xs text-primary/80 inline-flex items-center gap-0.5"><Layers size={9} className="shrink-0" />{g.name}</span>
+            : <span className="text-muted/30 text-xs">—</span>;
+        },
+      },
+      promo: {
+        key: "promo",
+        header: <span className="text-xs">Promociones</span>,
+        visible: isVisible("promo"),
+        className: "text-center align-top w-28",
+        renderCell: (raw) => {
+          const node = raw as AnyNode;
+          if (node.kind === "variant") return <span className="text-muted/40 text-xs">—</span>;
+          const row = node.row;
+          if (row.promotionSummary) return <span className="text-xs text-emerald-600 dark:text-emerald-400">{row.promotionSummary}</span>;
+          if (row.hasActivePromotion) return <span className="text-xs text-emerald-600 dark:text-emerald-400">Sí</span>;
+          return <span className="text-muted/30 text-xs">—</span>;
+        },
+      },
+      discount: {
+        key: "discount",
+        header: <span className="text-xs">Desc. cantidad</span>,
+        visible: isVisible("discount"),
+        className: "text-center align-top w-32",
+        renderCell: (raw) => {
+          const node = raw as AnyNode;
+          if (node.kind === "variant") return <span className="text-muted/40 text-xs">—</span>;
+          const row = node.row;
+          if (row.quantityDiscountSummary) return <span className="text-xs text-blue-600 dark:text-blue-400">{row.quantityDiscountSummary}</span>;
+          if (row.hasQuantityDiscount) return <span className="text-xs text-blue-600 dark:text-blue-400">Sí</span>;
+          return <span className="text-muted/30 text-xs">—</span>;
+        },
+      },
+      brand: {
+        key: "brand",
+        header: <SortHeader colKey="brand" label="Marca" />,
+        visible: isVisible("brand"),
+        className: "align-top w-32",
+        renderCell: (raw) => {
+          const node = raw as AnyNode;
+          if (node.kind === "variant") return <span className="text-muted/40 text-xs">—</span>;
+          return node.row.brand
+            ? <span className="text-xs text-muted">{node.row.brand}</span>
+            : <span className="text-muted/30 text-xs">—</span>;
+        },
+      },
+      manufacturer: {
+        key: "manufacturer",
+        header: <SortHeader colKey="manufacturer" label="Fabricante" />,
+        visible: isVisible("manufacturer"),
+        className: "align-top w-32",
+        renderCell: (raw) => {
+          const node = raw as AnyNode;
+          if (node.kind === "variant") return <span className="text-muted/40 text-xs">—</span>;
+          return node.row.manufacturer
+            ? <span className="text-xs text-muted">{node.row.manufacturer}</span>
+            : <span className="text-muted/30 text-xs">—</span>;
+        },
+      },
+      sku: {
+        key: "sku",
+        header: <SortHeader colKey="sku" label="SKU" />,
+        visible: isVisible("sku"),
+        className: "align-top w-28",
+        renderCell: (raw) => {
+          const node = raw as AnyNode;
+          const val = node.kind === "variant" ? node.variant.sku : node.row.sku;
+          return val
+            ? <span className="text-xs font-mono text-muted">{val}</span>
+            : <span className="text-muted/30 text-xs">—</span>;
+        },
+      },
+      code: {
+        key: "code",
+        header: <SortHeader colKey="code" label="Código" />,
+        visible: isVisible("code"),
+        className: "align-top w-28",
+        renderCell: (raw) => {
+          const node = raw as AnyNode;
+          const val = node.kind === "variant" ? node.variant.code : node.row.code;
+          return val
+            ? <span className="text-xs font-mono text-muted">{val}</span>
+            : <span className="text-muted/30 text-xs">—</span>;
+        },
+      },
+      costMode: {
+        key: "costMode",
+        header: <SortHeader colKey="costMode" label="Modo costo" />,
+        visible: isVisible("costMode"),
+        className: "align-top w-32",
+        renderCell: (raw) => {
+          const node = raw as AnyNode;
+          if (node.kind === "variant") return <span className="text-muted/40 text-xs">—</span>;
+          const labels: Record<string, string> = {
+            MANUAL: "Manual",
+            METAL_MERMA_HECHURA: "Metal/Merma",
+            MULTIPLIER: "Multiplicador",
+          };
+          const label = labels[node.row.costCalculationMode] ?? node.row.costCalculationMode;
+          return <span className="text-xs text-muted">{label}</span>;
+        },
+      },
+      taxes: {
+        key: "taxes",
+        header: <span className="text-xs">Imp. compra</span>,
+        visible: isVisible("taxes"),
+        className: "text-center align-top w-28",
+        renderCell: (raw) => {
+          const node = raw as AnyNode;
+          if (node.kind === "variant") return <span className="text-muted/40 text-xs">—</span>;
+          const count = node.row.manualTaxIds?.length ?? 0;
+          return count > 0
+            ? <span className="text-xs text-amber-600 dark:text-amber-400">{count} {count === 1 ? "impuesto" : "impuestos"}</span>
+            : <span className="text-muted/30 text-xs">—</span>;
+        },
+      },
+      hasVariants: {
+        key: "hasVariants",
+        header: <span className="text-xs">Variantes</span>,
+        visible: isVisible("hasVariants"),
+        className: "text-center align-top w-24",
+        renderCell: (raw) => {
+          const node = raw as AnyNode;
+          if (node.kind === "variant") return <span className="text-muted/40 text-xs">—</span>;
+          const count = node.row.variants?.length ?? 0;
+          return count > 0
+            ? <span className="text-xs text-primary/80">{count}</span>
+            : <span className="text-muted/30 text-xs">—</span>;
+        },
+      },
+      showInStore: {
+        key: "showInStore",
+        header: <SortHeader colKey="showInStore" label="En tienda" />,
+        visible: isVisible("showInStore"),
+        className: "text-center align-top w-24",
+        renderCell: (raw) => {
+          const node = raw as AnyNode;
+          if (node.kind === "variant") return <span className="text-muted/40 text-xs">—</span>;
+          return node.row.showInStore
+            ? <span className="text-xs text-emerald-600 dark:text-emerald-400">Sí</span>
+            : <span className="text-muted/30 text-xs">No</span>;
+        },
+      },
+      returnable: {
+        key: "returnable",
+        header: <SortHeader colKey="isReturnable" label="Acepta dev." />,
+        visible: isVisible("returnable"),
+        className: "text-center align-top w-24",
+        renderCell: (raw) => {
+          const node = raw as AnyNode;
+          if (node.kind === "variant") return <span className="text-muted/40 text-xs">—</span>;
+          return node.row.isReturnable
+            ? <span className="text-xs text-emerald-600 dark:text-emerald-400">Sí</span>
+            : <span className="text-muted/30 text-xs">No</span>;
+        },
+      },
+      fav: {
+        key: "fav",
+        header: <SortHeader colKey="isFavorite" label="Favorito" />,
+        visible: isVisible("fav"),
+        className: "text-center align-top w-20",
+        renderCell: (raw) => {
+          const node = raw as AnyNode;
+          if (node.kind === "variant") return <span className="text-muted/40 text-xs">—</span>;
+          return node.row.isFavorite
+            ? <Star size={14} className="text-amber-400 mx-auto" fill="currentColor" />
+            : <span className="text-muted/30 text-xs">—</span>;
+        },
+      },
+      updatedAt: {
+        key: "updatedAt",
+        header: <SortHeader colKey="updatedAt" label="Última act." />,
+        visible: isVisible("updatedAt"),
+        className: "align-top w-28",
+        renderCell: (raw) => {
+          const node = raw as AnyNode;
+          if (node.kind === "variant") return <span className="text-muted/40 text-xs">—</span>;
+          const d = new Date(node.row.updatedAt);
+          return (
+            <span className="text-xs text-muted tabular-nums">
+              {d.toLocaleDateString("es-AR", { day: "2-digit", month: "2-digit", year: "2-digit" })}
+            </span>
+          );
         },
       },
     };
 
-    // Ordenar columnas opcionales según colOrder (supplier va inline, no tiene columna propia)
+    // Ordenar columnas opcionales según colOrder
     const ordered = colOrder
       .map((k) => optionalCols[k])
       .filter((c): c is TreeColDef => !!c);
 
     return [mainCol, ...ordered];
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [colVis, colOrder, highlightId, expanded]);
+  }, [colVis, colOrder, highlightId, expanded, sortKey, sortDir]);
 
   /* ── acciones TPTreeTable ────────────────────────────────────────────────── */
   function renderTreeActions(raw: TreeNodeBase) {
@@ -961,6 +1355,15 @@ export default function InventarioArticulos() {
     if (node.kind === "article") {
       return (
         <TPRowActions
+          extra={
+            <button
+              title="Abrir en simulador de precios"
+              className="h-7 w-7 rounded-md flex items-center justify-center text-muted hover:bg-surface2 hover:text-primary transition-colors"
+              onClick={() => navigate(`/herramientas/simulador-precios?articleId=${node.row.id}`)}
+            >
+              <Calculator size={14} />
+            </button>
+          }
           onView={() => navigate(`/articulos/${node.row.id}`)}
           onEdit={() => openEdit(node.row)}
           onClone={() => handleClone(node.row)}
@@ -1061,12 +1464,6 @@ export default function InventarioArticulos() {
         <TPTableHeader
           left={
             <div className="flex items-center gap-2 w-full">
-              <TPSearchInput
-                value={q}
-                onChange={setQ}
-                placeholder="Buscar nombre, código, SKU…"
-                className="w-full max-w-sm"
-              />
               <TPColumnPicker
                 columns={orderedCols}
                 visibility={colVis}
@@ -1076,6 +1473,12 @@ export default function InventarioArticulos() {
                 }}
                 order={colOrder}
                 onOrderChange={(o) => { setColOrder(o); saveColOrder(o); }}
+              />
+              <TPSearchInput
+                value={q}
+                onChange={setQ}
+                placeholder="Buscar nombre, código, SKU…"
+                className="w-full max-w-sm"
               />
             </div>
           }
@@ -1113,7 +1516,7 @@ export default function InventarioArticulos() {
         {/* ── Filtros avanzados ──────────────────────────────────────────────── */}
         {filtersOpen && (
           <div className="px-4 pb-4 pt-3 border-b border-border bg-surface/30">
-            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-7 gap-3">
+            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-7 gap-3">
               {/* Tipo — sin MATERIAL */}
               <TPSelect
                 value={filterType}
@@ -1219,6 +1622,39 @@ export default function InventarioArticulos() {
                 </div>
               </div>
 
+              {/* Grupo */}
+              <TPSelect
+                value={filterGroupId}
+                onChange={setFilterGroupId}
+                label="Grupo"
+                className="!h-9 text-sm"
+              >
+                <option value="">Todos</option>
+                {groups.map((g) => (
+                  <option key={g.id} value={g.id}>{g.name}</option>
+                ))}
+              </TPSelect>
+
+              {/* Marca */}
+              <div>
+                <div className="mb-1.5 text-sm text-muted">Marca</div>
+                <div className="relative">
+                  <input
+                    type="text"
+                    value={filterBrand}
+                    onChange={(e) => setFilterBrand(e.target.value)}
+                    placeholder="Filtrar por marca"
+                    className="tp-input h-9 text-sm w-full pr-7"
+                  />
+                  {filterBrand && (
+                    <button type="button" onClick={() => setFilterBrand("")}
+                      className="absolute right-2 top-1/2 -translate-y-1/2 text-muted hover:text-text">
+                      <X size={12} />
+                    </button>
+                  )}
+                </div>
+              </div>
+
               {/* En tienda */}
               <div>
                 <div className="mb-1.5 text-sm text-muted">En tienda</div>
@@ -1233,6 +1669,21 @@ export default function InventarioArticulos() {
                   {filterShowInStore ? "Solo en tienda" : "Todos"}
                 </TPButton>
               </div>
+
+              {/* Tiene variantes */}
+              <div>
+                <div className="mb-1.5 text-sm text-muted">Variantes</div>
+                <TPButton
+                  variant="secondary"
+                  onClick={() => setFilterHasVariants((v) => !v)}
+                  className={cn(
+                    "w-full h-9 text-sm",
+                    filterHasVariants && "border-primary/40 text-primary"
+                  )}
+                >
+                  {filterHasVariants ? "Con variantes" : "Todos"}
+                </TPButton>
+              </div>
             </div>
 
             {/* Limpiar filtros */}
@@ -1244,7 +1695,8 @@ export default function InventarioArticulos() {
                   onClick={() => {
                     setFilterType(""); setFilterCategoryId(""); setFilterStatus("");
                     setFilterStockMode(""); setFilterSku(""); setFilterShowInStore(false);
-                    setFilterSupplierId(""); setBarcodeQ("");
+                    setFilterSupplierId(""); setFilterGroupId(""); setFilterBrand("");
+                    setFilterHasVariants(false); setBarcodeQ("");
                   }}
                   className="text-xs text-muted hover:text-primary"
                 >
@@ -1335,6 +1787,7 @@ export default function InventarioArticulos() {
         open={scannerOpen}
         onClose={() => setScannerOpen(false)}
       />
+      <TPImageLightbox src={lightboxSrc} onClose={() => setLightboxSrc(null)} />
     </TPSectionShell>
   );
 }

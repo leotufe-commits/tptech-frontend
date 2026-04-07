@@ -84,11 +84,11 @@ export default function UsersPage() {
             </TPButton>
           ) : undefined
         }
-        totalLabel={p.totalLabel}
         page={p.page}
-        totalPages={p.totalPages}
-        onPrev={() => p.setPage((x) => Math.max(1, x - 1))}
-        onNext={() => p.setPage((x) => Math.min(p.totalPages, x + 1))}
+        pageSize={p.limit}
+        total={p.total}
+        onPageChange={(pg) => p.setPage(pg)}
+        onPageSizeChange={(s) => { p.setLimit(s); p.setPage(1); }}
         canAdmin={p.canAdmin}
         canEditStatus={p.canEditStatus}
         meId={p.me?.id ?? null}
@@ -136,6 +136,10 @@ export default function UsersPage() {
         setFStreet={p.setFStreet}
         fNumber={p.fNumber}
         setFNumber={p.setFNumber}
+        fFloor={p.fFloor}
+        setFFloor={p.setFFloor}
+        fApartment={p.fApartment}
+        setFApartment={p.setFApartment}
         fCity={p.fCity}
         setFCity={p.setFCity}
         fProvince={p.fProvince}

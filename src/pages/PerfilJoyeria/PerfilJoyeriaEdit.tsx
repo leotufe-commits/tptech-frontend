@@ -164,11 +164,9 @@ export default function PerfilJoyeriaEdit(p: Props) {
 
   return (
     <div ref={rootRef} className="rounded-2xl p-4 sm:p-6" style={cardStyle}>
-      <div className="grid grid-cols-1 gap-8 lg:grid-cols-2">
-        {/* =========================
-            IZQUIERDA
-        ========================= */}
-        <div className="space-y-4">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-12">
+        {/* 1. Nombre de Fantasía */}
+        <div className="sm:col-span-6">
           <TPField label="Nombre de Fantasía" required>
             <TPInput
               tabIndex={t++}
@@ -177,32 +175,68 @@ export default function PerfilJoyeriaEdit(p: Props) {
               {...disabledProps}
             />
           </TPField>
+        </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-12 gap-3">
-            <div className="sm:col-span-5">
-              <TPField label="Condición de IVA">
-                <TPComboCreatable
-                  tabIndex={t++}
-                  {...comboProps("IVA_CONDITION", p.catIva)}
-                  value={p.company.ivaCondition}
-                  onChange={(v) => p.setCompanyField("ivaCondition", v)}
-                />
-              </TPField>
-            </div>
+        {/* 2. Razón social */}
+        <div className="sm:col-span-6">
+          <TPField label="Razón social">
+            <TPInput
+              tabIndex={t++}
+              value={p.company.legalName}
+              onChange={(v) => p.setCompanyField("legalName", v)}
+              {...disabledProps}
+            />
+          </TPField>
+        </div>
 
-            <div className="sm:col-span-7">
-              <TPField label="CUIT">
-                <TPInput
-                  tabIndex={t++}
-                  value={p.company.cuit}
-                  onChange={(v) => p.setCompanyField("cuit", v)}
-                  onlyDigits
-                  {...disabledProps}
-                />
-              </TPField>
-            </div>
-          </div>
+        {/* 3. Condición de IVA · CUIT · Prefijo · Teléfono */}
+        <div className="sm:col-span-3">
+          <TPField label="Condición de IVA">
+            <TPComboCreatable
+              tabIndex={t++}
+              {...comboProps("IVA_CONDITION", p.catIva)}
+              value={p.company.ivaCondition}
+              onChange={(v) => p.setCompanyField("ivaCondition", v)}
+            />
+          </TPField>
+        </div>
 
+        <div className="sm:col-span-3">
+          <TPField label="CUIT">
+            <TPInput
+              tabIndex={t++}
+              value={p.company.cuit}
+              onChange={(v) => p.setCompanyField("cuit", v)}
+              onlyDigits
+              {...disabledProps}
+            />
+          </TPField>
+        </div>
+
+        <div className="sm:col-span-2">
+          <TPField label="Prefijo">
+            <TPComboCreatable
+              tabIndex={t++}
+              {...comboProps("PHONE_PREFIX", p.catPrefix)}
+              value={p.existing.phoneCountry}
+              onChange={(v) => p.setExistingField("phoneCountry", v)}
+            />
+          </TPField>
+        </div>
+
+        <div className="sm:col-span-4">
+          <TPField label="Teléfono">
+            <TPInput
+              tabIndex={t++}
+              value={p.existing.phoneNumber}
+              onChange={(v) => p.setExistingField("phoneNumber", v)}
+              {...disabledProps}
+            />
+          </TPField>
+        </div>
+
+        {/* 4. Sitio web */}
+        <div className="sm:col-span-6">
           <TPField label="Sitio web">
             <TPInput
               tabIndex={t++}
@@ -213,43 +247,8 @@ export default function PerfilJoyeriaEdit(p: Props) {
           </TPField>
         </div>
 
-        {/* =========================
-            DERECHA
-        ========================= */}
-        <div className="space-y-4">
-          <TPField label="Razón social">
-            <TPInput
-              tabIndex={t++}
-              value={p.company.legalName}
-              onChange={(v) => p.setCompanyField("legalName", v)}
-              {...disabledProps}
-            />
-          </TPField>
-
-          <div className="grid grid-cols-1 sm:grid-cols-12 gap-3">
-            <div className="sm:col-span-4">
-              <TPField label="Prefijo">
-                <TPComboCreatable
-                  tabIndex={t++}
-                  {...comboProps("PHONE_PREFIX", p.catPrefix)}
-                  value={p.existing.phoneCountry}
-                  onChange={(v) => p.setExistingField("phoneCountry", v)}
-                />
-              </TPField>
-            </div>
-
-            <div className="sm:col-span-8">
-              <TPField label="Teléfono">
-                <TPInput
-                  tabIndex={t++}
-                  value={p.existing.phoneNumber}
-                  onChange={(v) => p.setExistingField("phoneNumber", v)}
-                  {...disabledProps}
-                />
-              </TPField>
-            </div>
-          </div>
-
+        {/* 5. Correo electrónico */}
+        <div className="sm:col-span-6">
           <TPField label="Correo electrónico">
             <TPInput
               tabIndex={t++}
@@ -290,7 +289,31 @@ export default function PerfilJoyeriaEdit(p: Props) {
             </TPField>
           </div>
 
-          <div className="md:col-span-2">
+          <div className="md:col-span-1">
+            <TPField label="Piso">
+              <TPInput
+                tabIndex={t++}
+                value={p.existing.floor}
+                onChange={(v) => p.setExistingField("floor", v)}
+                placeholder="3"
+                {...disabledProps}
+              />
+            </TPField>
+          </div>
+
+          <div className="md:col-span-1">
+            <TPField label="Dpto.">
+              <TPInput
+                tabIndex={t++}
+                value={p.existing.apartment}
+                onChange={(v) => p.setExistingField("apartment", v)}
+                placeholder="A"
+                {...disabledProps}
+              />
+            </TPField>
+          </div>
+
+          <div className="md:col-span-3">
             <TPField label="Código Postal">
               <TPInput
                 tabIndex={t++}
@@ -301,7 +324,7 @@ export default function PerfilJoyeriaEdit(p: Props) {
             </TPField>
           </div>
 
-          <div className="md:col-span-4">
+          <div className="md:col-span-3">
             <TPField label="Ciudad">
               <TPComboCreatable
                 tabIndex={t++}
@@ -312,7 +335,7 @@ export default function PerfilJoyeriaEdit(p: Props) {
             </TPField>
           </div>
 
-          <div className="md:col-span-4">
+          <div className="md:col-span-3">
             <TPField label="Provincia">
               <TPComboCreatable
                 tabIndex={t++}
@@ -323,7 +346,7 @@ export default function PerfilJoyeriaEdit(p: Props) {
             </TPField>
           </div>
 
-          <div className="md:col-span-4">
+          <div className="md:col-span-3">
             <TPField label="País">
               <TPComboCreatable
                 tabIndex={t++}

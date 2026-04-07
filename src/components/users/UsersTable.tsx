@@ -6,8 +6,6 @@ import {
   Paperclip,
   KeyRound,
   Shield,
-  ChevronLeft,
-  ChevronRight,
   Mail,
   Eye,
   Pencil,
@@ -19,7 +17,8 @@ import {
 import { cn, initialsFrom, absUrl } from "./users.ui";
 import { TPBadge } from "../ui/TPBadges";
 import { TPTableKit, type TPColDef } from "../ui/TPTableKit";
-import { TPTr, TPTd, TPTableFooter } from "../ui/TPTable";
+import { TPTr, TPTd } from "../ui/TPTable";
+import { TPPagination } from "../ui/TPPagination";
 import { TPRowActions } from "../ui/TPRowActions";
 
 import type { UserListItem } from "../../services/users";
@@ -41,6 +40,7 @@ import {
   roleTone,
 } from "./users.utils";
 import UsersAttachmentPanel from "./UsersAttachmentPanel";
+import TPImageLightbox from "../../components/ui/TPImageLightbox";
 
 /* ======================================================
    Column definitions
@@ -62,12 +62,12 @@ export const USERS_COL_LS_KEY = "tptech_col_users";
 type Props = {
   loading: boolean;
   users: UserListItem[];
-  totalLabel: string;
 
   page: number;
-  totalPages: number;
-  onPrev: () => void;
-  onNext: () => void;
+  pageSize: number;
+  total: number;
+  onPageChange: (page: number) => void;
+  onPageSizeChange: (size: number) => void;
 
   canAdmin: boolean;
   canEditStatus: boolean;
@@ -100,11 +100,11 @@ export default function UsersTable(props: Props) {
   const {
     loading,
     users,
-    totalLabel,
     page,
-    totalPages,
-    onPrev,
-    onNext,
+    pageSize,
+    total,
+    onPageChange,
+    onPageSizeChange,
     canAdmin,
     canEditStatus,
     meId,
@@ -121,6 +121,7 @@ export default function UsersTable(props: Props) {
 
   const nav = useNavigate();
 
+  const [lightboxSrc, setLightboxSrc] = useState<string | null>(null);
   const [sortBy, setSortBy] = useState<SortCol>("USER");
   const [sortDir, setSortDir] = useState<SortDir>("asc");
 
@@ -510,7 +511,11 @@ export default function UsersTable(props: Props) {
                     )}
                     title="Ver usuario"
                   >
-                    <div className="h-10 w-10 rounded-full overflow-hidden border border-border bg-surface shrink-0">
+                    <div
+                      className={cn("h-10 w-10 rounded-full overflow-hidden border border-border bg-surface shrink-0", avatarSrc && "cursor-zoom-in")}
+                      onClick={avatarSrc ? (e) => { e.stopPropagation(); setLightboxSrc(avatarSrc); } : undefined}
+                      title={avatarSrc ? "Ver imagen" : undefined}
+                    >
                       {avatarSrc ? (
                         <img src={avatarSrc} alt="Avatar" className="h-full w-full object-cover" />
                       ) : (
@@ -638,38 +643,14 @@ export default function UsersTable(props: Props) {
           })
         )}
 
-        {/* Footer MOBILE */}
-        <TPTableFooter className="flex items-center justify-between gap-3 px-4 py-3">
-          <div className="text-xs text-muted">
-            <span className="text-text font-medium">{totalLabel}</span>
-          </div>
-
-          <div className="flex items-center gap-2">
-            <button
-              className={cn("tp-btn-secondary h-9 w-9 !p-0 grid place-items-center shrink-0")}
-              type="button"
-              disabled={page <= 1}
-              onClick={onPrev}
-              title="Anterior"
-            >
-              <ChevronLeft className="h-4 w-4" />
-            </button>
-
-            <div className="text-xs text-muted">
-              <b className="text-text">{page}</b> / {totalPages}
-            </div>
-
-            <button
-              className={cn("tp-btn-secondary h-9 w-9 !p-0 grid place-items-center shrink-0")}
-              type="button"
-              disabled={page >= totalPages}
-              onClick={onNext}
-              title="Siguiente"
-            >
-              <ChevronRight className="h-4 w-4" />
-            </button>
-          </div>
-        </TPTableFooter>
+        <TPPagination
+          page={page}
+          pageSize={pageSize}
+          total={total}
+          onPageChange={onPageChange}
+          onPageSizeChange={onPageSizeChange}
+          countLabel={`${total} ${total === 1 ? "usuario" : "usuarios"}`}
+        />
       </div>
 
       {/* =========================
@@ -689,6 +670,14 @@ export default function UsersTable(props: Props) {
           onSort={handleSort}
           loading={loading}
           emptyText="Sin resultados."
+          countLabel={(n) => `${n} ${n === 1 ? "usuario" : "usuarios"}`}
+          pagination={{
+            page,
+            pageSize,
+            totalItems: total,
+            onPageChange,
+            onPageSizeChange,
+          }}
           renderRow={(u: any, vis) => {
             const status = String(u.status || "").toUpperCase();
             const isActive = status === "ACTIVE";
@@ -723,7 +712,11 @@ export default function UsersTable(props: Props) {
                       title="Ver usuario"
                     >
                       <div className="flex items-start gap-3">
-                        <div className="h-10 w-10 rounded-full overflow-hidden border border-border bg-surface shrink-0 mt-0.5">
+                        <div
+                          className={cn("h-10 w-10 rounded-full overflow-hidden border border-border bg-surface shrink-0 mt-0.5", avatarSrc && "cursor-zoom-in")}
+                          onClick={avatarSrc ? (e) => { e.stopPropagation(); setLightboxSrc(avatarSrc); } : undefined}
+                          title={avatarSrc ? "Ver imagen" : undefined}
+                        >
                           {avatarSrc ? (
                             <img src={avatarSrc} alt="Avatar" className="h-full w-full object-cover" />
                           ) : (
@@ -853,7 +846,6 @@ export default function UsersTable(props: Props) {
             );
           }}
         />
-
       </div>
 
       <UsersAttachmentPanel
@@ -867,6 +859,7 @@ export default function UsersTable(props: Props) {
         closeAttPanel={closeAttPanel}
         downloadAttachment={downloadAttachment}
       />
+      <TPImageLightbox src={lightboxSrc} onClose={() => setLightboxSrc(null)} />
     </>
   );
 }

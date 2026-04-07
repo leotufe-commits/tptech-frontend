@@ -24,6 +24,9 @@ import {
   Mail,
   BadgePercent,
   PackagePlus,
+  ShieldAlert,
+  Zap,
+  TrendingUp,
 } from "lucide-react";
 
 function cn(...classes: Array<string | false | null | undefined>) {
@@ -38,6 +41,15 @@ function Pill({ children }: { children: React.ReactNode }) {
   return (
     <span className="inline-flex items-center rounded-full border border-border bg-surface2 px-2 py-0.5 text-[11px] font-semibold text-muted">
       {children}
+    </span>
+  );
+}
+
+function PricingBadge() {
+  return (
+    <span className="inline-flex items-center gap-1 rounded-full bg-primary/10 px-2.5 py-0.5 text-[11px] font-semibold text-primary">
+      <Zap size={10} />
+      Motor de precios
     </span>
   );
 }
@@ -61,54 +73,98 @@ function CardLink({
     <NavLink
       to={to}
       className={cn(
-        "group block rounded-2xl border border-border bg-card p-4",
-        "shadow-[0_1px_0_0_rgba(0,0,0,0.05)] transition",
-        "hover:bg-surface2 hover:shadow-[0_8px_20px_rgba(0,0,0,0.10)]",
+        "group flex flex-col rounded-2xl border border-border bg-card p-4",
+        "shadow-[0_1px_0_0_rgba(0,0,0,0.05)] transition-all duration-150",
+        "hover:bg-surface2 hover:shadow-[0_6px_18px_rgba(0,0,0,0.09)] hover:-translate-y-px",
         "focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-primary/20",
-        active && "ring-1 ring-primary/15"
+        active && "ring-1 ring-primary/20 bg-surface2"
       )}
     >
       <div className="flex items-start justify-between gap-3">
-        <div className="flex items-start gap-3 min-w-0">
-          <div className="grid h-11 w-11 place-items-center rounded-xl border border-border bg-surface2 text-primary">
+        <div className="flex items-start gap-3 min-w-0 flex-1">
+          <div className="grid h-10 w-10 shrink-0 place-items-center rounded-xl border border-border bg-surface2 text-primary group-hover:border-primary/20 group-hover:bg-primary/5 transition-colors">
             {icon}
           </div>
 
-          <div className="min-w-0">
-            <div className="flex items-center gap-2">
-              <div className="text-base font-semibold text-text truncate">{title}</div>
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="text-sm font-semibold text-text truncate">{title}</span>
               {badge}
             </div>
-
-            <div className="text-sm text-muted mt-0.5">{desc}</div>
+            <p className="text-xs text-muted mt-0.5 line-clamp-2 leading-relaxed">{desc}</p>
           </div>
         </div>
 
         <ChevronRight
-          size={18}
-          className="mt-1 shrink-0 text-muted transition group-hover:translate-x-0.5 group-hover:text-text"
+          size={15}
+          className="mt-0.5 shrink-0 text-muted/50 transition-all group-hover:translate-x-0.5 group-hover:text-text"
         />
       </div>
     </NavLink>
   );
 }
 
+function SectionHeader({
+  title,
+  desc,
+  highlight,
+}: {
+  title: string;
+  desc?: string;
+  highlight?: boolean;
+}) {
+  return (
+    <div className={cn("flex items-start gap-3", highlight && "")}>
+      <div
+        className={cn(
+          "w-1 self-stretch rounded-full shrink-0 mt-0.5",
+          highlight ? "bg-primary" : "bg-border"
+        )}
+      />
+      <div className="min-w-0">
+        <div className="flex items-center gap-2.5 flex-wrap">
+          <h2
+            className={cn(
+              "text-base font-bold leading-tight",
+              highlight ? "text-text" : "text-text"
+            )}
+          >
+            {title}
+          </h2>
+          {highlight && <PricingBadge />}
+        </div>
+        {desc && (
+          <p className="text-sm text-muted mt-0.5 max-w-xl leading-relaxed">{desc}</p>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function Section({
   title,
   desc,
+  highlight,
   children,
 }: {
   title: string;
   desc?: string;
+  highlight?: boolean;
   children: React.ReactNode;
 }) {
+  if (highlight) {
+    return (
+      <section className="rounded-2xl border border-primary/15 bg-primary/[0.025] p-5 space-y-4">
+        <SectionHeader title={title} desc={desc} highlight />
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">{children}</div>
+      </section>
+    );
+  }
+
   return (
-    <section className="space-y-3">
-      <div>
-        <div className="text-sm font-semibold text-text">{title}</div>
-        {desc && <div className="text-sm text-muted mt-1">{desc}</div>}
-      </div>
-      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">{children}</div>
+    <section className="space-y-4">
+      <SectionHeader title={title} desc={desc} />
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4">{children}</div>
     </section>
   );
 }
@@ -121,7 +177,12 @@ type Card = {
   badge?: React.ReactNode;
 };
 
-type SectionCfg = { title: string; desc?: string; cards: Card[] };
+type SectionCfg = {
+  title: string;
+  desc?: string;
+  highlight?: boolean;
+  cards: Card[];
+};
 
 export default function ConfiguracionSistema() {
   const { pathname } = useLocation();
@@ -130,31 +191,31 @@ export default function ConfiguracionSistema() {
     () => [
       {
         title: "Empresa",
-        desc: "Configuraciones generales y fiscales de la joyería.",
+        desc: "Datos generales, fiscales y de comunicación de la joyería.",
         cards: [
           {
             to: "/configuracion/joyeria",
             title: "Datos de la empresa",
             desc: "Logo, datos fiscales, contacto, dirección, notas y adjuntos.",
-            icon: <Building2 size={20} />,
-          },
-          {
-            to: "/inventario/almacenes",
-            title: "Almacenes",
-            desc: "Alta y gestión de almacenes, activación y favoritos.",
-            icon: <Boxes size={20} />,
-          },
-          {
-            to: "/divisas",
-            title: "Divisas",
-            desc: "Monedas y tipos de cambio para operar en multi-moneda.",
-            icon: <Landmark size={20} />,
+            icon: <Building2 size={18} />,
           },
           {
             to: "/configuracion-sistema/correos",
             title: "Correos del sistema",
             desc: "Remitente, firma, logo y datos de contacto para emails.",
-            icon: <Mail size={20} />,
+            icon: <Mail size={18} />,
+          },
+          {
+            to: "/inventario/almacenes",
+            title: "Almacenes",
+            desc: "Alta y gestión de almacenes, activación y favoritos.",
+            icon: <Boxes size={18} />,
+          },
+          {
+            to: "/divisas",
+            title: "Divisas",
+            desc: "Monedas y tipos de cambio para operar en multi-moneda.",
+            icon: <Landmark size={18} />,
           },
         ],
       },
@@ -166,110 +227,135 @@ export default function ConfiguracionSistema() {
             to: "/configuracion/usuarios",
             title: "Usuarios",
             desc: "Alta, edición, estados y configuración de acceso por usuario.",
-            icon: <Users size={20} />,
+            icon: <Users size={18} />,
           },
           {
             to: "/configuracion/roles",
             title: "Roles y permisos",
             desc: "Definí roles, permisos por módulo y overrides por usuario.",
-            icon: <Shield size={20} />,
+            icon: <Shield size={18} />,
           },
           {
             to: "/configuracion-sistema/pin",
             title: "Configurar PIN",
-            desc: "Política general del sistema. Paso final: habilitar PIN por usuario en Usuarios → Editar.",
-            icon: <KeyRound size={20} />,
+            desc: "Política de bloqueo y acceso rápido entre usuarios.",
+            icon: <KeyRound size={18} />,
             badge: <Pill>2 niveles</Pill>,
           },
         ],
       },
       {
-        title: "Operaciones",
-        desc: "Reglas comerciales del negocio y parámetros del día a día.",
+        title: "Precios y reglas comerciales",
+        desc: "Definí cómo se calculan los precios, descuentos, promociones y reglas de control.",
+        highlight: true,
         cards: [
-          {
-            to: "/configuracion-sistema/vendedor",
-            title: "Vendedor",
-            desc: "Parámetros de vendedor, comisiones, objetivos y reglas comerciales.",
-            icon: <Store size={20} />,
-          },
-          {
-            to: "/configuracion-sistema/impuestos",
-            title: "Impuestos y tributos",
-            desc: "Impuestos, alícuotas, percepciones/retenciones y configuración fiscal.",
-            icon: <Receipt size={20} />,
-          },
-          {
-            to: "/configuracion-sistema/pagos",
-            title: "Pagos y cobros",
-            desc: "Medios de pago, condiciones, recargos/descuentos y cuotas.",
-            icon: <CreditCard size={20} />,
-          },
-          {
-            to: "/configuracion-sistema/envios",
-            title: "Envíos y logística",
-            desc: "Transportistas, métodos de envío, costos y parámetros.",
-            icon: <Truck size={20} />,
-          },
           {
             to: "/configuracion-sistema/listas-precios",
             title: "Listas de precios",
-            desc: "Administración de listas, márgenes y reglas.",
-            icon: <Tags size={20} />,
-          },
-          {
-            to: "/configuracion-sistema/categorias",
-            title: "Categorías de artículos",
-            desc: "Estructura del catálogo y organización.",
-            icon: <Layers size={20} />,
+            desc: "Márgenes y reglas de aplicación por cliente o categoría.",
+            icon: <Tags size={18} />,
           },
           {
             to: "/configuracion-sistema/promociones",
             title: "Promociones",
-            desc: "Descuentos especiales por tiempo o evento, aplicados con prioridad máxima en el punto de venta.",
-            icon: <BadgePercent size={20} />,
+            desc: "Descuentos por tiempo o evento, con prioridad máxima en el POS.",
+            icon: <BadgePercent size={18} />,
           },
           {
             to: "/configuracion-sistema/descuentos-cantidad",
             title: "Descuentos por cantidad",
-            desc: "Tramos de descuento automáticos según la cantidad vendida. Se activan en el punto de venta.",
-            icon: <PackagePlus size={20} />,
+            desc: "Tramos de descuento automáticos según unidades vendidas.",
+            icon: <PackagePlus size={18} />,
+          },
+          {
+            to: "/configuracion-sistema/politica-precios",
+            title: "Política de precios",
+            desc: "Alertas de margen y bloqueos de confirmación de ventas.",
+            icon: <ShieldAlert size={18} />,
           },
         ],
       },
       {
-        title: "Administración del sistema",
-        desc: "Estructura base, catálogos y análisis.",
+        title: "Producto",
+        desc: "Estructura y organización del catálogo de artículos.",
         cards: [
           {
-            to: "/configuracion-sistema/items",
+            to: "/configuracion-sistema/categorias",
+            title: "Categorías de artículos",
+            desc: "Jerarquía del catálogo, atributos por categoría y lista de precios por defecto.",
+            icon: <Layers size={18} />,
+          },
+        ],
+      },
+      {
+        title: "Operación",
+        desc: "Parámetros del día a día: vendedores, cobros, envíos e impuestos.",
+        cards: [
+          {
+            to: "/configuracion-sistema/vendedor",
+            title: "Vendedor",
+            desc: "Comisiones, objetivos y reglas comerciales por vendedor.",
+            icon: <Store size={18} />,
+          },
+          {
+            to: "/configuracion-sistema/pagos",
+            title: "Pagos y cobros",
+            desc: "Medios de pago, condiciones, recargos y cuotas.",
+            icon: <CreditCard size={18} />,
+          },
+          {
+            to: "/configuracion-sistema/envios",
+            title: "Envíos y logística",
+            desc: "Transportistas, métodos de envío y costos.",
+            icon: <Truck size={18} />,
+          },
+          {
+            to: "/configuracion-sistema/impuestos",
+            title: "Impuestos y tributos",
+            desc: "Alícuotas, percepciones, retenciones y configuración fiscal.",
+            icon: <Receipt size={18} />,
+          },
+        ],
+      },
+      {
+        title: "Sistema",
+        desc: "Catálogos base, reportes y análisis del negocio.",
+        cards: [
+          {
+            to: "/configuracion-sistema/items?type=DOCUMENT_TYPE",
             title: "Ítems del sistema",
-            desc: "Catálogos base utilizados por todo el sistema (combos y selecciones).",
-            icon: <Database size={20} />,
+            desc: "Catálogos utilizados en combos y selecciones de todo el sistema.",
+            icon: <Database size={18} />,
           },
           {
             to: "/configuracion-sistema/informes",
             title: "Informes",
             desc: "Reportes, estadísticas y análisis del negocio.",
-            icon: <BarChart3 size={20} />,
+            icon: <BarChart3 size={18} />,
+          },
+          {
+            to: "/reportes/rentabilidad",
+            title: "Rentabilidad",
+            desc: "Análisis de márgenes, costos y rentabilidad por artículo y período.",
+            icon: <TrendingUp size={18} />,
           },
         ],
       },
       {
         title: "Documentos",
-        desc: "Plantillas, numeración e impresión.",
+        desc: "Numeración, plantillas e impresión de comprobantes y etiquetas.",
         cards: [
           {
             to: "/configuracion-sistema/numeracion",
             title: "Numeración de comprobantes",
-            desc: "Series, prefijos y numeración por documento.",
-            icon: <Hash size={20} />,
+            desc: "Series, prefijos y numeración por tipo de documento.",
+            icon: <Hash size={18} />,
           },
           {
             to: "/configuracion-sistema/etiquetas",
             title: "Impresión de etiquetas",
-            desc: "Diseño e impresión de etiquetas.",
-            icon: <Printer size={20} />,
+            desc: "Diseño e impresión de etiquetas para artículos.",
+            icon: <Printer size={18} />,
           },
         ],
       },
@@ -281,14 +367,13 @@ export default function ConfiguracionSistema() {
             to: "/configuracion-sistema/tema",
             title: "Tema",
             desc: "Elegí el estilo visual del sistema.",
-            icon: <Palette size={20} />,
+            icon: <Palette size={18} />,
           },
-          // ✅ FIX RUTA: coincide con router.tsx
           {
             to: "/configuracion/apariencia/ui",
             title: "UI (Catálogo)",
-            desc: "Ver todos los componentes y estilos reales para decidir qué personalizar.",
-            icon: <LayoutGrid size={20} />,
+            desc: "Ver todos los componentes y estilos reales del sistema.",
+            icon: <LayoutGrid size={18} />,
             badge: <Pill>dev</Pill>,
           },
         ],
@@ -298,18 +383,21 @@ export default function ConfiguracionSistema() {
   );
 
   return (
-    <div className="p-6">
-      <div className="mb-6">
-        <div className="text-sm text-muted">Configuración</div>
+    <div className="p-6 w-full max-w-screen-2xl">
+      {/* Page header */}
+      <div className="mb-10">
+        <p className="text-xs font-medium text-muted uppercase tracking-wider mb-1">
+          Configuración
+        </p>
         <h1 className="text-2xl font-bold text-text">Configuración del sistema</h1>
-        <div className="text-sm text-muted mt-1">
+        <p className="text-sm text-muted mt-1.5 max-w-xl">
           Administrá la estructura de la empresa, accesos de usuarios y preferencias del sistema.
-        </div>
+        </p>
       </div>
 
-      <div className="space-y-10">
+      <div className="space-y-12">
         {sections.map((s) => (
-          <Section key={s.title} title={s.title} desc={s.desc}>
+          <Section key={s.title} title={s.title} desc={s.desc} highlight={s.highlight}>
             {s.cards.map((c) => (
               <CardLink
                 key={c.to}
