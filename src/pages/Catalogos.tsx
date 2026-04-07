@@ -41,6 +41,7 @@ const TYPE_LABEL: Record<CatalogType, string> = {
   ARTICLE_MANUFACTURER: "Fabricantes",
   UNIT_OF_MEASURE: "Unidades de medida",
   MULTIPLIER_BASE: "Unidades de peso",
+  WEIGHT_UNIT: "Unidades de peso (peso)",
 };
 
 const TYPES: CatalogType[] = ["PHONE_PREFIX", "CITY", "PROVINCE", "COUNTRY", "DOCUMENT_TYPE", "IVA_CONDITION", "PAYMENT_TERM"];

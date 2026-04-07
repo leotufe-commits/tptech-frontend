@@ -1343,11 +1343,11 @@ export default function ArticleDetail() {
                   function fmtN(n: number) {
                     return n.toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
                   }
-                  const spr     = salePriceResolution;
+                  const spr     = salePriceResolution!;
                   const src     = spr?.priceSource;
-                  const spPriceV = spr?.unitPrice     != null ? parseFloat(spr.unitPrice)     : null;
-                  const basePrc  = spr?.basePrice     != null ? parseFloat(spr.basePrice)     : null;
-                  const discAmt  = spr?.discountAmount != null ? parseFloat(spr.discountAmount) : 0;
+                  const spPriceV = spr?.unitPrice     != null ? parseFloat(spr!.unitPrice!)     : null;
+                  const basePrc  = spr?.basePrice     != null ? parseFloat(spr!.basePrice!)     : null;
+                  const discAmt  = spr?.discountAmount != null ? parseFloat(spr!.discountAmount!) : 0;
 
                   const allTiers = articleDiscounts.flatMap((d) =>
                     (d.tiers ?? []).map((t) => ({ ...t, ruleId: d.id, isActive: d.isActive }))
@@ -1391,29 +1391,29 @@ export default function ArticleDetail() {
                   type TraceStep = { label: string; sublabel?: string; value: string; type: StepType };
                   const steps: TraceStep[] = [];
                   if (src === "MANUAL_OVERRIDE") {
-                    if (spPriceV != null) steps.push({ label: "Precio manual", value: baseSym + fmtN(spPriceV), type: "base" });
+                    if (spPriceV != null) steps.push({ label: "Precio manual", value: baseSym + fmtN(spPriceV!), type: "base" });
                   } else {
                     if (basePrc != null) {
                       steps.push({
                         label: spr?.appliedPriceListName ? `Lista: ${spr.appliedPriceListName}` : "Precio base",
                         sublabel: spr?.appliedPriceListId ? "Lista de precios" : undefined,
-                        value: baseSym + fmtN(basePrc), type: "base",
+                        value: baseSym + fmtN(basePrc!), type: "base",
                       });
                     }
                     if (discAmt > 0 && spr?.appliedPromotionId) {
-                      steps.push({ label: spr.appliedPromotionName ?? "Promoción", sublabel: "Descuento especial", value: `−${baseSym}${fmtN(discAmt)}`, type: "promotion" });
+                      steps.push({ label: spr!.appliedPromotionName ?? "Promoción", sublabel: "Descuento especial", value: `−${baseSym}${fmtN(discAmt)}`, type: "promotion" });
                     } else if (discAmt > 0) {
                       steps.push({ label: `Desc. ×${simQty} u.`, sublabel: "Desc. por cantidad", value: `−${baseSym}${fmtN(discAmt)}`, type: "discount" });
                     }
                     if (spPriceV != null && steps.length > 0) {
-                      steps.push({ label: "Precio final", value: baseSym + fmtN(spPriceV), type: "final" });
+                      steps.push({ label: "Precio final", value: baseSym + fmtN(spPriceV!), type: "final" });
                     }
                   }
 
                   const allActiveLists = priceLists.filter(l => l.isActive);
                   const simList = simPriceListId ? allActiveLists.find(l => l.id === simPriceListId) : null;
                   const computedForSim = (article as any).computedCostPrice as { value: string | null; metalCost?: string | null; hechuraCost?: string | null } | undefined;
-                  const costPriceForSim = computedForSim?.value != null ? parseFloat(computedForSim.value) : null;
+                  const costPriceForSim = computedForSim?.value != null ? parseFloat(computedForSim!.value!) : null;
                   function calcListPrice(pl: PriceListRow): number | null {
                     if (costPriceForSim == null) return null;
                     if (pl.mode === "MARGIN_TOTAL") {
@@ -1429,7 +1429,7 @@ export default function ArticleDetail() {
                     }
                     return null;
                   }
-                  const simListPrice = simList ? calcListPrice(simList) : null;
+                  const simListPrice = simList ? calcListPrice(simList as PriceListRow) : null;
 
                   return (
                     <div className="rounded-xl border border-border bg-card p-4 space-y-5">
@@ -1636,7 +1636,7 @@ export default function ArticleDetail() {
                                 </table>
                               </div>
                               {minDiscount && discountStatus === "no-aplica" && (
-                                <p className="text-xs text-muted text-center">Desde <strong className="text-text">{parseFloat(minDiscount.minQty).toLocaleString("es-AR")}</strong> u. se activa el descuento.</p>
+                                <p className="text-xs text-muted text-center">Desde <strong className="text-text">{parseFloat(minDiscount!.minQty).toLocaleString("es-AR")}</strong> u. se activa el descuento.</p>
                               )}
                               <div className="flex justify-end"><TPButton variant="ghost" onClick={() => navigate("/configuracion-sistema/descuentos-cantidad")}>Editar</TPButton></div>
                             </div>

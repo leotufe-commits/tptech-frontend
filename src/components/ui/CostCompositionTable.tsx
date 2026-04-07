@@ -111,7 +111,7 @@ const GRID = "grid grid-cols-[20px_96px_72px_minmax(276px,4fr)_160px_20px_160px_
 // Helpers
 // ---------------------------------------------------------------------------
 function emptyLine(type: CostLineType, defaults: Partial<CostLine> = {}): CostLine {
-  return { type, label: type === "HECHURA" ? "Hechura / Mano de Obra" : "", quantity: 1, unitValue: 0, currencyId: null, mermaPercent: null, metalVariantId: null, sortOrder: 0, lineAdjKind: "", lineAdjType: "", lineAdjValue: null, ...defaults };
+  return { type, label: type === "HECHURA" ? "Hechura / Mano de Obra" : "", quantity: 1, quantityUnit: "", unitValue: 0, currencyId: null, mermaPercent: null, metalVariantId: null, sortOrder: 0, lineAdjKind: "", lineAdjType: "", lineAdjValue: null, ...defaults };
 }
 
 export function applyLineAdj(base: number, kind: string, type: string, val: number | null): number {
