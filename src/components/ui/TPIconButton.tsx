@@ -5,16 +5,13 @@ type Props = React.ButtonHTMLAttributes<HTMLButtonElement> & {
   active?: boolean;
 };
 
-export function TPIconButton({
-  className,
-  disabled,
-  active,
-  children,
-  type,
-  ...rest
-}: Props) {
+export const TPIconButton = React.forwardRef<HTMLButtonElement, Props>(function TPIconButton(
+  { className, disabled, active, children, type, ...rest },
+  ref
+) {
   return (
     <button
+      ref={ref}
       type={type ?? "button"}
       disabled={disabled}
       className={cn(
@@ -31,6 +28,6 @@ export function TPIconButton({
       {children}
     </button>
   );
-}
+});
 
 export default TPIconButton;

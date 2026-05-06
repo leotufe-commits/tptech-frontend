@@ -17,6 +17,7 @@ export type QuantityDiscountRow = {
   categoryId:     string | null;
   brand:          string | null;
   groupId:        string | null;
+  metalVariantIds: string[];
   isActive:       boolean;
   isStackable:    boolean;
   evaluationMode: QuantityDiscountEvaluationMode;
@@ -31,16 +32,17 @@ export type QuantityDiscountRow = {
 };
 
 export type QuantityDiscountPayload = {
-  articleId?:      string | null;
-  variantId?:      string | null;
-  categoryId?:     string | null;
-  brand?:          string | null;
-  groupId?:        string | null;
-  isActive?:       boolean;
-  isStackable?:    boolean;
-  evaluationMode?: QuantityDiscountEvaluationMode;
-  sortOrder?:      number;
-  tiers:           { minQty: number; type: PromotionType; value: number }[];
+  articleId?:       string | null;
+  variantId?:       string | null;
+  categoryId?:      string | null;
+  brand?:           string | null;
+  groupId?:         string | null;
+  metalVariantIds?: string[];
+  isActive?:        boolean;
+  isStackable?:     boolean;
+  evaluationMode?:  QuantityDiscountEvaluationMode;
+  sortOrder?:       number;
+  tiers:            { minQty: number; type: PromotionType; value: number }[];
 };
 
 export type QuantityDiscountListResult = {

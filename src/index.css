@@ -32,15 +32,16 @@
   outline: none;
 }
 
-/* ✅ focus-visible: anillo del theme */
+/* ✅ focus-visible: halo sutil de 1px (no 4px que se siente como "rectángulo
+   azul interno" cuando hay un wrapper con su propio focus-within). */
 :where(a, button, input, select, textarea, summary, [role="button"], [tabindex]):focus-visible {
   outline: none;
-  box-shadow: 0 0 0 4px color-mix(in oklab, var(--primary) 28%, transparent);
+  box-shadow: 0 0 0 1px color-mix(in oklab, var(--primary) 35%, transparent);
 }
 
 /* ✅ borde theme para inputs/select/textarea cuando reciben focus-visible */
 :where(input, select, textarea):focus-visible {
-  border-color: color-mix(in oklab, var(--primary) 55%, var(--border));
+  border-color: color-mix(in oklab, var(--primary) 60%, var(--border));
 }
 
 /* ✅ si algún componente usa `outline` por defecto */
@@ -136,8 +137,10 @@ textarea.tp-input::placeholder {
 
 input.tp-input:focus,
 textarea.tp-input:focus {
-  border-color: color-mix(in oklab, var(--primary) 55%, var(--border));
-  box-shadow: 0 0 0 4px color-mix(in oklab, var(--primary) 28%, transparent);
+  /* Foco sutil: solo cambia el borde + halo de 1px sin invadir.
+     Reemplaza el halo 4px que se sentía demasiado marcado en dark. */
+  border-color: color-mix(in oklab, var(--primary) 60%, var(--border));
+  box-shadow: 0 0 0 1px color-mix(in oklab, var(--primary) 35%, transparent);
 }
 
 input.tp-input:hover,
@@ -305,6 +308,9 @@ div.tp-input input:focus-visible {
   color: var(--text);
   font-size: 0.95rem;
 
+  /* fuerza al browser a usar colores del CSS en lugar del sistema */
+  color-scheme: light;
+
   transition: box-shadow 180ms ease, border-color 180ms ease, opacity 180ms ease, background 180ms ease;
 
   /* reset del select nativo */
@@ -341,6 +347,7 @@ div.tp-input input:focus-visible {
 [data-theme="dark"] .tp-select {
   background: color-mix(in oklab, var(--card) 82%, #000);
   border-color: rgba(255, 255, 255, 0.22);
+  color-scheme: dark;
 }
 
 [data-theme="dark"] .tp-select:hover {
@@ -590,4 +597,74 @@ select.tp-input:disabled {
   cursor: not-allowed !important;
   background-color: var(--card) !important;
   color: var(--muted) !important;
+}
+
+/* =====================================
+   ✅ BUTTON.TP-INPUT: botón estilizado como input/select
+   - Para ThemeSwitcher y cualquier trigger de dropdown
+   - Idéntico visual a input.tp-input / select.tp-input
+===================================== */
+button.tp-input {
+  width: 100% !important;
+  border-radius: 0.75rem !important;
+  border: 1px solid var(--border) !important;
+  height: 42px !important;
+  padding: 0 2.25rem 0 1rem !important; /* espacio para el caret a la derecha */
+  background-color: var(--card) !important;
+  color: var(--text) !important;
+  font-size: 0.95rem !important;
+  box-sizing: border-box !important;
+  display: flex !important;
+  align-items: center !important;
+  -webkit-appearance: none !important;
+  -moz-appearance: none !important;
+  appearance: none !important;
+  outline: none !important;
+  transition: box-shadow 180ms ease, border-color 180ms ease !important;
+  cursor: pointer !important;
+}
+
+button.tp-input:hover {
+  border-color: color-mix(in oklab, var(--border) 65%, var(--primary)) !important;
+  box-shadow: 0 6px 18px color-mix(in oklab, var(--primary) 10%, transparent) !important;
+}
+
+button.tp-input:focus,
+button.tp-input:focus-visible {
+  border-color: color-mix(in oklab, var(--primary) 55%, var(--border)) !important;
+  box-shadow: 0 0 0 4px color-mix(in oklab, var(--primary) 28%, transparent) !important;
+}
+
+[data-theme="dark"] button.tp-input {
+  background-color: color-mix(in oklab, var(--card) 82%, #000) !important;
+  border-color: rgba(255, 255, 255, 0.22) !important;
+}
+
+[data-theme="dark"] button.tp-input:hover {
+  border-color: rgba(255, 255, 255, 0.3) !important;
+}
+
+[data-theme="dark"] button.tp-input:focus,
+[data-theme="dark"] button.tp-input:focus-visible {
+  border-color: color-mix(in oklab, var(--primary) 60%, rgba(255, 255, 255, 0.22)) !important;
+  box-shadow:
+    0 0 0 4px color-mix(in oklab, var(--primary) 26%, transparent),
+    0 10px 26px rgba(0, 0, 0, 0.35) !important;
+}
+
+/* ─────────────────────────────────────────────────────────────────
+   📅 Calendar picker indicator — fix para dark mode
+   El ícono nativo de <input type="date"> es oscuro por default y se
+   pierde sobre fondos oscuros. Invierte en dark theme.
+───────────────────────────────────────────────────────────────── */
+input[type="date"].tp-input::-webkit-calendar-picker-indicator {
+  cursor: pointer;
+  opacity: 0.7;
+  transition: opacity 0.15s ease;
+}
+input[type="date"].tp-input:hover::-webkit-calendar-picker-indicator {
+  opacity: 1;
+}
+[data-theme="dark"] input[type="date"].tp-input::-webkit-calendar-picker-indicator {
+  filter: invert(0.9) brightness(1.1);
 }

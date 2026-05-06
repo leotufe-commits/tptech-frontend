@@ -648,3 +648,18 @@ export async function sendResetLinkForUser(
     ...ADMIN_401,
   });
 }
+
+export async function resendInvite(userId: string): Promise<{ ok: boolean }> {
+  return apiFetch<{ ok: boolean }>(`/users/${encodeURIComponent(userId)}/invite`, {
+    method: "POST",
+    ...ADMIN_401,
+  });
+}
+
+export async function updateMyTheme(theme: string): Promise<void> {
+  await apiFetch<{ ok: boolean }>("/users/me/theme", {
+    method: "PATCH",
+    body: { theme },
+    on401: "throw",
+  });
+}

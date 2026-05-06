@@ -9,6 +9,9 @@ import TPAttachmentList, { type TPAttachmentItem } from "../../components/ui/TPA
 import { TPField } from "../../components/ui/TPField";
 
 import { absUrl, cn } from "./perfilJoyeria.utils";
+import { useFieldFormats } from "../../context/FieldFormatsContext";
+import { usePhoneInput, useDocInput } from "../../hooks/useFormattedInput";
+import { PHONE_FORMAT_PLACEHOLDER, DOCUMENT_FORMAT_PLACEHOLDER } from "../../lib/format";
 
 import type { CatalogItem, CatalogType } from "../../services/catalogs";
 import type { ExistingBody, CompanyBody, JewelryAttachment } from "./perfilJoyeria.types";
@@ -70,6 +73,17 @@ const boxStyle: React.CSSProperties = {
 
 export default function PerfilJoyeriaEdit(p: Props) {
   const catLoading = p.catLoading ?? {};
+  const { phoneFormat, documentFormat } = useFieldFormats();
+  const ph = usePhoneInput(
+    p.existing.phoneNumber ?? "",
+    (v) => p.setExistingField("phoneNumber", v),
+    phoneFormat
+  );
+  const doc = useDocInput(
+    p.company.cuit ?? "",
+    (v) => p.setCompanyField("cuit", v),
+    documentFormat
+  );
 
   const busyAttachments = p.readonly || p.uploadingAttachments || Boolean(p.deletingAttId);
   const hasSaved = (p.savedAttachments || []).length > 0;
@@ -172,6 +186,7 @@ export default function PerfilJoyeriaEdit(p: Props) {
               tabIndex={t++}
               value={p.existing.name}
               onChange={(v) => p.setExistingField("name", v)}
+              placeholder="Joyería El Diamante"
               {...disabledProps}
             />
           </TPField>
@@ -184,6 +199,7 @@ export default function PerfilJoyeriaEdit(p: Props) {
               tabIndex={t++}
               value={p.company.legalName}
               onChange={(v) => p.setCompanyField("legalName", v)}
+              placeholder="El Diamante S.R.L."
               {...disabledProps}
             />
           </TPField>
@@ -205,9 +221,11 @@ export default function PerfilJoyeriaEdit(p: Props) {
           <TPField label="CUIT">
             <TPInput
               tabIndex={t++}
-              value={p.company.cuit}
-              onChange={(v) => p.setCompanyField("cuit", v)}
-              onlyDigits
+              value={doc.displayValue}
+              onChange={doc.handleChange}
+              onKeyDown={doc.handleKeyDown}
+              inputRef={doc.inputRef}
+              placeholder={DOCUMENT_FORMAT_PLACEHOLDER[documentFormat] ?? "20-12345678-9"}
               {...disabledProps}
             />
           </TPField>
@@ -228,8 +246,11 @@ export default function PerfilJoyeriaEdit(p: Props) {
           <TPField label="Teléfono">
             <TPInput
               tabIndex={t++}
-              value={p.existing.phoneNumber}
-              onChange={(v) => p.setExistingField("phoneNumber", v)}
+              value={ph.displayValue}
+              onChange={ph.handleChange}
+              onKeyDown={ph.handleKeyDown}
+              inputRef={ph.inputRef}
+              placeholder={PHONE_FORMAT_PLACEHOLDER[phoneFormat] ?? "11 1234-5678"}
               {...disabledProps}
             />
           </TPField>
@@ -242,6 +263,7 @@ export default function PerfilJoyeriaEdit(p: Props) {
               tabIndex={t++}
               value={p.company.website}
               onChange={(v) => p.setCompanyField("website", v)}
+              placeholder="www.joyeriaeldiamante.com"
               {...disabledProps}
             />
           </TPField>
@@ -254,6 +276,7 @@ export default function PerfilJoyeriaEdit(p: Props) {
               tabIndex={t++}
               value={p.company.email}
               onChange={(v) => p.setCompanyField("email", v)}
+              placeholder="contacto@joyeria.com"
               {...disabledProps}
             />
           </TPField>
@@ -273,6 +296,7 @@ export default function PerfilJoyeriaEdit(p: Props) {
                 tabIndex={t++}
                 value={p.existing.street}
                 onChange={(v) => p.setExistingField("street", v)}
+                placeholder="Av. Corrientes"
                 {...disabledProps}
               />
             </TPField>
@@ -284,6 +308,7 @@ export default function PerfilJoyeriaEdit(p: Props) {
                 tabIndex={t++}
                 value={p.existing.number}
                 onChange={(v) => p.setExistingField("number", v)}
+                placeholder="1234"
                 {...disabledProps}
               />
             </TPField>
@@ -319,6 +344,7 @@ export default function PerfilJoyeriaEdit(p: Props) {
                 tabIndex={t++}
                 value={p.existing.postalCode}
                 onChange={(v) => p.setExistingField("postalCode", v)}
+                placeholder="C1043AAZ"
                 {...disabledProps}
               />
             </TPField>
@@ -331,6 +357,7 @@ export default function PerfilJoyeriaEdit(p: Props) {
                 {...comboProps("CITY", p.catCity)}
                 value={p.existing.city}
                 onChange={(v) => p.setExistingField("city", v)}
+                placeholder="Seleccionar ciudad"
               />
             </TPField>
           </div>
@@ -342,6 +369,7 @@ export default function PerfilJoyeriaEdit(p: Props) {
                 {...comboProps("PROVINCE", p.catProvince)}
                 value={p.existing.province}
                 onChange={(v) => p.setExistingField("province", v)}
+                placeholder="Seleccionar provincia"
               />
             </TPField>
           </div>
@@ -353,6 +381,7 @@ export default function PerfilJoyeriaEdit(p: Props) {
                 {...comboProps("COUNTRY", p.catCountry)}
                 value={p.existing.country}
                 onChange={(v) => p.setExistingField("country", v)}
+                placeholder="Seleccionar país"
               />
             </TPField>
           </div>

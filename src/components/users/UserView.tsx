@@ -22,6 +22,7 @@ import {
 
 import { useAuth } from "../../context/AuthContext";
 import { useInventory } from "../../context/InventoryContext";
+import { useFieldFormats } from "../../context/FieldFormatsContext";
 
 import { cn, absUrl, initialsFrom } from "./users.ui";
 import { TPBadge } from "../ui/TPBadges";
@@ -104,6 +105,7 @@ export default function UserView() {
   const canAdmin = permissions.includes("USERS_ROLES:ADMIN");
   const isMe = Boolean(meId && userId && meId === userId);
 
+  const { fmtPhone, fmtDoc } = useFieldFormats();
   const inv = useInventory();
   const almacenes = (inv?.almacenes ?? []) as Array<{
     id: string;
@@ -332,11 +334,14 @@ export default function UserView() {
   }
 
   const phone = valueOrDash(
-    `${String((detail as any)?.phoneCountry || "").trim()} ${String((detail as any)?.phoneNumber || "").trim()}`.trim()
+    fmtPhone(
+      String((detail as any)?.phoneCountry || "").trim(),
+      String((detail as any)?.phoneNumber || "").trim()
+    )
   );
-  const doc = valueOrDash(
-    `${String((detail as any)?.documentType || "").trim()} ${String((detail as any)?.documentNumber || "").trim()}`.trim()
-  );
+  const docType = String((detail as any)?.documentType || "").trim();
+  const docNum = String((detail as any)?.documentNumber || "").trim();
+  const doc = valueOrDash([docType, docNum ? fmtDoc(docNum) : ""].filter(Boolean).join(" "));
 
   const addressLine = valueOrDash(
     [String((detail as any)?.street || "").trim(), String((detail as any)?.number || "").trim()].filter(Boolean).join(" ")

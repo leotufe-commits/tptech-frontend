@@ -2,6 +2,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { commercialEntitiesApi, type EntityRow } from "../services/commercial-entities";
 import { toast } from "../lib/toast";
+import { usePersistedTableSort } from "./usePersistedTableSort";
+import { CLIENT_COL_LS_KEY, SUPPLIER_COL_LS_KEY } from "../pages/configuracion-sistema/clientes/clientes.constants";
 
 type Role = "client" | "supplier";
 type SortKey = string;
@@ -17,8 +19,12 @@ export function useEntidades(role: Role) {
 
   // Búsqueda y orden (se envían al servidor)
   const [q, setQ]               = useState("");
-  const [sortKey, setSortKey]   = useState<SortKey>("displayName");
-  const [sortDir, setSortDir]   = useState<"asc" | "desc">("asc");
+  const sortStorageKey = role === "client" ? CLIENT_COL_LS_KEY : SUPPLIER_COL_LS_KEY;
+  const { sortKey, sortDir, toggleSort: setSortPersisted } = usePersistedTableSort<SortKey>({
+    storageKey: sortStorageKey,
+    defaultKey: "displayName",
+    defaultDir: "asc",
+  });
 
   // Delete
   const [deleteOpen, setDeleteOpen]     = useState(false);
@@ -70,12 +76,7 @@ export function useEntidades(role: Role) {
 
   // ── Ordenamiento ─────────────────────────────────────────────────────────
   function toggleSort(key: SortKey) {
-    if (sortKey === key) {
-      setSortDir((d) => (d === "asc" ? "desc" : "asc"));
-    } else {
-      setSortKey(key);
-      setSortDir("asc");
-    }
+    setSortPersisted(key);
     setPage(1);
   }
 

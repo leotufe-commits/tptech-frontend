@@ -8,12 +8,40 @@ import { TPField } from "../../components/ui/TPField";
 import TPNumberInput from "../../components/ui/TPNumberInput";
 import TPCheckbox from "../../components/ui/TPCheckbox";
 import { TPButton } from "../../components/ui/TPButton";
+import TPSelect from "../../components/ui/TPSelect";
 import { toast } from "../../lib/toast";
+import { ApiError } from "../../lib/api";
 import {
   fetchPricingPolicyConfig,
   updatePricingPolicyConfig,
+  fetchDocumentRoundingConfig,
+  updateDocumentRoundingConfig,
   type PricingPolicyConfig,
+  type DocumentRoundingConfig,
+  type DocumentRoundingMode,
+  type DocumentRoundingDirection,
 } from "../../services/company";
+
+const DOC_ROUNDING_MODE_OPTIONS: Array<{ value: DocumentRoundingMode; label: string }> = [
+  { value: "NONE",      label: "Sin redondeo" },
+  { value: "DECIMAL_2", label: "Al centavo (0,01)" },
+  { value: "DECIMAL_1", label: "Al décimo (0,10)" },
+  { value: "INTEGER",   label: "Al entero (1)" },
+  { value: "TEN",       label: "A la decena (10)" },
+  { value: "HUNDRED",   label: "A la centena (100)" },
+];
+
+const DOC_ROUNDING_DIRECTION_OPTIONS: Array<{ value: DocumentRoundingDirection; label: string }> = [
+  { value: "NEAREST", label: "Más cercano" },
+  { value: "UP",      label: "Hacia arriba" },
+  { value: "DOWN",    label: "Hacia abajo" },
+];
+
+const DOC_ROUNDING_DEFAULTS: DocumentRoundingConfig = {
+  documentRoundingEnabled:   false,
+  documentRoundingMode:      "NONE",
+  documentRoundingDirection: "NEAREST",
+};
 
 const DEFAULTS: PricingPolicyConfig = {
   pricingLowMarginWarningPercent:  15,
@@ -25,24 +53,39 @@ const DEFAULTS: PricingPolicyConfig = {
 
 export default function ConfiguracionSistemaPoliticaPrecios() {
   const [config, setConfig] = useState<PricingPolicyConfig>(DEFAULTS);
+  const [docRounding, setDocRounding] = useState<DocumentRoundingConfig>(DOC_ROUNDING_DEFAULTS);
   const [loading, setLoading] = useState(true);
   const [saving,  setSaving]  = useState(false);
 
   useEffect(() => {
-    fetchPricingPolicyConfig()
-      .then(setConfig)
-      .catch(() => toast.error("Error al cargar la configuración de precios."))
+    Promise.all([
+      fetchPricingPolicyConfig(),
+      fetchDocumentRoundingConfig(),
+    ])
+      .then(([pol, dr]) => { setConfig(pol); setDocRounding(dr); })
+      .catch((err) => {
+        if (err instanceof ApiError && err.status === 403) return;
+        toast.error("Error al cargar la configuración de precios.");
+      })
       .finally(() => setLoading(false));
   }, []);
 
   async function handleSave() {
     setSaving(true);
     try {
-      const updated = await updatePricingPolicyConfig(config);
-      setConfig(updated);
+      const [updatedPol, updatedDr] = await Promise.all([
+        updatePricingPolicyConfig(config),
+        updateDocumentRoundingConfig(docRounding),
+      ]);
+      setConfig(updatedPol);
+      setDocRounding(updatedDr);
       toast.success("Configuración guardada.");
-    } catch {
-      toast.error("Error al guardar la configuración.");
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 403) {
+        toast.error("No tenés permisos para guardar esta configuración.");
+      } else {
+        toast.error("Error al guardar la configuración.");
+      }
     } finally {
       setSaving(false);
     }
@@ -50,6 +93,10 @@ export default function ConfiguracionSistemaPoliticaPrecios() {
 
   function set<K extends keyof PricingPolicyConfig>(key: K, value: PricingPolicyConfig[K]) {
     setConfig(prev => ({ ...prev, [key]: value }));
+  }
+
+  function setDr<K extends keyof DocumentRoundingConfig>(key: K, value: DocumentRoundingConfig[K]) {
+    setDocRounding(prev => ({ ...prev, [key]: value }));
   }
 
   return (
@@ -150,6 +197,65 @@ export default function ConfiguracionSistemaPoliticaPrecios() {
                   label=""
                 />
               </div>
+            </div>
+          </TPCard>
+
+          {/* Redondeo por comprobante (modo UNIFIED) */}
+          <TPCard title="Redondeo por comprobante">
+            <p className="text-xs text-muted mb-4">
+              Política general de la joyería. Cuando está activa, el sistema
+              redondea el <span className="font-semibold text-text">total final</span>{" "}
+              de cada venta — después de descuentos, impuestos, envío y forma
+              de pago. No afecta líneas individuales ni impuestos.
+            </p>
+
+            <div className="space-y-4">
+              <div className="flex items-start justify-between gap-4 py-3 border-b border-border/50">
+                <div className="min-w-0">
+                  <div className="text-sm font-medium text-text">Activar redondeo del comprobante</div>
+                  <div className="text-xs text-muted mt-0.5">
+                    Si está apagado, el total se muestra tal cual lo calcula el motor (puede tener decimales).
+                    Si está encendido, se redondea con la granularidad y dirección elegidas abajo.
+                  </div>
+                </div>
+                <TPCheckbox
+                  checked={docRounding.documentRoundingEnabled}
+                  onChange={v => setDr("documentRoundingEnabled", v)}
+                  label=""
+                />
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <TPField
+                  label="Granularidad"
+                  hint="A qué nivel se redondea el total final del comprobante."
+                >
+                  <TPSelect
+                    value={docRounding.documentRoundingMode}
+                    onChange={v => setDr("documentRoundingMode", v as DocumentRoundingMode)}
+                    options={DOC_ROUNDING_MODE_OPTIONS}
+                    disabled={!docRounding.documentRoundingEnabled}
+                  />
+                </TPField>
+
+                <TPField
+                  label="Dirección"
+                  hint='Qué hacer cuando el total cae entre dos valores: "Más cercano" elige el más próximo, "Hacia arriba" siempre suma, "Hacia abajo" siempre resta.'
+                >
+                  <TPSelect
+                    value={docRounding.documentRoundingDirection}
+                    onChange={v => setDr("documentRoundingDirection", v as DocumentRoundingDirection)}
+                    options={DOC_ROUNDING_DIRECTION_OPTIONS}
+                    disabled={!docRounding.documentRoundingEnabled || docRounding.documentRoundingMode === "NONE"}
+                  />
+                </TPField>
+              </div>
+
+              <p className="text-[11px] italic text-muted/80">
+                El redondeo por comprobante es independiente del redondeo por lista de precios.
+                Si una lista tiene redondeo configurado al neto o al total, esta política lo desactiva
+                automáticamente para evitar redondear dos veces.
+              </p>
             </div>
           </TPCard>
 

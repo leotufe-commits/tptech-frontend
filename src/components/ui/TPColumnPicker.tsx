@@ -6,6 +6,7 @@ import {
 } from "lucide-react";
 import { cn } from "./tp";
 import { TPCheckbox } from "./TPCheckbox";
+import { selectableRowProps } from "./selectableRow";
 
 export type ColPickerDef = {
   key: string;
@@ -182,6 +183,9 @@ export function TPColumnPicker({
                   onDragEnd={() =>
                     setDrag({ draggingKey: null, overKey: null })
                   }
+                  {...selectableRowProps({
+                    onToggle: () => isHideable && onChange(col.key, !(visibility[col.key] !== false)),
+                  })}
                   className={cn(
                     "flex items-center gap-2 rounded-lg px-2 py-1.5 transition-colors",
                     "hover:bg-surface2/50",

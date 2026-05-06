@@ -5,6 +5,7 @@ import TPAvatarUploader from "../../../components/ui/TPAvatarUploader";
 import TPAttachmentManager from "../../../components/ui/TPAttachmentManager";
 import type { SellerRow } from "../../../services/sellers";
 import { formatDate, formatCommission, attachmentToTP } from "./vendedor.helpers";
+import { useFieldFormats } from "../../../context/FieldFormatsContext";
 
 interface Props {
   open: boolean;
@@ -16,6 +17,7 @@ interface Props {
 }
 
 export function VendedorViewModal({ open, seller, onClose, onAddAttachment, onDeleteAttachment, deletingAttachmentId }: Props) {
+  const { fmtPhone, fmtDoc } = useFieldFormats();
   return (
     <Modal
       open={open}
@@ -50,11 +52,11 @@ export function VendedorViewModal({ open, seller, onClose, onAddAttachment, onDe
                 [
                   "Documento",
                   seller.documentType || seller.documentNumber
-                    ? `${seller.documentType ? seller.documentType + " " : ""}${seller.documentNumber}`
+                    ? `${seller.documentType ? seller.documentType + " " : ""}${fmtDoc(seller.documentNumber)}`
                     : "—",
                 ],
                 ["Email", seller.email || "—"],
-                ["Teléfono", seller.phone || "—"],
+                ["Teléfono", seller.phone ? fmtPhone("", seller.phone) : "—"],
                 [
                   "Domicilio",
                   [

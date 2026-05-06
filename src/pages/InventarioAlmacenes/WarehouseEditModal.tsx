@@ -1,19 +1,23 @@
 // src/pages/InventarioAlmacenes/WarehouseEditModal.tsx
-import React, { useEffect } from "react";
-import { Loader2, Save } from "lucide-react";
+import React, { useEffect, useMemo } from "react";
+import { Loader2, Save, X } from "lucide-react";
 
 import Modal from "../../components/ui/Modal";
 import { TPButton } from "../../components/ui/TPButton";
+import { TPField } from "../../components/ui/TPField";
 import TPInput from "../../components/ui/TPInput";
 import TPTextarea from "../../components/ui/TPTextarea";
-import TPCheckbox from "../../components/ui/TPCheckbox";
-import TPAlert from "../../components/ui/TPAlert";
+import TPAttachmentManager from "../../components/ui/TPAttachmentManager";
+import type { TPAttachmentItem } from "../../components/ui/TPAttachmentList";
 
 import TPComboCreatable from "../../components/ui/TPComboCreatable";
 import { useCatalog } from "../../hooks/useCatalog";
 import type { CatalogType } from "../../services/catalogs";
+import { useFieldFormats } from "../../context/FieldFormatsContext";
+import { PHONE_FORMAT_PLACEHOLDER } from "../../lib/format";
+import { usePhoneInput } from "../../hooks/useFormattedInput";
 
-import type { WarehouseDraft } from "./types";
+import type { WarehouseAttachment, WarehouseDraft } from "./types";
 
 function asCatalogType(t: CatalogType): CatalogType {
   return t;
@@ -28,6 +32,12 @@ export default function WarehouseEditModal({
   onSave,
   editKey,
   onFormKeyDown,
+  savedAttachments = [],
+  pendingFiles = [],
+  uploadingAttachments = false,
+  deletingAttId = null,
+  onUpload,
+  onDeleteAttachment,
 }: {
   open: boolean;
   onClose: () => void;
@@ -40,9 +50,41 @@ export default function WarehouseEditModal({
 
   editKey: string;
   onFormKeyDown: (e: React.KeyboardEvent) => void;
+
+  savedAttachments?: WarehouseAttachment[];
+  pendingFiles?: File[];
+  uploadingAttachments?: boolean;
+  deletingAttId?: string | null;
+  onUpload?: (files: File[]) => void;
+  onDeleteAttachment?: (id: string) => void;
 }) {
   const isCreate = !String((draft as any)?.id || "").trim();
 
+  const attachmentItems: TPAttachmentItem[] = useMemo(() => {
+    const saved: TPAttachmentItem[] = savedAttachments.map((a) => ({
+      id: a.id,
+      name: a.filename,
+      size: a.size,
+      url: a.url,
+      mimeType: a.mimeType,
+    }));
+    // En modo create mostramos los archivos pendientes como items sin URL
+    const pending: TPAttachmentItem[] = pendingFiles.map((f, i) => ({
+      id: `pending-${i}`,
+      name: f.name,
+      size: f.size,
+      mimeType: f.type,
+    }));
+    return isCreate ? pending : saved;
+  }, [savedAttachments, pendingFiles, isCreate]);
+
+  const { phoneFormat } = useFieldFormats();
+  const ph = usePhoneInput(
+    (draft as any).phoneNumber ?? "",
+    (v) => setDraft((d) => ({ ...(d as any), phoneNumber: v })),
+    phoneFormat
+  );
+  const prefixCat = useCatalog(asCatalogType("PHONE_PREFIX"));
   const cityCat = useCatalog(asCatalogType("CITY"));
   const provCat = useCatalog(asCatalogType("PROVINCE"));
   const countryCat = useCatalog(asCatalogType("COUNTRY"));
@@ -61,7 +103,11 @@ export default function WarehouseEditModal({
       title={(draft as any).id ? "Editar almacén" : "Nuevo almacén"}
       subtitle="Completá los datos del almacén."
       busy={busySave}
-      maxWidth="xl"
+      maxWidth="4xl"
+      resizable
+      maximizable
+      maximizedMode="embedded"
+      modalKey="inventario-almacenes-editor"
       footer={
         <div className="flex w-full items-center justify-between gap-2">
           <div className="text-xs text-muted">
@@ -69,7 +115,7 @@ export default function WarehouseEditModal({
           </div>
 
           <div className="flex items-center gap-2">
-            <TPButton variant="ghost" onClick={onClose} disabled={busySave}>
+            <TPButton variant="secondary" onClick={onClose} disabled={busySave} iconLeft={<X size={14} />}>
               Cancelar
             </TPButton>
 
@@ -90,128 +136,225 @@ export default function WarehouseEditModal({
         onKeyDown={onFormKeyDown}
         className="space-y-4"
       >
-        {/* Fila 1: Nombre */}
-        <TPInput
-          label="Nombre del almacén *"
-          value={(draft as any).name}
-          onChange={(v) => setDraft((d) => ({ ...(d as any), name: v }))}
-          placeholder="Ej: Depósito Central"
-          autoFocus
-          disabled={busySave}
-        />
-
-        {/* Fila 2: Teléfono | Mail */}
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+        {/* Nombre */}
+        <TPField label="Nombre del almacén" required>
           <TPInput
-            label="Teléfono"
-            value={(draft as any).phoneNumber}
-            onChange={(v) => setDraft((d) => ({ ...(d as any), phoneNumber: v }))}
-            placeholder="Ej: +54 11 1234-5678"
+            value={(draft as any).name}
+            onChange={(v) => setDraft((d) => ({ ...(d as any), name: v }))}
+            placeholder="Sucursal Centro"
+            autoFocus
             disabled={busySave}
           />
+        </TPField>
 
-          <TPInput
-            label="Mail"
-            value={(draft as any).email}
-            onChange={(v) => setDraft((d) => ({ ...(d as any), email: v }))}
-            placeholder="Ej: deposito@empresa.com"
-            disabled={busySave}
-          />
-        </div>
-
-        {/* Fila 3: Dirección | Ciudad */}
+        {/* Teléfono | Mail */}
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-          <TPInput
-            label="Dirección"
-            value={(draft as any).street}
-            onChange={(v) => setDraft((d) => ({ ...(d as any), street: v }))}
-            placeholder="Ej: Av. Corrientes 1234"
-            disabled={busySave}
-          />
+          <div className="flex gap-2 items-end">
+            <div className="w-28 shrink-0">
+              <TPField label="Prefijo">
+                <TPComboCreatable
+                  mode={isCreate ? "create" : "edit"}
+                  type="PHONE_PREFIX"
+                  items={prefixCat.items}
+                  loading={prefixCat.loading}
+                  value={(draft as any).phoneCountry}
+                  onChange={(v) => setDraft((d) => ({ ...(d as any), phoneCountry: v }))}
+                  disabled={busySave}
+                  allowCreate
+                  onRefresh={() => void prefixCat.refresh()}
+                  onCreate={async (label) => {
+                    await prefixCat.createItem(label);
+                    setDraft((d) => ({ ...(d as any), phoneCountry: label }));
+                  }}
+                />
+              </TPField>
+            </div>
+            <div className="flex-1">
+              <TPField label="Teléfono">
+                <TPInput
+                  value={ph.displayValue}
+                  onChange={ph.handleChange}
+                  onKeyDown={ph.handleKeyDown}
+                  inputRef={ph.inputRef}
+                  placeholder={PHONE_FORMAT_PLACEHOLDER[phoneFormat] ?? "11 1234-5678"}
+                  disabled={busySave}
+                />
+              </TPField>
+            </div>
+          </div>
 
-          <TPComboCreatable
-            label="Ciudad"
-            mode={isCreate ? "create" : "edit"}
-            type="CITY"
-            items={cityCat.items}
-            loading={cityCat.loading}
-            value={(draft as any).city}
-            onChange={(v) => setDraft((d) => ({ ...(d as any), city: v }))}
-            placeholder="Ciudad"
-            disabled={busySave}
-            allowCreate
-            onRefresh={() => void cityCat.refresh()}
-            onCreate={async (label) => {
-              await cityCat.createItem(label);
-              setDraft((d) => ({ ...(d as any), city: label }));
-            }}
-          />
-        </div>
-
-        {/* Fila 4: Provincia | País */}
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-          <TPComboCreatable
-            label="Provincia"
-            mode={isCreate ? "create" : "edit"}
-            type="PROVINCE"
-            items={provCat.items}
-            loading={provCat.loading}
-            value={(draft as any).province}
-            onChange={(v) => setDraft((d) => ({ ...(d as any), province: v }))}
-            placeholder="Provincia"
-            disabled={busySave}
-            allowCreate
-            onRefresh={() => void provCat.refresh()}
-            onCreate={async (label) => {
-              await provCat.createItem(label);
-              setDraft((d) => ({ ...(d as any), province: label }));
-            }}
-          />
-
-          <TPComboCreatable
-            label="País"
-            mode={isCreate ? "create" : "edit"}
-            type="COUNTRY"
-            items={countryCat.items}
-            loading={countryCat.loading}
-            value={(draft as any).country}
-            onChange={(v) => setDraft((d) => ({ ...(d as any), country: v }))}
-            placeholder="País"
-            disabled={busySave}
-            allowCreate
-            onRefresh={() => void countryCat.refresh()}
-            onCreate={async (label) => {
-              await countryCat.createItem(label);
-              setDraft((d) => ({ ...(d as any), country: label }));
-            }}
-          />
-        </div>
-
-        {/* Fila 5: Notas */}
-        <TPTextarea
-          label="Notas"
-          value={(draft as any).notes}
-          onChange={(v) => setDraft((d) => ({ ...(d as any), notes: v }))}
-          maxLen={500}
-          disabled={busySave}
-        />
-
-        {!isCreate ? (
-          <>
-            <TPCheckbox
-              checked={!!(draft as any).isActive}
-              onChange={(v) => setDraft((d) => ({ ...(d as any), isActive: !!v }))}
-              label="Almacén activo"
+          <TPField label="Mail">
+            <TPInput
+              value={(draft as any).email}
+              onChange={(v) => setDraft((d) => ({ ...(d as any), email: v }))}
+              placeholder="ventas@sucursal.com"
               disabled={busySave}
             />
+          </TPField>
+        </div>
 
-            {!(draft as any).isActive ? (
-              <TPAlert tone="warning" title="Almacén inactivo">
-                No se podrá usar para movimientos hasta reactivarlo.
-              </TPAlert>
-            ) : null}
-          </>
-        ) : null}
+        {/* Domicilio */}
+        <div className="rounded-2xl border border-border p-4">
+          <div className="text-sm font-semibold text-text mb-4">Domicilio</div>
+
+          <div className="grid grid-cols-1 md:grid-cols-12 gap-4">
+            <div className="md:col-span-8">
+              <TPField label="Calle">
+                <TPInput
+                  value={(draft as any).street}
+                  onChange={(v) => setDraft((d) => ({ ...(d as any), street: v }))}
+                  placeholder="Av. Corrientes"
+                  disabled={busySave}
+                />
+              </TPField>
+            </div>
+
+            <div className="md:col-span-2">
+              <TPField label="Número">
+                <TPInput
+                  value={(draft as any).number}
+                  onChange={(v) => setDraft((d) => ({ ...(d as any), number: v }))}
+                  placeholder="1234"
+                  disabled={busySave}
+                />
+              </TPField>
+            </div>
+
+            <div className="md:col-span-1">
+              <TPField label="Piso">
+                <TPInput
+                  value={(draft as any).floor}
+                  onChange={(v) => setDraft((d) => ({ ...(d as any), floor: v }))}
+                  placeholder="3"
+                  disabled={busySave}
+                />
+              </TPField>
+            </div>
+
+            <div className="md:col-span-1">
+              <TPField label="Dpto.">
+                <TPInput
+                  value={(draft as any).apartment}
+                  onChange={(v) => setDraft((d) => ({ ...(d as any), apartment: v }))}
+                  placeholder="A"
+                  disabled={busySave}
+                />
+              </TPField>
+            </div>
+
+            <div className="md:col-span-3">
+              <TPField label="Código Postal">
+                <TPInput
+                  value={(draft as any).postalCode}
+                  onChange={(v) => setDraft((d) => ({ ...(d as any), postalCode: v }))}
+                  placeholder="C1043AAZ"
+                  disabled={busySave}
+                />
+              </TPField>
+            </div>
+
+            <div className="md:col-span-3">
+              <TPField label="Ciudad">
+                <TPComboCreatable
+                  mode={isCreate ? "create" : "edit"}
+                  type="CITY"
+                  items={cityCat.items}
+                  loading={cityCat.loading}
+                  value={(draft as any).city}
+                  onChange={(v) => setDraft((d) => ({ ...(d as any), city: v }))}
+                  placeholder="Seleccionar ciudad"
+                  disabled={busySave}
+                  allowCreate
+                  onRefresh={() => void cityCat.refresh()}
+                  onCreate={async (label) => {
+                    await cityCat.createItem(label);
+                    setDraft((d) => ({ ...(d as any), city: label }));
+                  }}
+                />
+              </TPField>
+            </div>
+
+            <div className="md:col-span-3">
+              <TPField label="Provincia">
+                <TPComboCreatable
+                  mode={isCreate ? "create" : "edit"}
+                  type="PROVINCE"
+                  items={provCat.items}
+                  loading={provCat.loading}
+                  value={(draft as any).province}
+                  onChange={(v) => setDraft((d) => ({ ...(d as any), province: v }))}
+                  placeholder="Seleccionar provincia"
+                  disabled={busySave}
+                  allowCreate
+                  onRefresh={() => void provCat.refresh()}
+                  onCreate={async (label) => {
+                    await provCat.createItem(label);
+                    setDraft((d) => ({ ...(d as any), province: label }));
+                  }}
+                />
+              </TPField>
+            </div>
+
+            <div className="md:col-span-3">
+              <TPField label="País">
+                <TPComboCreatable
+                  mode={isCreate ? "create" : "edit"}
+                  type="COUNTRY"
+                  items={countryCat.items}
+                  loading={countryCat.loading}
+                  value={(draft as any).country}
+                  onChange={(v) => setDraft((d) => ({ ...(d as any), country: v }))}
+                  placeholder="Seleccionar país"
+                  disabled={busySave}
+                  allowCreate
+                  onRefresh={() => void countryCat.refresh()}
+                  onCreate={async (label) => {
+                    await countryCat.createItem(label);
+                    setDraft((d) => ({ ...(d as any), country: label }));
+                  }}
+                />
+              </TPField>
+            </div>
+          </div>
+        </div>
+
+        {/* Notas */}
+        <TPField label="Notas">
+          <TPTextarea
+            value={(draft as any).notes}
+            onChange={(v) => setDraft((d) => ({ ...(d as any), notes: v }))}
+            placeholder="Observaciones internas del almacén"
+            maxLen={500}
+            disabled={busySave}
+          />
+        </TPField>
+
+        {/* Adjuntos */}
+        <div className="rounded-2xl border border-border p-4">
+          <div className="text-sm font-semibold text-text mb-3">Adjuntos</div>
+          <TPAttachmentManager
+            items={attachmentItems}
+            onUpload={onUpload}
+            uploadVariant="dropzone"
+            onDelete={
+              isCreate
+                ? undefined
+                : onDeleteAttachment
+                  ? (item) => onDeleteAttachment(item.id)
+                  : undefined
+            }
+            deletingId={deletingAttId}
+            loading={uploadingAttachments}
+            disabled={busySave || uploadingAttachments}
+            emptyText="Todavía no hay adjuntos."
+          />
+          {isCreate && pendingFiles.length > 0 && (
+            <p className="mt-2 text-xs text-muted">
+              {pendingFiles.length} archivo(s) se subirán al guardar.
+            </p>
+          )}
+        </div>
+
       </form>
     </Modal>
   );

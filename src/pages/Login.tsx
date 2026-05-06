@@ -1,8 +1,14 @@
 // tptech-frontend/src/pages/Login.tsx
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { Link, useNavigate } from "react-router-dom";
+import { MailCheck } from "lucide-react";
+import { GoogleLogin } from "@react-oauth/google";
 import * as API from "../lib/api"; // ✅ evita el error de export faltante
 import { useAuth } from "../context/AuthContext";
+import { toast } from "../lib/toast";
+import TPInput from "../components/ui/TPInput";
+import { TPButton } from "../components/ui/TPButton";
+import TPComboFixed from "../components/ui/TPComboFixed";
 
 function EyeIcon({ open }: { open: boolean }) {
   return (
@@ -38,14 +44,6 @@ function XIcon() {
   );
 }
 
-// ✅ flecha “select”
-function ChevronDownIcon() {
-  return (
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-      <path d="M6 9l6 6 6-6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
-  );
-}
 
 type TenantOption = { id: string; name: string };
 type LoginOptionsResponse = { email: string; tenants: TenantOption[] };
@@ -132,6 +130,12 @@ export default function Login() {
 
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [googleLoading, setGoogleLoading] = useState(false);
+
+  // Estado de cuenta pendiente de verificación
+  const [pendingEmail, setPendingEmail] = useState<string | null>(null);
+  const [resendLoading, setResendLoading] = useState(false);
+  const [resendDone, setResendDone] = useState(false);
 
   const emailOk = useMemo(() => isValidEmail(email), [email]);
   const hasEmail = email.trim().length > 0;
@@ -312,6 +316,16 @@ export default function Login() {
         return;
       }
 
+      if (status === 403) {
+        const payload = err?.data ?? {};
+        if (payload?.code === "PENDING_VERIFICATION") {
+          setPendingEmail(email.trim().toLowerCase());
+          return;
+        }
+        setError(getErrMessage(err, "No se puede iniciar sesión."));
+        return;
+      }
+
       setEmail((v) => v.trim());
       setError(getErrMessage(err, "Error de red. Revisá tu conexión e intentá de nuevo."));
     } finally {
@@ -319,13 +333,78 @@ export default function Login() {
     }
   }
 
-  const iconBtnClass =
-    "absolute right-3 top-1/2 -translate-y-1/2 inline-flex h-8 w-8 items-center justify-center " +
-    "rounded-md bg-transparent text-text/70 hover:text-text " +
-    "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30";
+  async function handleResend() {
+    if (!pendingEmail) return;
+    setResendLoading(true);
+    try {
+      await apiFetch("/auth/resend-verification", {
+        method: "POST",
+        body: { email: pendingEmail },
+        on401: "throw",
+      });
+      setResendDone(true);
+    } catch {
+      // silently ignore — usuario puede intentar de nuevo
+    } finally {
+      setResendLoading(false);
+    }
+  }
 
-  const selectWrapClass = "relative";
-  const selectChevronClass = "pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-muted";
+  async function handleGoogleSuccess(credentialResponse: { credential?: string }) {
+    const credential = credentialResponse.credential;
+    if (!credential) {
+      toast.error("No se pudo obtener el token de Google.");
+      return;
+    }
+
+    setGoogleLoading(true);
+    setError(null);
+
+    try {
+      const resp = await apiFetch<{ action: string; profile?: any; tenants?: any[] }>(
+        "/auth/google/token",
+        { method: "POST", body: { credential }, on401: "throw" }
+      );
+
+      if (resp.action === "LOGIN") {
+        const maybeToken = String((resp as any)?.accessToken || (resp as any)?.token || "").trim();
+        if (maybeToken) {
+          const fn = (API as any).storeTokenAndEmitLogin;
+          if (typeof fn === "function") fn(maybeToken);
+          else storeTokenAndEmitLoginFallback(maybeToken);
+        } else {
+          (API as any).emitLogin?.();
+        }
+        await refreshMe({ force: true, silent: true } as any);
+        navigate("/dashboard", { replace: true });
+        return;
+      }
+
+      if (resp.action === "REGISTER_REQUIRED") {
+        navigate("/register", {
+          state: { googleProfile: resp.profile, googleCredential: credential },
+        });
+        return;
+      }
+
+      if (resp.action === "TENANT_REQUIRED") {
+        // Etapa 2 — por ahora indicar login manual
+        toast.info("Esta cuenta tiene múltiples joyerías. Ingresá con tu contraseña para continuar.");
+        return;
+      }
+
+      toast.error("Respuesta inesperada del servidor.");
+    } catch (err: any) {
+      toast.error(getErrMessage(err, "Error al iniciar sesión con Google."));
+    } finally {
+      setGoogleLoading(false);
+    }
+  }
+
+  const iconBtnCls =
+    "inline-flex h-8 w-8 items-center justify-center rounded-md " +
+    "text-text opacity-70 hover:opacity-100 " +
+    "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30";
 
   return (
     <div className="min-h-screen bg-surface text-text flex items-center justify-center px-4 py-10">
@@ -334,34 +413,60 @@ export default function Login() {
         <h1 className="mt-2 text-3xl font-semibold text-text">Iniciar sesión</h1>
         <p className="mt-1 text-sm text-muted">Ingresá tus credenciales para continuar.</p>
 
-        {error && (
+        {pendingEmail ? (
+          <div className="mt-6 rounded-xl border border-primary/20 bg-primary/5 px-4 py-4 space-y-3">
+            <div className="flex items-start gap-3">
+              <div className="w-9 h-9 rounded-full bg-primary/10 flex items-center justify-center flex-shrink-0 mt-0.5">
+                <MailCheck className="w-5 h-5 text-primary" />
+              </div>
+              <div className="space-y-1">
+                <p className="text-sm font-medium text-text">Cuenta pendiente de activación</p>
+                <p className="text-xs text-muted leading-relaxed">
+                  La cuenta <strong className="text-text">{pendingEmail}</strong> aún no fue verificada.
+                  Revisá tu correo o solicitá un nuevo email.
+                </p>
+              </div>
+            </div>
+            {!resendDone ? (
+              <TPButton
+                variant="linkPrimary"
+                onClick={handleResend}
+                disabled={resendLoading}
+                loading={resendLoading}
+                className="w-full justify-center text-sm"
+              >
+                Reenviar email de verificación
+              </TPButton>
+            ) : (
+              <p className="text-center text-xs text-green-600 font-medium">
+                Email reenviado a {pendingEmail}. Revisá tu bandeja de entrada.
+              </p>
+            )}
+          </div>
+        ) : error ? (
           <div className="mt-6 rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm">{error}</div>
-        )}
+        ) : null}
 
         <form onSubmit={onSubmit} className="mt-8 space-y-5">
           {/* 1) EMAIL */}
           <div>
             <label className="mb-2 block text-sm text-muted">Email</label>
 
-            <div className="relative">
-              <input
-                type="email"
-                value={email}
-                onChange={(e) => {
-                  setEmail(e.target.value);
-
-                  lastLookupEmailRef.current = "";
-
-                  setTenants([]);
-                  setTenantId("");
-                  setManualTenantId("");
-                  setDidLookup(false);
-                }}
-                className={`tp-input ${hasEmail ? "pr-11" : ""}`}
-                autoComplete="email"
-              />
-
-              {hasEmail && (
+            <TPInput
+              type="email"
+              value={email}
+              onChange={(v) => {
+                setEmail(v);
+                lastLookupEmailRef.current = "";
+                setTenants([]);
+                setTenantId("");
+                setManualTenantId("");
+                setDidLookup(false);
+                setPendingEmail(null);
+                setResendDone(false);
+              }}
+              autoComplete="email"
+              rightIcon={hasEmail ? (
                 <button
                   type="button"
                   onClick={() => {
@@ -372,14 +477,14 @@ export default function Login() {
                     lastLookupEmailRef.current = "";
                     setDidLookup(false);
                   }}
-                  className={iconBtnClass}
+                  className={iconBtnCls}
                   aria-label="Limpiar email"
                   title="Limpiar"
                 >
                   <XIcon />
                 </button>
-              )}
-            </div>
+              ) : undefined}
+            />
 
             <div className="mt-2 min-h-[18px] text-xs text-muted">
               {emailOk ? (
@@ -402,27 +507,23 @@ export default function Login() {
           <div>
             <label className="mb-2 block text-sm text-muted">Contraseña</label>
 
-            <div className="relative">
-              <input
-                type={showPass ? "text" : "password"}
-                value={pass}
-                onChange={(e) => setPass(e.target.value)}
-                className={`tp-input ${hasPass ? "pr-11" : ""}`}
-                autoComplete="current-password"
-              />
-
-              {hasPass && (
+            <TPInput
+              type={showPass ? "text" : "password"}
+              value={pass}
+              onChange={setPass}
+              autoComplete="current-password"
+              rightIcon={hasPass ? (
                 <button
                   type="button"
                   onClick={() => setShowPass((s) => !s)}
-                  className={iconBtnClass}
+                  className={iconBtnCls}
                   aria-label={showPass ? "Ocultar contraseña" : "Mostrar contraseña"}
                   title={showPass ? "Ocultar" : "Mostrar"}
                 >
                   <EyeIcon open={showPass} />
                 </button>
-              )}
-            </div>
+              ) : undefined}
+            />
           </div>
 
           {/* 3) JOYERÍA */}
@@ -430,24 +531,13 @@ export default function Login() {
             <div>
               <label className="mb-2 block text-sm text-muted">Joyería</label>
 
-              <div className={selectWrapClass}>
-                <select
-                  className="tp-select appearance-none pr-10"
-                  value={tenantId}
-                  onChange={(e) => setTenantId(e.target.value)}
-                  disabled={!emailOk || loadingTenants || loading}
-                >
-                  {tenants.map((t) => (
-                    <option key={t.id} value={t.id}>
-                      {t.name}
-                    </option>
-                  ))}
-                </select>
-
-                <span className={selectChevronClass} aria-hidden="true">
-                  <ChevronDownIcon />
-                </span>
-              </div>
+              <TPComboFixed
+                value={tenantId}
+                onChange={setTenantId}
+                options={tenants.map((t) => ({ value: t.id, label: t.name }))}
+                disabled={!emailOk || loadingTenants || loading}
+                placeholder="Seleccioná una joyería…"
+              />
 
               <p className="mt-2 text-xs text-muted">Se recuerda la última joyería usada para este email.</p>
             </div>
@@ -456,11 +546,10 @@ export default function Login() {
           {showManualTenantInput && (
             <div>
               <label className="mb-2 block text-sm text-muted">Código de joyería</label>
-              <input
+              <TPInput
                 type="text"
                 value={manualTenantId}
-                onChange={(e) => setManualTenantId(e.target.value)}
-                className="tp-input"
+                onChange={setManualTenantId}
                 autoComplete="off"
                 placeholder="Código de joyería"
                 disabled={!emailOk || loadingTenants || loading}
@@ -471,9 +560,33 @@ export default function Login() {
             </div>
           )}
 
-          <button type="submit" disabled={!canSubmit || loading} className="tp-btn-primary w-full">
+          <TPButton
+            variant="primary"
+            type="submit"
+            disabled={!canSubmit || loading || googleLoading}
+            loading={loading}
+            className="w-full"
+          >
             {loading ? "Ingresando..." : "Iniciar sesión"}
-          </button>
+          </TPButton>
+
+          {/* ── Continuar con Google ── */}
+          <div className="relative flex items-center gap-3">
+            <div className="flex-1 border-t border-border" />
+            <span className="text-xs text-muted select-none">o</span>
+            <div className="flex-1 border-t border-border" />
+          </div>
+
+          <div className={`flex justify-center transition-opacity ${googleLoading ? "opacity-50 pointer-events-none" : ""}`}>
+            <GoogleLogin
+              onSuccess={handleGoogleSuccess}
+              onError={() => toast.error("Error al iniciar sesión con Google.")}
+              text="continue_with"
+              shape="rectangular"
+              size="large"
+              width="384"
+            />
+          </div>
 
           <div className="flex items-center justify-between pt-1">
             <Link to="/forgot-password" className="text-sm text-primary hover:underline">

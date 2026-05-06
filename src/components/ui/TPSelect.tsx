@@ -1,5 +1,6 @@
 // src/components/ui/TPSelect.tsx
 import React from "react";
+import { ChevronDown } from "lucide-react";
 import { cn } from "./tp";
 
 type SelectOption = {
@@ -37,26 +38,29 @@ export default function TPSelect({
     <div className={cn("w-full", wrapClassName)}>
       {label ? <div className="mb-2 text-sm text-muted">{label}</div> : null}
 
-      <select
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        disabled={disabled}
-        className={cn(
-          "tp-select w-full h-[42px]",
-          error && "border-red-500/40 focus:border-red-500/50 focus:ring-red-500/20",
-          disabled && "opacity-70",
-          className
-        )}
-        {...rest}
-      >
-        {options
-          ? options.map((o) => (
-              <option key={o.value} value={o.value}>
-                {o.label}
-              </option>
-            ))
-          : children}
-      </select>
+      <div className="tp-select-wrap w-full">
+        <select
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          disabled={disabled}
+          className={cn(
+            "tp-select w-full h-[42px]",
+            error && "border-red-500/40 focus:border-red-500/50 focus:ring-red-500/20",
+            disabled && "opacity-70",
+            className
+          )}
+          {...rest}
+        >
+          {options
+            ? options.map((o) => (
+                <option key={o.value} value={o.value}>
+                  {o.label}
+                </option>
+              ))
+            : children}
+        </select>
+        <ChevronDown size={16} className="tp-select-caret" />
+      </div>
 
       {error ? (
         <div className="mt-1 text-xs text-red-400">{error}</div>

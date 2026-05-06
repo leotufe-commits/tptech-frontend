@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Loader2, Users } from "lucide-react";
-import { apiFetch } from "../lib/api";
+import { toggleJewelryQuickSwitch } from "../services/company";
 import { useAuth } from "../context/AuthContext";
 
 export default function JewelryQuickSwitchToggle() {
@@ -17,10 +17,7 @@ export default function JewelryQuickSwitchToggle() {
     setError(null);
     try {
       setLoading(true);
-      await apiFetch("/auth/me/jewelry/quick-switch", {
-        method: "POST",
-        body: { enabled: next },
-      });
+      await toggleJewelryQuickSwitch(next);
       await refreshMe({ force: true, silent: true });
     } catch (e: any) {
       setError(e?.message || "No se pudo actualizar.");

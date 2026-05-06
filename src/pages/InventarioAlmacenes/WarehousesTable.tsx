@@ -15,14 +15,14 @@ import { isRowActive } from "./warehouses.utils";
 
 export const WH_COLUMNS: TPColDef[] = [
   { key: "name",        label: "Nombre",    canHide: false, sortKey: "name" },
-  { key: "city",        label: "Ciudad",    width: "140px" },
+  { key: "city",        label: "Ciudad",    width: "140px", sortKey: "city" },
   { key: "isActive",    label: "Estado",    width: "120px", sortKey: "isActive" },
-  { key: "stockGrams",  label: "Stock (g)", width: "140px", align: "right", sortKey: "stockGrams" },
-  { key: "stockPieces", label: "Piezas",    width: "120px", align: "right", sortKey: "stockPieces" },
+  { key: "stockPieces", label: "Piezas",          width: "120px", align: "right", sortKey: "stockPieces" },
+  { key: "stockGrams",  label: "Metales padre (g)", width: "160px", align: "right", sortKey: "stockGrams" },
   { key: "actions",     label: "Acciones",  canHide: false, width: "220px", align: "right" },
 ];
 
-export const WH_COL_LS_KEY = "tptech_col_warehouses";
+export const WH_COL_LS_KEY = "tptech_col_warehouses_v2";
 
 /* ── Componente ─────────────────────────────────────────────── */
 
@@ -39,6 +39,9 @@ export default function WarehousesTable({
   onEdit,
   onToggleActive,
   onAskDelete,
+  search,
+  onSearchChange,
+  actions,
 }: {
   loading: boolean;
   rows: WarehouseRow[];
@@ -56,7 +59,9 @@ export default function WarehousesTable({
   onToggleActive: (r: WarehouseRow) => void | Promise<void>;
   onAskDelete: (r: WarehouseRow) => void;
 
-  colVis: Record<string, boolean>;
+  search?: string;
+  onSearchChange?: (v: string) => void;
+  actions?: React.ReactNode;
 }) {
   const busyFav = busyFavoriteId ?? null;
   const busyRow = busyRowId ?? null;
@@ -66,12 +71,16 @@ export default function WarehousesTable({
       rows={rows}
       columns={WH_COLUMNS}
       storageKey={WH_COL_LS_KEY}
+      search={search ?? ""}
+      onSearchChange={onSearchChange}
+      searchPlaceholder="Buscar por nombre, código, ubicación, ciudad…"
       sortKey={sortKey}
       sortDir={sortDir}
       onSort={(k) => onToggleSort(k as SortKey)}
       loading={loading}
       emptyText="No hay almacenes para mostrar."
       countLabel="almacenes"
+      actions={actions}
       pagination
       onRowClick={(r) => onView(r)}
       renderRow={(r, vis) => {
@@ -91,11 +100,11 @@ export default function WarehousesTable({
                 <TPStatusPill active={active} />
               </TPTd>
             )}
-            {vis.stockGrams && (
-              <TPTd className="text-right">{fmtNumberSmart(r.stockGrams ?? 0)}</TPTd>
-            )}
             {vis.stockPieces && (
               <TPTd className="text-right">{fmtNumberSmart(r.stockPieces ?? 0)}</TPTd>
+            )}
+            {vis.stockGrams && (
+              <TPTd className="text-right">{fmtNumberSmart(r.stockGrams ?? 0)}</TPTd>
             )}
             {vis.actions && (
               <TPTd>

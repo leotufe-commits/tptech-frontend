@@ -24,7 +24,7 @@ import { TPRowActions } from "../ui/TPRowActions";
 import type { UserListItem } from "../../services/users";
 import { prefetchUserDetail as prefetchUserDetailInternal } from "./users.data";
 import { downloadUserAttachmentFile } from "../../lib/users.api";
-import { apiFetch } from "../../lib/api";
+import { resendInvite } from "../../services/users";
 
 import {
   type SortCol,
@@ -50,7 +50,7 @@ export const USERS_COLUMNS: TPColDef[] = [
   { key: "status",    label: "Estado",            width: "130px", sortKey: "STATUS" },
   { key: "pin",       label: "PIN",               width: "160px", sortKey: "PIN" },
   { key: "roles",     label: "Roles",             sortKey: "ROLES" },
-  { key: "warehouse", label: "Almacén favorito",  width: "180px", sortKey: "FAV" },
+  { key: "warehouse", label: "Almacén favorito",  width: "180px", sortKey: "FAV", visible: false },
   { key: "actions",   label: "Acciones",          canHide: false, width: "260px", align: "right" },
 ];
 
@@ -311,9 +311,7 @@ export default function UsersTable(props: Props) {
     setInviteFlash(null);
 
     try {
-      await apiFetch<{ ok: boolean }>(`/users/${encodeURIComponent(id)}/invite`, {
-        method: "POST",
-      });
+      await resendInvite(id);
 
       setJustInvitedIds((prev) => { const next = new Set(prev); next.add(id); return next; });
       flashInvite(`Invitación enviada a ${String(u?.email || "usuario")}.`, "ok", 2500);
@@ -678,6 +676,7 @@ export default function UsersTable(props: Props) {
             onPageChange,
             onPageSizeChange,
           }}
+          onRowClick={(u: any) => openView(u)}
           renderRow={(u: any, vis) => {
             const status = String(u.status || "").toUpperCase();
             const isActive = status === "ACTIVE";
@@ -705,38 +704,31 @@ export default function UsersTable(props: Props) {
               <TPTr key={u.id}>
                 {vis.user && (
                   <TPTd className="align-top">
-                    <button
-                      type="button"
-                      className={cn("w-full text-left rounded-xl hover:opacity-95 active:scale-[0.995] transition")}
-                      onClick={() => openView(u)}
-                      title="Ver usuario"
-                    >
-                      <div className="flex items-start gap-3">
-                        <div
-                          className={cn("h-10 w-10 rounded-full overflow-hidden border border-border bg-surface shrink-0 mt-0.5", avatarSrc && "cursor-zoom-in")}
-                          onClick={avatarSrc ? (e) => { e.stopPropagation(); setLightboxSrc(avatarSrc); } : undefined}
-                          title={avatarSrc ? "Ver imagen" : undefined}
-                        >
-                          {avatarSrc ? (
-                            <img src={avatarSrc} alt="Avatar" className="h-full w-full object-cover" />
-                          ) : (
-                            <div className="grid h-full w-full place-items-center text-xs font-bold text-primary">
-                              {initials}
-                            </div>
-                          )}
-                        </div>
-                        <div className="min-w-0">
-                          <div className="font-semibold truncate flex items-center gap-2">
-                            <span className="truncate">{u.name || "Sin nombre"}</span>
-                            {isMe && <span className="text-[11px] text-muted">(vos)</span>}
+                    <div className="flex items-start gap-3">
+                      <div
+                        className={cn("h-10 w-10 rounded-full overflow-hidden border border-border bg-surface shrink-0 mt-0.5", avatarSrc && "cursor-zoom-in")}
+                        onClick={avatarSrc ? (e) => { e.stopPropagation(); setLightboxSrc(avatarSrc); } : undefined}
+                        title={avatarSrc ? "Ver imagen" : undefined}
+                      >
+                        {avatarSrc ? (
+                          <img src={avatarSrc} alt="Avatar" className="h-full w-full object-cover" />
+                        ) : (
+                          <div className="grid h-full w-full place-items-center text-xs font-bold text-primary">
+                            {initials}
                           </div>
-                          <div className="text-xs text-muted truncate">{u.email}</div>
-                          {u.createdAt && (
-                            <div className="text-[11px] text-muted">Creado: {formatDateTime(u.createdAt)}</div>
-                          )}
-                        </div>
+                        )}
                       </div>
-                    </button>
+                      <div className="min-w-0">
+                        <div className="font-semibold truncate flex items-center gap-2">
+                          <span className="truncate">{u.name || "Sin nombre"}</span>
+                          {isMe && <span className="text-[11px] text-muted">(vos)</span>}
+                        </div>
+                        <div className="text-xs text-muted truncate">{u.email}</div>
+                        {u.createdAt && (
+                          <div className="text-[11px] text-muted">Creado: {formatDateTime(u.createdAt)}</div>
+                        )}
+                      </div>
+                    </div>
                   </TPTd>
                 )}
 

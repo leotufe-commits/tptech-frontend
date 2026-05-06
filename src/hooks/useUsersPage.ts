@@ -33,6 +33,7 @@ import {
   updateUserAvatarForUser,
   removeAvatarForUser,
   updateFavoriteWarehouseForUser,
+  updateMyFavoriteWarehouse,
   updateUserProfile,
 
   // adjuntos
@@ -58,6 +59,7 @@ import {
 
 import type { Permission } from "../services/permissions";
 import { apiFetch } from "../lib/api";
+import { resendInvite } from "../services/users";
 
 /* =========================
    ✅ split en helpers
@@ -119,23 +121,14 @@ const emitUserAvatarChanged: (payload: any) => void =
   (UsersPageEvents as any).emitUserAvatarChanged ?? (() => {});
 
 const emitPinEvent: (userId: string, payload: any) => void =
-  (UsersPageEvents as any).emitPinEvent ??
-  (UsersPageEvents as any).emitPinChanged ??
-  (UsersPageEvents as any).emitUserPinChanged ??
-  (() => {});
+  (UsersPageEvents as any).emitPinEvent ?? (() => {});
 
-// attachments helpers (si no existen, no rompe)
+// attachments helpers
 const downloadUserAttachmentWithAuth: (args: any) => Promise<void> =
-  (UserAttachments as any).downloadUserAttachmentWithAuth ??
-  (UserAttachments as any).downloadAttachmentWithAuth ??
-  (UserAttachments as any).downloadUserAttachment ??
-  (async () => {});
+  (UserAttachments as any).downloadUserAttachmentWithAuth ?? (async () => {});
 
 const openUserAttachmentWithAuth: (args: any) => Promise<void> =
-  (UserAttachments as any).openUserAttachmentWithAuth ??
-  (UserAttachments as any).openAttachmentWithAuth ??
-  (UserAttachments as any).openUserAttachment ??
-  (async () => {});
+  (UserAttachments as any).openUserAttachmentWithAuth ?? (async () => {});
 
 export function useUsersPage() {
   const nav = useNavigate();
@@ -435,7 +428,7 @@ export function useUsersPage() {
 
     try {
       // ✅ cookie httpOnly: apiFetch ya va con credentials
-      await apiFetch(`/users/${encodeURIComponent(id)}/invite`, { method: "POST" });
+      await resendInvite(id);
 
       // opcional: mostrar mensaje corto (sin exponer link)
       flashInviteMsg("Invitación enviada.", 3000);
@@ -1059,6 +1052,8 @@ export function useUsersPage() {
 
     setErr(null);
     resetForm();
+    // Pre-poblar con el almacén favorito del admin logueado (favorito global del contexto)
+    setFFavWarehouseId(inv.favoriteWarehouseId ?? "");
     setModalMode("CREATE");
     setModalOpen(true);
     setModalLoading(true);
@@ -1261,6 +1256,11 @@ export function useUsersPage() {
       setTab("DATA");
       return;
     }
+    if (!fFavWarehouseId && activeAlmacenes.length > 0) {
+      setErr("Debés asignar un almacén favorito.");
+      setTab("CONFIG");
+      return;
+    }
 
     setModalBusy(true);
     setSpecialSaving(true);
@@ -1390,6 +1390,8 @@ export function useUsersPage() {
       if (!isSelfEditing) {
         await assignRolesToUser(targetId, fRoleIds);
         await updateFavoriteWarehouseForUser(targetId, fFavWarehouseId ? fFavWarehouseId : null);
+      } else {
+        await updateMyFavoriteWarehouse(fFavWarehouseId ? fFavWarehouseId : null);
       }
 
       if (avatarFileDraft) {

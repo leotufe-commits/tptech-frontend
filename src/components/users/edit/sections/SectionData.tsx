@@ -15,6 +15,9 @@ import { TPIconButton } from "../../../ui/TPIconButton";
 import TPComboCreatable from "../../../ui/TPComboCreatable";
 import { useCatalog } from "../../../../hooks/useCatalog";
 import type { CatalogType } from "../../../../services/catalogs";
+import { useFieldFormats } from "../../../../context/FieldFormatsContext";
+import { PHONE_FORMAT_PLACEHOLDER, DOCUMENT_FORMAT_PLACEHOLDER } from "../../../../lib/format";
+import { usePhoneInput, useDocInput } from "../../../../hooks/useFormattedInput";
 
 type Props = {
   modalMode: "CREATE" | "EDIT";
@@ -174,6 +177,9 @@ export default function SectionData(props: Props) {
 
   const isCreate = modalMode === "CREATE";
   const busyAttachments = modalBusy || uploadingAttachments || Boolean(deletingAttId);
+  const { phoneFormat, documentFormat } = useFieldFormats();
+  const ph  = usePhoneInput(fPhoneNumber,  setFPhoneNumber,  phoneFormat);
+  const doc = useDocInput(fDocNumber, setFDocNumber, documentFormat);
 
   const hasDraft = attachmentsDraft.length > 0;
   const hasSaved = filteredSavedAttachments.length > 0;
@@ -271,7 +277,7 @@ export default function SectionData(props: Props) {
               label="Email"
               value={fEmail}
               onChange={setFEmail}
-              placeholder="usuario@correo.com"
+              placeholder="usuario@empresa.com"
               disabled={modalBusy}
               autoComplete="email"
             />
@@ -281,7 +287,7 @@ export default function SectionData(props: Props) {
                 label="Contraseña (opcional)"
                 value={fPassword}
                 onChange={setFPassword}
-                placeholder="Si la dejás vacía, queda Pendiente"
+                placeholder="Ingresar contraseña"
                 disabled={modalBusy}
                 autoComplete="new-password"
                 type={showPassword ? "text" : "password"}
@@ -308,7 +314,7 @@ export default function SectionData(props: Props) {
               label="Email"
               value={fEmail}
               onChange={setFEmail}
-              placeholder="usuario@correo.com"
+              placeholder="usuario@empresa.com"
               disabled
               autoComplete="email"
             />
@@ -330,7 +336,7 @@ export default function SectionData(props: Props) {
               label="Nombre *"
               value={fFirstName}
               onChange={setFFirstName}
-              placeholder="Ej: Juan"
+              placeholder="Juan"
               disabled={modalBusy}
             />
           </div>
@@ -340,7 +346,7 @@ export default function SectionData(props: Props) {
               label="Apellido *"
               value={fLastName}
               onChange={setFLastName}
-              placeholder="Ej: Pérez"
+              placeholder="Pérez"
               disabled={modalBusy}
             />
           </div>
@@ -368,9 +374,11 @@ export default function SectionData(props: Props) {
           <div className="md:col-span-3">
             <TPInput
               label="Nro. doc."
-              value={fDocNumber}
-              onChange={setFDocNumber}
-              placeholder="12345678"
+              value={doc.displayValue}
+              onChange={doc.handleChange}
+              onKeyDown={doc.handleKeyDown}
+              inputRef={doc.inputRef}
+              placeholder={DOCUMENT_FORMAT_PLACEHOLDER[documentFormat] ?? "12345678"}
               disabled={modalBusy}
             />
           </div>
@@ -398,9 +406,11 @@ export default function SectionData(props: Props) {
           <div className="md:col-span-4">
             <TPInput
               label="Teléfono"
-              value={fPhoneNumber}
-              onChange={setFPhoneNumber}
-              placeholder="11 1234 5678"
+              value={ph.displayValue}
+              onChange={ph.handleChange}
+              onKeyDown={ph.handleKeyDown}
+              inputRef={ph.inputRef}
+              placeholder={PHONE_FORMAT_PLACEHOLDER[phoneFormat] ?? "11 1234-5678"}
               disabled={modalBusy}
             />
           </div>
@@ -411,11 +421,11 @@ export default function SectionData(props: Props) {
 
               <div className="grid grid-cols-1 md:grid-cols-12 gap-3">
                 <div className="md:col-span-8">
-                  <TPInput label="Calle" value={fStreet} onChange={setFStreet} disabled={modalBusy} />
+                  <TPInput label="Calle" value={fStreet} onChange={setFStreet} placeholder="Av. Corrientes" disabled={modalBusy} />
                 </div>
 
                 <div className="md:col-span-2">
-                  <TPInput label="Número" value={fNumber} onChange={setFNumber} disabled={modalBusy} />
+                  <TPInput label="Número" value={fNumber} onChange={setFNumber} placeholder="1234" disabled={modalBusy} />
                 </div>
 
                 <div className="md:col-span-1">
@@ -423,7 +433,7 @@ export default function SectionData(props: Props) {
                 </div>
 
                 <div className="md:col-span-1">
-                  <TPInput label="Dpto." value={fApartment} onChange={setFApartment} placeholder="A" disabled={modalBusy} />
+                  <TPInput label="Dpto." value={fApartment} onChange={setFApartment} placeholder="Ej: A" disabled={modalBusy} />
                 </div>
 
                 <div className="md:col-span-3">
@@ -431,6 +441,7 @@ export default function SectionData(props: Props) {
                     label="Código postal"
                     value={fPostalCode}
                     onChange={setFPostalCode}
+                    placeholder="C1043AAZ"
                     disabled={modalBusy}
                   />
                 </div>
@@ -444,7 +455,7 @@ export default function SectionData(props: Props) {
                     loading={cityCat.loading}
                     value={fCity}
                     onChange={setFCity}
-                    placeholder="Ciudad"
+                    placeholder="Seleccionar ciudad"
                     disabled={modalBusy}
                     allowCreate
                     onRefresh={() => void cityCat.refresh()}
@@ -464,7 +475,7 @@ export default function SectionData(props: Props) {
                     loading={provCat.loading}
                     value={fProvince}
                     onChange={setFProvince}
-                    placeholder="Provincia"
+                    placeholder="Seleccionar provincia"
                     disabled={modalBusy}
                     allowCreate
                     onRefresh={() => void provCat.refresh()}
@@ -484,7 +495,7 @@ export default function SectionData(props: Props) {
                     loading={countryCat.loading}
                     value={fCountry}
                     onChange={setFCountry}
-                    placeholder="País"
+                    placeholder="Seleccionar país"
                     disabled={modalBusy}
                     allowCreate
                     onRefresh={() => void countryCat.refresh()}
@@ -507,7 +518,7 @@ export default function SectionData(props: Props) {
             className="tp-input min-h-[180px]"
             value={fNotes}
             onChange={(e) => setFNotes(e.target.value)}
-            placeholder="Notas internas…"
+            placeholder="Observaciones internas del usuario"
             disabled={modalBusy}
           />
         </Section>

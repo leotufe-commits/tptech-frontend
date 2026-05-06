@@ -6,13 +6,15 @@
 //
 import React, { useEffect, useRef, useState } from "react";
 import ReactDOM from "react-dom";
-import { ChevronDown, Search, X, Check } from "lucide-react";
+import { ChevronDown, Layers, Search, X } from "lucide-react";
 import { cn, TP_INPUT } from "./tp";
 
 export type ComboMultiOption = {
   value: string;
   label: string;
   sublabel?: string;
+  /** URL de imagen para la opción. Vacío ("") muestra ícono fallback. Undefined = sin imagen (retrocompatible). */
+  imageUrl?: string;
   disabled?: boolean;
 };
 
@@ -168,17 +170,51 @@ export default function TPComboMulti({
                     isSelected && !opt.disabled && "bg-primary/5"
                   )}
                 >
-                  {/* checkbox visual */}
-                  <div
+                  {/* checkbox visual — idéntico al visual de TPCheckbox */}
+                  <span
                     className={cn(
-                      "flex-shrink-0 w-4 h-4 rounded border flex items-center justify-center transition",
-                      isSelected
-                        ? "bg-primary border-primary"
-                        : "border-border bg-transparent"
+                      "inline-flex h-4 w-4 shrink-0 items-center justify-center rounded border transition-colors",
+                      isSelected ? "border-primary bg-primary" : "border-border bg-card"
                     )}
+                    aria-hidden="true"
                   >
-                    {isSelected && <Check size={10} className="text-primary-foreground" />}
-                  </div>
+                    {isSelected && (
+                      <svg width="10" height="8" viewBox="0 0 10 8" fill="none" aria-hidden="true">
+                        <path
+                          d="M1 4l2.5 2.5L9 1"
+                          stroke="var(--primary-foreground)"
+                          strokeWidth="1.8"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        />
+                      </svg>
+                    )}
+                  </span>
+                  {/* Imagen de opción (solo cuando imageUrl está definido) */}
+                  {opt.imageUrl !== undefined && (
+                    <span className="shrink-0" aria-hidden="true">
+                      {opt.imageUrl ? (
+                        <img
+                          src={opt.imageUrl}
+                          alt=""
+                          className="w-7 h-7 rounded-lg object-cover"
+                          onError={(e) => {
+                            const t = e.currentTarget;
+                            t.style.display = "none";
+                            (t.nextElementSibling as HTMLElement | null)?.style.setProperty("display", "flex");
+                          }}
+                        />
+                      ) : null}
+                      <span
+                        className={cn(
+                          "w-7 h-7 rounded-lg bg-primary/10 items-center justify-center",
+                          opt.imageUrl ? "hidden" : "flex"
+                        )}
+                      >
+                        <Layers size={12} className="text-primary/50" />
+                      </span>
+                    </span>
+                  )}
                   <div className="flex-1 min-w-0">
                     <span className={cn("block truncate", isSelected && "font-medium")}>
                       {opt.label}

@@ -113,6 +113,15 @@ export type EntityRow = {
   balanceType: BalanceType;
   priceListId: string | null;
   currencyId: string | null;
+  sellerId: string | null;
+  seller?: { id: string; displayName: string; firstName: string; lastName: string; email: string; isActive: boolean; isFavorite: boolean } | null;
+  /**
+   * Conteo de overrides de merma activos (tabla `EntityMermaOverride`).
+   * La merma del cliente es relacional — N rows por variante de metal.
+   * Si `_count.mermaOverrides > 0`, la entidad tiene merma personalizada;
+   * si es 0 o el campo no viene, se muestra "Global" en la tabla.
+   */
+  _count?: { mermaOverrides?: number };
   paymentTerm: string;
   commercialApplyOn: CommercialApplyOn | null;
   commercialRuleType: CommercialRuleType | null;
@@ -287,6 +296,7 @@ export type EntityPayload = {
   balanceType?: BalanceType;
   priceListId?: string | null;
   currencyId?: string | null;
+  sellerId?: string | null;
   commercialApplyOn?: CommercialApplyOn | null;
   commercialRuleType?: CommercialRuleType | null;
   commercialValueType?: CommercialValueType | null;

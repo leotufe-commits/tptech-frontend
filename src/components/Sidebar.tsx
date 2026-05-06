@@ -4,7 +4,7 @@ import { createPortal } from "react-dom";
 import { NavLink, useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import Avatar from "./ui/Avatar";
-import { ChevronDown, PanelLeftOpen, PanelLeftClose } from "lucide-react";
+import { ChevronDown, PanelLeftOpen, PanelLeftClose, Plus } from "lucide-react";
 
 import { SIDEBAR_NAV, type NavItem, type GroupItem } from "./sidebar/sidebar.nav";
 import type { IconType } from "./sidebar/sidebar.icons";
@@ -17,6 +17,10 @@ import {
   COLLAPSED_W,
   isChildPathActive,
 } from "./sidebar/sidebar.utils";
+
+function dispatchQuickCreate(screen: string) {
+  window.dispatchEvent(new CustomEvent("tptech:sidebar_quick_create", { detail: { screen } }));
+}
 
 /* ---------------- components ---------------- */
 function Divider({ collapsed }: { collapsed: boolean }) {
@@ -292,24 +296,41 @@ function Group({
                 <div className="p-2 tp-scroll" style={{ maxHeight: "calc(var(--popover-max, 560px) - 1px)" }}>
                   <div className="max-h-[60vh] overflow-auto tp-scroll">
                     {children.map((c) => (
-                      <NavLink
-                        key={c.to}
-                        to={c.to}
-                        className={({ isActive }) =>
-                          cn(
-                            "block w-full rounded-xl px-3 py-2 text-sm transition border",
-                            isActive
-                              ? "bg-surface2 text-text border-border"
-                              : "bg-card text-text/70 border-transparent hover:border-border hover:bg-surface2 hover:text-text"
-                          )
-                        }
-                        onClick={() => {
-                          setPopoverOpen(false);
-                          onNavigate?.();
-                        }}
-                      >
-                        {c.label}
-                      </NavLink>
+                      <div key={c.to} className={c.quickCreate ? "relative group/popitem" : undefined}>
+                        <NavLink
+                          to={c.to}
+                          className={({ isActive }) =>
+                            cn(
+                              "block w-full rounded-xl px-3 py-2 text-sm transition border",
+                              c.quickCreate ? "pr-8" : "",
+                              isActive
+                                ? "bg-surface2 text-text border-border"
+                                : "bg-card text-text/70 border-transparent hover:border-border hover:bg-surface2 hover:text-text"
+                            )
+                          }
+                          onClick={() => {
+                            setPopoverOpen(false);
+                            onNavigate?.();
+                          }}
+                        >
+                          {c.label}
+                        </NavLink>
+                        {c.quickCreate && (
+                          <button
+                            type="button"
+                            onClick={() => { dispatchQuickCreate(c.quickCreate!); setPopoverOpen(false); }}
+                            className={cn(
+                              "absolute right-1.5 top-1/2 -translate-y-1/2",
+                              "opacity-0 group-hover/popitem:opacity-100 transition-opacity",
+                              "h-6 w-6 rounded-md flex items-center justify-center",
+                              "text-muted hover:text-primary hover:bg-primary/10 transition-colors"
+                            )}
+                            title="Crear nuevo"
+                          >
+                            <Plus size={12} />
+                          </button>
+                        )}
+                      </div>
                     ))}
                   </div>
                 </div>
@@ -378,7 +399,26 @@ function Group({
                 <div className="pointer-events-none absolute left-5 top-1/2 z-10 h-px w-5 bg-muted opacity-80" />
 
                 <div className="relative z-20 pl-10">
-                  <Leaf to={c.to} label={c.label} collapsed={false} onNavigate={onNavigate} />
+                  {c.quickCreate ? (
+                    <div className="relative group/treeitem">
+                      <Leaf to={c.to} label={c.label} collapsed={false} onNavigate={onNavigate} />
+                      <button
+                        type="button"
+                        onClick={(e) => { e.preventDefault(); dispatchQuickCreate(c.quickCreate!); }}
+                        className={cn(
+                          "absolute right-2 top-1/2 -translate-y-1/2",
+                          "opacity-0 group-hover/treeitem:opacity-100 transition-opacity",
+                          "h-6 w-6 rounded-md flex items-center justify-center",
+                          "text-muted hover:text-primary hover:bg-primary/10 transition-colors"
+                        )}
+                        title="Crear nuevo"
+                      >
+                        <Plus size={12} />
+                      </button>
+                    </div>
+                  ) : (
+                    <Leaf to={c.to} label={c.label} collapsed={false} onNavigate={onNavigate} />
+                  )}
                 </div>
               </div>
             );

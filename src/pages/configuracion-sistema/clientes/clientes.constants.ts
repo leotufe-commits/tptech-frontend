@@ -9,6 +9,8 @@ export const ENTITY_COLS: TPColDef[] = [
   { key: "roles",    label: "Rol" },
   { key: "documento", label: "CUIT / DNI" },
   { key: "contacto", label: "Contacto",          sortKey: "email" },
+  { key: "vendedor", label: "Vendedor" },
+  { key: "merma",    label: "Merma" },
   { key: "iva",      label: "Cond. IVA",         visible: false },
   { key: "termino",  label: "Término de pago",   visible: false },
   { key: "regla",    label: "Regla comercial",   visible: false },

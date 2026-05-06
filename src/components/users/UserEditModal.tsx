@@ -21,8 +21,7 @@ import { useDraftAttachmentPreviews } from "./edit/hooks/useDraftAttachmentPrevi
 import UserAvatarCard from "./edit/partials/UserAvatarCard";
 
 // ✅ API (cookie httpOnly)
-import { apiFetch } from "../../lib/api";
-import { sendResetLinkForUser } from "../../services/users";
+import { sendResetLinkForUser, resendInvite } from "../../services/users";
 
 /* =========================
    PROPS
@@ -377,7 +376,7 @@ export default function UserEditModal(props: Props) {
 
     try {
       const email = String((detail as any)?.email || "usuario");
-      await apiFetch<{ ok: boolean }>(`/users/${encodeURIComponent(id)}/invite`, { method: "POST" });
+      await resendInvite(id);
       flashInvite(`Invitación enviada a ${email}. El link es válido por 7 días.`, "ok", 4000);
     } catch (e: any) {
       flashInvite(e?.message || "No se pudo enviar la invitación.", "err", 3500);

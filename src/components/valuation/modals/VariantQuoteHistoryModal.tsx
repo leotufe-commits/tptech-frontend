@@ -63,6 +63,26 @@ function CardRow({
   );
 }
 
+function pickBuy(r: any) {
+  return (
+    r?.finalPurchasePrice ??
+    r?.purchasePrice ??
+    r?.suggestedPrice ??
+    r?.basePurchasePrice ??
+    null
+  );
+}
+
+function pickSell(r: any) {
+  return (
+    r?.finalSalePrice ??
+    r?.salePrice ??
+    r?.baseSalePrice ??
+    r?.basePrice ??
+    null
+  );
+}
+
 function HistoryCard({ r }: { r: any }) {
   const sym = String(r?.currency?.symbol || r?.currencySymbol || "").trim();
   const code = String(r?.currency?.code || r?.currencyCode || "").trim();
@@ -77,7 +97,8 @@ function HistoryCard({ r }: { r: any }) {
 
   const reason = String(r?.reason || "").trim() || "—";
 
-  const sell = r?.finalSalePrice ?? r?.price;
+  const buy = pickBuy(r);
+  const sell = pickSell(r);
 
   return (
     <div className="rounded-2xl border border-border bg-card p-4">
@@ -90,7 +111,7 @@ function HistoryCard({ r }: { r: any }) {
         </div>
 
         <div className="shrink-0 text-right">
-          <div className="text-xs text-muted font-semibold">Precio</div>
+          <div className="text-xs text-muted font-semibold">Venta</div>
           <div className="mt-0.5 text-sm font-semibold text-text tabular-nums whitespace-nowrap">
             {money(sym, sell, 6)}
           </div>
@@ -99,11 +120,27 @@ function HistoryCard({ r }: { r: any }) {
 
       <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-3">
         <div className="rounded-xl border border-border bg-surface2 p-3">
+          <CardRow
+            label="Compra"
+            value={
+              <span className="font-semibold tabular-nums whitespace-nowrap">
+                {money(sym, buy, 6)}
+              </span>
+            }
+          />
+        </div>
+
+        <div className="rounded-xl border border-border bg-surface2 p-3">
           <CardRow label="Moneda" value={curLabel} title={curLabel} />
         </div>
 
         <div className="rounded-xl border border-border bg-surface2 p-3">
-          <CardRow label="Tipo" value={reason} title={reason} right={<Tag size={14} className="text-muted" />} />
+          <CardRow
+            label="Tipo"
+            value={reason}
+            title={reason}
+            right={<Tag size={14} className="text-muted" />}
+          />
         </div>
 
         <div className="rounded-xl border border-border bg-surface2 p-3">
@@ -116,7 +153,14 @@ function HistoryCard({ r }: { r: any }) {
         </div>
 
         <div className="rounded-xl border border-border bg-surface2 p-3 sm:col-span-2">
-          <CardRow label="Creado" value={<span className="tabular-nums whitespace-nowrap">{fmtDateTime(r?.createdAt)}</span>} />
+          <CardRow
+            label="Creado"
+            value={
+              <span className="tabular-nums whitespace-nowrap">
+                {fmtDateTime(r?.createdAt)}
+              </span>
+            }
+          />
         </div>
       </div>
     </div>
@@ -148,8 +192,10 @@ export default function VariantQuoteHistoryModal({
   const reqSeqRef = useRef(0);
   const dataForIdRef = useRef<string | null>(null);
 
-  // ✅ default: último mes → hoy
-  const [range, setRange] = useState<TPDateRangeValue>({ from: null, to: null });
+  const [range, setRange] = useState<TPDateRangeValue>({
+    from: null,
+    to: null,
+  });
 
   const title = useMemo(() => {
     const name = String(variant?.name || "Variante").trim();
@@ -169,7 +215,12 @@ export default function VariantQuoteHistoryModal({
     return [left, mid, right].filter(Boolean).join(" · ") || "Valor actual e historial.";
   }, [variant, serverVariant]);
 
-  const showLoading = loading || (open && !!variant?.id && dataForIdRef.current !== String(variant?.id || "") && !err);
+  const showLoading =
+    loading ||
+    (open &&
+      !!variant?.id &&
+      dataForIdRef.current !== String(variant?.id || "") &&
+      !err);
 
   useEffect(() => {
     if (!open) return;
@@ -199,9 +250,10 @@ export default function VariantQuoteHistoryModal({
         setRows([]);
         setServerVariant(null);
 
-        // ✅ rango default: 30 días atrás → hoy (sin horas)
         const today = startOfDay(new Date());
-        const from = startOfDay(new Date(today.getTime() - 30 * 24 * 60 * 60 * 1000));
+        const from = startOfDay(
+          new Date(today.getTime() - 30 * 24 * 60 * 60 * 1000)
+        );
         setRange({ from, to: today });
 
         const r = await onLoad(id, 200);
@@ -232,7 +284,6 @@ export default function VariantQuoteHistoryModal({
     };
   }, [open, variant, onLoad]);
 
-  // ✅ Filtrado por DÍA (ignora horas)
   const filteredRows = useMemo(() => {
     const from = range.from ? startOfDay(range.from).getTime() : null;
     const to = range.to ? endOfDay(range.to).getTime() : null;
@@ -259,11 +310,21 @@ export default function VariantQuoteHistoryModal({
     })[0];
   }, [filteredRows]);
 
-  const curSym = String(current?.currency?.symbol || current?.currencySymbol || "").trim();
-  const curCode = String(current?.currency?.code || current?.currencyCode || "").trim();
-  const curLabel = curCode ? `${curCode}${curSym ? ` (${curSym})` : ""}` : curSym || "—";
+  const curSym = String(
+    current?.currency?.symbol || current?.currencySymbol || ""
+  ).trim();
 
-  const currentEdited = fmtDateTime(current?.effectiveAt || current?.createdAt);
+  const curCode = String(
+    current?.currency?.code || current?.currencyCode || ""
+  ).trim();
+
+  const curLabel = curCode
+    ? `${curCode}${curSym ? ` (${curSym})` : ""}`
+    : curSym || "—";
+
+  const currentEdited = fmtDateTime(
+    current?.effectiveAt || current?.createdAt
+  );
 
   const currentUserLabel = useMemo(() => {
     const u = current?.user;
@@ -274,6 +335,9 @@ export default function VariantQuoteHistoryModal({
   }, [current]);
 
   const currentReason = String(current?.reason || "").trim() || "—";
+
+  const currentSell = pickSell(current);
+  const currentBuy = pickBuy(current);
 
   return (
     <ModalShell
@@ -309,31 +373,42 @@ export default function VariantQuoteHistoryModal({
           </div>
         ) : (
           <>
-            {/* Card "valor actual" */}
             <div className="rounded-2xl border border-border bg-card p-6">
-              <div className="text-xs text-muted text-center">Precio actual</div>
+              <div className="text-xs text-muted text-center">Venta actual</div>
 
               <div className="mt-2 flex items-center justify-center">
                 <div className="rounded-2xl border border-border bg-surface2 px-6 py-5 text-center">
                   <div className="text-4xl font-semibold text-text tabular-nums whitespace-nowrap">
-                    {current?.finalSalePrice != null
-                      ? money(curSym, current.finalSalePrice, 6)
-                      : current?.price != null
-                      ? money(curSym, current.price, 6)
-                      : "—"}
+                    {current ? money(curSym, currentSell, 6) : "—"}
+                  </div>
+
+                  <div className="mt-2 text-xs text-muted tabular-nums whitespace-nowrap">
+                    Compra:{" "}
+                    <span className="text-text font-semibold">
+                      {current ? money(curSym, currentBuy, 6) : "—"}
+                    </span>
                   </div>
                 </div>
               </div>
 
               <div className="mt-5 grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
                 <div className="rounded-xl border border-border bg-surface2 p-3">
-                  <div className="text-xs text-muted font-semibold">Última edición</div>
-                  <div className="mt-1 text-text tabular-nums whitespace-nowrap">{current ? currentEdited : "—"}</div>
+                  <div className="text-xs text-muted font-semibold">
+                    Última edición
+                  </div>
+                  <div className="mt-1 text-text tabular-nums whitespace-nowrap">
+                    {current ? currentEdited : "—"}
+                  </div>
                 </div>
 
                 <div className="rounded-xl border border-border bg-surface2 p-3">
-                  <div className="text-xs text-muted font-semibold">Moneda</div>
-                  <div className="mt-1 text-text truncate" title={curLabel}>
+                  <div className="text-xs text-muted font-semibold">
+                    Moneda
+                  </div>
+                  <div
+                    className="mt-1 text-text truncate"
+                    title={curLabel}
+                  >
                     {current ? curLabel : "—"}
                   </div>
                 </div>
@@ -342,7 +417,10 @@ export default function VariantQuoteHistoryModal({
                   <div className="text-xs text-muted font-semibold inline-flex items-center gap-2">
                     <User2 size={14} /> Creado por
                   </div>
-                  <div className="mt-1 text-text truncate" title={currentUserLabel}>
+                  <div
+                    className="mt-1 text-text truncate"
+                    title={currentUserLabel}
+                  >
                     {current ? currentUserLabel : "—"}
                   </div>
                 </div>
@@ -351,19 +429,25 @@ export default function VariantQuoteHistoryModal({
                   <div className="text-xs text-muted font-semibold inline-flex items-center gap-2">
                     <Tag size={14} /> Tipo
                   </div>
-                  <div className="mt-1 text-text truncate" title={currentReason}>
+                  <div
+                    className="mt-1 text-text truncate"
+                    title={currentReason}
+                  >
                     {current ? currentReason : "—"}
                   </div>
                 </div>
               </div>
             </div>
 
-            {/* Historial + filtro */}
             <div className="mt-6 min-w-0">
               <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
                 <div className="min-w-0">
-                  <div className="text-xs font-semibold text-muted">Historial</div>
-                  <div className="text-[11px] text-muted">Filtra por vigencia (effectiveAt). Si falta, se usa creado.</div>
+                  <div className="text-xs font-semibold text-muted">
+                    Historial
+                  </div>
+                  <div className="text-[11px] text-muted">
+                    Filtra por vigencia (effectiveAt). Si falta, se usa creado.
+                  </div>
                 </div>
 
                 <div className="w-full lg:w-[560px]">
@@ -380,17 +464,25 @@ export default function VariantQuoteHistoryModal({
 
               <div className="mt-3">
                 {filteredRows.length === 0 ? (
-                  <div className="text-sm text-muted">Sin historial para el filtro actual.</div>
+                  <div className="text-sm text-muted">
+                    Sin historial para el filtro actual.
+                  </div>
                 ) : (
                   <div className="max-w-full">
-                    {/* ✅ scroll vertical cómodo dentro del modal */}
                     <div
-                      className={cn("max-h-[42vh] overflow-y-auto overscroll-contain touch-pan-y rounded-2xl")}
+                      className={cn(
+                        "max-h-[42vh] overflow-y-auto overscroll-contain touch-pan-y rounded-2xl"
+                      )}
                       style={{ WebkitOverflowScrolling: "touch" as any }}
                     >
                       <div className="space-y-3">
                         {filteredRows.map((r: any) => (
-                          <HistoryCard key={String(r?.id || `${r?.effectiveAt}-${r?.createdAt}`)} r={r} />
+                          <HistoryCard
+                            key={String(
+                              r?.id || `${r?.effectiveAt}-${r?.createdAt}`
+                            )}
+                            r={r}
+                          />
                         ))}
                       </div>
                     </div>
@@ -401,12 +493,15 @@ export default function VariantQuoteHistoryModal({
                       )}
                     >
                       <div>
-                        {filteredRows.length} registro{filteredRows.length === 1 ? "" : "s"}
+                        {filteredRows.length} registro
+                        {filteredRows.length === 1 ? "" : "s"}
                       </div>
                       <div className="min-w-0 text-right">
                         Actual:{" "}
                         <span className="text-text font-semibold tabular-nums whitespace-nowrap">
-                          {current ? `${curLabel} · ${money(curSym, current?.finalSalePrice ?? current?.price, 6)}` : "—"}
+                          {current
+                            ? `${curLabel} · ${money(curSym, currentSell, 6)}`
+                            : "—"}
                         </span>
                       </div>
                     </div>
@@ -414,7 +509,8 @@ export default function VariantQuoteHistoryModal({
                 )}
 
                 <div className="mt-3 text-[11px] text-muted">
-                  Tip: el filtro aplica por día (sin horas). Usa Vigencia y si falta, Creado.
+                  Tip: el filtro aplica por día (sin horas). Usa Vigencia y si
+                  falta, Creado.
                 </div>
               </div>
             </div>

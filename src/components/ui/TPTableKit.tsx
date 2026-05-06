@@ -30,6 +30,7 @@ import { TPSearchInput } from "./TPSearchInput";
 import { SortArrows, type SortDir } from "./TPSort";
 import { TPPagination } from "./TPPagination";
 import { usePagination, type PaginationConfig } from "../../hooks/usePagination";
+import { usePersistedTableSort } from "../../hooks/usePersistedTableSort";
 import { cn } from "./tp";
 
 /* =========================================================
@@ -63,6 +64,19 @@ export type TPSortMenuItem = {
   icon?: ReactNode;
 };
 
+/**
+ * v2: shape objeto opcional para el search integrado.
+ * Equivalente a usar las tres props sueltas (search/onSearchChange/searchPlaceholder).
+ * Si se pasa como objeto, las props sueltas se ignoran.
+ */
+export type TPSearchConfig = {
+  value: string;
+  onChange: (v: string) => void;
+  placeholder?: string;
+  /** Debounce en ms (opcional) — se propaga a TPSearchInput */
+  debounceMs?: number;
+};
+
 type Props<T> = {
   // ---- Datos ----
   rows: T[];
@@ -72,15 +86,32 @@ type Props<T> = {
   /** Clave de localStorage para persistir visibilidad. Si se omite, no persiste. */
   storageKey?: string;
 
-  // ---- Búsqueda ----
-  search?: string;
+  // ---- Búsqueda (legacy props + v2 objeto unificado) ----
+  /**
+   * - String: valor actual del buscador (requiere `onSearchChange`).
+   * - Objeto `TPSearchConfig`: shape v2 que agrupa value/onChange/placeholder/debounceMs.
+   */
+  search?: string | TPSearchConfig;
   onSearchChange?: (v: string) => void;
   searchPlaceholder?: string;
 
   // ---- Ordenamiento ----
+  /** Modo controlado: el padre maneja el sort. */
   sortKey?: string;
   sortDir?: SortDir;
   onSort?: (key: string) => void;
+  /**
+   * Modo autogestionado v2: si se pasa esta key y NO se pasa `onSort`,
+   * TPTableKit administra el sort internamente usando `usePersistedTableSort`
+   * (persistencia en localStorage con sufijo `_sort`).
+   * Si `onSort` también está presente, el modo controlado gana.
+   */
+  sortPersistKey?: string;
+  /**
+   * Sort inicial cuando se usa `sortPersistKey`. Si se omite, se toma el primer
+   * `sortKey` de las columnas definidas o un string vacío.
+   */
+  defaultSort?: { key: string; dir?: SortDir };
 
   // ---- Cabecera ----
   /** Elemento a la derecha del header (normalmente un botón "Nuevo"). */
@@ -127,11 +158,29 @@ type Props<T> = {
    * - `vis`: columnas visibles (vis[colKey] === true)
    * - `sel`: solo presente cuando selectable=true
    */
-  renderRow: (row: T, vis: Record<string, boolean>, sel?: TPRowSel) => ReactNode;
+  /**
+   * `orderedKeys`: orden real de columnas visibles (mismo que el header).
+   * Usarlo para renderizar celdas en el orden correcto cuando el usuario reordena columnas.
+   */
+  renderRow: (row: T, vis: Record<string, boolean>, sel?: TPRowSel, orderedKeys?: string[]) => ReactNode;
 
-  // ---- Estado vacío / carga ----
+  // ---- Estado vacío / carga / error ----
   emptyText?: string;
+  /** v2: ReactNode completo para el estado vacío. Tiene precedencia sobre `emptyText`. */
+  emptyState?: ReactNode;
   loading?: boolean;
+  /**
+   * v2: modo visual de loading.
+   * - "text" (default): muestra "Cargando…" como fila única (comportamiento actual).
+   * - "skeleton": muestra 5 filas con placeholders grises animados.
+   */
+  loadingMode?: "text" | "skeleton";
+  /**
+   * v2: banner de error arriba de la tabla. Si es string, se envuelve en un
+   * box rojo estándar; si es ReactNode, se renderiza tal cual.
+   * No bloquea el render de la tabla — la UI sigue visible.
+   */
+  error?: string | ReactNode;
 
   // ---- Footer / count ----
   /**
@@ -157,6 +206,14 @@ type Props<T> = {
   onRowClick?: (row: T) => void;
   /** Oculta el botón de mostrar/ocultar columnas. Default: false */
   hideColumnPicker?: boolean;
+  /**
+   * v2: alias explícito para mostrar/ocultar el column picker.
+   * - `true`   → muestra (default, si `hideColumnPicker` no está seteado).
+   * - `false`  → oculta (equivalente a `hideColumnPicker=true`).
+   * - omitido  → respeta `hideColumnPicker` (comportamiento actual).
+   * `hideColumnPicker` tiene precedencia para conservar compatibilidad.
+   */
+  columnPicker?: boolean;
 };
 
 /* =========================================================
@@ -210,6 +267,8 @@ export function TPTableKit<T>({
   sortKey,
   sortDir = "asc",
   onSort,
+  sortPersistKey,
+  defaultSort,
   actions,
   headerLeft,
   belowHeader,
@@ -223,14 +282,51 @@ export function TPTableKit<T>({
   onClearSelection,
   renderRow,
   emptyText = "No hay resultados.",
+  emptyState,
   loading = false,
+  loadingMode = "text",
+  error,
   countLabel,
   pagination,
   responsive = "scroll",
   className,
   onRowClick,
   hideColumnPicker = false,
+  columnPicker,
 }: Props<T>) {
+  // ── Normalización del search (v2 objeto + legacy props sueltas) ──────────
+  // Cuando `search` viene como objeto, gana sobre los props sueltos.
+  const searchConfig: TPSearchConfig | null = useMemo(() => {
+    if (search != null && typeof search === "object") return search;
+    if (typeof search === "string" && onSearchChange) {
+      return { value: search, onChange: onSearchChange, placeholder: searchPlaceholder };
+    }
+    return null;
+  }, [search, onSearchChange, searchPlaceholder]);
+
+  // ── Modo autogestionado del sort (v2) ────────────────────────────────────
+  // Se activa SOLO cuando:
+  //   · se pasó sortPersistKey
+  //   · el caller NO pasó onSort (si lo pasó, gana el modo controlado)
+  const useInternalSort = !onSort && !!sortPersistKey;
+  const fallbackSortKey = useMemo(() => {
+    if (defaultSort?.key) return defaultSort.key;
+    const firstSortable = columns.find((c) => c.sortKey);
+    return firstSortable?.sortKey ?? "";
+  }, [columns, defaultSort?.key]);
+  const fallbackSortDir: SortDir = defaultSort?.dir ?? sortDir ?? "asc";
+  const internalSort = usePersistedTableSort({
+    storageKey: useInternalSort ? sortPersistKey : undefined,
+    defaultKey: fallbackSortKey,
+    defaultDir: fallbackSortDir,
+  });
+
+  // Valores efectivos de sort que el render usa (prioridad: controlado → hook)
+  const effSortKey: string = useInternalSort ? internalSort.sortKey : (sortKey ?? "");
+  const effSortDir: SortDir = useInternalSort ? internalSort.sortDir : sortDir;
+  const effOnSort: ((key: string) => void) | undefined = useInternalSort
+    ? internalSort.toggleSort
+    : onSort;
   // ── Visibilidad de columnas ──────────────────────────────────────────────
   const [vis, setVis] = useState<Record<string, boolean>>(() =>
     loadVis(storageKey, columns)
@@ -384,13 +480,18 @@ export function TPTableKit<T>({
 
   const hasBuiltInMenu = builtInItems.length > 0;
 
+  // ── Column picker: `hideColumnPicker` tiene precedencia para no romper
+  // pantallas que hoy lo ocultan vía ese prop. `columnPicker` es alias v2
+  // explícito (positivo): solo oculta si se pasa explícitamente `false`.
+  const showColumnPicker = !hideColumnPicker && columnPicker !== false;
+
   return (
     <TPTableWrap className={className}>
       {/* ── Header principal ── */}
       <TPTableHeader
         left={
           <div className="flex items-center gap-2">
-            {!hideColumnPicker && pickerCols.length > 0 && (
+            {showColumnPicker && pickerCols.length > 0 && (
               <TPColumnPicker
                 columns={pickerCols}
                 visibility={vis}
@@ -399,11 +500,12 @@ export function TPTableKit<T>({
                 onOrderChange={handleOrderChange}
               />
             )}
-            {onSearchChange && (
+            {searchConfig && (
               <TPSearchInput
-                value={search ?? ""}
-                onChange={onSearchChange}
-                placeholder={searchPlaceholder}
+                value={searchConfig.value}
+                onChange={searchConfig.onChange}
+                placeholder={searchConfig.placeholder ?? searchPlaceholder}
+                debounceMs={searchConfig.debounceMs}
                 className="w-full md:w-64"
               />
             )}
@@ -419,6 +521,13 @@ export function TPTableKit<T>({
           </div>
         }
       />
+
+      {/* ── Banner de error (opcional, no bloquea el render de la tabla) ── */}
+      {error != null && error !== "" && (
+        <div className="border-b border-rose-500/30 bg-rose-500/10 px-4 py-2 text-sm text-rose-600 dark:text-rose-400">
+          {typeof error === "string" ? error : error}
+        </div>
+      )}
 
       {belowHeader}
 
@@ -463,14 +572,14 @@ export function TPTableKit<T>({
                   const thClass = col.align === "right" ? "text-right" : undefined;
                   return (
                     <TPTh key={col.key} style={thStyle} className={thClass}>
-                      {col.sortKey && onSort ? (
+                      {col.sortKey && effOnSort ? (
                         <button
                           type="button"
-                          onClick={() => onSort(col.sortKey!)}
+                          onClick={() => effOnSort(col.sortKey!)}
                           className="inline-flex items-center gap-1"
                         >
                           {col.label}
-                          <SortArrows active={sortKey === col.sortKey} dir={sortDir} />
+                          <SortArrows active={effSortKey === col.sortKey} dir={effSortDir} />
                         </button>
                       ) : (
                         col.label
@@ -482,10 +591,28 @@ export function TPTableKit<T>({
             </TPThead>
 
             <TPTbody>
-              {loading ? (
+              {loading && loadingMode === "skeleton" ? (
+                // Skeleton: 5 filas con placeholders grises animados.
+                // No bloquea layout: mantiene el colSpan para preservar ancho de la tabla.
+                Array.from({ length: 5 }).map((_, i) => (
+                  <tr key={`sk-${i}`} aria-hidden>
+                    <td colSpan={colSpan} className="px-5 py-3">
+                      <div className="h-4 w-full rounded bg-surface2/60 animate-pulse" />
+                    </td>
+                  </tr>
+                ))
+              ) : loading ? (
                 <TPEmptyRow colSpan={colSpan} text="Cargando…" />
               ) : pageRows.length === 0 ? (
-                <TPEmptyRow colSpan={colSpan} text={emptyText} />
+                emptyState != null ? (
+                  <tr>
+                    <td colSpan={colSpan} className="px-5 py-10 text-center">
+                      {emptyState}
+                    </td>
+                  </tr>
+                ) : (
+                  <TPEmptyRow colSpan={colSpan} text={emptyText} />
+                )
               ) : (
                 pageRows.map((row) => {
                   const id = selectable && getRowId ? getRowId(row) : undefined;
@@ -493,7 +620,8 @@ export function TPTableKit<T>({
                     selectable && id !== undefined
                       ? { checked: selectedIds.has(id), onCheck: () => toggleRow(id) }
                       : undefined;
-                  const element = renderRow(row, vis, sel);
+                  const orderedKeys = visibleCols.map((c) => c.key);
+                  const element = renderRow(row, vis, sel, orderedKeys);
                   if (onRowClick && isValidElement(element)) {
                     return cloneElement(element as React.ReactElement<any>, {
                       onClick: (e: React.MouseEvent) => {

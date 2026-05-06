@@ -1,7 +1,7 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
-  Check, X, User, Building2, ChevronDown,
+  Check, X, User, Building2, ChevronDown, AlertTriangle,
 } from "lucide-react";
 import { TabAddresses } from "../../entity-detail/tabs/TabAddresses";
 import { TabContacts } from "../../entity-detail/tabs/TabContacts";
@@ -22,6 +22,9 @@ import TPAttachmentList from "../../../components/ui/TPAttachmentList";
 import { cn } from "../../../components/ui/tp";
 import { useCatalog } from "../../../hooks/useCatalog";
 import { toast } from "../../../lib/toast";
+import { useFieldFormats } from "../../../context/FieldFormatsContext";
+import { PHONE_FORMAT_PLACEHOLDER, DOCUMENT_FORMAT_PLACEHOLDER } from "../../../lib/format";
+import { usePhoneInput, useDocInput } from "../../../hooks/useFormattedInput";
 import {
   commercialEntitiesApi,
   commercialEntitiesExtApi,
@@ -39,6 +42,7 @@ import {
 } from "../../../services/commercial-entities";
 import { taxesApi, type TaxRow } from "../../../services/taxes";
 import { priceListsApi, type PriceListRow } from "../../../services/price-lists";
+import { sellersApi, type SellerRow } from "../../../services/sellers";
 import { MermaBlock } from "./MermaBlock";
 import { listCurrencies, type CurrencyRow } from "../../../services/valuation";
 import type { MermaOverrideDraft } from "./clientes.types";
@@ -71,6 +75,7 @@ type Draft = {
   creditLimitSupplier: number | null;
   priceListId: string | null;
   currencyId: string | null;
+  sellerId: string | null;
   taxExempt: boolean;
   taxApplyOnOverride: string;
   notes: string;
@@ -98,7 +103,8 @@ function emptyDraft(isClientCtx: boolean, isSupplierCtx: boolean): Draft {
     balanceType: "UNIFIED",
     commercialApplyOn: "", commercialRuleType: "", commercialValueType: "", commercialValue: null,
     creditLimitClient: null, creditLimitSupplier: null,
-    priceListId: null, currencyId: null, taxExempt: false, taxApplyOnOverride: "", notes: "",
+    priceListId: null, currencyId: null, sellerId: null,
+    taxExempt: false, taxApplyOnOverride: "", notes: "",
   };
 }
 
@@ -128,6 +134,7 @@ function entityToDraft(e: EntityDetailType): Draft {
     creditLimitSupplier: e.creditLimitSupplier != null ? parseFloat(e.creditLimitSupplier) : null,
     priceListId: e.priceListId,
     currencyId: e.currencyId,
+    sellerId: (e as any).sellerId ?? null,
     taxExempt: e.taxExempt ?? false,
     taxApplyOnOverride: e.taxApplyOnOverride ?? "",
     notes: e.notes,
@@ -177,6 +184,7 @@ export default function EntityEditModal({
   const navigate = useNavigate();
   const isRoleFixed = isClientContext || isSupplierContext;
   const comboMode = mode === "CREATE" ? "create" : "edit";
+  const { phoneFormat, documentFormat } = useFieldFormats();
 
   const [loading, setLoading] = useState(() => open && mode === "EDIT" && !!entityId);
   const [busy, setBusy] = useState(false);
@@ -185,6 +193,8 @@ export default function EntityEditModal({
   const [showUnsavedDialog, setShowUnsavedDialog] = useState(false);
 
   const [draft, setDraft] = useState<Draft>(() => emptyDraft(isClientContext, isSupplierContext));
+  const ph  = usePhoneInput(draft.phoneNumber,    (v) => set("phoneNumber", v),    phoneFormat);
+  const doc = useDocInput(draft.documentNumber, (v) => set("documentNumber", v), documentFormat);
   const [entity, setEntity] = useState<EntityDetailType | null>(null);
 
   // Avatar
@@ -240,6 +250,7 @@ export default function EntityEditModal({
 
   // Lists
   const [priceLists, setPriceLists] = useState<PriceListRow[]>([]);
+  const [sellers, setSellers] = useState<SellerRow[]>([]);
   const [currencies, setCurrencies] = useState<CurrencyRow[]>([]);
 
   // ── Reset + load ────────────────────────────────────────────────────────────
@@ -296,6 +307,7 @@ export default function EntityEditModal({
     }
 
     priceListsApi.list().then((rows) => setPriceLists(rows.filter((p) => p.isActive))).catch(() => {});
+    sellersApi.list().then((rows) => setSellers(rows.filter((s) => s.isActive && !s.deletedAt))).catch(() => {});
     taxesApi.list().then((rows) => setAvailableTaxes(rows.filter((t) => t.isActive))).catch(() => {});
     listCurrencies().then((resp: any) => {
       const list: CurrencyRow[] = resp?.rows ?? resp ?? [];
@@ -303,6 +315,31 @@ export default function EntityEditModal({
     }).catch(() => {});
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, mode, entityId]);
+
+  // ── Precarga del vendedor favorito en CREATE ───────────────────────────────
+  // Al abrir el modal en modo CREATE, si la lista de sellers ya cargó (o
+  // cuando termina de cargar), prellenar `sellerId` con el favorito. El ref
+  // evita que vuelva a aplicarse si el usuario eligió "— Sin vendedor —"
+  // manualmente. Se resetea al cerrar/reabrir el modal.
+  const sellerAutoFilledRef = useRef(false);
+  useEffect(() => {
+    if (!open) {
+      sellerAutoFilledRef.current = false;
+      return;
+    }
+    if (mode !== "CREATE") return;
+    if (sellers.length === 0) return;
+    if (sellerAutoFilledRef.current) return;
+    if (draft.sellerId) return;
+    const fav = sellers.find((s) => s.isFavorite);
+    if (fav) {
+      sellerAutoFilledRef.current = true;
+      // Aplicamos el default sin marcar `draftChanged` — no es una edición
+      // del usuario, así que cerrar el modal sin tocar nada no debe pedir
+      // confirmación de cambios sin guardar.
+      setDraft((prev) => ({ ...prev, sellerId: fav.id }));
+    }
+  }, [open, mode, sellers, draft.sellerId]);
 
   // ── State helpers ───────────────────────────────────────────────────────────
   function set<K extends keyof Draft>(key: K, value: Draft[K]) {
@@ -372,11 +409,15 @@ export default function EntityEditModal({
     setAvatarPreview(URL.createObjectURL(file));
     setAvatarFile(file);
     if (mode === "EDIT" && entity) {
+      // EDIT: se sube en el momento — no es cambio "sin guardar".
       setBusyAvatar(true);
       commercialEntitiesApi.avatar.update(entity.id, file)
         .then((r) => setEntity((prev) => prev ? { ...prev, avatarUrl: r.avatarUrl } : prev))
         .catch((e: any) => toast.error(e?.message || "Error al subir imagen."))
         .finally(() => setBusyAvatar(false));
+    } else {
+      // CREATE: queda staged hasta el save → es un cambio sin guardar.
+      setDraftChanged(true);
     }
   }
 
@@ -384,6 +425,7 @@ export default function EntityEditModal({
     if (avatarPreview.startsWith("blob:")) URL.revokeObjectURL(avatarPreview);
     setAvatarPreview("");
     setAvatarFile(null);
+    if (mode === "CREATE") setDraftChanged(true);
   }
 
   // ── Attachments (EDIT) ──────────────────────────────────────────────────────
@@ -452,6 +494,7 @@ export default function EntityEditModal({
       balanceType: d.balanceType,
       priceListId: d.priceListId || null,
       currencyId: d.currencyId || null,
+      sellerId: d.sellerId || null,
       commercialApplyOn: (d.commercialApplyOn || null) as EntityPayload["commercialApplyOn"],
       commercialRuleType: (d.commercialRuleType || null) as EntityPayload["commercialRuleType"],
       commercialValueType: (d.commercialValueType || null) as EntityPayload["commercialValueType"],
@@ -571,7 +614,24 @@ export default function EntityEditModal({
 
   // ── Render ──────────────────────────────────────────────────────────────────
   return (
-    <Modal open={open} maxWidth="6xl" title={title} onClose={handleClose} busy={busy} footer={null as any}>
+    <Modal
+      open={open}
+      maxWidth="6xl"
+      title={title}
+      onClose={handleClose}
+      busy={busy}
+      footer={null as any}
+      resizable
+      maximizable
+      maximizedMode="embedded"
+      modalKey={
+        isClientContext
+          ? "clientes-editor"
+          : isSupplierContext
+            ? "proveedores-editor"
+            : "entidades-editor"
+      }
+    >
       {loading ? (
         <div className="py-12 text-center text-sm text-muted">Cargando…</div>
       ) : (
@@ -723,7 +783,15 @@ export default function EntityEditModal({
                 />
               </div>
               <div>
-                <TPInput label="Nro. documento" value={draft.documentNumber} onChange={(v) => set("documentNumber", v)} disabled={busy} placeholder="20-12345678-9" />
+                <TPInput
+                  label="Nro. documento"
+                  value={doc.displayValue}
+                  onChange={doc.handleChange}
+                  onKeyDown={doc.handleKeyDown}
+                  inputRef={doc.inputRef}
+                  disabled={busy}
+                  placeholder={DOCUMENT_FORMAT_PLACEHOLDER[documentFormat] ?? "20-12345678-9"}
+                />
               </div>
               <div>
                 <TPComboCreatable
@@ -774,10 +842,12 @@ export default function EntityEditModal({
                 <div className="flex-1">
                   <TPInput
                     label="Teléfono"
-                    value={draft.phoneNumber}
-                    onChange={(v) => set("phoneNumber", v)}
+                    value={ph.displayValue}
+                    onChange={ph.handleChange}
+                    onKeyDown={ph.handleKeyDown}
+                    inputRef={ph.inputRef}
                     disabled={busy}
-                    placeholder="11 1234 5678"
+                    placeholder={PHONE_FORMAT_PLACEHOLDER[phoneFormat] ?? "11 1234-5678"}
                   />
                 </div>
               </div>
@@ -940,7 +1010,7 @@ export default function EntityEditModal({
                                   Cancelar
                                 </TPButton>
                                 <TPButton variant="primary" onClick={handleSaveOverride} disabled={busyOverride || !overrideFormTaxId || !overrideFormMode} loading={busyOverride} className="text-xs py-1 px-2 h-auto">
-                                  <Check size={12} /> Guardar
+                                  Guardar
                                 </TPButton>
                               </div>
                             </div>
@@ -964,7 +1034,7 @@ export default function EntityEditModal({
               {mode === "CREATE" ? (
                 <TabAddresses
                   offlineItems={offlineAddresses}
-                  onOfflineItemsChange={setOfflineAddresses}
+                  onOfflineItemsChange={(items) => { setOfflineAddresses(items); setDraftChanged(true); }}
                   contacts={offlineContacts}
                   entityName={draft.entityType === "COMPANY" ? draft.tradeName : [draft.firstName, draft.lastName].filter(Boolean).join(" ")}
                   hideCountLabel
@@ -989,7 +1059,7 @@ export default function EntityEditModal({
               {mode === "CREATE" ? (
                 <TabContacts
                   offlineItems={offlineContacts}
-                  onOfflineItemsChange={setOfflineContacts}
+                  onOfflineItemsChange={(items) => { setOfflineContacts(items); setDraftChanged(true); }}
                   hideCountLabel
                 />
               ) : (
@@ -1054,22 +1124,48 @@ export default function EntityEditModal({
                 </TPField>
               </div>
 
-              {/* Lista de precios */}
-              {showPriceList && (
-                <TPField label="Lista de precios" hint="Si no se asigna, se usa la lista favorita o general del sistema.">
+              {/* Línea 2 — Lista de precios + Vendedor (2 columnas en desktop,
+                  apilados en mobile). Si la entidad no tiene rol cliente, el
+                  campo "Lista de precios" se oculta y "Vendedor" toma el
+                  ancho completo. */}
+              <div className={cn("grid grid-cols-1 gap-3", showPriceList && "md:grid-cols-2")}>
+                {showPriceList && (
+                  <TPField label="Lista de precios" hint="Si no se asigna, se usa la lista favorita o general del sistema.">
+                    <TPComboFixed
+                      value={draft.priceListId ?? ""}
+                      onChange={(v) => set("priceListId", v || null)}
+                      disabled={busy}
+                      searchable
+                      searchPlaceholder="Buscar lista…"
+                      options={[
+                        { value: "", label: "— Heredar del sistema —" },
+                        ...priceLists.map((p) => ({ value: p.id, label: p.name })),
+                      ]}
+                    />
+                  </TPField>
+                )}
+
+                {/* Vendedor por defecto — aplica al cliente y se usa en Factura
+                    de Venta. Si está vacío, la factura usa el vendedor favorito. */}
+                <TPField label="Vendedor" hint="Si no se asigna, se usa el vendedor favorito del sistema.">
                   <TPComboFixed
-                    value={draft.priceListId ?? ""}
-                    onChange={(v) => set("priceListId", v || null)}
+                    value={draft.sellerId ?? ""}
+                    onChange={(v) => set("sellerId", v || null)}
                     disabled={busy}
                     searchable
-                    searchPlaceholder="Buscar lista…"
+                    searchPlaceholder="Buscar vendedor…"
                     options={[
-                      { value: "", label: "— Heredar del sistema —" },
-                      ...priceLists.map((p) => ({ value: p.id, label: p.name })),
+                      { value: "", label: "— Sin vendedor —" },
+                      ...sellers.map((s) => ({
+                        value:    s.id,
+                        label:    s.displayName || `${s.firstName} ${s.lastName}`.trim(),
+                        sublabel: s.email || undefined,
+                        isFavorite: s.isFavorite,
+                      })),
                     ]}
                   />
                 </TPField>
-              )}
+              </div>
 
               {/* Ajuste comercial | Tipo de valor | Valor */}
               <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
@@ -1188,7 +1284,7 @@ export default function EntityEditModal({
                   disabled={busy || busyUpload}
                   loading={busyUpload}
                   onFiles={mode === "CREATE"
-                    ? (files) => setStagedFiles((prev) => [...prev, ...files])
+                    ? (files) => { setStagedFiles((prev) => [...prev, ...files]); setDraftChanged(true); }
                     : handleUploadAttachments
                   }
                 />
@@ -1222,6 +1318,7 @@ export default function EntityEditModal({
                       ? (item) => {
                           const idx = parseInt(item.id.replace("staged-", ""), 10);
                           setStagedFiles((prev) => prev.filter((_, i) => i !== idx));
+                          setDraftChanged(true);
                         }
                       : handleDeleteAttachment
                   }
@@ -1252,10 +1349,11 @@ export default function EntityEditModal({
       <ConfirmDeleteDialog
         open={showUnsavedDialog}
         title="Cambios sin guardar"
-        description="Tenés cambios sin guardar. ¿Querés descartarlos?"
-        confirmText="Descartar cambios"
-        cancelText="Seguir editando"
+        description="Tenés cambios sin guardar. ¿Querés salir igualmente?"
+        confirmText="Salir sin guardar"
+        cancelText="Cancelar"
         busy={false}
+        icon={<AlertTriangle className="h-5 w-5 text-amber-500" />}
         onClose={() => setShowUnsavedDialog(false)}
         onConfirm={() => { setShowUnsavedDialog(false); onClose(); }}
       />

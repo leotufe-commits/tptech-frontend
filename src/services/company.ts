@@ -2,6 +2,24 @@
 import { apiFetch } from "../lib/api";
 
 // ---------------------------------------------------------------------------
+// Perfil básico de empresa (nombre + logo)
+// ---------------------------------------------------------------------------
+
+export type CompanyProfile = {
+  name:     string;
+  logoUrl:  string;
+};
+
+export async function fetchCompanyProfile(): Promise<CompanyProfile> {
+  const data = await apiFetch<{ jewelry: any }>("/company/me", { method: "GET" });
+  const j = data.jewelry ?? {};
+  return {
+    name:    j.name ?? "",
+    logoUrl: j.logoUrl ?? "",
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Política de alertas de precio
 // ---------------------------------------------------------------------------
 
@@ -37,6 +55,49 @@ export async function updatePricingPolicyConfig(patch: Partial<PricingPolicyConf
   };
 }
 
+// ---------------------------------------------------------------------------
+// Redondeo a nivel comprobante (modo UNIFIED)
+// ---------------------------------------------------------------------------
+
+export type DocumentRoundingMode      =
+  | "NONE" | "INTEGER" | "DECIMAL_1" | "DECIMAL_2" | "TEN" | "HUNDRED";
+export type DocumentRoundingDirection = "NEAREST" | "UP" | "DOWN";
+
+export type DocumentRoundingConfig = {
+  /** Activa la política de redondeo a nivel comprobante. */
+  documentRoundingEnabled:   boolean;
+  /** Granularidad del redondeo (al entero, decena, centena, etc.). */
+  documentRoundingMode:      DocumentRoundingMode;
+  /** Dirección del redondeo. */
+  documentRoundingDirection: DocumentRoundingDirection;
+};
+
+const DOC_ROUNDING_DEFAULTS: DocumentRoundingConfig = {
+  documentRoundingEnabled:   false,
+  documentRoundingMode:      "NONE",
+  documentRoundingDirection: "NEAREST",
+};
+
+function toDocumentRoundingConfig(j: any): DocumentRoundingConfig {
+  return {
+    documentRoundingEnabled:   j?.documentRoundingEnabled   ?? false,
+    documentRoundingMode:      (j?.documentRoundingMode      ?? "NONE")    as DocumentRoundingMode,
+    documentRoundingDirection: (j?.documentRoundingDirection ?? "NEAREST") as DocumentRoundingDirection,
+  };
+}
+
+export async function fetchDocumentRoundingConfig(): Promise<DocumentRoundingConfig> {
+  const data = await apiFetch<{ jewelry: any }>("/company/me", { method: "GET" });
+  return toDocumentRoundingConfig(data.jewelry ?? DOC_ROUNDING_DEFAULTS);
+}
+
+export async function updateDocumentRoundingConfig(
+  patch: Partial<DocumentRoundingConfig>,
+): Promise<DocumentRoundingConfig> {
+  const data = await apiFetch<{ jewelry: any }>("/company/me", { method: "PATCH", body: patch });
+  return toDocumentRoundingConfig(data.jewelry);
+}
+
 export type CompanySecuritySettings = {
   quickSwitchEnabled: boolean;
   pinLockEnabled: boolean;
@@ -63,4 +124,33 @@ export async function updateCompanySecuritySettings(
     }
   );
   return data;
+}
+
+export async function toggleJewelryQuickSwitch(enabled: boolean): Promise<void> {
+  await apiFetch("/auth/me/jewelry/quick-switch", { method: "POST", body: { enabled } });
+}
+
+// ---------------------------------------------------------------------------
+// Formato de campos
+// ---------------------------------------------------------------------------
+
+export type FieldFormatsConfig = {
+  phoneFormat:    string;
+  documentFormat: string;
+};
+
+export async function fetchFieldFormats(): Promise<FieldFormatsConfig> {
+  const data = await apiFetch<{ jewelry: any }>("/company/me", { method: "GET" });
+  return {
+    phoneFormat:    data.jewelry.phoneFormat    ?? "raw",
+    documentFormat: data.jewelry.documentFormat ?? "raw",
+  };
+}
+
+export async function updateFieldFormats(patch: Partial<FieldFormatsConfig>): Promise<FieldFormatsConfig> {
+  const data = await apiFetch<{ jewelry: any }>("/company/me", { method: "PATCH", body: patch });
+  return {
+    phoneFormat:    data.jewelry.phoneFormat    ?? "raw",
+    documentFormat: data.jewelry.documentFormat ?? "raw",
+  };
 }

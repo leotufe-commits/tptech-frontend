@@ -67,7 +67,7 @@ export function TPRowActions({
   className?: string;
 }) {
   return (
-    <div data-tp-actions className={cn("flex items-center justify-end gap-1.5 flex-nowrap", className)}>
+    <div data-tp-actions onClick={(e) => e.stopPropagation()} className={cn("flex items-center justify-end gap-1.5 flex-nowrap", className)}>
       {extra}
 
       {onFavorite && (

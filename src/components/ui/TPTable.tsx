@@ -56,14 +56,29 @@ export function TPTr({
   children,
   className,
   onClick,
+  draggable,
+  onDragStart,
+  onDragOver,
+  onDragEnd,
+  onDragLeave,
 }: {
   children: ReactNode;
   className?: string;
   onClick?: React.MouseEventHandler<HTMLTableRowElement>;
+  draggable?: boolean;
+  onDragStart?: React.DragEventHandler<HTMLTableRowElement>;
+  onDragOver?: React.DragEventHandler<HTMLTableRowElement>;
+  onDragEnd?: React.DragEventHandler<HTMLTableRowElement>;
+  onDragLeave?: React.DragEventHandler<HTMLTableRowElement>;
 }) {
   return (
     <tr
       onClick={onClick}
+      draggable={draggable}
+      onDragStart={onDragStart}
+      onDragOver={onDragOver}
+      onDragEnd={onDragEnd}
+      onDragLeave={onDragLeave}
       className={cn(
         "transition hover:bg-surface2/40",
         onClick && "cursor-pointer hover:bg-primary/5 active:bg-primary/10",
@@ -259,17 +274,22 @@ export function TPTableElBase({
   children,
   className,
   responsive = "scroll",
+  tableFixed = false,
 }: {
   children: ReactNode;
   className?: string;
   responsive?: ResponsiveMode;
+  /** Activa table-layout:fixed para respetar widths de columna estrictamente. */
+  tableFixed?: boolean;
 }) {
   const isStack = responsive === "stack";
 
   return (
     <table
+      style={tableFixed ? { tableLayout: "fixed" } : undefined}
       className={cn(
         "w-full text-sm",
+        tableFixed && "[&_td]:overflow-hidden",
 
         !isStack && "min-w-[720px] md:min-w-0",
 
@@ -350,6 +370,10 @@ type TPTablePaginatedProps<T> = {
   belowHeader?: ReactNode;
   responsive?: "scroll" | "stack";
   className?: string;
+  /** Fila(s) de totales en <tfoot>, alineadas con las columnas. */
+  renderFooter?: () => ReactNode;
+  /** Oculta el TPTableFooter inferior (útil cuando el resumen ya está en renderFooter). */
+  hideFooter?: boolean;
 };
 
 export function TPTablePaginated<T>({
@@ -366,6 +390,8 @@ export function TPTablePaginated<T>({
   belowHeader,
   responsive = "scroll",
   className,
+  renderFooter,
+  hideFooter = false,
 }: TPTablePaginatedProps<T>) {
   const pag = usePagination(pagination);
 
@@ -421,11 +447,14 @@ export function TPTablePaginated<T>({
                 pageRows.map((row, i) => renderRow(row, i))
               )}
             </TPTbody>
+            {renderFooter && !loading && pageRows.length > 0 && (
+              <tfoot>{renderFooter()}</tfoot>
+            )}
           </TPTableElBase>
         </TPTableXScroll>
       </TPTable>
 
-      {pag.enabled ? (
+      {!hideFooter && (pag.enabled ? (
         <TPPagination
           page={currentPage}
           pageSize={pag.pageSize}
@@ -439,7 +468,7 @@ export function TPTablePaginated<T>({
         <TPTableFooter>
           <span>{countStr}</span>
         </TPTableFooter>
-      )}
+      ))}
     </TPTableWrap>
   );
 }

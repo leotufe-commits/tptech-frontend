@@ -33,7 +33,7 @@ import {
 
 import { TPTECH_VALUATION_CHANGED, type ValuationChangedDetail } from "../../../services/valuation";
 
-import { fmtMoneySmart, fmtNumber2, fmtNumberSmart, fmtPurity3, purityKey2 } from "../../../lib/format";
+import { fmtFactor, fmtMoneySmart, fmtNumber2, fmtNumberSmart, fmtPurity3, purityKey2 } from "../../../lib/format";
 
 import {
   type VarSortKey,
@@ -77,6 +77,7 @@ const REF_COLUMNS: ColDef<RefSortKey>[] = [
 
 const VAR_COL_LS_KEY = "tptech_col_variants";
 const VAR_COL_ORDER_LS_KEY = "tptech_col_order_variants";
+const VAR_ROW_ORDER_LS_KEY_PREFIX = "tptech_var_row_order_";
 
 
 export type MetalsAndVariantsPanelHandle = {
@@ -180,6 +181,10 @@ const MetalsAndVariantsPanel = forwardRef(function MetalsAndVariantsPanel({
 
   const [varSortKey, setVarSortKey] = useState<VarSortKey>("name");
   const [varSortDir, setVarSortDir] = useState<VarSortDir>("asc");
+
+  const [varDragIdx, setVarDragIdx] = useState<number | null>(null);
+  const [varOverIdx, setVarOverIdx] = useState<number | null>(null);
+  const [varRowOrder, setVarRowOrder] = useState<string[]>([]);
 
   // ── Visibilidad de columnas de variantes ──
   const [varColVis, setVarColVis] = useState<Record<string, boolean>>(() => {
@@ -314,6 +319,14 @@ const MetalsAndVariantsPanel = forwardRef(function MetalsAndVariantsPanel({
   }, [getVariants, latestQVar, latestSelectedMetalId]);
 
   useEffect(() => {
+    if (!selectedMetalId) { setVarRowOrder([]); return; }
+    try {
+      const saved = localStorage.getItem(VAR_ROW_ORDER_LS_KEY_PREFIX + selectedMetalId);
+      setVarRowOrder(saved ? JSON.parse(saved) : []);
+    } catch { setVarRowOrder([]); }
+  }, [selectedMetalId]);
+
+  useEffect(() => {
     void loadVariants();
   }, [loadVariants, selectedMetalId, qVar]);
 
@@ -430,6 +443,10 @@ const MetalsAndVariantsPanel = forwardRef(function MetalsAndVariantsPanel({
      Variant sorting helpers
   ========================= */
   function toggleVarSort(nextKey: VarSortKey) {
+    if (selectedMetalId) {
+      setVarRowOrder([]);
+      try { localStorage.removeItem(VAR_ROW_ORDER_LS_KEY_PREFIX + selectedMetalId); } catch {}
+    }
     if (varSortKey === nextKey) {
       setVarSortDir((d) => (d === "asc" ? "desc" : "asc"));
       return;
@@ -478,8 +495,18 @@ const MetalsAndVariantsPanel = forwardRef(function MetalsAndVariantsPanel({
 
   const variantsList = useMemo(() => {
     const rows = [...(variants || [])];
-    const dir = varSortDir === "asc" ? 1 : -1;
 
+    if (varRowOrder.length > 0) {
+      const orderMap = new Map(varRowOrder.map((id, i) => [id, i]));
+      rows.sort((a: any, b: any) => {
+        const ai = orderMap.has(a.id) ? orderMap.get(a.id)! : varRowOrder.length;
+        const bi = orderMap.has(b.id) ? orderMap.get(b.id)! : varRowOrder.length;
+        return ai - bi;
+      });
+      return rows;
+    }
+
+    const dir = varSortDir === "asc" ? 1 : -1;
     rows.sort((a: any, b: any) => {
       if (varSortKey === "name") return dir * String(a.name || "").localeCompare(String(b.name || ""));
       if (varSortKey === "purity") return dir * (purityKey2(a.purity) - purityKey2(b.purity));
@@ -489,10 +516,9 @@ const MetalsAndVariantsPanel = forwardRef(function MetalsAndVariantsPanel({
       const bb = b.isActive !== false ? 1 : 0;
       return dir * (aa - bb);
     });
-
     return rows;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [variants, varSortKey, varSortDir, selectedMetalId]);
+  }, [variants, varSortKey, varSortDir, selectedMetalId, varRowOrder]);
 
   async function onToggleVariant(row: VariantRow) {
     const next = !(row as any).isActive;
@@ -508,6 +534,18 @@ const MetalsAndVariantsPanel = forwardRef(function MetalsAndVariantsPanel({
     return r;
   }
 
+
+  function onVarDrop(fromIdx: number, toIdx: number) {
+    if (fromIdx === toIdx) return;
+    const next = [...variantsList];
+    const [moved] = next.splice(fromIdx, 1);
+    next.splice(toIdx, 0, moved);
+    const newOrder = next.map((v: any) => v.id);
+    setVarRowOrder(newOrder);
+    if (selectedMetalId) {
+      try { localStorage.setItem(VAR_ROW_ORDER_LS_KEY_PREFIX + selectedMetalId, JSON.stringify(newOrder)); } catch {}
+    }
+  }
 
   async function onMetalDrop(fromIdx: number, toIdx: number) {
     if (!onMoveMetal || fromIdx === toIdx) return;
@@ -907,6 +945,7 @@ const MetalsAndVariantsPanel = forwardRef(function MetalsAndVariantsPanel({
                     <TPTableElBase responsive="stack">
                       <TPThead>
                         <tr>
+                          <TPTh style={{ width: "36px" }}>{null}</TPTh>
                           {visibleVarCols.map((col) => (
                             <TPTh
                               key={col.key}
@@ -938,7 +977,7 @@ const MetalsAndVariantsPanel = forwardRef(function MetalsAndVariantsPanel({
                         ) : variantsList.length === 0 ? (
                           <TPEmptyRow colSpan={varColSpan} text="No hay variantes para este metal." />
                         ) : (
-                          variantsList.map((v: any) => {
+                          variantsList.map((v: any, idx: number) => {
                             const isActive = v.isActive !== false;
                             const isFav = !!v.isFavorite;
                             const lockActions = saving || variantsLoading;
@@ -953,9 +992,33 @@ const MetalsAndVariantsPanel = forwardRef(function MetalsAndVariantsPanel({
                             const sf = toNum(v.saleFactor, 1);
 
                             const leyTxt = leyOf(v.purity);
+                            const isDraggingThis = varDragIdx === idx;
+                            const isOverThis = varOverIdx === idx && varDragIdx !== null && varDragIdx !== idx;
 
                             return (
-                              <TPTr key={v.id} className={!isActive ? "opacity-60" : undefined} onClick={onOpenVariantView ? () => onOpenVariantView(v) : undefined}>
+                              <TPTr
+                                key={v.id}
+                                draggable
+                                onDragStart={() => setVarDragIdx(idx)}
+                                onDragOver={(e) => { e.preventDefault(); setVarOverIdx(idx); }}
+                                onDragEnd={() => {
+                                  if (varDragIdx !== null && varOverIdx !== null && varDragIdx !== varOverIdx) {
+                                    onVarDrop(varDragIdx, varOverIdx);
+                                  }
+                                  setVarDragIdx(null);
+                                  setVarOverIdx(null);
+                                }}
+                                onDragLeave={() => setVarOverIdx(null)}
+                                className={cn(
+                                  !isActive && "opacity-60",
+                                  isDraggingThis && "opacity-40",
+                                  isOverThis && "ring-1 ring-inset ring-primary/40 bg-primary/5"
+                                )}
+                                onClick={onOpenVariantView ? () => onOpenVariantView(v) : undefined}
+                              >
+                                <TPTd key="drag" className="px-2 w-9" onClick={(e) => e.stopPropagation()}>
+                                  <GripVertical size={14} className="text-muted opacity-40 hover:opacity-80 mx-auto cursor-grab active:cursor-grabbing" />
+                                </TPTd>
                                 {visibleVarCols.map((col) => {
                                   switch (col.key) {
                                     case "name":
@@ -965,8 +1028,13 @@ const MetalsAndVariantsPanel = forwardRef(function MetalsAndVariantsPanel({
                                           <div className="text-xs text-muted">SKU: {v.sku}</div>
                                           {Number.isFinite(sf) && Math.abs(sf - 1) > 0.000001 && (
                                             <div className="mt-1 text-xs text-muted">
-                                              Factor:{" "}
-                                              <span className="tabular-nums text-text">{fmtNumber2(sf)}</span>
+                                              Merma:{" "}
+                                              <span
+                                                className="tabular-nums text-text"
+                                                title={`Factor interno: ${fmtNumber2(sf)}`}
+                                              >
+                                                {fmtFactor(sf)}
+                                              </span>
                                             </div>
                                           )}
                                         </TPTd>
@@ -1033,8 +1101,9 @@ const MetalsAndVariantsPanel = forwardRef(function MetalsAndVariantsPanel({
                 <div className="flex items-center justify-between border-t border-border bg-surface2/30 px-5 py-3 text-xs text-muted">
                   <div>
                     {variantsList.length} variante{variantsList.length === 1 ? "" : "s"}
+                    {varRowOrder.length > 0 && <span className="ml-2 text-primary opacity-70">· Orden personalizado</span>}
                   </div>
-                  <div>Tip: ordená desde el encabezado.</div>
+                  <div>Arrastrá filas para ordenar · Clic en encabezado para ordenar por columna</div>
                 </div>
               </TPTableWrap>
             </div>

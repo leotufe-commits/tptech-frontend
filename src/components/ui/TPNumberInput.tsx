@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { ChevronDown, ChevronUp } from "lucide-react";
+import { ChevronDown, ChevronUp, X as XIcon } from "lucide-react";
 import { cn } from "./tp";
 
 type Props = {
@@ -46,6 +46,21 @@ type Props = {
 
   /** Símbolo que se muestra a la derecha dentro del campo, ej: "%" */
   suffix?: React.ReactNode;
+
+  /**
+   * Si está, renderiza una X dentro del input (a la derecha del valor,
+   * antes de suffix/arrows) para limpiar. Tabbeable=false. preventDefault
+   * en mouseDown para no robar foco al input adyacente. El caller decide
+   * cuándo pasarla (típicamente solo cuando hay override activo).
+   */
+  onClear?: () => void;
+
+  /**
+   * Modo compacto: flechas más chicas y padding reducido para que el valor
+   * se vea sin solapar el spinner cuando el input es estrecho (ej. líneas
+   * de comprobante con columnas de 90–150px).
+   */
+  compact?: boolean;
 };
 
 function isIntermediate(raw: string) {
@@ -132,6 +147,8 @@ export default function TPNumberInput({
   showArrows = true,
   onKeyDown,
   suffix,
+  onClear,
+  compact = false,
 }: Props) {
   const innerRef = useRef<HTMLInputElement | null>(null);
 
@@ -154,9 +171,15 @@ export default function TPNumberInput({
     const isExternalChange = value !== lastEmittedRef.current;
 
     if (isExternalChange) {
-      // El padre cambió value independientemente (variante, catálogo, moneda).
-      // Sincronizar draft incondicionalmente y salir del modo edición.
+      // "Null-bounce": nosotros emitimos null (usuario borró el campo) pero el padre
+      // no actualizó su state y nos devuelve el valor anterior. Si estamos editando,
+      // no interrumpimos al usuario — él sigue escribiendo.
+      const isNullBounce = lastEmittedRef.current === null && isEditing && value !== null;
       lastEmittedRef.current = value ?? null;
+      if (isNullBounce) return;
+
+      // El padre cambió value independientemente (variante, catálogo, reset externo).
+      // Sincronizar draft y salir del modo edición.
       if (isEditing) setIsEditing(false);
       setDraft(
         typeof value === "number" && Number.isFinite(value)
@@ -262,6 +285,7 @@ export default function TPNumberInput({
   const hasLeft = Boolean(leftIcon);
   const hasRight = Boolean(rightAddon);
   const hasSuffix = Boolean(suffix);
+  const hasClear = Boolean(onClear);
   const wantSelectAll = Boolean(selectAllOnFocus || autoSelect);
 
   return (
@@ -290,13 +314,23 @@ export default function TPNumberInput({
             "tp-input",
             "tp-number-no-spin",
             "text-center",
-            showArrows
-              ? hasSuffix ? "pr-16" : "pr-12"
-              : hasSuffix ? "pr-8" : "pr-4",
             hasLeft && "pl-16",
             error && "border-red-500/60 focus-visible:ring-red-500/20",
             className
           )}
+          style={{
+            // inline style wins CSS specificity over input.tp-input { padding: 0 1rem }
+            paddingRight: (() => {
+              const base = showArrows
+                ? hasSuffix ? (compact ? 3   : 4)
+                            : (compact ? 2.25 : 3)
+                : hasSuffix ? (compact ? 1.5 : 2)
+                            : (compact ? 0.5 : 1);
+              const extra = hasClear ? (compact ? 1.25 : 1.5) : 0;
+              return `${base + extra}rem`;
+            })(),
+            paddingLeft: hasLeft ? undefined : (compact ? "0.5rem" : "1rem"),
+          }}
           onFocus={(e) => {
             setIsEditing(true);
 
@@ -384,34 +418,95 @@ export default function TPNumberInput({
         {hasSuffix && (
           <div className={cn(
             "absolute top-1/2 -translate-y-1/2 text-sm font-semibold text-muted pointer-events-none select-none",
-            showArrows ? "right-11" : "right-3"
+            showArrows
+              ? (compact ? "right-7" : "right-11")
+              : (compact ? "right-2" : "right-3")
           )}>
             {suffix}
           </div>
         )}
 
+        {hasClear && (
+          <button
+            type="button"
+            // X interna para limpiar override. Tabbeable=false: TAB salta
+            // directo al próximo input editable. preventDefault en mouseDown
+            // para no robar foco. El caller decide cuándo pasar onClear.
+            tabIndex={-1}
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => {
+              // Snap visual instantáneo: actualizamos el `draft` local a "0"
+              // ya formateado ANTES de invocar el callback externo. Esto
+              // evita el flicker "20.00 → 20 → 0" que aparecía cuando el
+              // padre actualiza `value` después del round-trip al backend
+              // (preview) y el effect de sincronización pisaba el draft con
+              // un format intermedio. También sincroniza `lastEmittedRef`
+              // para que el próximo cambio de `value=0` se vea como eco
+              // interno y NO dispare un nuevo setDraft.
+              lastEmittedRef.current = 0;
+              setDraft(formatFixed(0, decimals));
+              setIsEditing(false);
+              onClear?.();
+            }}
+            disabled={disabled || readOnly}
+            className="absolute top-1/2 -translate-y-1/2 grid place-items-center text-muted/60 hover:text-text disabled:opacity-50"
+            style={{
+              right:
+                showArrows && hasSuffix ? (compact ? "3rem"    : "4rem"   ) :
+                showArrows              ? (compact ? "2.5rem"  : "3rem"   ) :
+                hasSuffix               ? (compact ? "1.5rem"  : "2rem"   ) :
+                                          (compact ? "0.25rem" : "0.5rem" ),
+            }}
+            aria-label="Limpiar valor"
+            title="Limpiar"
+          >
+            <XIcon className={compact ? "h-3 w-3" : "h-3.5 w-3.5"} />
+          </button>
+        )}
+
         {showArrows ? (
-          <div className="absolute right-2 top-1/2 -translate-y-1/2 flex flex-col">
+          <div className={cn(
+            "absolute top-1/2 -translate-y-1/2 flex flex-col",
+            compact ? "right-1" : "right-2"
+          )}>
             <button
               type="button"
+              // Spinners FUERA del flujo de Tab. El input principal sigue
+              // siendo tabbable; las flechas de teclado ↑/↓ dentro del input
+              // ya incrementan/decrementan (comportamiento nativo de
+              // input[type=number]). Esto evita que TAB se "enganche" en los
+              // botones de spinner cuando el operador navega rápido entre
+              // Cantidad → Precio → Bonificación → Impuestos.
+              tabIndex={-1}
+              // Evita que el click robe foco del input editable adyacente —
+              // el operador puede seguir clickeando los arrows con mouse.
+              onMouseDown={(e) => e.preventDefault()}
               onClick={() => inc(1)}
               disabled={disabled || readOnly}
-              className="h-5 w-8 grid place-items-center text-muted hover:text-text disabled:opacity-50"
+              className={cn(
+                "grid place-items-center text-muted hover:text-text disabled:opacity-50",
+                compact ? "h-3.5 w-5" : "h-5 w-8"
+              )}
               aria-label="Incrementar"
               title="Incrementar"
             >
-              <ChevronUp className="h-4 w-4" />
+              <ChevronUp className={compact ? "h-3 w-3" : "h-4 w-4"} />
             </button>
 
             <button
               type="button"
+              tabIndex={-1}
+              onMouseDown={(e) => e.preventDefault()}
               onClick={() => inc(-1)}
               disabled={disabled || readOnly}
-              className="mt-0.5 h-5 w-8 grid place-items-center text-muted hover:text-text disabled:opacity-50"
+              className={cn(
+                "grid place-items-center text-muted hover:text-text disabled:opacity-50",
+                compact ? "mt-0 h-3.5 w-5" : "mt-0.5 h-5 w-8"
+              )}
               aria-label="Disminuir"
               title="Disminuir"
             >
-              <ChevronDown className="h-4 w-4" />
+              <ChevronDown className={compact ? "h-3 w-3" : "h-4 w-4"} />
             </button>
           </div>
         ) : null}

@@ -38,6 +38,20 @@ export function formatCommission(row: SellerRow): string {
   return "—";
 }
 
+export function formatCommissionBase(row: SellerRow): string {
+  if (row.commissionType === "NONE") return "—";
+  switch (row.commissionBase) {
+    case "TOTAL":                   return "Total de venta";
+    case "TOTAL_AFTER_DISCOUNTS":   return "Tras descuentos";
+    case "TOTAL_AFTER_PAYMENT":     return "Tras forma de pago";
+    case "METAL":                   return "Metal";
+    case "HECHURA":                 return "Hechura";
+    case "METAL_Y_HECHURA":         return "Metal + hechura";
+    case "HECHURA_AFTER_DISCOUNTS": return "Hechura s/dtos.";
+    default:                        return "—";
+  }
+}
+
 export function attachmentToTP(a: SellerAttachment): TPAttachmentItem {
   return { id: a.id, name: a.filename, url: a.url, mimeType: a.mimeType, size: a.size };
 }

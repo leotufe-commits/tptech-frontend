@@ -285,8 +285,8 @@ export function TabTaxes({ entityId, data, loading, onReload }: Props) {
             <TPButton variant="secondary" onClick={() => setModalOpen(false)} disabled={busySave}>
               Cancelar
             </TPButton>
-            <TPButton variant="primary" onClick={handleSave} disabled={busySave}>
-              {busySave ? "Guardando…" : "Guardar"}
+            <TPButton variant="primary" onClick={handleSave} loading={busySave}>
+              Guardar
             </TPButton>
           </div>
         </div>

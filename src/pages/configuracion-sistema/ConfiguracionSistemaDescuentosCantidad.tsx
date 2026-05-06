@@ -26,6 +26,8 @@ import { TPStatusPill } from "../../components/ui/TPStatusPill";
 import { TPRowActions } from "../../components/ui/TPRowActions";
 import TPComboFixed from "../../components/ui/TPComboFixed";
 import TPComboMulti from "../../components/ui/TPComboMulti";
+import { TPArticleScopeSelect } from "../../components/ui/TPArticleScopeSelect";
+import { MetalVariantPicker } from "../../components/ui/MetalVariantPicker";
 import TPNumberInput from "../../components/ui/TPNumberInput";
 import { CategoryTreePicker } from "../../components/ui/CategoryTreePicker";
 
@@ -40,17 +42,17 @@ import {
 import { articlesApi } from "../../services/articles";
 import type { PromotionType } from "../../services/promotions";
 import { PROMOTION_TYPE_LABELS } from "../../services/promotions";
-import type { ArticleRow, ArticleVariant } from "../../services/articles";
+import type { ScopeItem } from "../../services/articles";
 import { categoriesApi } from "../../services/categories";
 import type { CategoryRow } from "../../services/categories";
-import { getCurrencies, type CurrencyRow } from "../../services/valuation";
-import { articleGroupsApi } from "../../services/article-groups";
+import { getCurrencies, listMetals, listVariants, type CurrencyRow, type MetalRow, type MetalVariantRow } from "../../services/valuation";
+import { articleGroupsApi, groupsToComboOptions } from "../../services/article-groups";
 import type { ArticleGroupRow } from "../../services/article-groups";
 
 /* =========================================================
    Tipos locales
 ========================================================= */
-type ScopeMode = "all" | "category" | "brand" | "article_variant" | "group";
+type ScopeMode = "all" | "category" | "brand" | "article_variant" | "group" | "metals";
 
 type TierDraft = {
   key:    string;
@@ -75,12 +77,23 @@ function qtyDisplay(minQty: string | number): string {
   return n % 1 === 0 ? String(n) : n.toLocaleString("es-AR");
 }
 
-function rowScopeLabel(row: QuantityDiscountRow): string {
+function rowScopeLabel(row: QuantityDiscountRow, metalVariantsLabelMap?: Map<string, string>): string {
   if (row.variant)  return `Variante: ${row.variant.name}`;
   if (row.article)  return `${row.article.name} (${row.article.code})`;
   if (row.category) return `Categ.: ${row.category.name}`;
   if (row.brand)    return `Marca: ${row.brand}`;
   if (row.group)    return `Grupo: ${row.group.name}`;
+  // FASE 4: scope METALS — la regla aplica si la composición del artículo
+  // contiene al menos una de las variantes seleccionadas. Listamos los
+  // nombres de las variantes; si el catálogo aún no cargó, mostramos count.
+  const metals = row.metalVariantIds ?? [];
+  if (metals.length > 0) {
+    if (metalVariantsLabelMap && metalVariantsLabelMap.size > 0) {
+      const names = metals.map((id) => metalVariantsLabelMap.get(id) ?? id);
+      return names.join(", ");
+    }
+    return metals.length === 1 ? "1 variante de metal" : `${metals.length} variantes de metal`;
+  }
   return "Todos los artículos";
 }
 
@@ -119,6 +132,9 @@ function ScopeBadge({ row }: { row: QuantityDiscountRow }) {
   if (row.category) return <span className="inline-flex items-center rounded-full bg-purple-500/15 text-purple-600 dark:text-purple-400 px-2 py-0.5 text-[11px] font-medium whitespace-nowrap">Categoría</span>;
   if (row.brand)    return <span className="inline-flex items-center rounded-full bg-orange-500/15 text-orange-600 dark:text-orange-400 px-2 py-0.5 text-[11px] font-medium whitespace-nowrap">Marca</span>;
   if (row.group)    return <span className="inline-flex items-center rounded-full bg-indigo-500/15 text-indigo-600 dark:text-indigo-400 px-2 py-0.5 text-[11px] font-medium whitespace-nowrap">Grupo</span>;
+  if ((row.metalVariantIds ?? []).length > 0) {
+    return <span className="inline-flex items-center rounded-full bg-amber-500/15 text-amber-600 dark:text-amber-400 px-2 py-0.5 text-[11px] font-medium whitespace-nowrap">Metales</span>;
+  }
   return <span className="inline-flex items-center rounded-full bg-gray-500/10 text-muted px-2 py-0.5 text-[11px] font-medium whitespace-nowrap">Global</span>;
 }
 
@@ -185,10 +201,10 @@ function validate(
   scope: ScopeMode,
   selectedCategoryIds: string[],
   selectedBrands: string[],
-  selectedArticles: ArticleRow[],
-  selectedVariant: ArticleVariant | null,
+  scopeItems: ScopeItem[],
   tiers: TierDraft[],
   selectedGroupIds?: string[],
+  selectedMetalVariantIds?: string[],
 ): FormErrors {
   const errors: FormErrors = {};
 
@@ -196,10 +212,12 @@ function validate(
     errors.scope = "Seleccioná al menos una categoría.";
   } else if (scope === "brand" && selectedBrands.length === 0) {
     errors.scope = "Seleccioná al menos una marca.";
-  } else if (scope === "article_variant" && selectedArticles.length === 0) {
+  } else if (scope === "article_variant" && scopeItems.length === 0) {
     errors.scope = "Seleccioná al menos un artículo.";
   } else if (scope === "group" && (!selectedGroupIds || selectedGroupIds.length === 0)) {
     errors.scope = "Seleccioná al menos un grupo.";
+  } else if (scope === "metals" && (!selectedMetalVariantIds || selectedMetalVariantIds.length === 0)) {
+    errors.scope = "Seleccioná al menos una variante de metal.";
   }
 
   if (tiers.length === 0) {
@@ -273,10 +291,7 @@ export default function ConfiguracionSistemaDescuentosCantidad() {
   const [scopeMode,           setScopeMode]           = useState<ScopeMode>("all");
   const [selectedCategoryIds, setSelectedCategoryIds] = useState<string[]>([]);
   const [selectedBrands,      setSelectedBrands]      = useState<string[]>([]);
-  const [selectedArticles,    setSelectedArticles]    = useState<ArticleRow[]>([]);
-  const [selectedVariant,     setSelectedVariant]     = useState<ArticleVariant | null>(null);
-  const [variants,            setVariants]            = useState<ArticleVariant[]>([]);
-  const [loadingVariants,     setLoadingVariants]     = useState(false);
+  const [selectedScopeItems,  setSelectedScopeItems]  = useState<ScopeItem[]>([]);
 
   /* ---- tramos ---- */
   const [tiers, setTiers] = useState<TierDraft[]>([
@@ -303,11 +318,18 @@ export default function ConfiguracionSistemaDescuentosCantidad() {
   /* ---- catálogos pre-cargados ---- */
   const [allCategories, setAllCategories] = useState<CategoryRow[]>([]);
   const [allBrands,     setAllBrands]     = useState<string[]>([]);
-  const [allArticles,   setAllArticles]   = useState<ArticleRow[]>([]);
   const [allGroups,     setAllGroups]     = useState<ArticleGroupRow[]>([]);
+  /**
+   * Mapa metalVariantId → label visible ("Oro 18K"). Se llena lazy en el
+   * mount; mientras está vacío, `rowScopeLabel` cae a "N variantes de metal".
+   */
+  const [metalVariantsLabelMap, setMetalVariantsLabelMap] = useState<Map<string, string>>(new Map());
 
   /* ---- grupo seleccionado ---- */
   const [selectedGroupIds, setSelectedGroupIds] = useState<string[]>([]);
+
+  /* ---- variantes de metal seleccionadas (FASE 4 — scope METALS) ---- */
+  const [selectedMetalVariantIds, setSelectedMetalVariantIds] = useState<string[]>([]);
 
   /* ---- modal ver ---- */
   const [viewOpen,   setViewOpen]   = useState(false);
@@ -345,27 +367,34 @@ export default function ConfiguracionSistemaDescuentosCantidad() {
     articlesApi.listBrands()
       .then((res) => setAllBrands(res.brands ?? []))
       .catch(() => {});
-    articlesApi.list({ take: 500, status: "ACTIVE" })
-      .then((res) => setAllArticles(res.rows ?? []))
-      .catch(() => {});
     articleGroupsApi.list()
       .then((res) => setAllGroups((Array.isArray(res) ? res : []).filter((g) => g.isActive && !g.deletedAt)))
       .catch(() => {});
     getCurrencies()
       .then((res: any) => setCurrencies(Array.isArray(res) ? res : (res?.rows ?? [])))
       .catch(() => {});
+    // Cargar variantes de metal para que la columna "Alcance" muestre nombres
+    // legibles cuando una regla tiene scope METALS. Mismo patrón que en
+    // MetalVariantPicker: 1 query por metal — N+1 acotado al tenant.
+    (async () => {
+      try {
+        const metalsResp: any = await listMetals();
+        const metals: MetalRow[] = (metalsResp?.rows ?? metalsResp ?? []).filter((m: MetalRow) => m.isActive);
+        const map = new Map<string, string>();
+        await Promise.all(metals.map(async (m) => {
+          try {
+            const vResp: any = await listVariants(m.id, { isActive: true });
+            const variants: MetalVariantRow[] = vResp?.rows ?? vResp ?? [];
+            for (const v of variants) {
+              if (v.id) map.set(v.id, `${m.name} ${v.name}`.trim());
+            }
+          } catch { /* ignorar metal individual */ }
+        }));
+        setMetalVariantsLabelMap(map);
+      } catch { /* sin catálogo: fallback "N variantes" */ }
+    })();
   }, []);
 
-  /* ---- variantes cuando cambia el artículo seleccionado (solo si hay exactamente uno) ---- */
-  const singleArticle = selectedArticles.length === 1 ? selectedArticles[0] : null;
-  useEffect(() => {
-    if (!singleArticle) { setVariants([]); setSelectedVariant(null); return; }
-    setLoadingVariants(true);
-    articlesApi.variants.list(singleArticle.id)
-      .then((v) => setVariants((v ?? []).filter((x: ArticleVariant) => x.isActive)))
-      .catch(() => setVariants([]))
-      .finally(() => setLoadingVariants(false));
-  }, [singleArticle]);
 
   /* ---- filtrado y ordenamiento ---- */
   const filteredRows = useMemo(() => {
@@ -378,7 +407,10 @@ export default function ConfiguracionSistemaDescuentosCantidad() {
         (r.variant?.name ?? "").toLowerCase().includes(s) ||
         (r.category?.name ?? "").toLowerCase().includes(s) ||
         (r.brand ?? "").toLowerCase().includes(s) ||
-        (r.group?.name ?? "").toLowerCase().includes(s)
+        (r.group?.name ?? "").toLowerCase().includes(s) ||
+        (r.metalVariantIds ?? []).some((id) =>
+          (metalVariantsLabelMap.get(id) ?? "").toLowerCase().includes(s)
+        )
       );
     }
     if (filterActive !== "") {
@@ -396,7 +428,7 @@ export default function ConfiguracionSistemaDescuentosCantidad() {
       if (sortKey === "sortOrder") return (a.sortOrder - b.sortOrder) * mul;
       return 0;
     });
-  }, [rows, q, filterActive, sortKey, sortDir]);
+  }, [rows, q, filterActive, sortKey, sortDir, metalVariantsLabelMap]);
 
   /* ---- helpers tiers ---- */
   function addTier() {
@@ -419,10 +451,9 @@ export default function ConfiguracionSistemaDescuentosCantidad() {
     setScopeMode("all");
     setSelectedCategoryIds([]);
     setSelectedBrands([]);
-    setSelectedArticles([]);
-    setSelectedVariant(null);
-    setVariants([]);
+    setSelectedScopeItems([]);
     setSelectedGroupIds([]);
+    setSelectedMetalVariantIds([]);
   }
 
   /* ---- abrir modal crear ---- */
@@ -444,42 +475,61 @@ export default function ConfiguracionSistemaDescuentosCantidad() {
 
     if (row.variantId) {
       setScopeMode("article_variant");
-      setSelectedArticles(row.article ? [{ id: row.articleId!, code: row.article.code, name: row.article.name } as ArticleRow] : []);
-      setSelectedVariant(row.variant ? { id: row.variantId, code: row.variant.code, name: row.variant.name } as ArticleVariant : null);
+      setSelectedScopeItems([{
+        kind:        "VARIANT",
+        id:          row.variantId,
+        name:        `${row.article?.name ?? ""} — ${row.variant?.name ?? ""}`,
+        code:        row.variant?.code ?? "",
+        imageUrl:    null,
+        articleId:   row.articleId ?? "",
+        articleName: row.article?.name ?? "",
+      }]);
       setSelectedCategoryIds([]);
       setSelectedBrands([]);
     } else if (row.articleId) {
       setScopeMode("article_variant");
-      setSelectedArticles(row.article ? [{ id: row.articleId, code: row.article.code, name: row.article.name } as ArticleRow] : []);
-      setSelectedVariant(null);
+      setSelectedScopeItems([{
+        kind:        "ARTICLE",
+        id:          row.articleId,
+        name:        row.article?.name ?? "",
+        code:        row.article?.code ?? "",
+        imageUrl:    null,
+        articleId:   row.articleId,
+        articleName: row.article?.name ?? "",
+      }]);
       setSelectedCategoryIds([]);
       setSelectedBrands([]);
     } else if (row.categoryId) {
       setScopeMode("category");
       setSelectedCategoryIds([row.categoryId]);
-      setSelectedArticles([]);
-      setSelectedVariant(null);
+      setSelectedScopeItems([]);
       setSelectedBrands([]);
     } else if (row.brand) {
       setScopeMode("brand");
       setSelectedBrands([row.brand]);
       setSelectedCategoryIds([]);
-      setSelectedArticles([]);
-      setSelectedVariant(null);
+      setSelectedScopeItems([]);
     } else if (row.groupId) {
       setScopeMode("group");
       setSelectedGroupIds([row.groupId]);
       setSelectedCategoryIds([]);
-      setSelectedArticles([]);
-      setSelectedVariant(null);
+      setSelectedScopeItems([]);
       setSelectedBrands([]);
+      setSelectedMetalVariantIds([]);
+    } else if ((row.metalVariantIds ?? []).length > 0) {
+      setScopeMode("metals");
+      setSelectedMetalVariantIds(row.metalVariantIds ?? []);
+      setSelectedCategoryIds([]);
+      setSelectedScopeItems([]);
+      setSelectedBrands([]);
+      setSelectedGroupIds([]);
     } else {
       setScopeMode("all");
       setSelectedCategoryIds([]);
-      setSelectedArticles([]);
-      setSelectedVariant(null);
+      setSelectedScopeItems([]);
       setSelectedBrands([]);
       setSelectedGroupIds([]);
+      setSelectedMetalVariantIds([]);
     }
 
     const sortedTiers = [...(row.tiers ?? [])].sort((a, b) => parseFloat(a.minQty) - parseFloat(b.minQty));
@@ -511,7 +561,7 @@ export default function ConfiguracionSistemaDescuentosCantidad() {
   /* ---- guardar ---- */
   async function handleSave() {
     setSubmitted(true);
-    const errors = validate(scopeMode, selectedCategoryIds, selectedBrands, selectedArticles, selectedVariant, tiers, selectedGroupIds);
+    const errors = validate(scopeMode, selectedCategoryIds, selectedBrands, selectedScopeItems, tiers, selectedGroupIds, selectedMetalVariantIds);
     setFormErrors(errors);
     if (Object.keys(errors).length > 0) return;
 
@@ -533,27 +583,37 @@ export default function ConfiguracionSistemaDescuentosCantidad() {
     function buildPayloads(): QuantityDiscountPayload[] {
       if (scopeMode === "category") {
         const ids = editingId ? [selectedCategoryIds[0]] : selectedCategoryIds;
-        return ids.filter(Boolean).map(id => ({ ...basePayload, categoryId: id, articleId: null, variantId: null, brand: null, groupId: null }));
+        return ids.filter(Boolean).map(id => ({ ...basePayload, categoryId: id, articleId: null, variantId: null, brand: null, groupId: null, metalVariantIds: [] }));
       }
       if (scopeMode === "brand") {
         const vals = editingId ? [selectedBrands[0]] : selectedBrands;
-        return vals.filter(Boolean).map(v => ({ ...basePayload, brand: v, articleId: null, variantId: null, categoryId: null, groupId: null }));
+        return vals.filter(Boolean).map(v => ({ ...basePayload, brand: v, articleId: null, variantId: null, categoryId: null, groupId: null, metalVariantIds: [] }));
       }
       if (scopeMode === "group") {
         const ids = editingId ? [selectedGroupIds[0]] : selectedGroupIds;
-        return ids.filter(Boolean).map(id => ({ ...basePayload, groupId: id, articleId: null, variantId: null, categoryId: null, brand: null }));
+        return ids.filter(Boolean).map(id => ({ ...basePayload, groupId: id, articleId: null, variantId: null, categoryId: null, brand: null, metalVariantIds: [] }));
       }
       if (scopeMode === "article_variant") {
-        const arts = editingId ? selectedArticles.slice(0, 1) : selectedArticles;
-        return arts.map(art => ({
+        const items = editingId ? selectedScopeItems.slice(0, 1) : selectedScopeItems;
+        return items.map(item => ({
           ...basePayload,
-          articleId: art.id,
-          variantId: selectedVariant?.id ?? null,
+          articleId:  item.articleId,
+          variantId:  item.kind === "VARIANT" ? item.id : null,
           categoryId: null, brand: null, groupId: null,
+          metalVariantIds: [],
         }));
       }
+      if (scopeMode === "metals") {
+        // Una sola regla con N variantes en el array. El backend evalúa con
+        // intersección no vacía contra los metales del artículo (FASE 3).
+        return [{
+          ...basePayload,
+          articleId: null, variantId: null, categoryId: null, brand: null, groupId: null,
+          metalVariantIds: selectedMetalVariantIds,
+        }];
+      }
       // "all"
-      return [{ ...basePayload, articleId: null, variantId: null, categoryId: null, brand: null, groupId: null }];
+      return [{ ...basePayload, articleId: null, variantId: null, categoryId: null, brand: null, groupId: null, metalVariantIds: [] }];
     }
 
     const payloads = buildPayloads();
@@ -600,7 +660,7 @@ export default function ConfiguracionSistemaDescuentosCantidad() {
   function handleDelete(row: QuantityDiscountRow) {
     askDelete({
       entityName: "regla de descuento",
-      entityLabel: rowScopeLabel(row),
+      entityLabel: rowScopeLabel(row, metalVariantsLabelMap),
       onDelete: () => quantityDiscountsApi.remove(row.id),
       onAfterSuccess: load,
     });
@@ -609,8 +669,6 @@ export default function ConfiguracionSistemaDescuentosCantidad() {
   /* ---- opciones para combos ---- */
   const categoryOptions = allCategories.map((c) => ({ value: c.id, label: c.name }));
   const brandOptions    = allBrands.map((b) => ({ value: b, label: b }));
-  const articleOptions  = allArticles.map((a) => ({ value: a.id, label: `${a.name} (${a.code})` }));
-  const variantOptions  = variants.map((v) => ({ value: v.id, label: `${v.name}${v.code ? ` (${v.code})` : ""}` }));
 
   /* =========================================================
      Render
@@ -632,6 +690,7 @@ export default function ConfiguracionSistemaDescuentosCantidad() {
         sortDir={sortDir}
         onSort={toggleSort}
         loading={loading}
+        onRowClick={(row) => { setViewTarget(row); setViewOpen(true); }}
         emptyText={q || filterActive ? "Sin resultados para la búsqueda." : "No hay reglas de descuento. Creá la primera."}
         pagination={{ storageKey: "tptech:pageSize:quantityDiscounts" }}
         countLabel={(n) => `${n} ${n === 1 ? "regla" : "reglas"}`}
@@ -650,7 +709,7 @@ export default function ConfiguracionSistemaDescuentosCantidad() {
               <TPTd>
                 <div className="flex items-center gap-1.5 flex-wrap">
                   <ScopeBadge row={row} />
-                  <span className="text-sm font-medium text-text truncate max-w-[200px]">{rowScopeLabel(row)}</span>
+                  <span className="text-sm font-medium text-text truncate max-w-[200px]">{rowScopeLabel(row, metalVariantsLabelMap)}</span>
                 </div>
               </TPTd>
             )}
@@ -695,10 +754,9 @@ export default function ConfiguracionSistemaDescuentosCantidad() {
         title={editingId ? "Editar regla de descuento" : "Nueva regla de descuento"}
         onClose={closeEdit}
         maxWidth="xl"
-        className="h-[calc(100vh-3rem)]"
         footer={
           <div className="flex justify-end gap-2">
-            <TPButton variant="ghost" onClick={closeEdit} disabled={busySave} iconLeft={<X size={14} />}>Cancelar</TPButton>
+            <TPButton variant="secondary" onClick={closeEdit} disabled={busySave} iconLeft={<X size={14} />}>Cancelar</TPButton>
             <TPButton variant="primary" onClick={handleSave} loading={busySave} iconLeft={<Save size={14} />}>
               {editingId ? "Guardar cambios" : "Crear regla"}
             </TPButton>
@@ -718,9 +776,9 @@ export default function ConfiguracionSistemaDescuentosCantidad() {
                     setScopeMode(newScope);
                     setSelectedCategoryIds([]);
                     setSelectedBrands([]);
-                    setSelectedArticles([]);
-                    setSelectedVariant(null);
-                    setVariants([]);
+                    setSelectedScopeItems([]);
+                    setSelectedGroupIds([]);
+                    setSelectedMetalVariantIds([]);
                     // Resetear modo de evaluación si el nuevo scope no lo soporta
                     if (newScope !== "category") setEvaluationMode((prev) => prev === "CATEGORY_TOTAL" ? "LINE" : prev);
                     if (newScope !== "brand")    setEvaluationMode((prev) => prev === "BRAND_TOTAL"    ? "LINE" : prev);
@@ -733,18 +791,8 @@ export default function ConfiguracionSistemaDescuentosCantidad() {
                     { value: "category",        label: "Categoría" },
                     { value: "brand",           label: "Marca" },
                     { value: "article_variant", label: "Artículos y variantes" },
+                    { value: "metals",          label: "Metales" },
                   ]}
-                />
-              </TPField>
-              <TPField label="Prioridad">
-                <TPNumberInput
-                  value={sortOrderNum}
-                  onChange={setSortOrderNum}
-                  decimals={0}
-                  step={1}
-                  min={0}
-                  placeholder="0"
-                  disabled={busySave}
                 />
               </TPField>
             </div>
@@ -786,49 +834,21 @@ export default function ConfiguracionSistemaDescuentosCantidad() {
 
             {/* Artículo o Variante */}
             {scopeMode === "article_variant" && (
-              <>
-                <TPField
-                  label="Artículo"
-                  required
-                  error={submitted && selectedArticles.length === 0 ? formErrors.scope : undefined}
-                  hint={!editingId ? "Podés seleccionar varios — se creará una regla por artículo" : undefined}
-                >
-                  <TPComboMulti
-                    value={selectedArticles.map(a => a.id)}
-                    onChange={(ids) => {
-                      const arts = ids.map(id => allArticles.find(a => a.id === id)).filter(Boolean) as ArticleRow[];
-                      setSelectedArticles(arts);
-                      if (arts.length !== 1) setSelectedVariant(null);
-                    }}
-                    options={articleOptions}
-                    placeholder="Buscar artículo…"
-                    disabled={busySave}
-                  />
-                </TPField>
-
-                {/* Variante: solo disponible cuando hay exactamente un artículo seleccionado */}
-                {selectedArticles.length === 1 && (
-                  <TPField label="Variante" error={submitted && !selectedVariant ? formErrors.scope : undefined}>
-                    {loadingVariants ? (
-                      <p className="text-sm text-muted">Cargando variantes…</p>
-                    ) : variants.length === 0 ? (
-                      <p className="text-sm text-muted italic">Este artículo no tiene variantes activas.</p>
-                    ) : (
-                      <TPComboMulti
-                        value={selectedVariant ? [selectedVariant.id] : []}
-                        onChange={(ids) => {
-                          const id = ids[ids.length - 1] ?? null;
-                          const v = variants.find((x) => x.id === id) ?? null;
-                          setSelectedVariant(v);
-                        }}
-                        options={variantOptions}
-                        placeholder="Seleccionar variante…"
-                        disabled={busySave}
-                      />
-                    )}
-                  </TPField>
-                )}
-              </>
+              <TPField
+                label="Artículo o variante"
+                required
+                error={submitted ? formErrors.scope : undefined}
+                hint={!editingId ? "Podés seleccionar varios — se creará una regla por artículo o variante" : undefined}
+              >
+                <TPArticleScopeSelect
+                  value={selectedScopeItems}
+                  onChange={setSelectedScopeItems}
+                  multiple
+                  includeVariants
+                  placeholder="Buscar artículo o variante…"
+                  disabled={busySave}
+                />
+              </TPField>
             )}
 
             {/* Grupo de artículos */}
@@ -845,11 +865,28 @@ export default function ConfiguracionSistemaDescuentosCantidad() {
                   <TPComboMulti
                     value={selectedGroupIds}
                     onChange={setSelectedGroupIds}
-                    options={allGroups.map((g) => ({ value: g.id, label: g.name }))}
+                    options={groupsToComboOptions(allGroups)}
                     placeholder="Seleccionar grupo…"
                     disabled={busySave}
                   />
                 )}
+              </TPField>
+            )}
+
+            {/* Variantes de metal */}
+            {scopeMode === "metals" && (
+              <TPField
+                label="Variantes de metal"
+                required
+                error={submitted ? formErrors.scope : undefined}
+                hint="El descuento aplica si el artículo contiene al menos una de las variantes seleccionadas."
+              >
+                <MetalVariantPicker
+                  selected={selectedMetalVariantIds}
+                  onChange={setSelectedMetalVariantIds}
+                  disabled={busySave}
+                  placeholder="Seleccionar variantes (Oro 18K, Plata 925, …)"
+                />
               </TPField>
             )}
           </ModalSection>
@@ -964,7 +1001,7 @@ export default function ConfiguracionSistemaDescuentosCantidad() {
               disabled={busySave}
               className="w-full border border-dashed border-border hover:border-primary"
             >
-              Agregar tramo
+              Agregar
             </TPButton>
 
             {/* Preview de los tramos */}
@@ -1015,7 +1052,7 @@ export default function ConfiguracionSistemaDescuentosCantidad() {
         maxWidth="sm"
         footer={
           <div className="flex justify-end gap-2">
-            <TPButton variant="ghost" onClick={() => setViewOpen(false)} iconLeft={<X size={14} />}>Cerrar</TPButton>
+            <TPButton variant="secondary" onClick={() => setViewOpen(false)} iconLeft={<X size={14} />}>Cerrar</TPButton>
             {viewTarget && (
               <TPButton variant="primary" onClick={() => { setViewOpen(false); openEdit(viewTarget); }} iconLeft={<Pencil size={14} />}>
                 Editar
@@ -1030,7 +1067,7 @@ export default function ConfiguracionSistemaDescuentosCantidad() {
             <DetailRow label="Destino">
               {viewTarget.group
                 ? <span>{viewTarget.group.name}</span>
-                : rowScopeLabel(viewTarget)}
+                : rowScopeLabel(viewTarget, metalVariantsLabelMap)}
             </DetailRow>
             <DetailRow label="Modo de evaluación">{EVALUATION_MODE_LABELS[viewTarget.evaluationMode ?? "LINE"]}</DetailRow>
             <DetailRow label="Estado"><TPStatusPill active={viewTarget.isActive} /></DetailRow>

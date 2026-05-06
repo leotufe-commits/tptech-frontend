@@ -28,7 +28,8 @@ import { TPStatusPill } from "../../components/ui/TPStatusPill";
 import { TPRowActions } from "../../components/ui/TPRowActions";
 import TPComboFixed from "../../components/ui/TPComboFixed";
 import TPComboMulti from "../../components/ui/TPComboMulti";
-import type { ComboMultiOption } from "../../components/ui/TPComboMulti";
+import { TPArticleScopeSelect } from "../../components/ui/TPArticleScopeSelect";
+import { MetalVariantPicker } from "../../components/ui/MetalVariantPicker";
 import TPNumberInput from "../../components/ui/TPNumberInput";
 import TPAmountInput, { type AmountType } from "../../components/ui/TPAmountInput";
 import TPDateRangeInline from "../../components/ui/TPDateRangeInline";
@@ -45,16 +46,13 @@ import {
   PROMOTION_SCOPE_LABELS,
 } from "../../services/promotions";
 import { articlesApi } from "../../services/articles";
-import type { ArticleRow } from "../../services/articles";
+import type { ScopeItem } from "../../services/articles";
 import { categoriesApi } from "../../services/categories";
 import type { CategoryRow } from "../../services/categories";
-import { articleGroupsApi } from "../../services/article-groups";
+import { articleGroupsApi, groupsToComboOptions } from "../../services/article-groups";
 import type { ArticleGroupRow } from "../../services/article-groups";
 
-/* Variante enriquecida con referencia al artículo padre */
-type VariantOption = ComboMultiOption & { articleId: string };
-
-type ScopeMode = "all" | "category" | "article_variant" | "brand" | "group";
+type ScopeMode = "all" | "category" | "article_variant" | "brand" | "group" | "metals";
 
 /* =========================================================
    Label maps
@@ -203,12 +201,11 @@ function validate(
   draft: Draft,
   valueNum: number | null,
   scope: ScopeMode,
-  articles: ArticleRow[],
-  variantIds: string[],
-  showVariantPicker: boolean,
+  scopeItems: ScopeItem[],
   categoryIds: string[],
   brands: string[],
-  groupIds: string[]
+  groupIds: string[],
+  metalVariantIds: string[],
 ): FormErrors {
   const errors: FormErrors = {};
   if (!draft.name.trim()) errors.name = "El nombre es obligatorio.";
@@ -217,14 +214,14 @@ function validate(
   }
   if (scope === "category" && categoryIds.length === 0) {
     errors.scope = "Seleccioná al menos una categoría.";
-  } else if (scope === "article_variant" && articles.length === 0) {
-    errors.scope = "Seleccioná al menos un artículo.";
-  } else if (scope === "article_variant" && showVariantPicker && variantIds.length === 0) {
-    errors.scope = "Seleccioná al menos una variante, o desactivá el filtro por variante.";
+  } else if (scope === "article_variant" && scopeItems.length === 0) {
+    errors.scope = "Seleccioná al menos un artículo o variante.";
   } else if (scope === "brand" && brands.length === 0) {
     errors.scope = "Seleccioná al menos una marca.";
   } else if (scope === "group" && groupIds.length === 0) {
     errors.scope = "Seleccioná al menos un grupo.";
+  } else if (scope === "metals" && metalVariantIds.length === 0) {
+    errors.scope = "Seleccioná al menos una variante de metal.";
   }
   return errors;
 }
@@ -292,19 +289,15 @@ export default function ConfiguracionSistemaPromociones() {
   /* ---- catálogos para el selector de alcance ---- */
   const [allCategories, setAllCategories] = useState<CategoryRow[]>([]);
   const [allBrands, setAllBrands]         = useState<string[]>([]);
-  const [allArticles, setAllArticles]     = useState<ArticleRow[]>([]);
   const [allGroups,   setAllGroups]       = useState<ArticleGroupRow[]>([]);
 
   /* ---- selector de alcance ---- */
-  const [scopeMode, setScopeMode]                   = useState<ScopeMode>("all");
+  const [scopeMode, setScopeMode]                     = useState<ScopeMode>("all");
   const [selectedCategoryIds, setSelectedCategoryIds] = useState<string[]>([]);
   const [selectedBrands, setSelectedBrands]           = useState<string[]>([]);
-  const [selectedArticles, setSelectedArticles]       = useState<ArticleRow[]>([]);
-  const [variantOptions, setVariantOptions]           = useState<VariantOption[]>([]);
-  const [selectedVariantIds, setSelectedVariantIds]   = useState<string[]>([]);
-  const [loadingVariants, setLoadingVariants]         = useState(false);
-  const [showVariantPicker, setShowVariantPicker]     = useState(false);
+  const [selectedScopeItems, setSelectedScopeItems]   = useState<ScopeItem[]>([]);
   const [selectedGroupIds, setSelectedGroupIds]       = useState<string[]>([]);
+  const [selectedMetalVariantIds, setSelectedMetalVariantIds] = useState<string[]>([]);
 
   /* ---- modal ver ---- */
   const [viewOpen,   setViewOpen]   = useState(false);
@@ -338,45 +331,11 @@ export default function ConfiguracionSistemaPromociones() {
     articlesApi.listBrands()
       .then((res) => setAllBrands(res.brands ?? []))
       .catch(() => {});
-    articlesApi.list({ take: 500, status: "ACTIVE" })
-      .then((res) => setAllArticles(res.rows ?? []))
-      .catch(() => {});
     articleGroupsApi.list()
       .then((res) => setAllGroups((Array.isArray(res) ? res : []).filter((g) => g.isActive && !g.deletedAt)))
       .catch(() => {});
   }, []);
 
-  /* ---- cargar variantes cuando cambian los artículos seleccionados ---- */
-  useEffect(() => {
-    if (selectedArticles.length === 0) {
-      setVariantOptions([]);
-      setSelectedVariantIds([]);
-      return;
-    }
-    setLoadingVariants(true);
-    Promise.all(
-      selectedArticles.map((a) =>
-        articlesApi.variants.list(a.id).then((vars) =>
-          (vars ?? [])
-            .filter((v) => v.isActive)
-            .map((v): VariantOption => ({
-              value:     v.id,
-              label:     v.name + (v.sku ? ` (${v.sku})` : ""),
-              sublabel:  a.name,
-              articleId: a.id,
-            }))
-        )
-      )
-    )
-      .then((results) => {
-        const all = results.flat();
-        setVariantOptions(all);
-        // Eliminar variantes ya no disponibles
-        setSelectedVariantIds((prev) => prev.filter((id) => all.some((v) => v.value === id)));
-      })
-      .catch(() => setVariantOptions([]))
-      .finally(() => setLoadingVariants(false));
-  }, [selectedArticles]);
 
   /* ---- filtrado y ordenamiento ---- */
   const filteredRows = useMemo(() => {
@@ -421,11 +380,9 @@ export default function ConfiguracionSistemaPromociones() {
     setScopeMode("all");
     setSelectedCategoryIds([]);
     setSelectedBrands([]);
-    setSelectedArticles([]);
-    setVariantOptions([]);
-    setSelectedVariantIds([]);
-    setShowVariantPicker(false);
+    setSelectedScopeItems([]);
     setSelectedGroupIds([]);
+    setSelectedMetalVariantIds([]);
     setSubmitted(false);
     setFormErrors({});
     setEditOpen(true);
@@ -457,6 +414,8 @@ export default function ConfiguracionSistemaPromociones() {
       setScopeMode("brand");
     } else if (row.scope === "GROUP") {
       setScopeMode("group");
+    } else if (row.scope === "METALS") {
+      setScopeMode("metals");
     } else {
       setScopeMode("all");
     }
@@ -465,28 +424,31 @@ export default function ConfiguracionSistemaPromociones() {
     setSelectedCategoryIds(row.categories.map((c) => c.categoryId));
     setSelectedBrands(row.brands.map((b) => b.brand));
     setSelectedGroupIds((row.groups ?? []).map((g) => g.groupId));
+    setSelectedMetalVariantIds((row.metalVariants ?? []).map((m) => m.metalVariantId));
 
     if (row.scope === "VARIANT") {
-      // Para variantes: reconstruir los artículos padre desde las variantes
-      const articleMap = new Map<string, ArticleRow>();
-      row.variants.forEach((v) => {
-        if (v.variant.article) {
-          articleMap.set(v.variant.articleId, v.variant.article as unknown as ArticleRow);
-        }
-      });
-      setSelectedArticles([...articleMap.values()]);
-      setSelectedVariantIds(row.variants.map((v) => v.variantId));
-      setShowVariantPicker(true);
+      setSelectedScopeItems(row.variants.map((v) => ({
+        kind:        "VARIANT" as const,
+        id:          v.variantId,
+        name:        `${v.variant.article?.name ?? ""} — ${v.variant.name}`,
+        code:        v.variant.code ?? "",
+        imageUrl:    (v.variant as any).imageUrl || (v.variant.article as any)?.mainImageUrl || null,
+        articleId:   v.variant.articleId,
+        articleName: v.variant.article?.name ?? "",
+      })));
     } else if (row.scope === "ARTICLE") {
-      setSelectedArticles(row.articles.map((a) => a.article as unknown as ArticleRow));
-      setSelectedVariantIds([]);
-      setShowVariantPicker(false);
+      setSelectedScopeItems(row.articles.map((a) => ({
+        kind:        "ARTICLE" as const,
+        id:          a.articleId,
+        name:        (a.article as any).name ?? "",
+        code:        (a.article as any).code ?? "",
+        imageUrl:    (a.article as any).mainImageUrl || null,
+        articleId:   a.articleId,
+        articleName: (a.article as any).name ?? "",
+      })));
     } else {
-      setSelectedArticles([]);
-      setSelectedVariantIds([]);
-      setShowVariantPicker(false);
+      setSelectedScopeItems([]);
     }
-    setVariantOptions([]);
     setSubmitted(false);
     setFormErrors({});
     setEditOpen(true);
@@ -501,30 +463,34 @@ export default function ConfiguracionSistemaPromociones() {
   /* ---- guardar ---- */
   async function handleSave() {
     setSubmitted(true);
-    const errors = validate(draft, valueNum, scopeMode, selectedArticles, selectedVariantIds, showVariantPicker, selectedCategoryIds, selectedBrands, selectedGroupIds);
+    const errors = validate(draft, valueNum, scopeMode, selectedScopeItems, selectedCategoryIds, selectedBrands, selectedGroupIds, selectedMetalVariantIds);
     setFormErrors(errors);
     if (Object.keys(errors).length > 0) return;
 
-    // Resolver scope backend desde las 5 opciones UI
+    // Resolver scope backend desde las 6 opciones UI
     let scope: PromotionScope;
-    if (scopeMode === "all")            scope = "ALL";
-    else if (scopeMode === "category")  scope = "CATEGORY";
-    else if (scopeMode === "brand")     scope = "BRAND";
-    else if (scopeMode === "group")     scope = "GROUP";
-    else if (showVariantPicker && selectedVariantIds.length > 0) scope = "VARIANT";
-    else                                scope = "ARTICLE";
+    if (scopeMode === "all")           scope = "ALL";
+    else if (scopeMode === "category") scope = "CATEGORY";
+    else if (scopeMode === "brand")    scope = "BRAND";
+    else if (scopeMode === "group")    scope = "GROUP";
+    else if (scopeMode === "metals")   scope = "METALS";
+    else {
+      const hasVariantItems = selectedScopeItems.some(i => i.kind === "VARIANT");
+      scope = hasVariantItems ? "VARIANT" : "ARTICLE";
+    }
 
     const payload: PromotionPayload = {
-      name:          draft.name.trim(),
-      type:          draft.type,
-      value:         valueNum!,
+      name:             draft.name.trim(),
+      type:             draft.type,
+      value:            valueNum!,
       scope,
-      articleIds:    scope === "ARTICLE" ? selectedArticles.map((a) => a.id) : [],
-      variantIds:    scope === "VARIANT"  ? selectedVariantIds : [],
-      categoryIds:   scope === "CATEGORY" ? selectedCategoryIds : [],
-      brands:        scope === "BRAND"    ? selectedBrands : [],
-      groupIds:      scope === "GROUP"    ? selectedGroupIds : [],
-      priority:      priorityNum ?? 0,
+      articleIds:       scope === "ARTICLE" ? selectedScopeItems.map(i => i.id) : [],
+      variantIds:       scope === "VARIANT"  ? selectedScopeItems.filter(i => i.kind === "VARIANT").map(i => i.id) : [],
+      categoryIds:      scope === "CATEGORY" ? selectedCategoryIds : [],
+      brands:           scope === "BRAND"    ? selectedBrands : [],
+      groupIds:         scope === "GROUP"    ? selectedGroupIds : [],
+      metalVariantIds:  scope === "METALS"   ? selectedMetalVariantIds : [],
+      priority:         priorityNum ?? 0,
       validFrom:     draft.validFrom || null,
       validTo:       draft.validTo   || null,
       untilStockEnd: draft.untilStockEnd,
@@ -545,7 +511,15 @@ export default function ConfiguracionSistemaPromociones() {
       setEditOpen(false);
       await load();
     } catch (e: any) {
-      toast.error(e?.message || "Ocurrió un error al guardar.");
+      // El middleware `validateBody` del backend devuelve `{ message: "Datos
+      // inválidos.", issues: [{ path, message }] }`. Cuando hay issues, el
+      // toast genérico ("Datos inválidos.") no ayuda al usuario — preferimos
+      // el primer issue, que indica exactamente qué campo falló.
+      const issues = e?.data?.issues as { path?: string; message?: string }[] | undefined;
+      const detail = issues && issues.length > 0
+        ? issues[0].message || `Campo "${issues[0].path}" inválido.`
+        : null;
+      toast.error(detail || e?.message || "Ocurrió un error al guardar.");
     } finally {
       setBusySave(false);
     }
@@ -556,7 +530,8 @@ export default function ConfiguracionSistemaPromociones() {
     try {
       setTogglingId(row.id);
       setRows((prev) => prev.map((r) => r.id === row.id ? { ...r, isActive: !r.isActive } : r));
-      await promotionsApi.update(row.id, { isActive: !row.isActive });
+      // Endpoint dedicado: no exige validar scope ni metalVariantIds.
+      await promotionsApi.toggle(row.id);
       toast.success(row.isActive ? "Promoción desactivada." : "Promoción activada.");
       await load();
     } catch (e: any) {
@@ -764,17 +739,6 @@ export default function ConfiguracionSistemaPromociones() {
                   data-tp-autofocus="1"
                 />
               </TPField>
-              <TPField label="Prioridad" hint="Menor = más prioridad">
-                <TPNumberInput
-                  value={priorityNum}
-                  onChange={setPriorityNum}
-                  decimals={0}
-                  step={1}
-                  min={0}
-                  placeholder="0"
-                  disabled={busySave}
-                />
-              </TPField>
             </div>
           </ModalSection>
 
@@ -819,11 +783,9 @@ export default function ConfiguracionSistemaPromociones() {
                   setScopeMode(v as ScopeMode);
                   setSelectedCategoryIds([]);
                   setSelectedBrands([]);
-                  setSelectedArticles([]);
-                  setVariantOptions([]);
-                  setSelectedVariantIds([]);
-                  setShowVariantPicker(false);
+                  setSelectedScopeItems([]);
                   setSelectedGroupIds([]);
+                  setSelectedMetalVariantIds([]);
                 }}
                 disabled={busySave}
                 options={[
@@ -832,6 +794,7 @@ export default function ConfiguracionSistemaPromociones() {
                   { value: "category",       label: "Categorías" },
                   { value: "brand",          label: "Marcas" },
                   { value: "article_variant",label: "Artículos y variantes" },
+                  { value: "metals",         label: "Metales" },
                 ]}
               />
             </TPField>
@@ -850,70 +813,16 @@ export default function ConfiguracionSistemaPromociones() {
 
             {/* Artículos y variantes */}
             {scopeMode === "article_variant" && (
-              <>
-                <TPField label="Artículos" required>
-                  <TPComboMulti
-                    value={selectedArticles.map((a) => a.id)}
-                    onChange={(ids) => {
-                      const next = [
-                        ...selectedArticles.filter((a) => !allArticles.some((b) => b.id === a.id)),
-                        ...allArticles.filter((a) => ids.includes(a.id)),
-                      ];
-                      setSelectedArticles(next);
-                      if (next.length === 0) {
-                        setSelectedVariantIds([]);
-                        setShowVariantPicker(false);
-                      }
-                    }}
-                    options={[
-                      ...selectedArticles
-                        .filter((a) => !allArticles.some((b) => b.id === a.id))
-                        .map((a) => ({ value: a.id, label: a.name, sublabel: a.code })),
-                      ...allArticles.map((a) => ({ value: a.id, label: a.name, sublabel: a.code })),
-                    ]}
-                    placeholder="Seleccionar artículos…"
-                    disabled={busySave}
-                  />
-                </TPField>
-
-                {selectedArticles.length > 0 && (
-                  <div className="flex items-center gap-2">
-                    <TPCheckbox
-                      checked={showVariantPicker}
-                      onChange={(v) => {
-                        setShowVariantPicker(v);
-                        if (!v) setSelectedVariantIds([]);
-                      }}
-                      disabled={busySave}
-                      label={
-                        <span className="text-sm text-text">
-                          Restringir a variantes específicas
-                        </span>
-                      }
-                    />
-                  </div>
-                )}
-
-                {showVariantPicker && selectedArticles.length > 0 && (
-                  <TPField label="Variantes" required>
-                    {loadingVariants ? (
-                      <div className="text-xs text-muted py-2">Cargando variantes…</div>
-                    ) : variantOptions.length === 0 ? (
-                      <p className="text-xs text-muted py-2 italic">
-                        Los artículos seleccionados no tienen variantes activas.
-                      </p>
-                    ) : (
-                      <TPComboMulti
-                        value={selectedVariantIds}
-                        onChange={setSelectedVariantIds}
-                        options={variantOptions}
-                        placeholder="Seleccionar variantes…"
-                        disabled={busySave}
-                      />
-                    )}
-                  </TPField>
-                )}
-              </>
+              <TPField label="Artículos y variantes" required error={errors.scope}>
+                <TPArticleScopeSelect
+                  value={selectedScopeItems}
+                  onChange={setSelectedScopeItems}
+                  multiple
+                  includeVariants
+                  placeholder="Buscar y seleccionar artículos o variantes…"
+                  disabled={busySave}
+                />
+              </TPField>
             )}
 
             {/* Marcas */}
@@ -935,6 +844,18 @@ export default function ConfiguracionSistemaPromociones() {
               </TPField>
             )}
 
+            {/* Metales — variantes específicas (Oro 18K, Plata 925, etc.) */}
+            {scopeMode === "metals" && (
+              <TPField label="Variantes de metal" required error={submitted ? formErrors.scope : undefined}>
+                <MetalVariantPicker
+                  selected={selectedMetalVariantIds}
+                  onChange={setSelectedMetalVariantIds}
+                  disabled={busySave}
+                  placeholder="Seleccionar variantes (Oro 18K, Plata 925, …)"
+                />
+              </TPField>
+            )}
+
             {/* Grupos de artículos */}
             {scopeMode === "group" && (
               <TPField label="Grupos" required error={submitted ? errors.scope : undefined}>
@@ -946,7 +867,7 @@ export default function ConfiguracionSistemaPromociones() {
                   <TPComboMulti
                     value={selectedGroupIds}
                     onChange={setSelectedGroupIds}
-                    options={allGroups.map((g) => ({ value: g.id, label: g.name }))}
+                    options={groupsToComboOptions(allGroups)}
                     placeholder="Seleccionar grupos…"
                     disabled={busySave}
                   />
@@ -957,11 +878,10 @@ export default function ConfiguracionSistemaPromociones() {
             {/* Info: una promo puede incluir múltiples items */}
             {scopeMode !== "all" && (() => {
               const count =
-                scopeMode === "category"       ? selectedCategoryIds.length :
-                scopeMode === "brand"          ? selectedBrands.length :
-                scopeMode === "group"          ? selectedGroupIds.length :
-                scopeMode === "article_variant" && showVariantPicker ? selectedVariantIds.length :
-                scopeMode === "article_variant" ? selectedArticles.length : 0;
+                scopeMode === "category"        ? selectedCategoryIds.length :
+                scopeMode === "brand"           ? selectedBrands.length :
+                scopeMode === "group"           ? selectedGroupIds.length :
+                scopeMode === "article_variant" ? selectedScopeItems.length : 0;
               if (count <= 1) return null;
               return (
                 <div className="flex items-center gap-1.5 rounded-lg bg-blue-500/10 border border-blue-500/20 px-3 py-2 text-xs text-blue-600 dark:text-blue-400">

@@ -15,6 +15,18 @@ import {
   GripVertical,
 } from "lucide-react";
 
+import {
+  DndContext,
+  type DragEndEvent,
+  PointerSensor,
+  KeyboardSensor,
+  useSensor,
+  useSensors,
+  closestCenter,
+} from "@dnd-kit/core";
+import { restrictToVerticalAxis } from "@dnd-kit/modifiers";
+import { arrayMove, sortableKeyboardCoordinates } from "@dnd-kit/sortable";
+
 import { cn } from "../../components/ui/tp";
 import { Modal } from "../../components/ui/Modal";
 import { TPButton } from "../../components/ui/TPButton";
@@ -26,9 +38,9 @@ import ConfirmDeleteDialog from "../../components/ui/ConfirmDeleteDialog";
 import { TPSearchInput } from "../../components/ui/TPSearchInput";
 import { TPStatusPill } from "../../components/ui/TPStatusPill";
 import { TPRowActions } from "../../components/ui/TPRowActions";
-import { TPTr, TPTd } from "../../components/ui/TPTable";
-import { TPTableKit, type TPColDef } from "../../components/ui/TPTableKit";
-import { type SortDir } from "../../components/ui/TPSort";
+import { TPTableHeader, TPTableFooter } from "../../components/ui/TPTable";
+import { TPTreeTable, type TreeColDef, type TreeNodeBase } from "../../components/ui/TPTreeTable";
+import { SortArrows, type SortDir } from "../../components/ui/TPSort";
 
 import { toast } from "../../lib/toast";
 import {
@@ -126,15 +138,42 @@ export function AttributeLibraryModal({ open, onClose, initialView = "list" }: P
 
   const [deleteDef, setDeleteDef] = useState<AttributeDefRow | null>(null);
 
-  const [sortKey, setSortKey] = useState<"name" | "inputType" | "isActive" | "assignmentCount">("name");
+  const [sortKey, setSortKey] = useState<"name" | "inputType" | "isActive" | "assignmentCount" | null>(null);
   const [sortDir, setSortDir] = useState<SortDir>("asc");
 
-  function toggleSort(key: typeof sortKey) {
+  function toggleSort(key: "name" | "inputType" | "isActive" | "assignmentCount") {
     if (sortKey === key) {
-      setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+      if (sortDir === "asc") setSortDir("desc");
+      else { setSortKey(null); setSortDir("asc"); }
     } else {
       setSortKey(key);
       setSortDir("asc");
+    }
+  }
+
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
+  );
+
+  async function handleDragEnd(event: DragEndEvent) {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+
+    const activeId = String(active.id);
+    const overId = String(over.id);
+    const oldIndex = defs.findIndex((d) => d.id === activeId);
+    const newIndex = defs.findIndex((d) => d.id === overId);
+    if (oldIndex === -1 || newIndex === -1) return;
+
+    const reordered = arrayMove(defs, oldIndex, newIndex);
+    setDefs(reordered);
+
+    try {
+      await attributeDefsApi.reorder(reordered.map((d) => d.id));
+    } catch (e: any) {
+      toast.error(e?.message || "Error al guardar el orden.");
+      await load();
     }
   }
 
@@ -187,14 +226,16 @@ export function AttributeLibraryModal({ open, onClose, initialView = "list" }: P
       })
     : defs;
 
-  const sorted = [...filtered].sort((a, b) => {
-    let cmp = 0;
-    if (sortKey === "name")            cmp = a.name.localeCompare(b.name, "es");
-    if (sortKey === "inputType")       cmp = INPUT_TYPE_LABELS[a.inputType].localeCompare(INPUT_TYPE_LABELS[b.inputType], "es");
-    if (sortKey === "isActive")        cmp = Number(b.isActive) - Number(a.isActive);
-    if (sortKey === "assignmentCount") cmp = a.assignmentCount - b.assignmentCount;
-    return sortDir === "asc" ? cmp : -cmp;
-  });
+  const sorted = sortKey
+    ? [...filtered].sort((a, b) => {
+        let cmp = 0;
+        if (sortKey === "name")            cmp = a.name.localeCompare(b.name, "es");
+        if (sortKey === "inputType")       cmp = INPUT_TYPE_LABELS[a.inputType].localeCompare(INPUT_TYPE_LABELS[b.inputType], "es");
+        if (sortKey === "isActive")        cmp = Number(b.isActive) - Number(a.isActive);
+        if (sortKey === "assignmentCount") cmp = a.assignmentCount - b.assignmentCount;
+        return sortDir === "asc" ? cmp : -cmp;
+      })
+    : filtered;
 
   const hasOptionsInDraft =
     draft.inputType !== "" && HAS_OPTIONS.includes(draft.inputType as AttributeInputType);
@@ -491,7 +532,7 @@ export function AttributeLibraryModal({ open, onClose, initialView = "list" }: P
 
   function confirmPendingEdit(idx: number) {
     const label = editingPendingLabelVal.trim();
-    const code = editingPendingCodeVal.trim().toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 4);
+    const code = editingPendingCodeVal.trim().toUpperCase().replace(/[^A-Z0-9\-\/*_.]/g, "").slice(0, 10);
     if (label) {
       setPendingOptions((prev) =>
         prev.map((o, i) => (i === idx ? { ...o, label, codeExtension: code } : o))
@@ -687,7 +728,7 @@ export function AttributeLibraryModal({ open, onClose, initialView = "list" }: P
                           <input
                             type="text"
                             value={editingOptCodeVal}
-                            onChange={(e) => setEditingOptCodeVal(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 4))}
+                            onChange={(e) => setEditingOptCodeVal(e.target.value.toUpperCase().replace(/[^A-Z0-9\-\/*_.]/g, "").slice(0, 10))}
                             onKeyDown={(e) => {
                               if (e.key === "Enter") { e.preventDefault(); void handleSaveOptEdit(opt.id); }
                               if (e.key === "Escape") { setEditingOptId(null); setEditingOptLabelVal(""); setEditingOptCodeVal(""); }
@@ -825,7 +866,7 @@ export function AttributeLibraryModal({ open, onClose, initialView = "list" }: P
                         <input
                           type="text"
                           value={editingPendingCodeVal}
-                          onChange={(e) => setEditingPendingCodeVal(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 4))}
+                          onChange={(e) => setEditingPendingCodeVal(e.target.value.toUpperCase().replace(/[^A-Z0-9\-\/*_.]/g, "").slice(0, 10))}
                           onKeyDown={(e) => {
                             if (e.key === "Enter") { e.preventDefault(); confirmPendingEdit(idx); }
                             if (e.key === "Escape") { setEditingPendingIdx(null); setEditingPendingLabelVal(""); setEditingPendingCodeVal(""); }
@@ -920,99 +961,156 @@ export function AttributeLibraryModal({ open, onClose, initialView = "list" }: P
   }
 
   /* =========================================================
-     Columnas
+     Vista lista — DnD con TPTreeTable
   ========================================================= */
-  const ATTR_LIB_COLS: TPColDef[] = [
-    { key: "name", label: "Nombre", canHide: false, sortKey: "name" },
-    { key: "inputType", label: "Tipo", sortKey: "inputType" },
-    { key: "isActive", label: "Estado", sortKey: "isActive" },
-    { key: "assignmentCount", label: "Usado en", sortKey: "assignmentCount" },
-    { key: "acciones", label: "Acciones", canHide: false, align: "right" },
+  type AttrDefNode = AttributeDefRow & { level: number; children: { id: string }[] };
+
+  const isDndActive = !q.trim() && !sortKey;
+  const treeNodes: AttrDefNode[] = sorted.map((d) => ({ ...d, level: 0, children: [] }));
+
+  function sortHeader(key: "name" | "inputType" | "isActive" | "assignmentCount", label: string) {
+    return (
+      <button
+        type="button"
+        onClick={() => toggleSort(key)}
+        className="inline-flex items-center gap-1 text-left hover:text-text transition-colors"
+      >
+        {label}
+        <SortArrows active={sortKey === key} dir={sortDir} />
+      </button>
+    );
+  }
+
+  const treeColumns: TreeColDef[] = [
+    {
+      key: "name",
+      header: sortHeader("name", "Nombre"),
+      renderCell: (node: TreeNodeBase) => {
+        const def = node as AttrDefNode;
+        const hasOptions = HAS_OPTIONS.includes(def.inputType);
+        return (
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="font-medium text-text">{def.name}</span>
+            {hasOptions && def.options.length > 0 && (
+              <span className="inline-flex items-center gap-1 rounded-full bg-surface2 px-2 py-0.5 text-xs text-muted">
+                <Tags size={10} />
+                {def.options.length}
+              </span>
+            )}
+          </div>
+        );
+      },
+    },
+    {
+      key: "inputType",
+      header: sortHeader("inputType", "Tipo"),
+      className: "hidden md:table-cell",
+      renderCell: (node: TreeNodeBase) => <TypePill inputType={(node as AttrDefNode).inputType} />,
+    },
+    {
+      key: "isActive",
+      header: sortHeader("isActive", "Estado"),
+      className: "hidden md:table-cell",
+      renderCell: (node: TreeNodeBase) => (
+        <TPStatusPill
+          active={(node as AttrDefNode).isActive}
+          activeLabel="Activo"
+          inactiveLabel="Inactivo"
+        />
+      ),
+    },
+    {
+      key: "assignmentCount",
+      header: sortHeader("assignmentCount", "Usado en"),
+      className: "hidden md:table-cell",
+      renderCell: (node: TreeNodeBase) => {
+        const def = node as AttrDefNode;
+        if (def.assignmentCount === 0) return <span className="text-muted">—</span>;
+        return (
+          <div className="flex flex-wrap gap-1">
+            {def.assignedCategories.slice(0, 3).map((cat) => (
+              <span
+                key={cat.id}
+                className="inline-flex items-center rounded-full bg-surface2 px-2 py-0.5 text-xs text-text"
+              >
+                {cat.name}
+              </span>
+            ))}
+            {def.assignmentCount > 3 && (
+              <span className="inline-flex items-center rounded-full bg-surface2 px-2 py-0.5 text-xs text-muted">
+                +{def.assignmentCount - 3} más
+              </span>
+            )}
+          </div>
+        );
+      },
+    },
   ];
 
-  /* =========================================================
-     Vista lista
-  ========================================================= */
   const listView = (
-    <TPTableKit
-      rows={sorted}
-      columns={ATTR_LIB_COLS}
-      storageKey="tptech_col_attr_library"
-      search={q}
-      onSearchChange={setQ}
-      searchPlaceholder="Buscar por nombre, código o tipo…"
-      sortKey={sortKey}
-      sortDir={sortDir}
-      onSort={(key) => toggleSort(key as typeof sortKey)}
-      loading={loading}
-      emptyText={q ? "Sin resultados para esa búsqueda." : "No hay atributos en la biblioteca todavía."}
-      countLabel={(n) => `${n} atributo${n !== 1 ? "s" : ""} en total`}
-      renderRow={(def, vis) => {
-        const hasOptions = HAS_OPTIONS.includes(def.inputType);
-        const isBusy = busyId === def.id;
-        return (
-          <TPTr key={def.id} className={cn(!def.isActive && "opacity-60")}>
-            {vis.name && (
-              <TPTd label="Nombre">
-                <div className="flex items-center gap-2 flex-wrap">
-                  <span className="font-medium text-text">{def.name}</span>
-                  {hasOptions && def.options.length > 0 && (
-                    <span className="inline-flex items-center gap-1 rounded-full bg-surface2 px-2 py-0.5 text-xs text-muted">
-                      <Tags size={10} />
-                      {def.options.length}
-                    </span>
-                  )}
-                </div>
-              </TPTd>
-            )}
-            {vis.inputType && (
-              <TPTd label="Tipo">
-                <TypePill inputType={def.inputType} />
-              </TPTd>
-            )}
-            {vis.isActive && (
-              <TPTd label="Estado">
-                <TPStatusPill active={def.isActive} activeLabel="Activo" inactiveLabel="Inactivo" />
-              </TPTd>
-            )}
-            {vis.assignmentCount && (
-              <TPTd label="Usado en">
-                {def.assignmentCount === 0 ? (
-                  <span className="text-muted">—</span>
-                ) : (
-                  <div className="flex flex-wrap gap-1">
-                    {def.assignedCategories.slice(0, 3).map((cat) => (
-                      <span
-                        key={cat.id}
-                        className="inline-flex items-center rounded-full bg-surface2 px-2 py-0.5 text-xs text-text"
-                      >
-                        {cat.name}
-                      </span>
-                    ))}
-                    {def.assignmentCount > 3 && (
-                      <span className="inline-flex items-center rounded-full bg-surface2 px-2 py-0.5 text-xs text-muted">
-                        +{def.assignmentCount - 3} más
-                      </span>
-                    )}
-                  </div>
-                )}
-              </TPTd>
-            )}
-            {vis.acciones && (
-              <TPTd>
-                <TPRowActions
-                  onView={() => openView(def)}
-                  onEdit={() => openEdit(def)}
-                  onToggle={isBusy ? undefined : () => void handleToggle(def)}
-                  isActive={def.isActive}
-                  onDelete={() => setDeleteDef(def)}
-                />
-              </TPTd>
-            )}
-          </TPTr>
-        );
-      }}
-    />
+    <div>
+      <TPTableHeader
+        left={
+          <TPSearchInput
+            value={q}
+            onChange={setQ}
+            placeholder="Buscar por nombre, código o tipo…"
+            className="w-full md:w-64"
+          />
+        }
+        right={
+          sortKey ? (
+            <button
+              type="button"
+              onClick={() => { setSortKey(null); setSortDir("asc"); }}
+              className="text-xs text-muted hover:text-primary transition-colors flex items-center gap-1"
+              title="Volver al orden manual"
+            >
+              <GripVertical size={12} />
+              Activar reordenamiento
+            </button>
+          ) : undefined
+        }
+      />
+
+      <DndContext
+        sensors={sensors}
+        collisionDetection={closestCenter}
+        onDragEnd={handleDragEnd}
+        modifiers={[restrictToVerticalAxis]}
+      >
+        <TPTreeTable
+          nodes={treeNodes}
+          columns={treeColumns}
+          renderActions={(node: TreeNodeBase) => {
+            const def = node as AttrDefNode;
+            const isBusy = busyId === def.id;
+            return (
+              <TPRowActions
+                onView={() => openView(def)}
+                onEdit={() => openEdit(def)}
+                onToggle={isBusy ? undefined : () => void handleToggle(def)}
+                isActive={def.isActive}
+                onDelete={() => setDeleteDef(def)}
+              />
+            );
+          }}
+          expanded={new Set<string>()}
+          onToggleExpand={() => {}}
+          draggable={isDndActive}
+          isSearching={!isDndActive}
+          loading={loading}
+          emptyText={q ? "Sin resultados para esa búsqueda." : "No hay atributos en la biblioteca todavía."}
+          rowClassName={(node: TreeNodeBase) =>
+            !(node as AttrDefNode).isActive ? "opacity-60" : undefined
+          }
+        />
+      </DndContext>
+
+      <TPTableFooter>
+        <span>{sorted.length} atributo{sorted.length !== 1 ? "s" : ""} en total</span>
+      </TPTableFooter>
+    </div>
   );
 
   /* =========================================================

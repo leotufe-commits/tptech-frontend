@@ -40,17 +40,13 @@ import {
   type PaymentComponentInput,
 } from "../services/purchases";
 import { getCurrencies, type CurrencyRow } from "../services/valuation";
+import { fmtNumber2 } from "../lib/format";
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
-function fmtMoney(v: string | number | null | undefined): string {
-  if (v == null) return "—";
-  const n = typeof v === "string" ? parseFloat(v) : v;
-  if (!Number.isFinite(n)) return "—";
-  return n.toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-}
+const fmtMoney = fmtNumber2;
 
 function fmtDate(s: string | null | undefined): string {
   if (!s) return "—";

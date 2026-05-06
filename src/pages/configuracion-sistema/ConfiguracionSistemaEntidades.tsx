@@ -1,6 +1,6 @@
 // src/pages/configuracion-sistema/ConfiguracionSistemaEntidades.tsx
 // Componente unificado para Clientes y Proveedores — usar a través de los wrappers.
-import React from "react";
+import React, { useEffect } from "react";
 import { TPSectionShell } from "../../components/ui/TPSectionShell";
 import ConfirmDeleteDialog from "../../components/ui/ConfirmDeleteDialog";
 import { useEntidades } from "../../hooks/useEntidades";
@@ -51,6 +51,17 @@ export default function ConfiguracionSistemaEntidades({
     relateOpen, setRelateOpen,
     bulkImportOpen, setBulkImportOpen,
   } = useEntidades(role);
+
+  // Sidebar quick-create
+  useEffect(() => {
+    const screen = role === "client" ? "clientes" : "proveedores";
+    function onQuickCreate(e: Event) {
+      const { screen: s } = (e as CustomEvent).detail ?? {};
+      if (s === screen) openCreate();
+    }
+    window.addEventListener("tptech:sidebar_quick_create", onQuickCreate);
+    return () => window.removeEventListener("tptech:sidebar_quick_create", onQuickCreate);
+  }, [role]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const storageKey       = role === "client" ? CLIENT_COL_LS_KEY : SUPPLIER_COL_LS_KEY;
   const isClientContext  = role === "client";

@@ -115,24 +115,6 @@ export function catalogHints(key: CatalogType) {
         statusHint: "Desactivá para ocultarlo sin borrar el historial.",
       };
 
-    case "UNIT_OF_MEASURE":
-      return {
-        modalSubtitle: "Definí unidades de medida para los artículos del catálogo.",
-        nameLabel: "Unidad",
-        namePlaceholder: "Ej: UND, KG, GR, MT, PAR",
-        nameHint: "Nombre corto visible en el campo Unidad de medida del artículo.",
-        statusHint: "Desactivá para ocultarla del selector.",
-      };
-
-    case "MULTIPLIER_BASE":
-      return {
-        modalSubtitle: "Definí las unidades de peso para los artículos del catálogo (gramos, kilates, onzas, etc.).",
-        nameLabel: "Unidad",
-        namePlaceholder: "Ej: Gramos, Kilates, Onzas",
-        nameHint: "Nombre visible en el selector de unidad de peso del artículo.",
-        statusHint: "Desactivá para ocultarla del selector.",
-      };
-
     default:
       return {
         modalSubtitle: "Completá los campos y guardá.",

@@ -304,8 +304,8 @@ export default function VariantValueModal({
 
                   <InfoCard
                     icon={<Sigma className="h-3.5 w-3.5" />}
-                    label="Factor de venta"
-                    value={Number.isFinite(saleFactor) ? fmtNumber2(saleFactor) : "—"}
+                    label="Merma (%)"
+                    value={Number.isFinite(saleFactor) ? `${fmtNumber2(Math.round((saleFactor - 1) * 10000) / 100)}%` : "—"}
                     valueClassName="font-medium tabular-nums"
                   />
 

@@ -4,6 +4,53 @@ import { createPortal } from "react-dom";
 import { X } from "lucide-react";
 import { cn } from "./tp";
 
+// ── Iconos estilo Windows ──────────────────────────────────────────────────
+function IconMaximize() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" aria-hidden>
+      <rect x="3" y="3" width="10" height="10" />
+    </svg>
+  );
+}
+function IconRestore() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" aria-hidden>
+      <rect x="6" y="3" width="7" height="7" />
+      <rect x="3" y="6" width="7" height="7" />
+    </svg>
+  );
+}
+
+// ── Resize handles ─────────────────────────────────────────────────────────
+type ResizeSide = "tl" | "t" | "tr" | "r" | "br" | "b" | "bl" | "l";
+
+const RESIZE_CURSOR: Record<ResizeSide, string> = {
+  tl: "nwse-resize", t:  "ns-resize", tr: "nesw-resize",
+  r:  "ew-resize",
+  br: "nwse-resize", b:  "ns-resize", bl: "nesw-resize",
+  l:  "ew-resize",
+};
+
+function sidesOf(side: ResizeSide) {
+  return {
+    left:   side === "l" || side === "tl" || side === "bl",
+    right:  side === "r" || side === "tr" || side === "br",
+    top:    side === "t" || side === "tl" || side === "tr",
+    bottom: side === "b" || side === "bl" || side === "br",
+  };
+}
+
+function clamp(v: number, lo: number, hi: number) {
+  return Math.min(Math.max(v, lo), hi);
+}
+
+// El breakpoint `lg` de Tailwind. En mobile no leemos ni escribimos
+// preferencias para no contaminar el estado guardado en desktop.
+function isMobileViewport() {
+  if (typeof window === "undefined") return false;
+  return window.innerWidth < 1024;
+}
+
 /**
  * ✅ Modal DRAGGABLE (arrastrable) + stack (nested-safe)
  * ✅ overlayClassName opcional
@@ -29,7 +76,7 @@ import { cn } from "./tp";
 
 let __tp_modal_stack: string[] = [];
 
-type MaxWidth = "sm" | "md" | "lg" | "xl" | "2xl" | "3xl" | "4xl" | "6xl" | "7xl";
+type MaxWidth = "sm" | "md" | "lg" | "xl" | "2xl" | "3xl" | "4xl" | "5xl" | "6xl" | "7xl";
 
 function maxWidthClass(maxWidth?: MaxWidth, wide?: boolean) {
   if (!maxWidth) return wide ? "max-w-6xl" : "max-w-4xl";
@@ -41,6 +88,7 @@ function maxWidthClass(maxWidth?: MaxWidth, wide?: boolean) {
   if (maxWidth === "2xl") return "max-w-2xl";
   if (maxWidth === "3xl") return "max-w-3xl";
   if (maxWidth === "4xl") return "max-w-4xl";
+  if (maxWidth === "5xl") return "max-w-5xl";
   if (maxWidth === "6xl") return "max-w-6xl";
   if (maxWidth === "7xl") return "max-w-7xl";
   return wide ? "max-w-6xl" : "max-w-4xl";
@@ -115,6 +163,12 @@ export function Modal({
   showCloseIcon = true,
   closeLabel = "",
 
+  resizable = false,
+  maximizable = false,
+  defaultMaximized = false,
+  maximizedMode = "viewport",
+  modalKey,
+
   onEnter,
 }: {
   open: boolean;
@@ -140,6 +194,27 @@ export function Modal({
   headerRight?: React.ReactNode;
   showCloseIcon?: boolean;
   closeLabel?: string;
+
+  /** Permite redimensionar el modal arrastrando desde los handles. */
+  resizable?: boolean;
+  /** Habilita botón de maximizar/restaurar en el header. */
+  maximizable?: boolean;
+  /** Si maximizable, arranca maximizado al abrir. */
+  defaultMaximized?: boolean;
+  /**
+   * Modo de maximización:
+   * - "viewport" (default): ventana clásica, 8px de margen al borde.
+   * - "embedded": fullscreen estilo página interna del dashboard (sin sombra,
+   *   sin borde redondeado, fondo del dashboard, cubre todo el viewport).
+   */
+  maximizedMode?: "viewport" | "embedded";
+
+  /**
+   * Si se setea, guarda y restaura `isMaximized` + `size` en localStorage
+   * bajo `tp_modal_<modalKey>`. Útil para que la preferencia del usuario
+   * persista entre aperturas/sesiones.
+   */
+  modalKey?: string;
 
   /** ✅ Enter = ejecutar acción primaria (Guardar/Confirmar) */
   onEnter?: () => void;
@@ -183,10 +258,207 @@ export function Modal({
     return true;
   };
 
+  // ── Maximizar / restaurar ──────────────────────────────────────────────
+  const [isMaximized, setIsMaximized] = useState(maximizable && defaultMaximized);
+  // Tamaño explícito en px cuando el usuario redimensiona (null = usar wCls).
+  const [size, setSize] = useState<{ width: number; height: number } | null>(null);
+  // Memoria del estado previo a maximizar para restaurar exactamente igual.
+  const restoreRef = useRef<{ size: { width: number; height: number } | null; pos: { x: number; y: number } } | null>(null);
+
   useEffect(() => {
     if (!open) return;
-    setPos({ x: 0, y: 0 });
-  }, [open]);
+
+    const mobile = isMobileViewport();
+
+    let initialMax: boolean = Boolean(maximizable && defaultMaximized);
+    let initialSize: { width: number; height: number } | null = null;
+    let initialPos: { x: number; y: number } = { x: 0, y: 0 };
+
+    if (mobile) {
+      // Mobile: ignora estado guardado. Si es maximizable, arrancar en
+      // pantalla completa (mejor UX). Sin tamaño ni posición personalizados.
+      initialMax = Boolean(maximizable);
+      initialSize = null;
+      initialPos = { x: 0, y: 0 };
+    } else if (modalKey && typeof window !== "undefined") {
+      try {
+        // Convención: `tp:modal:<modalKey>` (ver document-types.ts → LS_KEYS).
+        const raw = window.localStorage.getItem(`tp:modal:${modalKey}`);
+        if (raw) {
+          const data = JSON.parse(raw);
+
+          if (typeof data?.isMaximized === "boolean" && maximizable) {
+            initialMax = data.isMaximized;
+          }
+
+          if (
+            typeof data?.width === "number" &&
+            typeof data?.height === "number"
+          ) {
+            const maxW = window.innerWidth - 16;
+            const maxH = window.innerHeight - 16;
+            initialSize = {
+              width:  clamp(data.width,  720, Math.max(720, maxW)),
+              height: clamp(data.height, 420, Math.max(420, maxH)),
+            };
+          }
+
+          if (typeof data?.x === "number" && typeof data?.y === "number") {
+            // Clamp para que el modal siga visible si cambió el viewport.
+            // Mantener al menos `margin` px del modal dentro del viewport.
+            const margin = 80;
+            const maxX = Math.max(0, window.innerWidth  / 2 - margin);
+            const maxY = Math.max(0, window.innerHeight / 2 - margin);
+            initialPos = {
+              x: clamp(data.x, -maxX, maxX),
+              y: clamp(data.y, -maxY, maxY),
+            };
+          }
+        }
+      } catch {}
+    }
+
+    setIsMaximized(initialMax);
+    setSize(initialSize);
+    setPos(initialPos);
+    restoreRef.current = null;
+  }, [open, maximizable, defaultMaximized, modalKey]);
+
+  function toggleMaximize() {
+    setIsMaximized((prev) => {
+      if (!prev) {
+        // Maximizar: guardar estado actual
+        restoreRef.current = { size, pos };
+        setPos({ x: 0, y: 0 });
+        return true;
+      }
+      // Restaurar: volver al estado guardado
+      const prevState = restoreRef.current;
+      if (prevState) {
+        setSize(prevState.size);
+        setPos(prevState.pos);
+      } else {
+        setSize(null);
+        setPos({ x: 0, y: 0 });
+      }
+      return false;
+    });
+  }
+
+  const embeddedActive = isMaximized && maximizedMode === "embedded";
+
+  // ── Persistencia de preferencias en localStorage (opcional vía modalKey) ──
+  // Guarda `{ isMaximized, width, height, x, y }` con debounce de 250 ms para
+  // no escribir en cada frame durante drag/resize. En mobile NO escribe para
+  // no contaminar el estado guardado en desktop.
+  useEffect(() => {
+    if (!open || !modalKey || typeof window === "undefined") return;
+    if (isMobileViewport()) return;
+
+    const t = window.setTimeout(() => {
+      try {
+        window.localStorage.setItem(
+          `tp:modal:${modalKey}`,
+          JSON.stringify({
+            isMaximized,
+            width:  size?.width  ?? null,
+            height: size?.height ?? null,
+            x: pos.x,
+            y: pos.y,
+          }),
+        );
+      } catch {}
+    }, 250);
+
+    return () => window.clearTimeout(t);
+  }, [open, modalKey, isMaximized, size, pos]);
+
+  // ── Resize con handles propios ──────────────────────────────────────────
+  const resize = useRef({
+    active: false,
+    side: "br" as ResizeSide,
+    startX: 0, startY: 0,
+    startW: 0, startH: 0,
+    startTx: 0, startTy: 0,
+  });
+
+  function onResizeStart(e: React.PointerEvent, side: ResizeSide) {
+    if (!resizable || isMaximized || busy || !isTopMost) return;
+    if (e.button !== 0) return;
+    e.preventDefault();
+    e.stopPropagation();
+
+    const el = modalRef.current;
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+
+    resize.current = {
+      active: true,
+      side,
+      startX: e.clientX,
+      startY: e.clientY,
+      startW: rect.width,
+      startH: rect.height,
+      startTx: pos.x,
+      startTy: pos.y,
+    };
+
+    document.body.style.userSelect = "none";
+    document.body.style.cursor = RESIZE_CURSOR[side];
+  }
+
+  useEffect(() => {
+    function onMove(e: PointerEvent) {
+      if (!resize.current.active) return;
+      const r = resize.current;
+      const dx = e.clientX - r.startX;
+      const dy = e.clientY - r.startY;
+      const s = sidesOf(r.side);
+
+      const minW = 720;
+      const minH = 420;
+      const maxW = window.innerWidth  - 16;
+      const maxH = window.innerHeight - 16;
+
+      let newW = r.startW;
+      let newH = r.startH;
+      let newTx = r.startTx;
+      let newTy = r.startTy;
+
+      if (s.right && !s.left) {
+        newW  = clamp(r.startW + dx, minW, maxW);
+        newTx = r.startTx + (newW - r.startW) / 2;
+      } else if (s.left && !s.right) {
+        newW  = clamp(r.startW - dx, minW, maxW);
+        newTx = r.startTx - (newW - r.startW) / 2;
+      }
+
+      if (s.bottom && !s.top) {
+        newH  = clamp(r.startH + dy, minH, maxH);
+        newTy = r.startTy + (newH - r.startH) / 2;
+      } else if (s.top && !s.bottom) {
+        newH  = clamp(r.startH - dy, minH, maxH);
+        newTy = r.startTy - (newH - r.startH) / 2;
+      }
+
+      setSize({ width: newW, height: newH });
+      setPos({ x: newTx, y: newTy });
+    }
+
+    function onUp() {
+      if (!resize.current.active) return;
+      resize.current.active = false;
+      document.body.style.userSelect = "";
+      document.body.style.cursor = "";
+    }
+
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    return () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+    };
+  }, []);
 
   // ✅ Bloquear scroll del body mientras el modal está abierto (solo top-most)
   useEffect(() => {
@@ -218,7 +490,11 @@ export function Modal({
 
     return () => {
       try {
-        prevFocusRef.current?.focus?.();
+        // `preventScroll: true` — al cerrar el modal, restaurar el foco
+        // al elemento anterior NO debe scrollear la página. Si el
+        // elemento estaba fuera del viewport, el usuario decide si
+        // quiere ir a buscarlo (con Tab/scroll explícito).
+        prevFocusRef.current?.focus?.({ preventScroll: true } as any);
       } catch {}
       prevFocusRef.current = null;
     };
@@ -232,6 +508,13 @@ export function Modal({
       const root = modalRef.current;
       if (!root) return;
 
+      // ✅ Si hay un TPActionsMenu (u otro popover que setea este flag)
+      // abierto, NO movemos el foco. Abrir/cerrar el menú no debe
+      // disparar el autoFocus del modal (caso típico: menú "..." de una
+      // línea cerca del fondo del scroll → foco a Cliente al tope →
+      // scrollIntoView automático).
+      if ((typeof window !== "undefined") && (window.__tp_actions_menu_open ?? 0) > 0) return;
+
       // si ya está adentro, no pelear
       const active = document.activeElement as HTMLElement | null;
       if (active && root.contains(active)) return;
@@ -239,10 +522,19 @@ export function Modal({
       // ✅ si el foco está en un modal anidado (ej. TPComboCreatable), no interferir
       if (active && active.closest?.('[role="dialog"][aria-modal="true"]')) return;
 
+      // ✅ si el foco está en un portal marcado como zona permitida
+      // (ej. TPActionsMenu, TPComboFixed, etc.), no robarlo
+      if (active && active.closest?.('[data-tp-portal]')) return;
+
       const best = pickBest(root);
       if (best) {
         try {
-          best.focus();
+          // `preventScroll: true` evita el scrollIntoView automático del
+          // navegador cuando el foco va a un elemento parcialmente fuera
+          // del viewport. El primer focus al abrir un modal típicamente
+          // ocurre cuando el modal ya está visible, así que no necesita
+          // scroll — y si lo necesita, el modal entero ya está layout-eado.
+          best.focus({ preventScroll: true });
           if (best instanceof HTMLInputElement || best instanceof HTMLTextAreaElement) {
             try {
               best.select?.();
@@ -253,7 +545,7 @@ export function Modal({
       }
 
       try {
-        headerRef.current?.focus?.();
+        headerRef.current?.focus?.({ preventScroll: true } as any);
       } catch {}
     };
 
@@ -313,6 +605,8 @@ export function Modal({
         const active = document.activeElement as HTMLElement | null;
 
         if (!active || !root.contains(active)) {
+          // Si el foco está en un portal hijo (ej. dropdown de búsqueda), dejar Tab libre
+          if (active && active.closest?.("[data-tp-portal]")) return;
           e.preventDefault();
           (e.shiftKey ? focusables[focusables.length - 1] : focusables[0])?.focus?.();
           return;
@@ -387,6 +681,13 @@ export function Modal({
   function onFocusCapture() {
     if (!isTopMost) return;
 
+    // ✅ Si hay un TPActionsMenu abierto, NO recapturar foco. El menú
+    // tiene su propio ciclo de vida y al cerrarlo el foco volverá al
+    // botón naturalmente. Sin este guard, abrir el menú en una línea
+    // baja del modal causa: focus → body → recaptura a Cliente (1er
+    // input) → scrollIntoView del modal hacia el tope.
+    if ((typeof window !== "undefined") && (window.__tp_actions_menu_open ?? 0) > 0) return;
+
     const root = modalRef.current;
     if (!root) return;
 
@@ -397,12 +698,15 @@ export function Modal({
     // no robarlo — los portales React propagan eventos por el árbol React aunque estén en body
     if (active && active.closest?.('[role="dialog"][aria-modal="true"]')) return;
 
-    // ✅ si el foco fue al portal de TPComboFixed o TPComboCreatable (renderizado en body),
-    // no robarlo — el usuario está interactuando con el dropdown
+    // ✅ si el foco fue al portal de TPComboFixed / TPComboCreatable / TPActionsMenu
+    // (renderizados en body con `data-tp-portal`), no robarlo
     if (active && active.closest?.('[data-tp-portal]')) return;
 
     const best = pickBest(root);
-    (best ?? headerRef.current)?.focus?.();
+    // `preventScroll: true` — si por algún motivo llegamos hasta acá y
+    // refocusamos al primer input, NO queremos disparar scrollIntoView
+    // del modal. Mejor el foco vuelve sin saltos visuales.
+    (best ?? headerRef.current)?.focus?.({ preventScroll: true } as any);
   }
 
   useEffect(() => {
@@ -457,7 +761,8 @@ export function Modal({
 
   const stackSize = __tp_modal_stack.length;
   const defaultOverlayClass = stackSize > 1 ? "bg-black/25" : "bg-black/40";
-  const overlayClass = overlayClassName ?? defaultOverlayClass;
+  // En modo embedded el overlay no debe ensombrecer la pantalla — el modal se siente como página.
+  const overlayClass = overlayClassName ?? (embeddedActive ? "bg-transparent" : defaultOverlayClass);
 
   const zBase = 1000 + depth * 10;
   const wCls = maxWidthClass(maxWidth, wide);
@@ -465,39 +770,101 @@ export function Modal({
   const hasMeta = Boolean(subtitle || description);
 
   return createPortal(
-    <div className="fixed inset-0" style={{ zIndex: zBase }} onFocusCapture={onFocusCapture}>
-      {/* overlay */}
-      <div
-        className={cn("absolute inset-0", overlayClass)}
-        onMouseDown={(e) => {
-          if (!isTopMost) return;
-          if (drag.current.active) e.preventDefault();
-          if (busy) e.preventDefault();
-        }}
-        onClick={() => {
-          if (!canClose()) return;
-          if (recentlyDragged()) return;
-          onClose();
-        }}
-      />
+    <div
+      className={cn("fixed inset-0", embeddedActive && "pointer-events-none")}
+      style={{ zIndex: zBase }}
+      onFocusCapture={onFocusCapture}
+    >
+      {/* overlay (oculto en modo embedded) */}
+      {!embeddedActive ? (
+        <div
+          className={cn("absolute inset-0", overlayClass)}
+          onMouseDown={(e) => {
+            if (!isTopMost) return;
+            if (drag.current.active) e.preventDefault();
+            if (busy) e.preventDefault();
+          }}
+          onClick={() => {
+            if (!canClose()) return;
+            if (recentlyDragged()) return;
+            onClose();
+          }}
+        />
+      ) : null}
 
       {/* layout container */}
-      <div className="absolute inset-0 flex items-center justify-center px-4 py-6">
+      <div
+        className={cn(
+          "absolute inset-0 flex items-center justify-center",
+          !embeddedActive && "px-4 py-6"
+        )}
+      >
         <div
           ref={modalRef}
           role="dialog"
           aria-modal="true"
           aria-label={title}
           className={cn(
-            "relative w-full rounded-2xl border border-border bg-card shadow-soft",
-            wCls,
-            "max-h-[calc(100vh-3rem)] flex flex-col overflow-hidden",
-            className
+            "flex flex-col overflow-hidden",
+            embeddedActive
+              ? cn(
+                  // Mobile: fullscreen. lg+: respeta el sidebar (left) y el
+                  // topbar (top). Ambos vienen como CSS vars del layout:
+                  //   --sidebar-w (Sidebar.tsx)  /  --topbar-h (Topbar.tsx)
+                  "fixed inset-0",
+                  "lg:left-[var(--sidebar-w,280px)]",
+                  "lg:top-[var(--topbar-h,72px)]",
+                  "bg-bg pointer-events-auto"
+                )
+              : "rounded-2xl border border-border bg-card shadow-soft",
+            !isMaximized && !size && "relative w-full",
+            !isMaximized && size && "relative",
+            !isMaximized && !size && wCls,
+            !isMaximized && !size && "max-h-[85vh]",
+            // El className del caller (ej: "!max-w-[1500px] w-[96vw]") se
+            // aplica solo en modo flotante; en cualquier modo maximizado
+            // queremos ancho completo del área disponible.
+            !isMaximized && className
           )}
-          style={{
-            transform: `translate(${pos.x}px, ${pos.y}px)`,
-            willChange: "transform",
-          }}
+          style={
+            embeddedActive
+              ? {
+                  // Posicionamiento via clases Tailwind (top/right/bottom/left)
+                  // para soportar el media query del sidebar.
+                  width: "auto",
+                  height: "auto",
+                  maxWidth: "none",
+                  maxHeight: "none",
+                  transform: "none",
+                  willChange: "auto",
+                }
+              : isMaximized
+                ? {
+                    position: "fixed",
+                    top: 8,
+                    left: 8,
+                    right: 8,
+                    bottom: 8,
+                    width: "auto",
+                    height: "auto",
+                    maxWidth: "none",
+                    maxHeight: "none",
+                    transform: "none",
+                    willChange: "auto",
+                  }
+                : {
+                    transform: `translate(${pos.x}px, ${pos.y}px)`,
+                    willChange: "transform",
+                    ...(size
+                      ? {
+                          width:  `${size.width}px`,
+                          height: `${size.height}px`,
+                          maxWidth:  "calc(100vw - 16px)",
+                          maxHeight: "calc(100vh - 16px)",
+                        }
+                      : {}),
+                  }
+          }
           onMouseDown={(e) => e.stopPropagation()}
           onClick={(e) => e.stopPropagation()}
         >
@@ -505,10 +872,15 @@ export function Modal({
           <div
             ref={headerRef}
             tabIndex={-1}
-            className={cn("border-b border-border select-none", "px-6 pt-5 pb-4", "cursor-move")}
+            className={cn(
+              "border-b border-border select-none shrink-0",
+              "px-6 pt-5 pb-4",
+              isMaximized ? "cursor-default" : "cursor-move"
+            )}
             onPointerDown={(e) => {
               if (!isTopMost) return;
               if (busy) return;
+              if (isMaximized) return;
               if ((e as any).button != null && (e as any).button !== 0) return;
 
               const target = e.target as HTMLElement | null;
@@ -532,6 +904,31 @@ export function Modal({
 
               <div className="flex items-center gap-2 shrink-0" data-no-drag="1">
                 {headerRight ? <div className="flex items-center gap-2">{headerRight}</div> : null}
+
+                {maximizable ? (
+                  <button
+                    data-no-drag="1"
+                    type="button"
+                    title={isMaximized ? "Restaurar" : "Maximizar"}
+                    aria-label={isMaximized ? "Restaurar" : "Maximizar"}
+                    className={cn(
+                      "h-9 w-9 rounded-xl border border-border bg-surface2/40",
+                      "grid place-items-center hover:bg-surface2 transition",
+                      (busy || !isTopMost) && "opacity-60"
+                    )}
+                    onPointerDown={(e) => e.stopPropagation()}
+                    onMouseDown={(e) => e.stopPropagation()}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      if (!isTopMost) return;
+                      if (busy) return;
+                      toggleMaximize();
+                    }}
+                    disabled={busy || !isTopMost}
+                  >
+                    {isMaximized ? <IconRestore /> : <IconMaximize />}
+                  </button>
+                ) : null}
 
                 {!hideHeaderClose ? (
                   <div className="flex items-center gap-2">
@@ -588,8 +985,9 @@ export function Modal({
           {/* BODY (scroll) */}
           <div
             className={cn(
-              "p-6 pt-4 flex-1 min-h-0 overflow-y-auto tp-scroll",
+              "p-6 pt-4 min-h-0 overflow-y-auto tp-scroll",
               "overscroll-contain touch-pan-y",
+              (isMaximized || resizable) && "flex-1",
               bodyClassName
             )}
             style={{ WebkitOverflowScrolling: "touch" as any }}
@@ -599,9 +997,49 @@ export function Modal({
 
           {/* FOOTER */}
           {footer ? (
-            <div className={cn("px-6 py-4 border-t border-border", "flex items-center justify-end gap-2", footerClassName)}>
+            <div className={cn("px-6 py-4 border-t border-border", "flex items-center justify-end gap-2 shrink-0", footerClassName)}>
               {footer}
             </div>
+          ) : null}
+
+          {/* RESIZE HANDLES (8) */}
+          {resizable && !isMaximized ? (
+            <>
+              {/* Bordes */}
+              <div
+                className="absolute top-0 left-3 right-3 h-1.5 z-20 cursor-ns-resize"
+                onPointerDown={(e) => onResizeStart(e, "t")}
+              />
+              <div
+                className="absolute bottom-0 left-3 right-3 h-1.5 z-20 cursor-ns-resize"
+                onPointerDown={(e) => onResizeStart(e, "b")}
+              />
+              <div
+                className="absolute top-3 bottom-3 left-0 w-1.5 z-20 cursor-ew-resize"
+                onPointerDown={(e) => onResizeStart(e, "l")}
+              />
+              <div
+                className="absolute top-3 bottom-3 right-0 w-1.5 z-20 cursor-ew-resize"
+                onPointerDown={(e) => onResizeStart(e, "r")}
+              />
+              {/* Esquinas */}
+              <div
+                className="absolute top-0 left-0 w-3 h-3 z-30 cursor-nwse-resize"
+                onPointerDown={(e) => onResizeStart(e, "tl")}
+              />
+              <div
+                className="absolute top-0 right-0 w-3 h-3 z-30 cursor-nesw-resize"
+                onPointerDown={(e) => onResizeStart(e, "tr")}
+              />
+              <div
+                className="absolute bottom-0 left-0 w-3 h-3 z-30 cursor-nesw-resize"
+                onPointerDown={(e) => onResizeStart(e, "bl")}
+              />
+              <div
+                className="absolute bottom-0 right-0 w-3 h-3 z-30 cursor-nwse-resize"
+                onPointerDown={(e) => onResizeStart(e, "br")}
+              />
+            </>
           ) : null}
         </div>
       </div>

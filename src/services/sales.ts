@@ -114,6 +114,7 @@ export type SaleRow = {
   confirmedAt: string | null;
   cancelledAt: string | null;
   createdAt: string;
+  sellerCommissionTotal: string | null;
   client: { id: string; displayName: string; code: string } | null;
   seller: { id: string; firstName: string; lastName: string; displayName: string } | null;
   warehouse: { id: string; name: string; code: string } | null;
@@ -129,8 +130,18 @@ export type SaleTotals = {
   linesWithoutCost: number;
 };
 
+export type SellerSnapshot = {
+  id: string;
+  displayName: string;
+  commissionType: string;
+  commissionValue: number | null;
+  commissionBase: string;
+  commissionTotal: number | null;
+};
+
 export type SaleDetail = SaleRow & {
   clientSnapshot: Record<string, unknown> | null;
+  sellerSnapshot: SellerSnapshot | null;
   cancelNote: string;
   lines: SaleLineRow[];
   payments: SalePaymentRow[];
@@ -140,9 +151,41 @@ export type SaleDetail = SaleRow & {
 // ─── Sale Preview ─────────────────────────────────────────────────────────────
 
 export type SalePreviewLineInput = {
-  articleId: string;
+  /** Tipo de línea. Default ARTICLE. MANUAL = texto libre sin pricing-engine. */
+  type?: "ARTICLE" | "MANUAL";
+  /** Descripción libre (obligatoria si `type === "MANUAL"`). */
+  description?: string;
+  /** Id del artículo del catálogo. Obligatorio para `type === "ARTICLE"`. */
+  articleId?: string;
   variantId?: string | null;
   quantity:  number;
+  /** Override manual del precio neto unitario (Fase 6.5). */
+  manualPriceOverride?:    number | null;
+  /** Override manual de la bonificación por línea. */
+  manualDiscountOverride?: {
+    mode:      "PERCENT" | "AMOUNT";
+    value:     number;
+    appliesTo?: "METAL" | "HECHURA" | "PRODUCT" | "SERVICE" | "TOTAL";
+  } | null;
+  /** Override manual del impuesto por línea. */
+  taxOverride?: {
+    mode:      "PERCENT" | "AMOUNT";
+    value:     number;
+    appliesTo?: "METAL" | "HECHURA" | "PRODUCT" | "SERVICE" | "TOTAL";
+  } | null;
+  /** Fase 2A.7 — override de lista de precios por línea. Tiene precedencia
+   *  sobre el `priceListId` doc-level. */
+  priceListIdOverride?: string | null;
+  // Fase 3B — overrides de COMPOSICIÓN DE COSTO por línea. El motor ya los
+  // respetaba; ahora viajan en `/sales/preview` para edición desde Factura.
+  /** Pisa los gramos de la línea METAL del artículo. */
+  gramsOverride?:          number | null;
+  /** Pisa el % de merma aplicado sobre el metal. */
+  mermaPercentOverride?:   number | null;
+  /** Pisa el `metalVariantId` (cambia la cotización del metal usado). */
+  metalVariantIdOverride?: string | null;
+  /** Pisa el monto unitario de la línea HECHURA. */
+  hechuraOverrideAmount?:  number | null;
 };
 
 export type SalePreviewInput = {
@@ -150,6 +193,68 @@ export type SalePreviewInput = {
   clientId?:        string | null;
   paymentMethodId?: string | null;
   installmentsQty?: number;
+  channelId?:       string | null;
+  couponCode?:      string | null;
+  /** Costo de envío del documento (Fase 4). */
+  shippingAmount?:       number | null;
+  /** Descuento global del documento ya resuelto a monto (Fase 4). */
+  globalDiscountAmount?: number | null;
+  /** Descuento global sin resolver (Fase 5) — el backend computa el monto
+   *  contra el subtotal post-descuentos de línea. Evita feedback loop. */
+  globalDiscount?: { type: "PERCENT" | "AMOUNT"; value: number } | null;
+  /** Fase 2A.7 — override de lista de precios a nivel documento. */
+  priceListId?: string | null;
+  /** Fase MM — moneda en la que se quiere ver el response del preview. */
+  currencyId?: string | null;
+  /** Fase MM ext — cotización manual del documento (`draft.fxRate`). Cuando
+   *  viene válida, el backend la usa para convertir el response en lugar
+   *  de la tasa vigente del catálogo. SOLO afecta el preview; el confirm
+   *  persiste en moneda base con la tasa del momento. */
+  currencyRate?: number | null;
+};
+
+export type SalePreviewLineMetalHechura = {
+  metalCost:         number;
+  metalSale:         number;
+  metalMarginPct:    number;
+  hechuraCost:       number;
+  hechuraSale:       number;
+  hechuraMarginPct:  number;
+  metalGramsBase:    number | null;
+  metalGramsSale:    number | null;
+  metalPricePerGram: number | null;
+  // FASE 1 — el motor lo popula universalmente con flag estimated y source.
+  metalSaleEstimated?:   boolean;
+  hechuraSaleEstimated?: boolean;
+  source?:
+    | "METAL_HECHURA"
+    | "PROPORTIONAL_COST"
+    | "MANUAL_AS_HECHURA"
+    | "SERVICE_AS_HECHURA"
+    | "COMBO_COMPONENTS"
+    | "NONE";
+};
+
+export type SalePreviewPricingSnapshot = {
+  unitPrice:            number | null;
+  basePrice:            number | null;
+  discountAmount:       number;
+  taxAmount:            number;
+  totalWithTax:         number | null;
+  priceSource:          string;
+  baseSource:           string;
+  unitCost:             number | null;
+  unitMargin:           number | null;
+  marginPercent:        number | null;
+  costPartial:          boolean;
+  costMode:             string;
+  partial:              boolean;
+  appliedPriceListId:   string | null;
+  appliedPriceListName: string | null;
+  appliedPromotionId:   string | null;
+  appliedPromotionName: string | null;
+  appliedDiscountId:    string | null;
+  resolvedAt:           string;
 };
 
 export type SalePreviewLine = {
@@ -157,26 +262,242 @@ export type SalePreviewLine = {
   variantId:            string | null;
   quantity:             number;
   unitPrice:            number | null;
+  /** Precio de lista pre-descuento (Fase 4). null si no se pudo resolver. */
+  basePrice:            number | null;
+  /** Alias de `lineTotal` — preservado por compatibilidad. */
   lineSubtotal:         number | null;
+  /** Total de línea ya redondeado: qty × unitPrice (Fase 4). */
+  lineTotal:            number | null;
+  /** (basePrice − unitPrice) × qty (Fase 4). Total de descuento de línea. */
+  lineDiscount:         number;
+  /** Impuesto unitario (Fase 4). */
+  unitTaxAmount:        number;
+  /** Total unitario con impuestos: emitido por backend v3 (Sprint 4). */
+  unitTotalWithTax:     number | null;
+  /** Impuesto total de la línea: qty × unitTaxAmount (Fase 4). */
+  lineTaxAmount:        number;
+  /** lineTotal + lineTaxAmount (Fase 4). */
+  lineTotalWithTax:     number | null;
+  /** Descuento por cantidad por unidad (Fase 5). */
+  quantityDiscountAmount:  number | null;
+  /** Descuento de promoción por unidad (Fase 5). */
+  promotionDiscountAmount: number | null;
   priceSource:          string;
   appliedPriceListId:   string | null;
   appliedPriceListName: string | null;
+  /** Modo de la lista aplicada (METAL_HECHURA / MARGIN_TOTAL / ...). */
+  appliedPriceListMode?: string | null;
   appliedPromotionId:   string | null;
   appliedPromotionName: string | null;
   appliedDiscountId:    string | null;
   unitCost:             number | null;
+  /** Margen unitario (Fase 5). */
+  unitMargin:           number | null;
+  /** Margen % sobre precio final (Fase 5). */
+  marginPercent:        number | null;
   costPartial:          boolean;
   costMode:             string;
   policy: { canConfirm: boolean; blockingAlerts: string[] };
+  /** Desglose por impuesto individual aplicado a la línea. */
+  taxBreakdown:         any[];
+  /** Desglose Metal/Hechura cuando aplica (Fase 5). */
+  metalHechuraBreakdown: SalePreviewLineMetalHechura | null;
+  /** Snapshot completo equivalente al que persiste createSale (Fase 5). */
+  pricingSnapshot:      SalePreviewPricingSnapshot;
+  /** Redondeo aplicado por la lista de precios a esta línea. Null si no aplicó. */
+  appliedRounding?: {
+    source:        "PRICE_LIST";
+    priceListId:   string | null;
+    priceListName: string | null;
+    applyOn:       "PRICE" | "NET" | "TOTAL";
+    mode:          string;
+    direction:     string;
+    preRounding:   number;
+    postRounding:  number;
+    unitAdjustment: number;
+  } | null;
+
+  // ── Fase 2A.7 — paridad con articles/pricing-preview ─────────────────────
+  /** Bloque metal/hechura/taxes — mismo shape que el endpoint del Simulador. */
+  composition?: {
+    metal: {
+      originalGrams:     number | null;
+      appliedGrams:      number | null;
+      gramsManual:       boolean;
+      originalMermaPct:  number | null;
+      appliedMermaPct:   number | null;
+      mermaManual:       boolean;
+      originalVariantId: string | null;
+      appliedVariantId:  string | null;
+      variantManual:     boolean;
+      purity:            number | null;
+      purityLabel:       string | null;
+      metalName:         string | null;
+    } | null;
+    hechura: {
+      originalAmount: number | null;
+      appliedAmount:  number | null;
+      manual:         boolean;
+      appliesTo:      string | null;
+    } | null;
+    taxes: Array<{
+      id:        string;
+      name:      string;
+      code:      string;
+      rate:      number | null;
+      appliesTo: string;
+      taxAmount: number;
+      manual:    boolean;
+    }>;
+  };
+  /** Merma efectivamente aplicada por el motor. Atajo de
+   *  `composition.metal.appliedMermaPct`. */
+  appliedMermaPercent?: number | null;
+  /** Costo de compra (sin/con/breakdown). */
+  costBase?:         string | null;
+  costTaxAmount?:    string | null;
+  costWithTax?:      string | null;
+  costTaxBreakdown?: Array<{
+    taxId:           string;
+    name:            string;
+    calculationType: string;
+    rate:            number | null;
+    fixedAmount:     number | null;
+    taxAmount:       number;
+  }>;
+  /** Eco del override de lista efectivamente aplicado a esta línea. */
+  priceListIdOverride?: string | null;
+};
+
+/** Totales del documento — fuente única de verdad calculada por
+ *  `computeSaleDocumentTotals` en el backend (Fase 3 + 4). */
+export type SaleDocumentTotals = {
+  subtotalBeforeDiscounts:   number;
+  lineDiscountAmount:        number;
+  subtotalAfterLineDiscounts: number;
+  channelAdjustmentAmount:   number;
+  couponDiscountAmount:      number;
+  paymentAdjustmentAmount:   number;
+  shippingAmount:            number;
+  globalDiscountAmount:      number;
+  taxableBase:               number;
+  taxAmount:                 number;
+  /** Suma agregada del `unitAdjustment × qty` reportado por las líneas con
+   *  redondeo aplicado por la lista de precios. Display delta — el motor ya
+   *  absorbió este monto en lineTotal/lineTotalWithTax, así que `total` no
+   *  vuelve a sumarlo. */
+  roundingAdjustment:        number;
+  totalBeforeTax:            number;
+  totalWithTax:              number;
+  total:                     number;
+  legacyCouponOnlyDiscount:  number;
+  sourceTrace:               Array<{ step: string; amount: number; note?: string }>;
+  // FASE 2 — Agregados Metal/Hechura a nivel documento (informativos).
+  metalCostSubtotal?:    number;
+  hechuraCostSubtotal?:  number;
+  metalSaleSubtotal?:    number;
+  hechuraSaleSubtotal?:  number;
+  /** true si al menos una línea reporta `*Estimated=true`. */
+  breakdownEstimated?:   boolean;
+  /** Metadata del redondeo cuando alguna línea lo aplicó o la política doc
+   *  del tenant lo aplicó. Null en caso contrario. La UI usa esto para
+   *  mostrar "Redondeo por lista: …", "Redondeo comprobante" o "Sin
+   *  redondeo". */
+  roundingInfo?: {
+    source:        "PRICE_LIST" | "TENANT_POLICY";
+    priceListId:   string | null;
+    priceListName: string | null;
+    applyOn:       string;
+    mode:          string;
+    direction:     string;
+  } | null;
+  /** Detalle del redondeo a nivel comprobante (modo UNIFIED), cuando la
+   *  política `Jewelry.documentRoundingEnabled` está activa y el delta es
+   *  != 0. Null en caso contrario. */
+  documentRoundingApplied?: {
+    source?:       string;
+    applyOn?:      string;
+    mode?:         string;
+    direction?:    string;
+    preRounding?:  number;
+    postRounding?: number;
+    adjustment?:   number;
+  } | null;
 };
 
 import type { CheckoutResult } from "./articles";
 
+export type ChannelAdjResult = {
+  baseAmount:    number;
+  channelAmount: number;
+  finalAmount:   number;
+  channelName:   string;
+  channelId:     string;
+};
+
+export type CouponAdjResult = {
+  baseAmount:     number;
+  discountAmount: number;
+  finalAmount:    number;
+  couponId:       string;
+  couponCode:     string;
+  couponName:     string;
+  discountType:   string;
+  discountValue:  number;
+  applied:        boolean;
+  reason?:        string;
+};
+
+/** Fase 2A.7 — reglas comerciales del cliente expuestas en el preview. */
+export type SalePreviewClientCommercialRules = {
+  ruleType:  string | null;
+  valueType: string | null;
+  value:     number | null;
+  applyOn:   string | null;
+};
+
 export type SalePreviewResult = {
   lines:          SalePreviewLine[];
+  /** Σ lineTotal — alias de `documentTotals.subtotalAfterLineDiscounts`. */
   subtotal:       number;
+  channelResult:  ChannelAdjResult | null;
+  couponResult:   CouponAdjResult | null;
   checkoutResult: CheckoutResult | null;
+  /** Total final con impuestos (Fase 4 — antes era post-pago SIN impuestos). */
   total:          number;
+  /** Totales del documento. Misma fuente que `confirmSale` en el backend. */
+  documentTotals: SaleDocumentTotals;
+
+  // ── Fase 2A.7 — info doc-level ────────────────────────────────────────
+  /** balanceType del cliente (UNIFIED / BREAKDOWN). null si no hay cliente. */
+  clientBalanceType?:    string | null;
+  /** Reglas comerciales del cliente (descuentos/recargos automáticos). */
+  clientCommercialRules?: SalePreviewClientCommercialRules | null;
+  /** Eco de `input.priceListId` — lo que el operador eligió a nivel doc. */
+  requestedPriceListId?: string | null;
+  /** Lista efectivamente aplicada consolidada. Si todas las líneas usaron la
+   *  misma → ese id. Si difieren → "MIXED". null si no hubo lista. */
+  appliedPriceListId?:   string | null;
+  /** Nombre consolidado. "Múltiples" cuando es "MIXED". */
+  appliedPriceListName?: string | null;
+  /** true si el operador pidió override (doc o línea), independientemente de
+   *  si el motor pudo respetarlo. */
+  priceListWasOverridden?: boolean;
+
+  // ── Fase MM — metadata de moneda del response ────────────────────────────
+  /** Moneda en la que vienen los importes del response (si != base, hubo
+   *  conversión). Ausente cuando el endpoint no devolvió la metadata
+   *  (compatibilidad hacia atrás). */
+  responseCurrencyId?:     string;
+  responseCurrencyCode?:   string;
+  responseCurrencySymbol?: string;
+  baseCurrencyId?:         string;
+  baseCurrencyCode?:       string;
+  baseCurrencySymbol?:     string;
+  /** Tasa "1 unidad responseCurrency = `currencyRate` unidades base". */
+  currencyRate?:           number;
+  /** true si hubo conversión real (responseCurrency != base). */
+  currencyConverted?:      boolean;
 };
 
 // ─── Payloads ─────────────────────────────────────────────────────────────────
@@ -193,11 +514,13 @@ export type SaleLineInput = {
 };
 
 export type CreateSalePayload = {
-  clientId?: string | null;
-  sellerId?: string | null;
+  clientId?:   string | null;
+  sellerId?:   string | null;
   warehouseId?: string | null;
-  notes?: string;
-  lines: SaleLineInput[];
+  notes?:      string;
+  channelId?:  string | null;
+  couponCode?: string | null;
+  lines:       SaleLineInput[];
 };
 
 export type AddPaymentPayload = {

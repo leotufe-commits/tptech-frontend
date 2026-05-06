@@ -20,29 +20,32 @@ export type LabelElementRow = {
 };
 
 export type LabelTemplateRow = {
-  id:          string;
-  name:        string;
-  widthMm:     string;
-  heightMm:    string;
-  dpi:         number;
-  orientation: string;
-  bgColor:     string;
-  isDefault:   boolean;
-  isActive:    boolean;
-  deletedAt:   string | null;
-  createdAt:   string;
-  elements:    LabelElementRow[];
+  id:                      string;
+  name:                    string;
+  widthMm:                 string;
+  heightMm:                string;
+  dpi:                     number;
+  orientation:             string;
+  bgColor:                 string;
+  isDefault:               boolean;
+  isActive:                boolean;
+  deletedAt:               string | null;
+  createdAt:               string;
+  defaultPrinterProfileId: string | null;
+  defaultPrinterProfile:   { id: string; name: string; type: string } | null;
+  elements:                LabelElementRow[];
 };
 
 export type LabelTemplatePayload = {
-  name:        string;
-  widthMm:     number;
-  heightMm:    number;
-  dpi?:        number;
-  orientation?: string;
-  bgColor?:    string;
-  isDefault?:  boolean;
-  isActive?:   boolean;
+  name:                    string;
+  widthMm:                 number;
+  heightMm:                number;
+  dpi?:                    number;
+  orientation?:            string;
+  bgColor?:                string;
+  isDefault?:              boolean;
+  isActive?:               boolean;
+  defaultPrinterProfileId?: string | null;
 };
 
 export type LabelElementPayload = {
@@ -87,7 +90,7 @@ export const labelTemplatesApi = {
 
 export const PRESET_TEMPLATES: (Omit<LabelTemplatePayload, "name"> & { name: string; elements: Omit<LabelElementPayload, "configJson">[] })[] = [
   {
-    name: "Joyería 58×40",
+    name: "Plantilla A",
     widthMm: 58, heightMm: 40, dpi: 203,
     elements: [
       { type: "TEXT",    fieldKey: "article.name",      x: 2, y: 2,    width: 54, height: 7, fontSize: 8,  fontWeight: "bold",   align: "center" },
@@ -99,7 +102,7 @@ export const PRESET_TEMPLATES: (Omit<LabelTemplatePayload, "name"> & { name: str
     ],
   },
   {
-    name: "Anillos 40×25",
+    name: "Plantilla B",
     widthMm: 40, heightMm: 25, dpi: 203,
     elements: [
       { type: "TEXT", fieldKey: "article.name",     x: 1, y: 1, width: 38, height: 5, fontSize: 7, fontWeight: "bold",   align: "center" },
@@ -109,7 +112,7 @@ export const PRESET_TEMPLATES: (Omit<LabelTemplatePayload, "name"> & { name: str
     ],
   },
   {
-    name: "Etiqueta interna 58×30",
+    name: "Plantilla C",
     widthMm: 58, heightMm: 30, dpi: 203,
     elements: [
       { type: "TEXT", fieldKey: "article.name",      x: 2, y: 2, width: 54, height: 7,  fontSize: 8, fontWeight: "bold",   align: "center" },
@@ -118,43 +121,77 @@ export const PRESET_TEMPLATES: (Omit<LabelTemplatePayload, "name"> & { name: str
       { type: "TEXT", fieldKey: "article.salePrice", x: 30, y: 22, width: 26, height: 5, fontSize: 7, fontWeight: "bold",  align: "right" },
     ],
   },
-  // ── Print 2 — Etiqueta técnica 100×20mm ──────────────────────────────────
-  // Layout: | Lado operario (0-50mm) | Lado engranaje (50-77.5mm) | Avance (77.5-100mm) |
-  {
-    name: "Print 2",
-    widthMm: 100, heightMm: 20, dpi: 203, orientation: "horizontal",
-    elements: [
-      // Borders
-      { type: "LINE", fieldKey: "", label: "",               x: 0,    y: 0,    width: 100,  height: 0.3,  fontSize: 6, fontWeight: "normal", align: "left"   },
-      { type: "LINE", fieldKey: "", label: "",               x: 0,    y: 19.7, width: 100,  height: 0.3,  fontSize: 6, fontWeight: "normal", align: "left"   },
-      { type: "LINE", fieldKey: "", label: "",               x: 0,    y: 0,    width: 0.3,  height: 20,   fontSize: 6, fontWeight: "normal", align: "left"   },
-      { type: "LINE", fieldKey: "", label: "",               x: 99.7, y: 0,    width: 0.3,  height: 20,   fontSize: 6, fontWeight: "normal", align: "left"   },
-      // Section dividers
-      { type: "LINE", fieldKey: "", label: "",               x: 50,   y: 0,    width: 0.3,  height: 20,   fontSize: 6, fontWeight: "normal", align: "left"   },
-      { type: "LINE", fieldKey: "", label: "",               x: 77.5, y: 1.5,  width: 0.3,  height: 17,   fontSize: 6, fontWeight: "normal", align: "left"   },
-      // Left — Lado operario
-      { type: "TEXT", fieldKey: "static",       label: "Lado operario",  x: 1,    y: 1,   width: 47.5, height: 4,    fontSize: 6,  fontWeight: "bold",   align: "center" },
-      { type: "TEXT", fieldKey: "article.name", label: "",               x: 1.5,  y: 6,   width: 46.5, height: 5.5,  fontSize: 8,  fontWeight: "bold",   align: "left"   },
-      { type: "TEXT", fieldKey: "article.code", label: "",               x: 1.5,  y: 12,  width: 46.5, height: 4.5,  fontSize: 6,  fontWeight: "normal", align: "left"   },
-      // Center-right — Lado engranaje
-      { type: "TEXT", fieldKey: "static",       label: "Lado engranaje", x: 51,   y: 1,   width: 25.5, height: 4,    fontSize: 6,  fontWeight: "bold",   align: "center" },
-      { type: "TEXT", fieldKey: "variant.name", label: "",               x: 51.5, y: 6,   width: 24.5, height: 5.5,  fontSize: 7,  fontWeight: "normal", align: "left"   },
-      // Right — Avance
-      { type: "TEXT", fieldKey: "static",       label: "Avance",         x: 78,   y: 1,   width: 21,   height: 4,    fontSize: 6,  fontWeight: "bold",   align: "center" },
-      { type: "TEXT", fieldKey: "static",       label: "→→→",            x: 78,   y: 9,   width: 21,   height: 8,    fontSize: 11, fontWeight: "bold",   align: "center" },
-    ],
-  },
 ];
 
+/**
+ * Catálogo de campos imprimibles para el editor de etiquetas.
+ * Las entradas con isHeader: true son separadores visuales (no seleccionables).
+ * Usar con <TPComboFixed searchable> para búsqueda rápida.
+ */
 export const FIELD_KEY_OPTIONS = [
-  { value: "article.name",      label: "Nombre del artículo" },
-  { value: "article.code",      label: "Código" },
-  { value: "article.sku",       label: "SKU" },
-  { value: "article.barcode",   label: "Código de barras" },
-  { value: "article.salePrice", label: "Precio de venta" },
-  { value: "article.costPrice", label: "Precio de costo" },
-  { value: "article.brand",     label: "Marca" },
-  { value: "variant.name",      label: "Nombre de variante" },
-  { value: "variant.code",      label: "Código de variante" },
-  { value: "static",            label: "Texto estático" },
+  // ── Identificación ───────────────────────────────────────────────────────────
+  { value: "__h_ident",              label: "Identificación",       isHeader: true },
+  { value: "article.name",          label: "Nombre del artículo" },
+  { value: "variant.name",          label: "Nombre de variante" },
+  { value: "article.code",          label: "Código" },
+  { value: "resolvedSku",           label: "SKU" },
+  { value: "article.barcode",       label: "Código de barras" },
+  { value: "qrCode",                label: "Código QR" },
+  { value: "rfidCode",              label: "Código RFID" },
+  { value: "article.brand",         label: "Marca" },
+  { value: "manufacturer",          label: "Fabricante" },
+  { value: "supplierName",          label: "Proveedor" },
+
+  // ── Precio y costos ───────────────────────────────────────────────────────────
+  { value: "__h_price",              label: "Precio",               isHeader: true },
+  { value: "article.salePrice",     label: "Precio de venta" },
+  { value: "article.costPrice",     label: "Costo" },
+  { value: "hechura",               label: "Hechura" },
+
+  // ── Metales y peso ────────────────────────────────────────────────────────────
+  { value: "__h_metals",             label: "Metales y peso",       isHeader: true },
+  { value: "totalWeight",           label: "Grs totales" },
+  { value: "metalVariantWeights",   label: "Grs por metal" },
+  { value: "mainMetal",             label: "Metal principal" },
+  { value: "purityOrLey",           label: "Ley / pureza" },
+  { value: "resolvedMerma",         label: "Merma" },
+  { value: "metalMermaSummary",     label: "Merma por metal" },
+
+  // ── Clasificación ─────────────────────────────────────────────────────────────
+  { value: "__h_class",              label: "Clasificación",        isHeader: true },
+  { value: "categoryName",          label: "Categoría" },
+  { value: "groupName",             label: "Grupo comercial" },
+  { value: "articleType",           label: "Tipo de artículo" },
+  { value: "articleStatus",         label: "Estado" },
+
+  // ── Atributos ────────────────────────────────────────────────────────────────
+  { value: "__h_attrs",              label: "Atributos",            isHeader: true },
+  { value: "resolvedAttributesSummary", label: "Atributos resueltos" },
+  { value: "attributesSummary",     label: "Atributos de variante" },
+
+  // ── Inventario ───────────────────────────────────────────────────────────────
+  { value: "__h_inv",                label: "Inventario",           isHeader: true },
+  { value: "stockTotal",            label: "Stock actual" },
+  { value: "reorderPoint",          label: "Punto de reposición" },
+  { value: "defaultQuantity",       label: "Cantidad predeterminada" },
+
+  // ── Descriptivos ─────────────────────────────────────────────────────────────
+  { value: "__h_desc",               label: "Descriptivos",         isHeader: true },
+  { value: "description",           label: "Descripción" },
+  { value: "notes",                 label: "Notas" },
+  { value: "unitOfMeasure",         label: "Unidad de medida" },
+  { value: "dimensions",            label: "Dimensiones" },
+
+  // ── Texto libre ──────────────────────────────────────────────────────────────
+  { value: "__h_static",             label: "Texto libre",          isHeader: true },
+  { value: "static",                label: "Texto estático" },
+
+  // ── Avanzados ────────────────────────────────────────────────────────────────
+  { value: "__h_adv",                label: "Avanzados",            isHeader: true },
+  { value: "mermaPercent",          label: "Merma % (raw)" },
+  { value: "variant.code",          label: "Código de variante" },
+  { value: "variant.sku",           label: "SKU de variante" },
+  { value: "attr.Talle",            label: "Atributo: Talle" },
+  { value: "attr.Color",            label: "Atributo: Color" },
+  { value: "attr.Piedra",           label: "Atributo: Piedra" },
 ];

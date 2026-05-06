@@ -12,7 +12,7 @@ export const COL_DEFS: ColPickerDef[] = [
   { key: "acciones", label: "Acciones", canHide: false },
 ];
 
-export const COL_LS_KEY = "tptech_col_vendedores";
+export const COL_LS_KEY = "tptech_col_vendedores_v3";
 
 export const COMMISSION_LABELS: Record<CommissionType, string> = {
   NONE: "Sin comisión",
@@ -21,9 +21,13 @@ export const COMMISSION_LABELS: Record<CommissionType, string> = {
 };
 
 export const COMMISSION_BASE_LABELS: Record<CommissionBase, string> = {
-  GROSS: "Venta bruta",
-  NET: "Venta neta (sin impuestos)",
-  MARGIN: "Ganancia",
+  TOTAL:                   "Total de venta (antes de impuestos)",
+  TOTAL_AFTER_DISCOUNTS:   "Total después de descuentos",
+  TOTAL_AFTER_PAYMENT:     "Total después de forma de pago",
+  METAL:                   "Componente metal",
+  HECHURA:                 "Componente hechura",
+  METAL_Y_HECHURA:         "Metal + hechura",
+  HECHURA_AFTER_DISCOUNTS: "Hechura después de descuentos",
 };
 
 export const EMPTY_DRAFT: SellerDraft = {
@@ -43,7 +47,7 @@ export const EMPTY_DRAFT: SellerDraft = {
   postalCode: "",
   commissionType: "NONE",
   commissionValue: null,
-  commissionBase: "NET",
+  commissionBase: "TOTAL",
   isActive: true,
   isFavorite: false,
   notes: "",

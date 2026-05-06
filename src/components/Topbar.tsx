@@ -1,5 +1,5 @@
 // tptech-frontend/src/components/Topbar.tsx
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { Menu, Settings, Lock, UsersRound } from "lucide-react";
 
@@ -36,6 +36,19 @@ export default function Topbar({
 
   const [settingsOpen, setSettingsOpen] = useState(false);
   const settingsBtnRef = useRef<HTMLButtonElement | null>(null);
+  const headerRef = useRef<HTMLElement | null>(null);
+
+  /* Publica --topbar-h para que paneles laterales puedan posicionarse */
+  useLayoutEffect(() => {
+    const el = headerRef.current;
+    if (!el) return;
+    const update = () =>
+      document.documentElement.style.setProperty("--topbar-h", `${el.offsetHeight}px`);
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    update();
+    return () => ro.disconnect();
+  }, []);
 
   // anchorRef estable (evita re-renders raros)
   const settingsAnchorRef = useMemo<React.RefObject<HTMLElement | null>>(
@@ -133,6 +146,7 @@ export default function Topbar({
 
   return (
     <header
+      ref={headerRef}
       className={cn(
         "sticky top-0 z-[999] border-b border-border bg-bg/90 backdrop-blur",
         "[touch-action:pan-y]",

@@ -10,6 +10,7 @@ import { sellersApi, type SellerRow } from "../../services/sellers";
 
 import { fetchUsers } from "../../services/users";
 import type { UserListItem } from "../../services/users";
+import { useInventory } from "../../context/InventoryContext";
 
 import { VendedoresTable } from "./vendedor/VendedoresTable";
 import { VendedorEditModal } from "./vendedor/VendedorEditModal";
@@ -17,6 +18,7 @@ import { VendedorViewModal } from "./vendedor/VendedorViewModal";
 import { EMPTY_DRAFT, COL_LS_KEY } from "./vendedor/vendedor.constants";
 import { loadColVis } from "./vendedor/vendedor.helpers";
 import type { SellerDraft, SortKey, WarehouseOption } from "./vendedor/vendedor.types";
+import { usePersistedTableSort } from "../../hooks/usePersistedTableSort";
 
 function splitPhone(phone: string) {
   const parts = String(phone || "")
@@ -41,6 +43,8 @@ function buildPhone(phoneCountry: string, phoneNumber: string) {
 }
 
 export default function ConfiguracionSistemaVendedor() {
+  const { favoriteWarehouseId: globalFavWarehouseId } = useInventory();
+
   /* ---- datos ---- */
   const [rows, setRows] = useState<SellerRow[]>([]);
   const [loading, setLoading] = useState(false);
@@ -49,8 +53,11 @@ export default function ConfiguracionSistemaVendedor() {
 
   /* ---- tabla ---- */
   const [q, setQ] = useState("");
-  const [sortKey, setSortKey] = useState<SortKey>("displayName");
-  const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
+  const { sortKey, sortDir, toggleSort } = usePersistedTableSort<SortKey>({
+    storageKey: COL_LS_KEY,
+    defaultKey: "displayName",
+    defaultDir: "asc",
+  });
   const [colVis, setColVis] = useState<Record<string, boolean>>(loadColVis);
 
   /* ---- modales ---- */
@@ -123,15 +130,6 @@ export default function ConfiguracionSistemaVendedor() {
       .map((r) => r.userId as string);
   }, [rows, editTarget]);
 
-  /* ---- sort ---- */
-  function toggleSort(key: SortKey) {
-    if (sortKey === key) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
-    else {
-      setSortKey(key);
-      setSortDir("asc");
-    }
-  }
-
   /* ---- filtrado + orden ---- */
   const filtered = useMemo(() => {
     const s = q.trim().toLowerCase();
@@ -148,6 +146,9 @@ export default function ConfiguracionSistemaVendedor() {
 
     return [...base].sort((a, b) => {
       const mul = sortDir === "asc" ? 1 : -1;
+      if (sortKey === "isActive") {
+        return ((b.isActive ? 1 : 0) - (a.isActive ? 1 : 0)) * mul;
+      }
       const va = String((a as any)[sortKey] ?? "");
       const vb = String((b as any)[sortKey] ?? "");
       return va.localeCompare(vb, "es") * mul;
@@ -178,7 +179,12 @@ export default function ConfiguracionSistemaVendedor() {
   /* ---- abrir modales ---- */
   function openCreate() {
     setEditTarget(null);
-    setDraft({ ...EMPTY_DRAFT });
+    // Pre-seleccionar el almacén favorito global si está disponible
+    const defaultWarehouseIds =
+      globalFavWarehouseId && warehouses.some((wh) => wh.id === globalFavWarehouseId)
+        ? [globalFavWarehouseId]
+        : [];
+    setDraft({ ...EMPTY_DRAFT, warehouseIds: defaultWarehouseIds });
     setSubmitted(false);
     setStagedFiles([]);
     setPendingAvatarUrl(null);
@@ -188,6 +194,18 @@ export default function ConfiguracionSistemaVendedor() {
 
   function openEdit(row: SellerRow) {
     const { phoneCountry, phoneNumber } = splitPhone(row.phone);
+
+    // Resolver almacén con la misma prioridad que handleUserChange:
+    // 1. favorito del usuario vinculado, 2. favorito global, 3. sin cambio
+    const baseWarehouseIds = row.warehouses.map((w) => w.warehouseId);
+    const linkedUser = row.userId ? users.find((u) => u.id === row.userId) : null;
+    const favId = linkedUser?.favoriteWarehouseId || globalFavWarehouseId || null;
+    const warehouseIds =
+      favId &&
+      warehouses.some((wh) => wh.id === favId) &&
+      !baseWarehouseIds.includes(favId)
+        ? [...baseWarehouseIds, favId]
+        : baseWarehouseIds;
 
     setEditTarget(row);
     setDraft({
@@ -208,11 +226,11 @@ export default function ConfiguracionSistemaVendedor() {
       commissionType: row.commissionType,
       commissionValue:
         row.commissionValue !== null ? parseFloat(row.commissionValue) : null,
-      commissionBase: row.commissionBase ?? "NET",
+      commissionBase: row.commissionBase ?? "TOTAL",
       isActive: row.isActive,
       isFavorite: row.isFavorite,
       notes: row.notes,
-      warehouseIds: row.warehouses.map((w) => w.warehouseId),
+      warehouseIds,
       userId: row.userId ?? null,
       contactName: row.contactName ?? "",
       contactPhone: row.contactPhone ?? "",

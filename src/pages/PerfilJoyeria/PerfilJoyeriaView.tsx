@@ -1,5 +1,6 @@
 // src/pages/PerfilJoyeria/PerfilJoyeriaView.tsx
 import React, { useCallback, useMemo, useRef } from "react";
+import { useFieldFormats } from "../../context/FieldFormatsContext";
 import { Building2, Globe, Loader2, Mail, MapPin, Paperclip, Phone, Plus, Receipt, StickyNote, Tag } from "lucide-react";
 
 import { TPSectionShell } from "../../components/ui/TPSectionShell";
@@ -19,7 +20,8 @@ type Props = {
     email: string;
     notes: string;
   };
-  phone: string;
+  phoneCountry: string;
+  phoneNumber: string;
   addressLine: string;
   addressMeta: string;
   savedAttachments: JewelryAttachment[];
@@ -30,7 +32,8 @@ type Props = {
 };
 
 export default function PerfilJoyeriaView(props: Props) {
-  const { existingName, company, phone, addressLine, addressMeta, savedAttachments, onUploadAttachments, uploadingAttachments, onDeleteAttachment, deletingAttId } = props;
+  const { existingName, company, phoneCountry, phoneNumber, addressLine, addressMeta, savedAttachments, onUploadAttachments, uploadingAttachments, onDeleteAttachment, deletingAttId } = props;
+  const { fmtPhone, fmtDoc } = useFieldFormats();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const items: TPAttachmentItem[] = useMemo(() => {
@@ -44,9 +47,10 @@ export default function PerfilJoyeriaView(props: Props) {
   }, [savedAttachments]);
 
   const ivaLine = useMemo(() => {
-    const parts = [valueOrDash(company.ivaCondition), valueOrDash(company.cuit)].filter((x) => x !== "—");
+    const cuitDisplay = company.cuit ? fmtDoc(company.cuit) : "—";
+    const parts = [valueOrDash(company.ivaCondition), cuitDisplay].filter((x) => x !== "—");
     return parts.join(" • ") || "—";
-  }, [company.ivaCondition, company.cuit]);
+  }, [company.ivaCondition, company.cuit, fmtDoc]);
 
   const openInNewTab = useCallback((url: string) => {
     try {
@@ -71,7 +75,7 @@ export default function PerfilJoyeriaView(props: Props) {
           <TPInfoCard icon={<Building2 className="h-3.5 w-3.5" />} label="Razón social" value={company.legalName} />
 
           <TPInfoCard icon={<Receipt className="h-3.5 w-3.5" />} label="Condición de IVA" value={ivaLine} />
-          <TPInfoCard icon={<Phone className="h-3.5 w-3.5" />} label="Teléfono" value={phone} />
+          <TPInfoCard icon={<Phone className="h-3.5 w-3.5" />} label="Teléfono" value={fmtPhone(phoneCountry, phoneNumber)} />
 
           <TPInfoCard icon={<Globe className="h-3.5 w-3.5" />} label="Sitio web" value={company.website} />
           <TPInfoCard icon={<Mail className="h-3.5 w-3.5" />} label="Correo" value={company.email} />

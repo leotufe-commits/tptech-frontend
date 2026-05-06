@@ -1,6 +1,9 @@
 import React, { useEffect, useMemo, useState } from "react";
 
 import TPInput from "../../../components/ui/TPInput";
+import { useFieldFormats } from "../../../context/FieldFormatsContext";
+import { PHONE_FORMAT_PLACEHOLDER, DOCUMENT_FORMAT_PLACEHOLDER } from "../../../lib/format";
+import { usePhoneInput, useDocInput } from "../../../hooks/useFormattedInput";
 import { TPField } from "../../../components/ui/TPField";
 import TPComboCreatable from "../../../components/ui/TPComboCreatable";
 import TPComboCreatableMulti from "../../../components/ui/TPComboCreatableMulti";
@@ -25,6 +28,7 @@ import type { UserListItem } from "../../../services/users";
 import type { SellerDraft, WarehouseOption } from "./vendedor.types";
 import { attachmentToTP } from "./vendedor.helpers";
 import { useValuation } from "../../../hooks/useValuation";
+import { useInventory } from "../../../context/InventoryContext";
 
 function asCatalogType(t: CatalogType): CatalogType {
   return t;
@@ -61,9 +65,15 @@ function applyFields(
     key: K,
     value: SellerDraft[K] | undefined
   ) => {
-    if (!value) return;
-    if (!overwrite && String(draft[key] ?? "").trim()) return;
-    set(key, value);
+    if (overwrite) {
+      // Copia exacta: asignar siempre, incluso si el usuario no tiene valor
+      set(key, (value ?? "") as SellerDraft[K]);
+    } else {
+      // Solo completar vacíos: usuario debe tener dato y vendedor debe estar vacío
+      if (!value) return;
+      if (String(draft[key] ?? "").trim()) return;
+      set(key, value);
+    }
   };
 
   fill("firstName", user.firstName as any);
@@ -139,7 +149,22 @@ export function VendedorForm({
   onStagedFilesChange,
   firstInputRef,
 }: Props) {
+  const { phoneFormat, documentFormat } = useFieldFormats();
+  const ph  = usePhoneInput(draft.phoneNumber,    (v) => set("phoneNumber", v),    phoneFormat);
+  const doc = useDocInput(draft.documentNumber, (v) => set("documentNumber", v), documentFormat);
   const [pendingUser, setPendingUser] = useState<UserListItem | null>(null);
+  const { favoriteWarehouseId: globalFavWarehouseId } = useInventory();
+
+  // Añade el almacén favorito del usuario a warehouseIds si no está ya
+  function applyWarehouseFavorite(user: UserListItem) {
+    const favId = user.favoriteWarehouseId || globalFavWarehouseId;
+    if (!favId) return;
+    if (!warehouses.some((wh) => wh.id === favId)) return;
+    const current = draft.warehouseIds ?? [];
+    if (!current.includes(favId)) {
+      set("warehouseIds", [...current, favId]);
+    }
+  }
 
   // Preview URLs locales (blob://) para imágenes staged en create modal.
   // Se generan con createObjectURL y se revocan automáticamente al desmontar o cambiar.
@@ -221,6 +246,10 @@ export function VendedorForm({
     const user = users.find((u) => u.id === uid);
     if (!user) return;
 
+    // El almacén favorito se aplica siempre al seleccionar un usuario,
+    // independientemente de si hay conflicto en los datos personales
+    applyWarehouseFavorite(user);
+
     if (!isDraftEmpty(draft) && hasConflict(user, draft)) {
       setPendingUser(user);
       return;
@@ -233,6 +262,7 @@ export function VendedorForm({
   function handleApplyOverwrite() {
     if (!pendingUser) return;
     applyFields(pendingUser, draft, set, true);
+    applyWarehouseFavorite(pendingUser);
     if (pendingUser.avatarUrl) onApplyUserAvatar(pendingUser.avatarUrl);
     setPendingUser(null);
   }
@@ -240,6 +270,7 @@ export function VendedorForm({
   function handleApplyEmptyOnly() {
     if (!pendingUser) return;
     applyFields(pendingUser, draft, set, false);
+    applyWarehouseFavorite(pendingUser);
     if (pendingUser.avatarUrl && !editTarget?.avatarUrl) onApplyUserAvatar(pendingUser.avatarUrl);
     setPendingUser(null);
   }
@@ -339,7 +370,7 @@ export function VendedorForm({
               inputRef={firstInputRef}
               value={draft.firstName}
               onChange={(v) => set("firstName", v)}
-              placeholder="Ej: Juan"
+              placeholder="Juan"
               disabled={busySave}
             />
           </TPField>
@@ -348,7 +379,7 @@ export function VendedorForm({
             <TPInput
               value={draft.lastName}
               onChange={(v) => set("lastName", v)}
-              placeholder="Ej: Pérez"
+              placeholder="Pérez"
               disabled={busySave}
             />
           </TPField>
@@ -358,7 +389,7 @@ export function VendedorForm({
           <TPInput
             value={draft.displayName}
             onChange={(v) => set("displayName", v)}
-            placeholder="Ej: Juan Pérez"
+            placeholder="Juan Pérez"
             disabled={busySave}
           />
         </TPField>
@@ -387,9 +418,11 @@ export function VendedorForm({
           <div className="md:col-span-4">
             <TPInput
               label="Nro. doc."
-              value={draft.documentNumber}
-              onChange={(v) => set("documentNumber", v)}
-              placeholder="12345678"
+              value={doc.displayValue}
+              onChange={doc.handleChange}
+              onKeyDown={doc.handleKeyDown}
+              inputRef={doc.inputRef}
+              placeholder={DOCUMENT_FORMAT_PLACEHOLDER[documentFormat] ?? "12345678"}
               disabled={busySave}
             />
           </div>
@@ -417,9 +450,11 @@ export function VendedorForm({
           <div className="md:col-span-4">
             <TPInput
               label="Teléfono"
-              value={draft.phoneNumber}
-              onChange={(v) => set("phoneNumber", v)}
-              placeholder="11 1234 5678"
+              value={ph.displayValue}
+              onChange={ph.handleChange}
+              onKeyDown={ph.handleKeyDown}
+              inputRef={ph.inputRef}
+              placeholder={PHONE_FORMAT_PLACEHOLDER[phoneFormat] ?? "11 1234-5678"}
               disabled={busySave}
             />
           </div>
@@ -443,6 +478,7 @@ export function VendedorForm({
                 label="Calle"
                 value={draft.street}
                 onChange={(v) => set("street", v)}
+                placeholder="Av. Corrientes"
                 disabled={busySave}
               />
             </div>
@@ -452,6 +488,7 @@ export function VendedorForm({
                 label="Número"
                 value={draft.streetNumber}
                 onChange={(v) => set("streetNumber", v)}
+                placeholder="1234"
                 disabled={busySave}
               />
             </div>
@@ -464,6 +501,7 @@ export function VendedorForm({
                 loading={cityCat.loading}
                 value={draft.city}
                 onChange={(v) => set("city", v)}
+                placeholder="Seleccionar ciudad"
                 allowCreate
                 onCreate={async (label) => {
                   await cityCat.createItem(label);
@@ -482,6 +520,7 @@ export function VendedorForm({
                 loading={provCat.loading}
                 value={draft.province}
                 onChange={(v) => set("province", v)}
+                placeholder="Seleccionar provincia"
                 allowCreate
                 onCreate={async (label) => {
                   await provCat.createItem(label);
@@ -497,6 +536,7 @@ export function VendedorForm({
                 label="Código postal"
                 value={draft.postalCode}
                 onChange={(v) => set("postalCode", v)}
+                placeholder="C1043AAZ"
                 disabled={busySave}
               />
             </div>
@@ -509,6 +549,7 @@ export function VendedorForm({
                 loading={countryCat.loading}
                 value={draft.country}
                 onChange={(v) => set("country", v)}
+                placeholder="Seleccionar país"
                 allowCreate
                 onCreate={async (label) => {
                   await countryCat.createItem(label);
@@ -561,9 +602,13 @@ export function VendedorForm({
                 onChange={(v) => set("commissionBase", v as CommissionBase)}
                 disabled={busySave}
                 options={[
-                  { value: "GROSS", label: "Venta bruta" },
-                  { value: "NET", label: "Venta neta (sin impuestos)" },
-                  { value: "MARGIN", label: "Ganancia" },
+                  { value: "TOTAL",                   label: "Total de venta (antes de impuestos)" },
+                  { value: "TOTAL_AFTER_DISCOUNTS",   label: "Total después de descuentos" },
+                  { value: "TOTAL_AFTER_PAYMENT",     label: "Total después de forma de pago" },
+                  { value: "METAL",                   label: "Componente metal" },
+                  { value: "HECHURA",                 label: "Componente hechura" },
+                  { value: "METAL_Y_HECHURA",         label: "Metal + hechura" },
+                  { value: "HECHURA_AFTER_DISCOUNTS", label: "Hechura después de descuentos" },
                 ]}
               />
             </TPField>

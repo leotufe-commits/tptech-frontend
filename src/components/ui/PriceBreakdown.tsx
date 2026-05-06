@@ -141,17 +141,15 @@ export function PriceBreakdown({
         </span>
       </div>
 
-      {/* ── Costo base + Margen ───────────────────────────────────── */}
-      {!isManualPrice && costBase != null && (
+      {/* ── Costo base + Margen — solo cuando hay transformación real ── */}
+      {!isManualPrice && hasMargin && costBase != null && (
         <>
           <BreakdownRow label="Costo base" value={fmtMoney(costBase, sym)} />
-          {hasMargin && (
-            <BreakdownRow
-              label={marginLabel ?? "Margen"}
-              value={`+${fmtMoney(marginAmount!, sym)}`}
-              tone="positive"
-            />
-          )}
+          <BreakdownRow
+            label={marginLabel ?? "Margen"}
+            value={`+${fmtMoney(marginAmount!, sym)}`}
+            tone="positive"
+          />
           <SectionDivider />
         </>
       )}
@@ -206,7 +204,7 @@ export function PriceBreakdown({
       )}
 
       {/* ── Total final ───────────────────────────────────────────── */}
-      {finalValue != null && (hasTaxes || isTaxExempt || showNetRow || (priceBase != null && hasDiscount)) && (
+      {finalValue != null && (hasTaxes || isTaxExempt) && (
         <TotalRow
           label={hasTaxes ? "Total final" : "Precio neto"}
           value={fmtMoney(finalValue, sym)}

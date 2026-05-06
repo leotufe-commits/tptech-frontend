@@ -9,6 +9,7 @@ import Register from "./pages/Register";
 import ForgotPassword from "./pages/ForgotPassword";
 import AcceptInvite from "./pages/AcceptInvite";
 import ResetPassword from "./pages/ResetPassword";
+import VerifyEmail from "./pages/VerifyEmail";
 
 import Dashboard from "./pages/Dashboard";
 import MainLayout from "./layouts/MainLayout";
@@ -19,11 +20,35 @@ import InventarioArticulos from "./pages/InventarioArticulos";
 import InventarioAlmacenes from "./pages/InventarioAlmacenes";
 import InventarioMovimientos from "./pages/InventarioMovimientos";
 import InventarioArticulosMovimientos from "./pages/InventarioArticulosMovimientos";
+import InventarioStockPorDeposito from "./pages/InventarioStockPorDeposito";
+import InventarioReposicion from "./pages/InventarioReposicion";
 
-import VentasClientes from "./pages/VentasClientes";
+import VentasClientes from "./pages/configuracion-sistema/ConfiguracionSistemaClientes";
 import Ventas from "./pages/Ventas";
 import Caja from "./pages/Caja";
 import ComprasProveedores from "./pages/ComprasProveedores";
+import ComprasOrdenes from "./pages/ComprasOrdenes";
+import ComprasRecepciones from "./pages/ComprasRecepciones";
+import ComprasFacturasProveedor from "./pages/ComprasFacturasProveedor";
+import ComprasPagosProveedor from "./pages/ComprasPagosProveedor";
+import FinanzasCuentaCorriente from "./pages/FinanzasCuentaCorriente";
+import VentasPresupuestos from "./pages/VentasPresupuestos";
+import VentasOrdenes from "./pages/VentasOrdenes";
+import VentasEntregas from "./pages/VentasEntregas";
+import VentasFacturas from "./pages/VentasFacturas";
+import VentasCobros from "./pages/VentasCobros";
+import VentasNotasCredito from "./pages/VentasNotasCredito";
+import ComprasNotasCreditoProveedor from "./pages/ComprasNotasCreditoProveedor";
+import VentasDevoluciones from "./pages/VentasDevoluciones";
+import ComprasDevoluciones from "./pages/ComprasDevoluciones";
+import InformesHub from "./pages/InformesHub";
+import InformesVentas from "./pages/InformesVentas";
+import InformesCompras from "./pages/InformesCompras";
+import InformesStock from "./pages/InformesStock";
+import InformesFinanzas from "./pages/InformesFinanzas";
+import FinanzasMovimientos from "./pages/FinanzasMovimientos";
+import FinanzasSaldosMoneda from "./pages/FinanzasSaldosMoneda";
+import FinanzasSaldosMetal from "./pages/FinanzasSaldosMetal";
 
 import PerfilJoyeria from "./pages/PerfilJoyeria";
 
@@ -43,6 +68,7 @@ import SystemThemeSettings from "./pages/configuracion-sistema/SystemThemeSettin
 import SystemUiCatalog from "./pages/configuracion-sistema/SystemUiCatalog";
 import ConfiguracionSistemaVendedor from "./pages/configuracion-sistema/ConfiguracionSistemaVendedor";
 import ConfiguracionSistemaItems from "./pages/configuracion-sistema/ConfiguracionSistemaItems";
+import ConfiguracionSistemaUnidades from "./pages/configuracion-sistema/ConfiguracionSistemaUnidades";
 import ConfiguracionSistemaInformes from "./pages/configuracion-sistema/ConfiguracionSistemaInformes";
 import ConfiguracionSistemaCategorias from "./pages/configuracion-sistema/ConfiguracionSistemaCategorias";
 import ConfiguracionSistemaImpuestos from "./pages/configuracion-sistema/ConfiguracionSistemaImpuestos";
@@ -57,11 +83,19 @@ import ConfiguracionSistemaDescuentosCantidad from "./pages/configuracion-sistem
 import ConfiguracionSistemaEtiquetas from "./pages/configuracion-sistema/ConfiguracionSistemaEtiquetas";
 import ConfiguracionSistemaGruposArticulos from "./pages/configuracion-sistema/ConfiguracionSistemaGruposArticulos";
 import ConfiguracionSistemaPoliticaPrecios from "./pages/configuracion-sistema/ConfiguracionSistemaPoliticaPrecios";
+import ConfiguracionSistemaCanalesDeVenta from "./pages/configuracion-sistema/ConfiguracionSistemaCanalesDeVenta";
+import ConfiguracionSistemaCupones from "./pages/configuracion-sistema/ConfiguracionSistemaCupones";
+import FormatoCamposPage from "./pages/configuracion-sistema/FormatoCamposPage";
+import DocumentosHub from "./pages/configuracion-sistema/documentos/DocumentosHub";
+import DocumentTemplateEditor from "./pages/configuracion-sistema/documentos/DocumentTemplateEditor";
 import DashboardRentabilidad from "./pages/DashboardRentabilidad";
 import PricingSimulator from "./pages/PricingSimulator";
+import PricingCompare from "./pages/dev/PricingCompare";
 import EntityDetail from "./pages/entity-detail/EntityDetail";
 import EntityAccountStatement from "./pages/entity-detail/EntityAccountStatement";
 import ArticleDetail from "./pages/article-detail/ArticleDetail";
+import ImportBatchesPage from "./pages/importaciones/ImportBatchesPage";
+import ImportBatchDetailPage from "./pages/importaciones/ImportBatchDetailPage";
 
 import ProtectedRoute from "./components/ProtectedRoute";
 
@@ -125,6 +159,11 @@ const router = createBrowserRouter([
     path: "/reset-password",
     element: <ResetPassword />,
   },
+  {
+    // Ruta pública sin PublicOnly: el link llega por email, el usuario puede no estar logueado
+    path: "/verify-email",
+    element: <VerifyEmail />,
+  },
 
   /* =====================
      PRIVATE
@@ -153,40 +192,58 @@ const router = createBrowserRouter([
           // ===== INVENTARIO =====
           { path: "inventario/articulos", element: <InventarioArticulos /> },
           { path: "inventario/almacenes", element: <InventarioAlmacenes /> },
+          { path: "inventario/stock", element: <InventarioStockPorDeposito /> },
+          { path: "inventario/reposicion", element: <InventarioReposicion /> },
           { path: "inventario/movimientos", element: <InventarioMovimientos /> },
           { path: "inventario/movimientos-articulos", element: <InventarioArticulosMovimientos /> },
 
           // ===== VENTAS =====
           { path: "ventas", element: <Ventas /> },
           { path: "ventas/pos", element: <Ventas /> },
-          { path: "ventas/:id", element: <Placeholder title="Detalle de venta" /> },
+          { path: "ventas/:id", element: <Placeholder title="Detalle de venta (Próximamente)" /> },
           { path: "ventas/clientes", element: <VentasClientes /> },
-          { path: "ventas/ordenes-venta", element: <Placeholder title="Órdenes de venta" /> },
-          { path: "ventas/facturas-clientes", element: <Placeholder title="Facturas de clientes" /> },
-          { path: "ventas/paquetes", element: <Placeholder title="Paquetes" /> },
-          { path: "ventas/remitos", element: <Placeholder title="Remitos" /> },
-          { path: "ventas/pagos-recibidos", element: <Caja /> },
+          { path: "ventas/presupuestos", element: <VentasPresupuestos /> },
+          { path: "ventas/ordenes", element: <VentasOrdenes /> },
+          { path: "ventas/ordenes-venta", element: <Navigate to="/ventas/ordenes" replace /> },
+          { path: "ventas/facturas", element: <VentasFacturas /> },
+          { path: "ventas/facturas-clientes", element: <Navigate to="/ventas/facturas" replace /> },
+          { path: "ventas/cobros", element: <VentasCobros /> },
+          { path: "ventas/paquetes", element: <Placeholder title="Paquetes (Próximamente)" /> },
+          { path: "ventas/entregas", element: <VentasEntregas /> },
+          { path: "ventas/remitos", element: <Navigate to="/ventas/entregas" replace /> },
+          { path: "ventas/pagos-recibidos", element: <Navigate to="/ventas/caja" replace /> },
           { path: "ventas/caja", element: <Caja /> },
-          { path: "ventas/devoluciones-venta", element: <Placeholder title="Devoluciones de venta" /> },
-          { path: "ventas/notas-credito", element: <Placeholder title="Notas de crédito" /> },
-
-          // compat rutas viejas
-          { path: "ventas/ordenes", element: <Navigate to="/ventas/ordenes-venta" replace /> },
+          { path: "ventas/devoluciones", element: <VentasDevoluciones /> },
+          { path: "ventas/devoluciones-venta", element: <Navigate to="/ventas/devoluciones" replace /> },
+          { path: "ventas/notas-credito", element: <VentasNotasCredito /> },
 
           // ===== COMPRAS =====
           { path: "compras/proveedores", element: <ComprasProveedores /> },
-          { path: "compras/ordenes-compra", element: <Placeholder title="Órdenes de compra" /> },
-          { path: "compras/facturas-proveedor", element: <Placeholder title="Facturas de proveedor" /> },
-          { path: "compras/recepciones", element: <Placeholder title="Recepción de compras" /> },
-          { path: "compras/pagos-realizados", element: <Placeholder title="Pagos realizados" /> },
-          { path: "compras/devoluciones", element: <Placeholder title="Devolución" /> },
-          { path: "compras/creditos-proveedor", element: <Placeholder title="Créditos del proveedor" /> },
+          { path: "compras/ordenes", element: <ComprasOrdenes /> },
+          { path: "compras/facturas-proveedor", element: <ComprasFacturasProveedor /> },
+          { path: "compras/recepciones", element: <ComprasRecepciones /> },
+          { path: "compras/pagos-proveedor", element: <ComprasPagosProveedor /> },
+          { path: "compras/pagos-realizados", element: <Navigate to="/compras/pagos-proveedor" replace /> },
+          { path: "compras/notas-credito-proveedor", element: <ComprasNotasCreditoProveedor /> },
+          { path: "compras/devoluciones", element: <ComprasDevoluciones /> },
+          { path: "compras/creditos-proveedor", element: <Placeholder title="Créditos del proveedor (Próximamente)" /> },
 
           // compat rutas viejas
-          { path: "compras/ordenes", element: <Navigate to="/compras/ordenes-compra" replace /> },
+          { path: "compras/ordenes-compra", element: <Navigate to="/compras/ordenes" replace /> },
 
           // ===== FINANZAS =====
-          { path: "finanzas", element: <Placeholder title="Finanzas" /> },
+          { path: "finanzas", element: <Placeholder title="Finanzas (Próximamente)" /> },
+          { path: "finanzas/cuenta-corriente", element: <FinanzasCuentaCorriente /> },
+          { path: "finanzas/movimientos", element: <FinanzasMovimientos /> },
+          { path: "finanzas/saldos-moneda", element: <FinanzasSaldosMoneda /> },
+          { path: "finanzas/saldos-metal", element: <FinanzasSaldosMetal /> },
+
+          // ===== INFORMES =====
+          { path: "informes", element: <InformesHub /> },
+          { path: "informes/ventas", element: <InformesVentas /> },
+          { path: "informes/compras", element: <InformesCompras /> },
+          { path: "informes/stock", element: <InformesStock /> },
+          { path: "informes/finanzas", element: <InformesFinanzas /> },
 
           // ===== CONFIGURACIÓN =====
           { path: "configuracion/joyeria", element: <PerfilJoyeria /> },
@@ -223,6 +280,8 @@ const router = createBrowserRouter([
           { path: "configuracion-sistema/impuestos", element: <ConfiguracionSistemaImpuestos /> },
           { path: "configuracion-sistema/pagos", element: <ConfiguracionSistemaPagos /> },
           { path: "configuracion-sistema/envios", element: <ConfiguracionSistemaEnvios /> },
+          { path: "configuracion-sistema/canales-venta", element: <ConfiguracionSistemaCanalesDeVenta /> },
+          { path: "configuracion-sistema/cupones",       element: <ConfiguracionSistemaCupones /> },
           { path: "configuracion-sistema/listas-precios", element: <ConfiguracionSistemaListasPrecios /> },
           { path: "configuracion-sistema/promociones", element: <ConfiguracionSistemaPromociones /> },
           { path: "configuracion-sistema/descuentos-cantidad", element: <ConfiguracionSistemaDescuentosCantidad /> },
@@ -232,10 +291,26 @@ const router = createBrowserRouter([
           { path: "configuracion-sistema/correos", element: <ConfiguracionSistemaCorreos /> },
           { path: "configuracion-sistema/numeracion", element: <Placeholder title="Numeración de comprobantes" /> },
           { path: "configuracion-sistema/etiquetas", element: <ConfiguracionSistemaEtiquetas /> },
+          { path: "configuracion-sistema/formato-campos",    element: <FormatoCamposPage /> },
+          { path: "configuracion-sistema/documentos",        element: <DocumentosHub /> },
+          { path: "configuracion-sistema/documentos/:kind",  element: <DocumentTemplateEditor /> },
+
+          // ===== IMPORTACIONES =====
+          { path: "importaciones",     element: <ImportBatchesPage /> },
+          { path: "importaciones/:id", element: <ImportBatchDetailPage /> },
 
           // ✅ ADMINISTRACIÓN
           { path: "configuracion-sistema/items", element: <ConfiguracionSistemaItems /> },
+          { path: "configuracion-sistema/unidades", element: <ConfiguracionSistemaUnidades /> },
           { path: "configuracion-sistema/informes", element: <ConfiguracionSistemaInformes /> },
+
+          // ===== DEV-ONLY =====
+          // Solo se registra en desarrollo (vite). En producción, la
+          // página se autobloquea con un Navigate al dashboard. No aparece
+          // en sidebar.
+          ...(import.meta.env.DEV
+            ? [{ path: "dev/pricing-compare", element: <PricingCompare /> }]
+            : []),
 
           /* =====================
              COMPAT: RUTAS VIEJAS

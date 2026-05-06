@@ -1,12 +1,13 @@
 // src/pages/article-detail/ArticleDetail.tsx
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import {
   AlertCircle,
   ArrowLeft,
   Barcode,
   Calculator,
   DollarSign,
+  Eye,
   Gem,
   Hash,
   Info,
@@ -47,7 +48,10 @@ import ConfirmDeleteDialog from "../../components/ui/ConfirmDeleteDialog";
 import { cn } from "../../components/ui/tp";
 import { toast } from "../../lib/toast";
 import ArticleModal from "./ArticleModal";
+import ArticleSearchSelect from "../../components/ui/ArticleSearchSelect";
+import type { ArticleRow } from "../../services/articles";
 import EditVariantModal from "./EditVariantModal";
+import ViewVariantModal from "./ViewVariantModal";
 import CostosTab from "./CostosTab";
 import {
   articlesApi,
@@ -60,6 +64,8 @@ import {
   type StockMode,
   type HechuraPriceMode,
   type ArticlePayload,
+  type ArticleCommercialMode,
+  type ComboAdjustmentKind,
   type PricingPreviewResult,
   ARTICLE_TYPE_LABELS,
   ARTICLE_TYPE_TONES,
@@ -204,6 +210,21 @@ const PRICE_SOURCE_LABELS_MINI: Record<string, string> = {
 // ---------------------------------------------------------------------------
 // Draft
 // ---------------------------------------------------------------------------
+type ComboComponentDraft = {
+  /** ID del artículo componente (debe ser articleType=PRODUCT activo). */
+  articleId: string;
+  /** Snapshot de presentación — solo para mostrar en UI sin re-fetchear. */
+  code: string;
+  name: string;
+  /** Cantidad por unidad de combo. Debe ser > 0. */
+  quantity: number;
+  /** Snapshot de precio unitario del componente al momento de agregarlo.
+   *  Usado SOLO para preview en vivo en el editor; el cálculo real lo hace el motor en backend. */
+  unitPrice: number | null;
+  /** Snapshot de stock total del componente al agregarlo (UI hint). */
+  stock: number | null;
+};
+
 type Draft = {
   name: string;
   code: string;
@@ -217,9 +238,32 @@ type Draft = {
   notes: string;
   salePrice: number | null;
   useManualSalePrice: boolean;
+  // ── Combo comercial ─────────────────────────────────────────────────────
+  commercialMode: ArticleCommercialMode;
+  comboAdjustmentKind: ComboAdjustmentKind;
+  comboAdjustmentValue: number | null;
+  comboComponents: ComboComponentDraft[];
 };
 
 function articleToDraft(a: ArticleDetailType): Draft {
+  // Reconstruir componentes combo desde costComposition (líneas tipo PRODUCT con catalogItemId).
+  // Solo aplica cuando el artículo es combo; en NORMAL queda como [].
+  const comboComponents: ComboComponentDraft[] =
+    (a.commercialMode === "COMBO_COMMERCIAL" && Array.isArray(a.costComposition))
+      ? a.costComposition
+          .filter((l: any) => (l.type === "PRODUCT" || l.type === "SERVICE") && l.catalogItemId)
+          .map((l: any) => ({
+            articleId: l.catalogItemId,
+            code: l.catalogItem?.code ?? "",
+            name: l.catalogItem?.name ?? l.label ?? "",
+            quantity: parseFloat(String(l.quantity ?? 1)) || 1,
+            // Cuando se carga un combo existente, no tenemos snapshot de precio/stock del componente.
+            // El preview en vivo solo aplica para componentes recién agregados en esta sesión.
+            unitPrice: null,
+            stock: null,
+          }))
+      : [];
+
   return {
     name: a.name,
     code: a.code,
@@ -233,6 +277,10 @@ function articleToDraft(a: ArticleDetailType): Draft {
     notes: (a as any).notes ?? "",
     salePrice: a.salePrice != null ? parseFloat(a.salePrice) : null,
     useManualSalePrice: (a as any).useManualSalePrice ?? false,
+    commercialMode:       a.commercialMode ?? "NORMAL",
+    comboAdjustmentKind:  a.comboAdjustmentKind ?? "NONE",
+    comboAdjustmentValue: a.comboAdjustmentValue != null ? parseFloat(String(a.comboAdjustmentValue)) : null,
+    comboComponents,
   };
 }
 
@@ -249,23 +297,177 @@ const EMPTY_DRAFT: Draft = {
   notes: "",
   salePrice: null,
   useManualSalePrice: false,
+  commercialMode:       "NORMAL",
+  comboAdjustmentKind:  "NONE",
+  comboAdjustmentValue: null,
+  comboComponents:      [],
 };
 
 function draftToPayload(d: Draft): ArticlePayload {
+  const isCombo = d.commercialMode === "COMBO_COMMERCIAL";
+
+  // En combo: el backend fuerza stockMode=NO_STOCK, sellWithoutVariants=true,
+  // useManualSalePrice=false. Acá enviamos lo coherente para evitar 400.
+  // Componentes combo se mapean a costComposition con type=PRODUCT y affectsStock=true
+  // (el backend igual lo fuerza, pero lo enviamos consistente).
+  const costComposition = isCombo
+    ? d.comboComponents
+        .filter(c => c.articleId && c.quantity > 0)
+        .map((c, idx) => ({
+          type: "PRODUCT" as const,
+          label: c.name || c.code || "",
+          quantity: c.quantity,
+          quantityUnit: "unidad",
+          unitValue: 0,                  // el costo del componente lo resuelve el motor
+          currencyId: null,
+          mermaPercent: null,
+          metalVariantId: null,
+          catalogItemId: c.articleId,
+          affectsStock: true,
+          sortOrder: idx,
+          lineAdjKind: "",
+          lineAdjType: "",
+          lineAdjValue: null,
+        }))
+    : undefined;
+
   return {
     name: d.name.trim(),
     code: d.code.trim() || undefined,
     description: d.description.trim() || undefined,
     categoryId: d.categoryId || null,
     status: d.status,
-    stockMode: d.stockMode,
+    stockMode: isCombo ? "NO_STOCK" : d.stockMode,
     hechuraPriceMode: d.hechuraPriceMode,
     hechuraPrice: d.hechuraPrice,
     mermaPercent: d.mermaPercent,
     notes: d.notes.trim() || undefined,
-    salePrice: d.salePrice,
-    useManualSalePrice: d.useManualSalePrice,
+    salePrice: isCombo ? null : d.salePrice,
+    useManualSalePrice: isCombo ? false : d.useManualSalePrice,
+    sellWithoutVariants: isCombo ? true : undefined,
+    commercialMode:       d.commercialMode,
+    comboAdjustmentKind:  d.comboAdjustmentKind,
+    comboAdjustmentValue: isCombo && d.comboAdjustmentKind !== "NONE" ? d.comboAdjustmentValue : null,
+    ...(costComposition !== undefined ? { costComposition } as any : {}),
   };
+}
+
+// ---------------------------------------------------------------------------
+// ComboInfoBlock — sección de detalle (modo lectura) para combos.
+// Muestra: aviso de stock dependiente, lista de componentes con stock individual,
+// disponibilidad calculada del combo y la regla de precio aplicada.
+// Carga la disponibilidad desde el backend (endpoint /combo-availability).
+// ---------------------------------------------------------------------------
+function ComboInfoBlock({ article }: { article: ArticleDetailType }) {
+  const [data, setData] = useState<{
+    available: number;
+    isCombo: boolean;
+    bottleneckArticleId: string | null;
+    components: Array<{
+      articleId: string; code: string; name: string;
+      qtyPerCombo: number; stock: number; canMake: number;
+    }>;
+  } | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let alive = true;
+    setLoading(true);
+    articlesApi.comboAvailability(article.id)
+      .then((d) => { if (alive) setData(d); })
+      .catch(() => { if (alive) setData(null); })
+      .finally(() => { if (alive) setLoading(false); });
+    return () => { alive = false; };
+  }, [article.id]);
+
+  const adjLabel: Record<string, string> = {
+    NONE: "Suma directa (sin ajuste)",
+    DISCOUNT_PERCENT: "Descuento %",
+    DISCOUNT_FIXED: "Descuento fijo",
+    SURCHARGE_PERCENT: "Recargo %",
+  };
+  const adjKind = article.comboAdjustmentKind ?? "NONE";
+  const adjVal  = article.comboAdjustmentValue;
+  const adjText = adjKind === "NONE"
+    ? adjLabel.NONE
+    : `${adjLabel[adjKind]}: ${adjVal ?? "—"}${adjKind.includes("PERCENT") ? "%" : ""}`;
+
+  return (
+    <div className="rounded-xl bg-surface2/40 border border-border/40 p-4 flex flex-col gap-3">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <Package size={13} className="text-muted shrink-0" />
+          <span className="text-xs font-semibold uppercase tracking-wide text-muted">Combo comercial</span>
+        </div>
+        {!loading && data?.isCombo && (
+          <TPBadge tone={data.available > 0 ? "success" : "danger"} size="sm">
+            {data.available} disponible{data.available === 1 ? "" : "s"}
+          </TPBadge>
+        )}
+      </div>
+
+      {/* Aviso de stock dependiente — mismo wording que el editor */}
+      <div className="rounded-md border border-amber-500/30 bg-amber-50 dark:bg-amber-950/20 px-3 py-2 text-[11px] text-amber-800 dark:text-amber-300">
+        <strong>Sin stock propio.</strong> La disponibilidad sale del stock de los componentes.
+      </div>
+
+      {/* Componentes con stock */}
+      <div className="border-t border-border/30 pt-3">
+        <div className="text-[10px] font-medium text-muted uppercase tracking-wide mb-2">
+          Componentes
+        </div>
+        {loading && (
+          <div className="text-xs text-muted/60 italic">Cargando disponibilidad…</div>
+        )}
+        {!loading && data && data.components.length > 0 && (
+          <div className="space-y-1.5">
+            {data.components.map((c) => {
+              const isBottleneck = c.articleId === data.bottleneckArticleId;
+              return (
+                <div
+                  key={c.articleId}
+                  className={cn(
+                    "flex items-center justify-between gap-2 rounded-md border px-2 py-1.5",
+                    isBottleneck
+                      ? "border-amber-500/40 bg-amber-50/50 dark:bg-amber-950/10"
+                      : "border-border/40 bg-card",
+                  )}
+                  title={isBottleneck ? "Este componente limita la disponibilidad del combo" : undefined}
+                >
+                  <div className="min-w-0 flex-1">
+                    <div className="text-xs font-medium text-text truncate">{c.name}</div>
+                    <div className="text-[10px] text-muted/70 font-mono tabular-nums">
+                      {c.code} · {c.qtyPerCombo} por combo
+                    </div>
+                  </div>
+                  <div className="text-right shrink-0">
+                    <div className="text-xs tabular-nums font-semibold text-text">{c.stock} en stock</div>
+                    <div className="text-[10px] text-muted/70 tabular-nums">
+                      alcanza para {c.canMake}
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+        {!loading && (!data || data.components.length === 0) && (
+          <div className="text-xs text-muted/60 italic">Sin componentes con stock que descuente.</div>
+        )}
+      </div>
+
+      {/* Regla de precio aplicada */}
+      <div className="border-t border-border/30 pt-3">
+        <div className="text-[10px] font-medium text-muted uppercase tracking-wide mb-1">
+          Regla de precio
+        </div>
+        <div className="text-xs text-text">{adjText}</div>
+        <div className="text-[10px] text-muted/70 mt-0.5">
+          El precio se calcula sumando los componentes y aplicando este ajuste.
+        </div>
+      </div>
+    </div>
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -274,6 +476,9 @@ function draftToPayload(d: Draft): ArticlePayload {
 export default function ArticleDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  /** variantId pasado por query param desde la tabla de artículos (Ver variante). */
+  const focusVariantId = searchParams.get("variantId");
   const createMode = id === "nuevo";
 
   // ---- Article state ----
@@ -352,6 +557,7 @@ export default function ArticleDetail() {
   // ---- Variant modal ----
   const [varModal, setVarModal]     = useState(false);
   const [varEditId, setVarEditId]   = useState<string | null>(null);
+  const [viewVarId, setViewVarId]   = useState<string | null>(null);
   const [removingVar, setRemovingVar] = useState<string | null>(null);
   const [confirmDeleteVarId, setConfirmDeleteVarId] = useState<string | null>(null);
 
@@ -396,6 +602,17 @@ export default function ArticleDetail() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id, createMode]);
 
+  // Scroll + highlight de variante cuando se llega desde "Ver variante" en la tabla
+  useEffect(() => {
+    if (!focusVariantId || !variantsLoaded) return;
+    // Pequeño delay para que el DOM se renderice con el panel expandido
+    const t = setTimeout(() => {
+      const el = document.getElementById(`variant-${focusVariantId}`);
+      if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
+    }, 150);
+    return () => clearTimeout(t);
+  }, [focusVariantId, variantsLoaded]);
+
   async function fetchArticle() {
     setLoading(true);
     try {
@@ -403,7 +620,16 @@ export default function ArticleDetail() {
       setArticle(data);
       setDraft(articleToDraft(data));
       // pre-populate tab data from detail
-      setVariants(data.variants);
+      setVariants((() => {
+        if (!id) return data.variants;
+        try {
+          const saved = localStorage.getItem(`tptech_variant_order_${id}`);
+          if (!saved) return data.variants;
+          const order: string[] = JSON.parse(saved);
+          const im = new Map(order.map((x, i) => [x, i] as [string, number]));
+          return [...data.variants].sort((a, b) => (im.get(a.id) ?? 999) - (im.get(b.id) ?? 999));
+        } catch { return data.variants; }
+      })());
       setVariantsLoaded(true);
       if (data.variants.length > 0) setExpandedPanel("variants");
       setAttributes(data.attributeValues);
@@ -506,7 +732,16 @@ export default function ArticleDetail() {
       const data = await articlesApi.getOne(id);
       setArticle(data);
       setDraft(articleToDraft(data));
-      setVariants(data.variants);
+      setVariants((() => {
+        if (!id) return data.variants;
+        try {
+          const saved = localStorage.getItem(`tptech_variant_order_${id}`);
+          if (!saved) return data.variants;
+          const order: string[] = JSON.parse(saved);
+          const im = new Map(order.map((x, i) => [x, i] as [string, number]));
+          return [...data.variants].sort((a, b) => (im.get(a.id) ?? 999) - (im.get(b.id) ?? 999));
+        } catch { return data.variants; }
+      })());
       setImages(data.images);
     } catch {}
     finally { setRefreshingCostos(false); }
@@ -519,6 +754,21 @@ export default function ArticleDetail() {
     if (!draft) return;
     setSubmitted(true);
     if (!draft.name.trim()) return;
+
+    // Validación local de combo: requiere al menos un componente.
+    // Mejora UX: catchea el error antes de pegarle al backend.
+    if (draft.commercialMode === "COMBO_COMMERCIAL" && draft.comboComponents.length === 0) {
+      toast.error("Un combo comercial debe tener al menos un componente.");
+      return;
+    }
+    if (
+      draft.commercialMode === "COMBO_COMMERCIAL" &&
+      draft.comboAdjustmentKind !== "NONE" &&
+      (draft.comboAdjustmentValue == null || draft.comboAdjustmentValue < 0)
+    ) {
+      toast.error("Indicá un valor válido para el ajuste del combo.");
+      return;
+    }
 
     setBusySave(true);
     try {
@@ -758,11 +1008,17 @@ export default function ArticleDetail() {
                       {article.isFavorite && <Star size={14} className="fill-yellow-400 text-yellow-400 shrink-0" />}
                     </div>
 
-                    {/* Badges: tipo + variantes + categoría */}
+                    {/* Badges: tipo + combo (si aplica) + variantes + categoría */}
                     <div className="flex items-center gap-1.5 flex-wrap">
                       <TPBadge tone={ARTICLE_TYPE_TONES[article.articleType]}>
                         {ARTICLE_TYPE_LABELS[article.articleType]}
                       </TPBadge>
+                      {article.commercialMode === "COMBO_COMMERCIAL" && (
+                        <TPBadge tone="info" className="gap-1" title="Combo comercial: precio y stock dependen de los componentes">
+                          <Package size={11} />
+                          COMBO
+                        </TPBadge>
+                      )}
                       {variants.length > 0 && (
                         <span className="inline-flex items-center rounded-md border border-purple-400/30 bg-purple-500/10 px-2 py-0.5 text-[11px] font-semibold text-purple-600">
                           Con variantes
@@ -777,6 +1033,11 @@ export default function ArticleDetail() {
                         <span className="inline-flex items-center gap-1 rounded-md border border-primary/20 bg-primary/10 px-2 py-0.5 text-[11px] font-medium text-primary">
                           <Layers size={10} />
                           {article.group.name}
+                        </span>
+                      )}
+                      {article.brand && (
+                        <span className="inline-flex items-center rounded-md border border-border/60 bg-surface2 px-2 py-0.5 text-[11px] font-medium text-muted">
+                          {article.brand}
                         </span>
                       )}
                     </div>
@@ -804,13 +1065,13 @@ export default function ArticleDetail() {
 
             {/* ── Derecha: acciones ── */}
             <div className="flex items-center gap-2 shrink-0 pt-0.5">
-              <TPButton variant="secondary" onClick={() => navigate(-1)} iconLeft={<ArrowLeft size={14} />}>
-                Volver
-              </TPButton>
-              {!createMode && article && (
+              {!createMode && article ? (
                 <>
                   <TPButton variant="secondary" onClick={() => navigate(`/herramientas/simulador-precios?articleId=${id}`)} iconLeft={<Calculator size={14} />}>
                     Simulador
+                  </TPButton>
+                  <TPButton variant="secondary" onClick={() => navigate(-1)} iconLeft={<ArrowLeft size={14} />}>
+                    Volver
                   </TPButton>
                   <TPButton variant="primary" onClick={() => setEditModalOpen(true)} iconLeft={<Pencil size={14} />}>
                     Editar
@@ -823,6 +1084,10 @@ export default function ArticleDetail() {
                     onPrintLabels={() => setLabelPrintOpen(true)}
                   />
                 </>
+              ) : (
+                <TPButton variant="secondary" onClick={() => navigate(-1)} iconLeft={<ArrowLeft size={14} />}>
+                  Volver
+                </TPButton>
               )}
             </div>
           </div>
@@ -870,6 +1135,23 @@ export default function ArticleDetail() {
                 {/* ── KPI comercial ── */}
                 <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 border-b border-border pb-4">
 
+                  {/* Stock */}
+                  <div className="rounded-xl border border-border/50 bg-card px-4 py-3 space-y-1">
+                    <div className="text-[10px] font-semibold uppercase tracking-wide text-muted">Stock</div>
+                    {article.stockMode !== "BY_ARTICLE"
+                      ? <div className="text-sm text-muted">{STOCK_MODE_LABELS[article.stockMode]}</div>
+                      : stockLoading
+                        ? <Loader2 size={16} className="animate-spin text-muted" />
+                        : <>
+                            <div className={cn("text-xl font-bold tabular-nums", stockTotal > 0 ? "text-emerald-600 dark:text-emerald-400" : "text-red-500")}>
+                              {stockTotal} u.
+                            </div>
+                            <div className={cn("text-[11px]", stockTotal > 0 ? "text-emerald-600/70" : "text-red-500/70")}>
+                              {stockTotal > 0 ? "En stock" : "Sin stock"}
+                            </div>
+                          </>}
+                  </div>
+
                   {/* ── Card COSTO ── */}
                   {(() => {
                     // Usa directamente los valores del backend — sin recálculo manual
@@ -893,7 +1175,20 @@ export default function ArticleDetail() {
                     );
                   })()}
 
-                  {/* ── Card PRECIO DE VENTA ── */}
+                  {/* Margen */}
+                  <div className="rounded-xl border border-border/50 bg-card px-4 py-3 space-y-1">
+                    <div className="text-[10px] font-semibold uppercase tracking-wide text-muted">Margen</div>
+                    {margin != null
+                      ? <>
+                          <div className={cn("text-xl font-bold tabular-nums", margin >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-red-500")}>
+                            {margin >= 0 ? "+" : ""}{fmtN(margin)}%
+                          </div>
+                          <div className="text-[11px] text-muted">sobre precio sin impuestos</div>
+                        </>
+                      : <div className="text-sm text-muted/50 italic">Sin datos</div>}
+                  </div>
+
+                  {/* ── Card PRECIO / TOTAL FINAL ── */}
                   {(() => {
                     const taxExempt    = pricingPreview?.taxExemptByEntity === true;
                     const totalWithTax = pricingPreview?.totalWithTax != null
@@ -919,7 +1214,7 @@ export default function ArticleDetail() {
                         {/* Composición neto + impuestos (reemplaza la línea de fuente cuando hay impuestos) */}
                         {hasSaleTax && spPrice != null && !loadingSalePrice && (
                           <div className="text-[11px] text-muted tabular-nums">
-                            Neto: {baseSym} {fmtN(spPrice)}{" · "}imp.: +{baseSym} {fmtN(taxAmt)}
+                            Sin imp.: {baseSym} {fmtN(spPrice)}{" · "}imp.: +{baseSym} {fmtN(taxAmt)}
                           </div>
                         )}
                         {/* Fuente de precio (solo cuando no hay línea de composición) */}
@@ -935,36 +1230,6 @@ export default function ArticleDetail() {
                       </div>
                     );
                   })()}
-
-                  {/* Margen */}
-                  <div className="rounded-xl border border-border/50 bg-card px-4 py-3 space-y-1">
-                    <div className="text-[10px] font-semibold uppercase tracking-wide text-muted">Margen</div>
-                    {margin != null
-                      ? <>
-                          <div className={cn("text-xl font-bold tabular-nums", margin >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-red-500")}>
-                            {margin >= 0 ? "+" : ""}{fmtN(margin)}%
-                          </div>
-                          <div className="text-[11px] text-muted">sobre precio neto</div>
-                        </>
-                      : <div className="text-sm text-muted/50 italic">Sin datos</div>}
-                  </div>
-
-                  {/* Stock */}
-                  <div className="rounded-xl border border-border/50 bg-card px-4 py-3 space-y-1">
-                    <div className="text-[10px] font-semibold uppercase tracking-wide text-muted">Stock</div>
-                    {article.stockMode !== "BY_ARTICLE"
-                      ? <div className="text-sm text-muted">{STOCK_MODE_LABELS[article.stockMode]}</div>
-                      : stockLoading
-                        ? <Loader2 size={16} className="animate-spin text-muted" />
-                        : <>
-                            <div className={cn("text-xl font-bold tabular-nums", stockTotal > 0 ? "text-emerald-600 dark:text-emerald-400" : "text-red-500")}>
-                              {stockTotal} u.
-                            </div>
-                            <div className={cn("text-[11px]", stockTotal > 0 ? "text-emerald-600/70" : "text-red-500/70")}>
-                              {stockTotal > 0 ? "En stock" : "Sin stock"}
-                            </div>
-                          </>}
-                  </div>
 
                 </div>
 
@@ -1002,48 +1267,63 @@ export default function ArticleDetail() {
 
                     {/* Identificación + Configuración */}
                     <div className="rounded-xl border border-border/50 bg-card p-4 flex flex-col gap-4">
-                      <div className="space-y-3">
+
+                      {/* ── Comercial ── */}
+                      {(article.category || article.group || article.brand || article.manufacturer || article.preferredSupplier || article.unitOfMeasure) && (
+                        <div className="space-y-3">
+                          <div className="flex items-center gap-2">
+                            <Tag size={13} className="text-muted shrink-0" />
+                            <span className="text-xs font-semibold uppercase tracking-wide text-muted">Comercial</span>
+                          </div>
+                          <div className="grid grid-cols-2 gap-y-2.5 gap-x-6">
+                            {article.category      && <FactPair label="Categoría"        value={article.category.name} />}
+                            {article.group         && <FactPair label="Grupo"            value={article.group.name} />}
+                            {article.brand         && <FactPair label="Marca"            value={article.brand} />}
+                            {article.manufacturer  && <FactPair label="Fabricante"       value={article.manufacturer} />}
+                            {article.preferredSupplier && <FactPair label="Proveedor pref." value={article.preferredSupplier.displayName} />}
+                            {article.unitOfMeasure && <FactPair label="Unidad de medida" value={article.unitOfMeasure} />}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* ── Identificadores ── */}
+                      <div className={cn("space-y-3", (article.category || article.group || article.brand || article.manufacturer || article.preferredSupplier || article.unitOfMeasure) && "border-t border-border/30 pt-3")}>
                         <div className="flex items-center gap-2">
                           <Hash size={13} className="text-muted shrink-0" />
-                          <span className="text-xs font-semibold uppercase tracking-wide text-muted">Identificación</span>
+                          <span className="text-xs font-semibold uppercase tracking-wide text-muted">Identificadores</span>
                         </div>
-                        <div className="grid grid-cols-2 gap-y-3 gap-x-6">
-                          <FactPair label="Código"            value={article.code} mono />
-                          {article.sku           && <FactPair label="SKU"               value={article.sku} mono />}
-                          {article.barcode       && <FactPair label="Código de barras"   value={article.barcode} mono />}
-                          {(article as any).barcodeType && <FactPair label="Tipo de código"   value={(article as any).barcodeType} />}
-                          {article.unitOfMeasure && <FactPair label="Unidad de medida"   value={article.unitOfMeasure} />}
-                          {article.brand         && <FactPair label="Marca"              value={article.brand} />}
-                          {article.manufacturer  && <FactPair label="Fabricante"         value={article.manufacturer} />}
-                          {article.preferredSupplier && <FactPair label="Proveedor pref." value={article.preferredSupplier.displayName} />}
+                        <div className="grid grid-cols-2 gap-y-2.5 gap-x-6">
+                          <FactPair label="Código interno"    value={article.code} mono />
+                          {article.sku           && <FactPair label="SKU"              value={article.sku} mono />}
+                          {article.barcode       && <FactPair label="Código de barras" value={article.barcode} mono />}
+                          {(article as any).barcodeType && <FactPair label="Tipo de código"  value={(article as any).barcodeType} />}
                           {(article as any).supplierCode && <FactPair label="Cód. proveedor" value={(article as any).supplierCode} mono />}
                         </div>
                       </div>
 
+                      {/* ── Configuración ── */}
                       <div className="border-t border-border/30 pt-3 space-y-3">
                         <div className="flex items-center gap-2">
                           <Settings2 size={13} className="text-muted shrink-0" />
                           <span className="text-xs font-semibold uppercase tracking-wide text-muted">Configuración</span>
                         </div>
                         <div className="flex flex-wrap gap-1.5">
-                          <TPBadge tone={article.showInStore   ? "success" : "neutral"} size="sm">
+                          <TPBadge tone={article.showInStore  ? "success" : "neutral"} size="sm">
                             <Store size={10} className="mr-1 inline" />
                             En tienda: {article.showInStore ? "Sí" : "No"}
                           </TPBadge>
-                          <TPBadge tone={article.isReturnable  ? "success" : "neutral"} size="sm">
+                          <TPBadge tone={article.isReturnable ? "success" : "neutral"} size="sm">
                             Retornable: {article.isReturnable ? "Sí" : "No"}
-                          </TPBadge>
-                          <TPBadge tone={article.sellWithoutVariants ? "info" : "neutral"} size="sm">
-                            Variantes: {article.sellWithoutVariants ? "Sin variantes" : "Con variantes"}
                           </TPBadge>
                         </div>
                         <div className="grid grid-cols-2 gap-y-2.5 gap-x-6">
-                          <FactPair label="Modo de stock"  value={STOCK_MODE_LABELS[article.stockMode]} />
                           <FactPair label="Modo hechura"   value={HECHURA_MODE_LABELS[article.hechuraPriceMode]} />
-                          <FactPair label="Tipo de precio" value={(article as any).useManualSalePrice ? "Manual" : "Por lista"} />
-                          {article.hechuraPrice != null && <FactPair label="Hechura"    value={fmtMoney(article.hechuraPrice, baseSym)} />}
-                          {article.mermaPercent != null && <FactPair label="Merma"      value={`${article.mermaPercent}%`} />}
-                          {article.reorderPoint != null && <FactPair label="Reposición" value={`${article.reorderPoint} u.`} />}
+                          {article.hechuraPrice != null && <FactPair label="Hechura"        value={fmtMoney(article.hechuraPrice, baseSym)} />}
+                          {article.mermaPercent != null && <FactPair label="Merma"          value={`${article.mermaPercent}%`} />}
+                          {article.reorderPoint != null && <FactPair label="Reposición"     value={`${article.reorderPoint} u.`} />}
+                          {article.minSaleQuantity != null && <FactPair label="Cant. mínima"  value={`${article.minSaleQuantity} u.`} />}
+                          {article.maxSaleQuantity != null && <FactPair label="Cant. máxima"  value={`${article.maxSaleQuantity} u.`} />}
+                          {article.defaultQuantity != null && <FactPair label="Cant. default" value={`${article.defaultQuantity} u.`} />}
                         </div>
                         {article.description && (
                           <p className="text-xs text-muted leading-relaxed border-t border-border/30 pt-3">{article.description}</p>
@@ -1110,9 +1390,22 @@ export default function ArticleDetail() {
                             const isFallback = !ownImg && !!imgSrc;
                             const isDragging = dragIdx === idx;
                             const isOver = overIdx === idx && dragIdx !== null && dragIdx !== idx;
+                            // ── KPI de variante ──────────────────────────────
+                            const stockQty      = variantStockMap[v.id] ?? 0;
+                            const vCostNet      = v.costPrice != null ? parseFloat(v.costPrice) : null;
+                            const vCostTotal    = v.costPriceWithTax != null ? parseFloat(v.costPriceWithTax) : vCostNet;
+                            const vEffCost      = vCostTotal ?? costWithTax ?? costActual;
+                            // El precio es siempre del artículo padre (las variantes no tienen precio propio)
+                            const vEffPrice     = spPrice;
+                            const vNetCost      = vCostNet ?? costActual;
+                            const vNetPrice     = spPrice;
+                            const vMargin       = vNetPrice != null && vNetCost != null && vNetPrice > 0
+                              ? ((vNetPrice - vNetCost) / vNetPrice * 100) : null;
+                            const isFocused = focusVariantId === v.id;
                             return (
                               <div
                                 key={v.id}
+                                id={`variant-${v.id}`}
                                 draggable
                                 onDragStart={() => setDragIdx(idx)}
                                 onDragOver={(e) => { e.preventDefault(); setOverIdx(idx); }}
@@ -1122,6 +1415,9 @@ export default function ArticleDetail() {
                                       const next = [...prev];
                                       const [moved] = next.splice(dragIdx, 1);
                                       next.splice(overIdx, 0, moved);
+                                      if (id) {
+                                        try { localStorage.setItem(`tptech_variant_order_${id}`, JSON.stringify(next.map((vv) => vv.id))); } catch {}
+                                      }
                                       return next;
                                     });
                                   }
@@ -1133,7 +1429,8 @@ export default function ArticleDetail() {
                                   "flex items-start gap-3 rounded-xl border bg-card px-4 py-3 transition-all duration-150",
                                   v.isActive ? "border-border" : "border-border opacity-60",
                                   isDragging && "opacity-40 scale-[0.98]",
-                                  isOver && "border-primary ring-1 ring-primary/30"
+                                  isOver && "border-primary ring-1 ring-primary/30",
+                                  isFocused && "ring-2 ring-primary/50 border-primary/40 bg-primary/5"
                                 )}
                               >
                                 <div className="shrink-0 mt-2 cursor-grab active:cursor-grabbing text-muted/40 hover:text-muted">
@@ -1169,7 +1466,6 @@ export default function ArticleDetail() {
                                       </span>
                                     )}
                                     {v.weightOverride != null && <span>Peso: <span className="text-text/70">{v.weightOverride}g</span></span>}
-                                    {v.priceOverride != null && <span>Precio fijo: <span className="text-text/70 tabular-nums">{fmtMoney(v.priceOverride)}</span></span>}
                                   </div>
                                   {(v.reorderPoint != null && Number(v.reorderPoint) > 0 || (Array.isArray(v.attributeValues) && v.attributeValues.length > 0)) && (
                                     <div className="flex flex-wrap items-center gap-x-3 mt-1 text-xs text-muted">
@@ -1186,8 +1482,73 @@ export default function ArticleDetail() {
                                       )}
                                     </div>
                                   )}
+                                  {(v.minSaleQuantity != null || v.maxSaleQuantity != null || v.defaultQuantity != null) && (
+                                    <div className="flex flex-wrap items-center gap-x-3 mt-0.5 text-xs text-muted">
+                                      {v.minSaleQuantity != null && <span>Mín: <span className="text-text/70 tabular-nums">{v.minSaleQuantity}</span></span>}
+                                      {v.maxSaleQuantity != null && <span>Máx: <span className="text-text/70 tabular-nums">{v.maxSaleQuantity}</span></span>}
+                                      {v.defaultQuantity != null && <span>Default: <span className="text-text/70 tabular-nums">{v.defaultQuantity}</span></span>}
+                                    </div>
+                                  )}
+                                  {v.notes && (
+                                    <p className="mt-1 text-xs text-muted/70 italic leading-snug">{v.notes}</p>
+                                  )}
+                                  {/* ── KPI strip: Stock | Costo | Margen | Precio ── */}
+                                  <div className="flex flex-wrap gap-1.5 mt-2">
+                                    {/* Stock — solo cuando BY_ARTICLE */}
+                                    {article.stockMode === "BY_ARTICLE" && (() => {
+                                      const rpNum = v.reorderPoint != null && Number(v.reorderPoint) > 0
+                                        ? Number(v.reorderPoint)
+                                        : article.reorderPoint != null && Number(article.reorderPoint) > 0
+                                          ? Number(article.reorderPoint) : null;
+                                      const isLow      = stockQty > 0 && rpNum != null && stockQty <= rpNum;
+                                      const stockColor = stockQty === 0 ? "text-red-500" : isLow ? "text-amber-500 dark:text-amber-400" : "text-emerald-600 dark:text-emerald-400";
+                                      const stockLabel = stockQty === 0 ? "Sin stock" : isLow ? "Stock bajo" : "Disponible";
+                                      return (
+                                        <div className="rounded-lg border border-border/50 bg-surface2/60 px-2.5 py-1.5 text-center flex flex-col items-center gap-0.5 min-w-[4rem]">
+                                          <div className="text-[9px] font-semibold uppercase tracking-wide text-muted leading-none">Stock</div>
+                                          <div className={cn("text-sm font-bold tabular-nums leading-none", stockColor)}>
+                                            {stockQty > 0 ? `${stockQty} u.` : "0"}
+                                          </div>
+                                          <div className={cn("text-[9px] leading-none", stockColor)}>{stockLabel}</div>
+                                        </div>
+                                      );
+                                    })()}
+                                    {/* Costo — siempre visible, "—" si no hay dato */}
+                                    <div className="rounded-lg border border-border/50 bg-surface2/60 px-2.5 py-1.5 text-center flex flex-col items-center gap-0.5 min-w-[4rem]">
+                                      <div className="text-[9px] font-semibold uppercase tracking-wide text-muted leading-none">Costo</div>
+                                      {vEffCost != null
+                                        ? <div className="text-sm font-bold tabular-nums text-text leading-none">{baseSym} {fmtN(vEffCost)}</div>
+                                        : <div className="text-sm font-bold text-muted leading-none">—</div>}
+                                      <div className="text-[9px] text-muted leading-none">
+                                        {vEffCost != null ? (v.costPrice != null ? "propio" : "art.") : ""}
+                                      </div>
+                                    </div>
+                                    {/* Margen — siempre visible, "—" si no hay dato */}
+                                    <div className="rounded-lg border border-border/50 bg-surface2/60 px-2.5 py-1.5 text-center flex flex-col items-center gap-0.5 min-w-[4rem]">
+                                      <div className="text-[9px] font-semibold uppercase tracking-wide text-muted leading-none">Margen</div>
+                                      {vMargin != null
+                                        ? <div className={cn("text-sm font-bold tabular-nums leading-none", vMargin >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-red-500")}>
+                                            {vMargin >= 0 ? "+" : ""}{fmtN(vMargin)}%
+                                          </div>
+                                        : <div className="text-sm font-bold text-muted leading-none">—</div>}
+                                      <div className="text-[9px] text-muted leading-none">sin imp.</div>
+                                    </div>
+                                    {/* Precio — siempre visible, "—" si no hay dato */}
+                                    <div className="rounded-lg border border-border/50 bg-surface2/60 px-2.5 py-1.5 text-center flex flex-col items-center gap-0.5 min-w-[4rem]">
+                                      <div className="text-[9px] font-semibold uppercase tracking-wide text-muted leading-none">Precio</div>
+                                      {vEffPrice != null
+                                        ? <div className="text-sm font-bold tabular-nums text-text leading-none">{baseSym} {fmtN(vEffPrice)}</div>
+                                        : <div className="text-sm font-bold text-muted leading-none">—</div>}
+                                      <div className="text-[9px] text-muted leading-none">
+                                        {vEffPrice != null ? "art." : ""}
+                                      </div>
+                                    </div>
+                                  </div>
                                 </div>
                                 <div className="shrink-0 flex items-center gap-1">
+                                  <TPIconButton title="Ver variante" onClick={() => setViewVarId(v.id)} className="h-8 w-8">
+                                    <Eye size={14} />
+                                  </TPIconButton>
                                   <TPIconButton title="Editar variante" onClick={() => openEditVariant(v)} className="h-8 w-8">
                                     <Pencil size={14} />
                                   </TPIconButton>
@@ -1209,6 +1570,14 @@ export default function ArticleDetail() {
 
                   {/* ─ Columna derecha ─ */}
                   <div className="space-y-4">
+
+                    {/* ── Combo comercial — solo cuando aplica ──
+                        Sección visible en modo lectura: muestra componentes del combo
+                        con su stock actual + disponibilidad calculada del combo + regla de precio.
+                        Reutiliza endpoint /articles/:id/combo-availability del backend. */}
+                    {article.commercialMode === "COMBO_COMMERCIAL" && (
+                      <ComboInfoBlock article={article} />
+                    )}
 
                     {/* ── Desglose de costo ── */}
                     <div className="rounded-xl border border-border/50 bg-card p-4 flex flex-col gap-3">
@@ -1697,6 +2066,33 @@ export default function ArticleDetail() {
                       variant={editingVar}
                       onVariantChange={(updated) => setVariants(prev => prev.map(v => v.id === updated.id ? updated : v))}
                       variantStock={variantStockMap}
+                      variants={variants}
+                      onSwitchVariant={(nextId) => setVarEditId(nextId)}
+                    />
+                  );
+                })()}
+
+                {/* ── Modal: ver variante ── */}
+                {viewVarId && (() => {
+                  const viewingVar = variants.find((v) => v.id === viewVarId);
+                  if (!viewingVar || !article) return null;
+                  // El endpoint /articles/:id devuelve computedCostPrice.value y effectiveSalePrice
+                  // en lugar de los campos planos computedCostBase y resolvedSalePrice que usa la lista.
+                  // Mapeamos aquí para que ViewVariantModal reciba siempre la misma forma.
+                  const a = article as any;
+                  const articleRowForModal = {
+                    ...a,
+                    computedCostBase:  a.computedCostBase  ?? a.computedCostPrice?.value ?? null,
+                    resolvedSalePrice: a.resolvedSalePrice ?? a.effectiveSalePrice        ?? null,
+                  } as import("../../services/articles").ArticleRow;
+                  return (
+                    <ViewVariantModal
+                      open
+                      onClose={() => setViewVarId(null)}
+                      variant={viewingVar}
+                      articleRow={articleRowForModal}
+                      stockQty={variantStockMap[viewingVar.id] ?? 0}
+                      onEdit={() => { setViewVarId(null); openEditVariant(viewingVar); }}
                     />
                   );
                 })()}
@@ -1775,6 +2171,20 @@ export default function ArticleDetail() {
                     />
                   </TPField>
 
+                  <TPField
+                    label="Modo de venta"
+                    hint="Combo comercial: el precio se calcula desde sus componentes y el stock se descuenta de ellos"
+                  >
+                    <TPComboFixed
+                      value={draft.commercialMode}
+                      onChange={(v) => setDraft((p) => p && ({ ...p, commercialMode: v as ArticleCommercialMode }))}
+                      options={[
+                        { value: "NORMAL",           label: "Producto normal" },
+                        { value: "COMBO_COMMERCIAL", label: "Combo comercial" },
+                      ]}
+                    />
+                  </TPField>
+
                   <div className="md:col-span-2">
                     <TPField label="Descripción">
                       <TPTextarea
@@ -1787,13 +2197,247 @@ export default function ArticleDetail() {
                 </div>
               </TPCard>
 
+              {/* ── COMBO COMERCIAL — solo cuando commercialMode = COMBO_COMMERCIAL ────────
+                  Sección visualmente diferenciada de "Composición del costo" para no
+                  confundir al usuario: los componentes acá descuentan stock real al vender. */}
+              {draft.commercialMode === "COMBO_COMMERCIAL" && (
+                <TPCard
+                  title="Combo comercial"
+                  right={<TPBadge tone="info" size="sm">COMBO</TPBadge>}
+                >
+                  <div className="space-y-4">
+                    {/* Aviso de stock dependiente */}
+                    <div className="rounded-lg border border-amber-500/30 bg-amber-50 dark:bg-amber-950/20 px-3 py-2 text-xs text-amber-800 dark:text-amber-300">
+                      <strong>Este combo no tiene stock propio.</strong> Al venderlo se descontará
+                      automáticamente el stock de cada uno de sus componentes según la cantidad indicada.
+                    </div>
+
+                    {/* Componentes del combo */}
+                    <div>
+                      <div className="text-xs font-semibold uppercase tracking-wider text-muted mb-2">
+                        Artículos incluidos en el combo
+                      </div>
+                      <div className="space-y-2">
+                        {draft.comboComponents.map((c, idx) => {
+                          const lineSubtotal = c.unitPrice != null ? c.unitPrice * (c.quantity || 0) : null;
+                          return (
+                            <div
+                              key={idx}
+                              className="grid grid-cols-[1fr_120px_40px] items-end gap-2 rounded-lg border border-border bg-muted/5 px-3 py-2"
+                            >
+                              <div className="min-w-0">
+                                <div className="text-sm text-text font-medium truncate">{c.name || "Sin nombre"}</div>
+                                <div className="text-[11px] text-muted/70 font-mono flex items-center gap-2">
+                                  <span>{c.code}</span>
+                                  {c.stock != null && (
+                                    <span className={cn(
+                                      "rounded px-1 text-[10px]",
+                                      c.stock > 0 ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400" : "bg-red-500/10 text-red-700 dark:text-red-400",
+                                    )} title="Stock actual del componente">
+                                      stock {c.stock}
+                                    </span>
+                                  )}
+                                  {c.unitPrice != null && (
+                                    <span className="text-muted/60 tabular-nums" title="Precio unitario actual del componente">
+                                      {fmtMoney(c.unitPrice, "$")}
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
+                              <TPField label="Cantidad" hint="Por unidad de combo">
+                                <TPNumberInput
+                                  value={c.quantity}
+                                  onChange={(v) => setDraft((p) => {
+                                    if (!p) return p;
+                                    const next = [...p.comboComponents];
+                                    next[idx] = { ...next[idx], quantity: v ?? 1 };
+                                    return { ...p, comboComponents: next };
+                                  })}
+                                  min={0.0001}
+                                  decimals={4}
+                                />
+                                {lineSubtotal != null && (
+                                  <p className="text-[10px] text-muted/60 tabular-nums mt-1 text-right">
+                                    Subtotal: {fmtMoney(lineSubtotal, "$")}
+                                  </p>
+                                )}
+                              </TPField>
+                              <TPIconButton
+                                title="Quitar componente"
+                                onClick={() => setDraft((p) => p && ({
+                                  ...p,
+                                  comboComponents: p.comboComponents.filter((_, i) => i !== idx),
+                                }))}
+                                className="h-8 w-8"
+                              >
+                                <Trash2 size={14} />
+                              </TPIconButton>
+                            </div>
+                          );
+                        })}
+                        {draft.comboComponents.length === 0 && (
+                          <div className="rounded-lg border border-dashed border-border px-3 py-4 text-center text-xs text-muted">
+                            Aún no agregaste componentes. Buscá un artículo abajo para empezar.
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Picker de artículo */}
+                      <div className="mt-3">
+                        <ArticleSearchSelect
+                          selected={null}
+                          onSelect={(row: ArticleRow) => {
+                            // No permitir autoreferencia (en creación no hay aún ID, así que solo evitar duplicados)
+                            setDraft((p) => {
+                              if (!p) return p;
+                              if (p.comboComponents.some(c => c.articleId === row.id)) {
+                                toast.error("Este artículo ya está agregado como componente.");
+                                return p;
+                              }
+                              // Snapshot de precio y stock para preview/UX en el editor.
+                              // El cálculo definitivo lo hace el motor en backend al confirmar.
+                              const unitPrice = row.salePrice != null ? parseFloat(String(row.salePrice)) : null;
+                              const stock = row.stockData?.total ?? null;
+                              return {
+                                ...p,
+                                comboComponents: [
+                                  ...p.comboComponents,
+                                  { articleId: row.id, code: row.code, name: row.name, quantity: 1, unitPrice, stock },
+                                ],
+                              };
+                            });
+                          }}
+                          onClear={() => {}}
+                          placeholder="Buscar artículo para agregar al combo…"
+                          articleType="PRODUCT"
+                        />
+                      </div>
+                    </div>
+
+                    {/* Regla de precio del combo */}
+                    <div className="border-t border-border/40 pt-4">
+                      <div className="text-xs font-semibold uppercase tracking-wider text-muted mb-2">
+                        Regla de precio del combo
+                      </div>
+                      <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                        <TPField label="Tipo de ajuste">
+                          <TPComboFixed
+                            value={draft.comboAdjustmentKind}
+                            onChange={(v) => setDraft((p) => p && ({
+                              ...p,
+                              comboAdjustmentKind: v as ComboAdjustmentKind,
+                              // Si pasa a NONE, descartar value
+                              comboAdjustmentValue: v === "NONE" ? null : p.comboAdjustmentValue,
+                            }))}
+                            options={[
+                              { value: "NONE",              label: "Suma directa (sin ajuste)" },
+                              { value: "DISCOUNT_PERCENT",  label: "Descuento %" },
+                              { value: "DISCOUNT_FIXED",    label: "Descuento fijo" },
+                              { value: "SURCHARGE_PERCENT", label: "Recargo %" },
+                            ]}
+                          />
+                        </TPField>
+                        {draft.comboAdjustmentKind !== "NONE" && (
+                          <TPField
+                            label={
+                              draft.comboAdjustmentKind === "DISCOUNT_FIXED"
+                                ? "Monto a descontar"
+                                : "Porcentaje (0–100)"
+                            }
+                          >
+                            <TPNumberInput
+                              value={draft.comboAdjustmentValue}
+                              onChange={(v) => setDraft((p) => p && ({ ...p, comboAdjustmentValue: v }))}
+                              min={0}
+                              max={draft.comboAdjustmentKind === "DISCOUNT_FIXED" ? undefined : 100}
+                              decimals={2}
+                            />
+                          </TPField>
+                        )}
+                      </div>
+                      <p className="text-[11px] text-muted/70 mt-2">
+                        El precio del combo se calcula automáticamente sumando el precio de cada componente
+                        y aplicando este ajuste. Si cambia el precio de algún componente, el del combo se actualiza.
+                      </p>
+
+                      {/* SKELETON de preview del combo durante edición.
+                          El cálculo DEFINITIVO lo hace el pricing-engine del backend al
+                          guardar/confirmar. Este bloque solo muestra una estimación
+                          optimista con los snapshots de salePrice cargados en cada
+                          componente — puede diferir del precio final si el motor aplica
+                          lista de precios, promoción, cupón, canal o redondeo.
+                          Ver reglas en src/lib/pricing-engine/README.md (backend). */}
+                      {(() => {
+                        const comps = draft.comboComponents.filter(c => c.unitPrice != null);
+                        if (comps.length === 0) return null;
+                        const subtotal = comps.reduce((s, c) => s + (c.unitPrice ?? 0) * (c.quantity || 0), 0);
+                        const k = draft.comboAdjustmentKind;
+                        const v = draft.comboAdjustmentValue ?? 0;
+                        // _previewComboSkeleton: replica local del ajuste de combo que hace
+                        // applyComboAdjustment en src/lib/combo.utils.ts (backend). El backend
+                        // es la única fuente de verdad; esto solo evita un round-trip por tecla.
+                        let final = subtotal;
+                        let adjAmount = 0;
+                        if (k === "DISCOUNT_PERCENT")  { adjAmount = subtotal * v / 100; final = subtotal - adjAmount; }
+                        if (k === "SURCHARGE_PERCENT") { adjAmount = subtotal * v / 100; final = subtotal + adjAmount; }
+                        if (k === "DISCOUNT_FIXED")    { adjAmount = v;                  final = subtotal - v; }
+                        if (final < 0) final = 0;
+                        const allKnown = comps.length === draft.comboComponents.length;
+                        return (
+                          <div className="mt-3 rounded-lg border border-primary/20 bg-primary/5 px-3 py-2 space-y-1">
+                            <div className="flex items-center justify-between">
+                              <div className="text-[10px] font-semibold uppercase tracking-wider text-muted">
+                                Preview de precio
+                              </div>
+                              <span className="text-[9px] font-semibold uppercase tracking-wider px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-600 dark:text-amber-400">
+                                Estimado
+                              </span>
+                            </div>
+                            <div className="flex justify-between text-xs text-muted">
+                              <span>Subtotal componentes</span>
+                              <span className="tabular-nums">{fmtMoney(subtotal, "$")}</span>
+                            </div>
+                            {k !== "NONE" && Math.abs(adjAmount) > 0.005 && (
+                              <div className="flex justify-between text-xs text-muted">
+                                <span>{k === "SURCHARGE_PERCENT" ? "Recargo" : "Descuento"}</span>
+                                <span className={cn("tabular-nums", k === "SURCHARGE_PERCENT" ? "text-emerald-600" : "text-red-600")}>
+                                  {k === "SURCHARGE_PERCENT" ? "+" : "−"}{fmtMoney(Math.abs(adjAmount), "$")}
+                                </span>
+                              </div>
+                            )}
+                            <div className="flex justify-between text-sm font-bold text-text border-t border-border/30 pt-1">
+                              <span>Precio del combo</span>
+                              <span className="tabular-nums text-primary">{fmtMoney(final, "$")}</span>
+                            </div>
+                            <p className="text-[10px] text-muted/70 italic border-t border-border/30 pt-1">
+                              El precio definitivo lo calcula el motor de precios al guardar el combo.
+                            </p>
+                            {!allKnown && (
+                              <p className="text-[10px] text-amber-600 dark:text-amber-400 italic">
+                                Algunos componentes no tienen precio cargado: la estimación es parcial.
+                              </p>
+                            )}
+                          </div>
+                        );
+                      })()}
+                    </div>
+                  </div>
+                </TPCard>
+              )}
+
               <TPCard title="Stock y hechura">
                 <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-                  <TPField label="Modo de stock">
+                  <TPField
+                    label="Modo de stock"
+                    hint={draft.commercialMode === "COMBO_COMMERCIAL"
+                      ? "Bloqueado: los combos no manejan stock propio (depende de los componentes)"
+                      : undefined}
+                  >
                     <TPComboFixed
-                      value={draft.stockMode}
+                      value={draft.commercialMode === "COMBO_COMMERCIAL" ? "NO_STOCK" : draft.stockMode}
                       onChange={(v) => setDraft((p) => p && ({ ...p, stockMode: v as StockMode }))}
                       options={stockModeOptions}
+                      disabled={draft.commercialMode === "COMBO_COMMERCIAL"}
                     />
                   </TPField>
 

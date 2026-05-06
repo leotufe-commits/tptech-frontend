@@ -1,4 +1,5 @@
 import React, { useState } from "react";
+import { useFieldFormats } from "../../context/FieldFormatsContext";
 import { useParams, useNavigate, useLocation } from "react-router-dom";
 import { ArrowLeft, Printer, Mail, Loader2, AlertCircle } from "lucide-react";
 import { TPCard } from "../../components/ui/TPCard";
@@ -348,6 +349,7 @@ export default function EntityAccountStatement() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const location = useLocation();
+  const { fmtDoc } = useFieldFormats();
 
   const isSupplierContext = location.pathname.startsWith("/proveedores");
 
@@ -460,7 +462,7 @@ export default function EntityAccountStatement() {
                     )}
                     {statement.entity.documentNumber && (
                       <span className="text-xs text-muted">
-                        CUIT / DNI: <span className="font-mono">{statement.entity.documentNumber}</span>
+                        CUIT / DNI: <span className="font-mono">{fmtDoc(statement.entity.documentNumber)}</span>
                       </span>
                     )}
                     {statement.entity.email && (

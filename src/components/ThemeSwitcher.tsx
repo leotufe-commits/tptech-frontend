@@ -198,8 +198,8 @@ export default function ThemeSwitcher({ variant = "inline" }: { variant?: "inlin
           aria-haspopup="listbox"
           aria-expanded={open}
           className={cn(
-            "tp-input text-left cursor-pointer select-none relative",
-            isMenu ? "!py-2 !px-3 !pr-9 text-sm" : "!py-[0.55rem] !px-[0.9rem] !pr-[2.25rem]"
+            "tp-input text-left select-none relative",
+            isMenu ? "text-sm" : ""
           )}
           title={current?.label ?? "Tema"}
         >

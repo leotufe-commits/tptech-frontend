@@ -64,10 +64,10 @@ export type CostBreakdownProps = {
 // ── Helpers internos ───────────────────────────────────────────────────────────
 
 const KIND_SIGN: Record<CostBreakdownRowKind, "+" | ""> = {
-  metal:   "",
+  metal:   "",   // base/origen — sin signo
   merma:   "+",
-  hechura: "",
-  other:   "",
+  hechura: "+",  // suma al costo base
+  other:   "+",  // suma al costo base
   tax:     "+",
 };
 
@@ -94,7 +94,7 @@ function BreakdownRow({
       </div>
       <span className={cn(
         "tabular-nums text-right text-xs font-semibold",
-        isTax ? "text-amber-600 dark:text-amber-400" : "text-text/80"
+        isTax ? "text-muted" : "text-text/80"
       )}>
         {isTax ? `+${value}` : value}
       </span>
@@ -151,6 +151,10 @@ export function CostBreakdown({
   const heroValue = hasTax ? totalAmount : baseAmount;
   const heroLabel = hasTax ? "Total costo" : "Costo base";
 
+  // Mostrar subtotal "Costo base" solo cuando hay múltiples componentes que sumar.
+  // Con 1 sola fila, esa fila YA es el costo base — el subtotal repetiría el mismo valor.
+  const showBaseRow = baseAmount != null && costRows.length > 1;
+
   return (
     <div className={cn("rounded-xl border border-border overflow-hidden", className)}>
 
@@ -201,7 +205,7 @@ export function CostBreakdown({
       )}
 
       {/* ── Costo base (subtotal de producción) ──────────────────── */}
-      {baseAmount != null && (hasCostRows || mode === "MULTIPLIER") && (
+      {showBaseRow && (
         <>
           <SectionDivider />
           {hasTax ? (

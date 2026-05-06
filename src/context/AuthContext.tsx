@@ -113,6 +113,9 @@ export type User = {
   hasQuickPin?: boolean;
   pinEnabled?: boolean;
   quickPinEnabled?: boolean;
+
+  // Preferencia de tema guardada en backend
+  themePreference?: string | null;
 };
 
 export type Jewelry = Record<string, any>;

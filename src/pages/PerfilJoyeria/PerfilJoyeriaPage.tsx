@@ -190,7 +190,8 @@ export default function PerfilJoyeriaPage() {
           <PerfilJoyeriaView
             existingName={p.existing.name}
             company={p.company}
-            phone={p.phone}
+            phoneCountry={String(p.existing?.phoneCountry ?? "")}
+            phoneNumber={String(p.existing?.phoneNumber ?? "")}
             addressLine={p.addressLine}
             addressMeta={p.addressMeta}
             savedAttachments={p.savedAttachments}

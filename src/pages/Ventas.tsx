@@ -34,6 +34,10 @@ import type {
 } from "../services/articles";
 import { salesApi } from "../services/sales";
 import type { SaleLineInput, AddPaymentPayload, SaleDetail, SalePriceSource, SalePreviewResult } from "../services/sales";
+import { salesChannelsApi } from "../services/sales-channels";
+import type { SalesChannelRow } from "../services/sales-channels";
+import { sellersApi } from "../services/sellers";
+import type { SellerRow } from "../services/sellers";
 import { paymentsApi } from "../services/payments";
 import type { PaymentMethodRow } from "../services/payments";
 import { apiFetch } from "../lib/api";
@@ -298,6 +302,18 @@ export default function Ventas() {
   // ── Notes ─────────────────────────────────────────────────────────────────
   const [notes, setNotes] = useState("");
 
+  // ── Canal de venta ────────────────────────────────────────────────────────
+  const [salesChannels, setSalesChannels] = useState<SalesChannelRow[]>([]);
+  const [selectedChannelId, setSelectedChannelId] = useState<string>("");
+
+  // ── Vendedor ──────────────────────────────────────────────────────────────
+  const [sellers, setSellers] = useState<SellerRow[]>([]);
+  const [selectedSellerId, setSelectedSellerId] = useState<string>("");
+
+  // ── Cupón de descuento ────────────────────────────────────────────────────
+  const [couponInput, setCouponInput] = useState<string>("");
+  const [couponApplied, setCouponApplied] = useState<string>("");
+
   // ── Submit ────────────────────────────────────────────────────────────────
   const [confirming, setConfirming] = useState(false);
 
@@ -322,6 +338,16 @@ export default function Ventas() {
         if (active.length) setPayingMethodId(active[0].id);
       })
       .catch(() => {});
+
+    salesChannelsApi
+      .list()
+      .then((list) => setSalesChannels(list.filter((c) => c.isActive && !c.deletedAt)))
+      .catch(() => {});
+
+    sellersApi
+      .list()
+      .then((list) => setSellers((list ?? []).filter((s: SellerRow) => s.isActive && !s.deletedAt)))
+      .catch(() => {});
   }, []);
 
   // ─── Sales preview — backend resuelve TODO: precios + subtotal + checkout ───
@@ -342,13 +368,15 @@ export default function Ventas() {
           clientId:        selectedClient?.id ?? null,
           paymentMethodId: previewPMId   || null,
           installmentsQty: previewInstallments || 0,
+          channelId:       selectedChannelId || null,
+          couponCode:      couponApplied || null,
         })
         .then(setSalesPreview)
         .catch(() => setSalesPreview(null))
         .finally(() => setSalesPreviewLoading(false));
     }, 400);
     return () => clearTimeout(t);
-  }, [cart, selectedClient, previewPMId, previewInstallments]);
+  }, [cart, selectedClient, previewPMId, previewInstallments, selectedChannelId, couponApplied]);
 
   // ─── Cargar detalle + stock al abrir el picker de variantes ─────────────
   useEffect(() => {
@@ -438,9 +466,10 @@ export default function Ventas() {
   ) {
     const variantId = variant?.id ?? null;
     const key = `${article.id}__${variantId ?? ""}`;
+    // El precio es siempre del artículo padre (las variantes no tienen precio propio)
     const unitPrice =
       price ??
-      (parseFloat(variant?.priceOverride ?? article.salePrice ?? "0") || 0);
+      (parseFloat(article.salePrice ?? "0") || 0);
 
     setCart((prev) => {
       const idx = prev.findIndex((l) => l.key === key);
@@ -491,7 +520,7 @@ export default function Ventas() {
       });
       const price    = result.unitPrice != null
         ? parseFloat(result.unitPrice)
-        : (parseFloat(variant?.priceOverride ?? article.salePrice ?? "0") || 0);
+        : (parseFloat(article.salePrice ?? "0") || 0);
       const unitCost = result.unitCost != null ? parseFloat(result.unitCost) : null;
       addToCart(
         article, variant, price,
@@ -501,7 +530,7 @@ export default function Ventas() {
       );
       setPricingMap(prev => ({ ...prev, [lineKey]: result }));
     } catch {
-      const price = parseFloat(variant?.priceOverride ?? article.salePrice ?? "0") || 0;
+      const price = parseFloat(article.salePrice ?? "0") || 0;
       addToCart(article, variant, price, "", null, null, null, null, null, null, true, "NONE");
     }
   }
@@ -576,6 +605,9 @@ export default function Ventas() {
     setSelectedClient(null);
     setNotes("");
     setCurrentSale(null);
+    setSelectedChannelId("");
+    setCouponInput("");
+    setCouponApplied("");
   }
 
   // ─── Client search ────────────────────────────────────────────────────────
@@ -620,9 +652,12 @@ export default function Ventas() {
 
       // Create draft
       const draft = await salesApi.create({
-        clientId: selectedClient?.id ?? null,
+        clientId:   selectedClient?.id ?? null,
+        sellerId:   selectedSellerId || null,
         warehouseId: selectedWarehouseId || null,
         notes,
+        channelId:  selectedChannelId || null,
+        couponCode: couponApplied || null,
         lines,
       });
 
@@ -1145,6 +1180,78 @@ export default function Ventas() {
             );
           })()}
 
+          {/* Canal de venta */}
+          {cart.length > 0 && salesChannels.length > 0 && (
+            <div className="mt-2 mb-1.5">
+              <select
+                className="w-full text-xs border border-gray-200 rounded-lg px-2.5 py-1.5 focus:outline-none focus:ring-1 focus:ring-indigo-400 bg-white"
+                value={selectedChannelId}
+                onChange={(e) => setSelectedChannelId(e.target.value)}
+              >
+                <option value="">Sin canal de venta</option>
+                {salesChannels.map((ch) => {
+                  const val = parseFloat(ch.adjustmentValue);
+                  const suffix = val !== 0
+                    ? ` (${val > 0 ? "+" : ""}${ch.adjustmentType === "PERCENTAGE" ? `${ch.adjustmentValue}%` : `$${ch.adjustmentValue}`})`
+                    : "";
+                  return <option key={ch.id} value={ch.id}>{ch.name}{suffix}</option>;
+                })}
+              </select>
+            </div>
+          )}
+
+          {/* Vendedor */}
+          {cart.length > 0 && sellers.length > 0 && (
+            <div className="mb-1.5">
+              <select
+                className="w-full text-xs border border-gray-200 rounded-lg px-2.5 py-1.5 focus:outline-none focus:ring-1 focus:ring-indigo-400 bg-white"
+                value={selectedSellerId}
+                onChange={(e) => setSelectedSellerId(e.target.value)}
+              >
+                <option value="">Sin vendedor asignado</option>
+                {sellers.map((s) => (
+                  <option key={s.id} value={s.id}>{s.displayName || `${s.firstName} ${s.lastName}`}</option>
+                ))}
+              </select>
+            </div>
+          )}
+
+          {/* Cupón de descuento */}
+          {cart.length > 0 && (
+            <div className="mb-1.5">
+              {couponApplied ? (
+                <div className="flex items-center gap-1.5 px-2.5 py-1.5 bg-emerald-50 border border-emerald-200 rounded-lg text-xs">
+                  <span className="text-emerald-700 font-medium flex-1">Cupón "{couponApplied}" aplicado</span>
+                  <button
+                    type="button"
+                    className="text-emerald-400 hover:text-emerald-600"
+                    onClick={() => { setCouponApplied(""); setCouponInput(""); }}
+                  >
+                    <X size={12} />
+                  </button>
+                </div>
+              ) : (
+                <div className="flex gap-1.5">
+                  <input
+                    type="text"
+                    placeholder="Código de cupón"
+                    className="flex-1 text-xs border border-gray-200 rounded-lg px-2.5 py-1.5 focus:outline-none focus:ring-1 focus:ring-indigo-400 uppercase placeholder-gray-400"
+                    value={couponInput}
+                    onChange={(e) => setCouponInput(e.target.value.toUpperCase())}
+                    onKeyDown={(e) => { if (e.key === "Enter" && couponInput.trim()) setCouponApplied(couponInput.trim()); }}
+                  />
+                  <button
+                    type="button"
+                    className="text-xs px-2.5 py-1 bg-indigo-100 text-indigo-600 hover:bg-indigo-200 rounded-lg font-medium shrink-0"
+                    onClick={() => { if (couponInput.trim()) setCouponApplied(couponInput.trim()); }}
+                  >
+                    Aplicar
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+
           {/* Selector de forma de cobro — inputs al preview */}
           {cart.length > 0 && (
             <div className="mt-2 mb-2 space-y-1.5">
@@ -1189,6 +1296,45 @@ export default function Ventas() {
               {salesPreviewLoading && (
                 <div className="flex items-center gap-1.5 text-xs text-gray-400 py-1">
                   <RefreshCw className="w-3 h-3 animate-spin" /> Calculando…
+                </div>
+              )}
+
+              {/* Desglose canal de venta */}
+              {!salesPreviewLoading && salesPreview?.channelResult && salesPreview.channelResult.channelAmount !== 0 && (
+                <div className="rounded-lg border border-gray-100 bg-white overflow-hidden text-xs mb-1.5">
+                  <div className="flex justify-between items-center px-3 py-1.5">
+                    <span className={`font-medium ${salesPreview.channelResult.channelAmount > 0 ? "text-amber-600" : "text-emerald-600"}`}>
+                      Canal: {salesPreview.channelResult.channelName}
+                    </span>
+                    <span className={`tabular-nums font-semibold ${salesPreview.channelResult.channelAmount > 0 ? "text-amber-600" : "text-emerald-600"}`}>
+                      {salesPreview.channelResult.channelAmount > 0 ? "+" : ""}${fmt(salesPreview.channelResult.channelAmount)}
+                    </span>
+                  </div>
+                </div>
+              )}
+
+              {/* Desglose cupón — aplicado */}
+              {!salesPreviewLoading && couponApplied && salesPreview?.couponResult?.applied && salesPreview.couponResult.discountAmount > 0 && (
+                <div className="rounded-lg border border-emerald-100 bg-emerald-50 overflow-hidden text-xs mb-1.5">
+                  <div className="flex justify-between items-center px-3 py-1.5">
+                    <span className="text-emerald-700 font-medium">
+                      Cupón {salesPreview.couponResult.couponCode}
+                      {salesPreview.couponResult.discountType === "PERCENTAGE" && ` (${salesPreview.couponResult.discountValue}%)`}
+                    </span>
+                    <span className="tabular-nums font-semibold text-emerald-700">
+                      −${fmt(salesPreview.couponResult.discountAmount)}
+                    </span>
+                  </div>
+                </div>
+              )}
+
+              {/* Cupón no válido */}
+              {!salesPreviewLoading && couponApplied && salesPreview?.couponResult && !salesPreview.couponResult.applied && salesPreview.couponResult.reason && (
+                <div className="rounded-lg border border-red-100 bg-red-50 overflow-hidden text-xs mb-1.5">
+                  <div className="flex items-center gap-1.5 px-3 py-1.5">
+                    <Info size={11} className="text-red-400 shrink-0" />
+                    <span className="text-red-600">{salesPreview.couponResult.reason}</span>
+                  </div>
                 </div>
               )}
 
@@ -1317,7 +1463,7 @@ export default function Ventas() {
                       </div>
                       <div className="flex flex-col items-end gap-1 ml-3 shrink-0">
                         <span className="text-sm font-semibold text-gray-600">
-                          ${fmt(parseFloat(v.priceOverride ?? variantPickerArticle.salePrice ?? "0") || 0)}
+                          ${fmt(parseFloat(variantPickerArticle.salePrice ?? "0") || 0)}
                         </span>
                         {stockQty !== undefined && (
                           <span className={`text-xs font-medium ${stockQty > 0 ? "text-emerald-600" : "text-red-500"}`}>
@@ -1498,6 +1644,12 @@ export default function Ventas() {
                 <div className="flex justify-between text-sm text-green-600">
                   <span>Cobrado</span>
                   <span>${fmt(parseFloat(completedSale.paidAmount))}</span>
+                </div>
+              )}
+              {completedSale.sellerSnapshot?.commissionType !== "NONE" && completedSale.sellerCommissionTotal != null && (
+                <div className="flex justify-between text-xs text-gray-500 border-t pt-1">
+                  <span>Comisión {completedSale.sellerSnapshot?.displayName}</span>
+                  <span>${fmt(parseFloat(completedSale.sellerCommissionTotal))}</span>
                 </div>
               )}
             </div>

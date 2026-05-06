@@ -1,6 +1,7 @@
 // src/components/valuation/modals/CreateVariantModal.tsx
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Save, SlidersHorizontal, X } from "lucide-react";
+import { fmtNumber2 } from "../../../lib/format";
 
 import Modal from "../../ui/Modal";
 
@@ -23,13 +24,6 @@ function clamp(n: number, min: number, max: number) {
   return Math.max(min, Math.min(max, n));
 }
 
-function fmtMoney(n: number) {
-  if (!Number.isFinite(n)) return "—";
-  return n.toLocaleString("es-AR", {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  });
-}
 
 type Mode = "CREATE" | "EDIT";
 type PricingMode = "AUTO" | "OVERRIDE";
@@ -141,7 +135,7 @@ export default function CreateVariantModal({
     const val = typeof v === "number" && Number.isFinite(v) ? v : 1.0;
     const nextFactor = clamp(val, 0.0001, 100);
 
-    setSaleFactor(Number(nextFactor.toFixed(2)));
+    setSaleFactor(Number(nextFactor.toFixed(4)));
 
     if (Number.isFinite(suggested)) {
       const nextFinal = suggested * nextFactor;
@@ -173,7 +167,7 @@ export default function CreateVariantModal({
 
     if (Number.isFinite(suggested) && suggested > 0) {
       const nextFactor = clamp(val / suggested, 0.0001, 100);
-      if (Number.isFinite(nextFactor)) setSaleFactor(Number(nextFactor.toFixed(2)));
+      if (Number.isFinite(nextFactor)) setSaleFactor(Number(nextFactor.toFixed(4)));
     }
 
     setPricingMode("OVERRIDE");
@@ -286,7 +280,7 @@ export default function CreateVariantModal({
   }, [open, suggested, saleFactor, pricingMode]);
 
   const title = mode === "EDIT" ? "Editar variante" : "Nueva variante";
-  const autoBadge = Number.isFinite(calcSaleAuto) ? fmtMoney(calcSaleAuto) : "—";
+  const autoBadge = Number.isFinite(calcSaleAuto) ? fmtNumber2(calcSaleAuto) : "—";
 
   async function submit() {
     const mid = String(metalId || "").trim();
@@ -311,8 +305,8 @@ export default function CreateVariantModal({
       return setErr("Pureza/Ley inválida. Ej: 0.750 (18k) / 0.585 (14k) / 0.925 (plata).");
     }
 
-    if (!Number.isFinite(saleFactor) || saleFactor <= 0 || saleFactor > 100) {
-      return setErr("Factor inválido. Ej: 1.00 / 1.05 / 1.10");
+    if (!Number.isFinite(saleFactor) || saleFactor <= 0) {
+      return setErr("Merma inválida. Ej: 0%, 10%, -5%");
     }
 
     let salOv: number | null = null;
@@ -418,7 +412,7 @@ export default function CreateVariantModal({
               <div className="text-xs font-semibold text-muted text-left">{topValueLabel}</div>
 
               <div className="mt-2 tp-input h-[52px] flex items-center justify-start tabular-nums text-left">
-                {Number.isFinite(ref) ? fmtMoney(ref) : "—"}
+                {Number.isFinite(ref) ? fmtNumber2(ref) : "—"}
               </div>
 
               <div className="mt-auto pt-2 text-[11px] text-muted text-left">Moneda base</div>
@@ -468,7 +462,7 @@ export default function CreateVariantModal({
               <div className="text-xs font-semibold text-muted text-right">Valor sugerido</div>
 
               <div className="mt-2 tp-input h-[52px] flex items-center justify-end tabular-nums">
-                {Number.isFinite(suggested) ? fmtMoney(suggested) : "—"}
+                {Number.isFinite(suggested) ? fmtNumber2(suggested) : "—"}
               </div>
 
               <div className="mt-auto pt-2 text-[11px] text-muted text-right">valor × pureza</div>
@@ -502,21 +496,21 @@ export default function CreateVariantModal({
 
             <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
               <TPNumberInput
-                label="Merma / Factor"
-                value={Number.isFinite(saleFactor) ? saleFactor : null}
+                label="Merma (%)"
+                value={Number.isFinite(saleFactor) ? Math.round((saleFactor - 1) * 10000) / 100 : null}
                 onChange={(v) => {
                   markDirty();
-                  syncFromFactor(v);
+                  syncFromFactor(v !== null ? 1 + v / 100 : null);
                 }}
-                step={0.01}
-                min={0.0001}
-                max={100}
+                step={1}
+                min={-99.99}
+                max={9900}
                 decimals={2}
-                placeholder="1,00"
+                placeholder="0"
                 disabled={busy}
                 className="h-[52px]"
                 onKeyDown={onKeyDownEnter as any}
-                hint={Number.isFinite(calcSaleAuto) ? `Auto actual: ${autoBadge}` : "Ej: 1.00 / 1.05 / 1.10"}
+                hint={Number.isFinite(calcSaleAuto) ? `Auto: ${autoBadge}` : "Ej: 0%, 10%, -5%"}
               />
 
               <TPNumberInput
@@ -556,7 +550,7 @@ export default function CreateVariantModal({
                 <div className="text-xs text-muted">{isManual ? "Precio manual activo" : "Cálculo automático"}</div>
 
                 <div className="text-4xl md:text-5xl font-normal tracking-tight tabular-nums text-text">
-                  {Number.isFinite(appliedFinal) ? fmtMoney(appliedFinal) : "—"}
+                  {Number.isFinite(appliedFinal) ? fmtNumber2(appliedFinal) : "—"}
                 </div>
 
                 <div className="text-[11px] text-muted">Precio final</div>

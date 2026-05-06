@@ -1,5 +1,5 @@
 // src/pages/configuracion-sistema/clientes/BulkImportModal.tsx
-// Importación masiva de clientes/proveedores — versión 2
+// Importación masiva de clientes/proveedores — versión 2 con mapeo de columnas
 import React, { useState } from "react";
 import * as XLSX from "xlsx-js-style";
 import { Download, FileDown, CheckCircle2, XCircle, SkipForward, AlertTriangle, FileText, X } from "lucide-react";
@@ -8,6 +8,7 @@ import { TPButton } from "../../../components/ui/TPButton";
 import { TPField } from "../../../components/ui/TPField";
 import TPComboFixed from "../../../components/ui/TPComboFixed";
 import TPDropzone from "../../../components/ui/TPDropzone";
+import ImportColumnMappingStep from "../../../components/ui/ImportColumnMappingStep";
 import { toast } from "../../../lib/toast";
 import {
   commercialEntitiesApi,
@@ -21,8 +22,11 @@ import {
   IMPORT_COLUMNS,
   IMPORT_LABELS,
   getImportLabelsXLSX,
-  mapRowToFields,
 } from "./importColumns";
+import { autoMatchColumns } from "../../../lib/import-mapping/autoMatch";
+import { applyMapping } from "../../../lib/import-mapping/applyMapping";
+import { ENTITY_FIELDS } from "../../../lib/import-mapping/entityFields";
+import type { ColumnMapping } from "../../../lib/import-mapping/types";
 
 // ---------------------------------------------------------------------------
 // CSV parser
@@ -163,13 +167,14 @@ interface Props {
   onImported: () => void;
 }
 
-type Step = "config" | "preview" | "done";
+type Step = "config" | "mapping" | "preview" | "done";
 
 export default function BulkImportModal({ open, role, onClose, onImported }: Props) {
   const [step, setStep]           = useState<Step>("config");
   const [mode, setMode]           = useState<"create" | "update" | "upsert">("create");
   const [matchBy, setMatchBy]     = useState<"documentNumber" | "email">("documentNumber");
   const [parsedRows, setParsedRows]   = useState<Record<string, string>[]>([]);
+  const [mappings, setMappings]       = useState<ColumnMapping[]>([]);
   const [fileName, setFileName]       = useState("");
   const [fileError, setFileError]     = useState("");
   const [previewResult, setPreviewResult] = useState<ImportPreviewResponse | null>(null);
@@ -239,6 +244,7 @@ export default function BulkImportModal({ open, role, onClose, onImported }: Pro
   function reset() {
     setStep("config");
     setParsedRows([]);
+    setMappings([]);
     setFileName("");
     setFileError("");
     setPreviewResult(null);
@@ -256,18 +262,32 @@ export default function BulkImportModal({ open, role, onClose, onImported }: Pro
       const rows = parseCSV(text);
       if (rows.length === 0) { setFileError("El archivo está vacío o sin datos válidos."); return; }
       if (rows.length > 500) { setFileError("Máximo 500 filas por importación."); return; }
+      // Extraer encabezados del primer row y auto-matchear
+      const headers = Object.keys(rows[0]);
+      const examples: Record<string, string> = {};
+      for (const h of headers) {
+        examples[h] = rows.find(r => r[h])?.[ h] ?? "";
+      }
+      const autoMapped = autoMatchColumns(headers, ENTITY_FIELDS, examples);
       setFileName(file.name);
       setParsedRows(rows);
+      setMappings(autoMapped);
     };
     reader.onerror = () => setFileError("No se pudo leer el archivo.");
     reader.readAsText(file, "UTF-8");
+  }
+
+  /** Avanza al paso de mapeo desde config */
+  function handleGoToMapping() {
+    if (!parsedRows.length) { toast.error("Cargá un archivo CSV primero."); return; }
+    setStep("mapping");
   }
 
   async function handlePreview() {
     if (!parsedRows.length) { toast.error("Cargá un archivo CSV primero."); return; }
     setBusy(true);
     try {
-      const mappedRows = parsedRows.map(mapRowToFields);
+      const mappedRows = applyMapping(parsedRows, mappings);
       const res = await commercialEntitiesExtApi.importPreview({ rows: mappedRows, role: apiRole });
       setPreviewResult(res);
       setStep("preview");
@@ -282,7 +302,7 @@ export default function BulkImportModal({ open, role, onClose, onImported }: Pro
     if (!parsedRows.length) return;
     setBusy(true);
     try {
-      const mappedRows = parsedRows.map(mapRowToFields);
+      const mappedRows = applyMapping(parsedRows, mappings);
       const res = await commercialEntitiesExtApi.importCommit({ rows: mappedRows, mode, role: apiRole, matchBy });
       setCommitResult(res);
       setStep("done");
@@ -347,13 +367,16 @@ export default function BulkImportModal({ open, role, onClose, onImported }: Pro
         step === "config" ? (
           <>
             <TPButton variant="secondary" onClick={() => { reset(); onClose(); }} disabled={busy}>Cancelar</TPButton>
-            <TPButton variant="primary" onClick={handlePreview} disabled={!parsedRows.length} loading={busy}>
-              Vista previa
+            <TPButton variant="primary" onClick={handleGoToMapping} disabled={!parsedRows.length} loading={busy}>
+              Siguiente →
             </TPButton>
           </>
+        ) : step === "mapping" ? (
+          // El paso de mapeo maneja sus propios botones internamente
+          undefined
         ) : step === "preview" ? (
           <>
-            <TPButton variant="secondary" onClick={() => setStep("config")} disabled={busy}>Volver</TPButton>
+            <TPButton variant="secondary" onClick={() => setStep("mapping")} disabled={busy}>Volver</TPButton>
             {errorRows.length > 0 && (
               <TPButton variant="secondary" onClick={() => downloadErrors(previewResult?.rows ?? [])} iconLeft={<Download size={14} />}>
                 Descargar errores
@@ -381,6 +404,19 @@ export default function BulkImportModal({ open, role, onClose, onImported }: Pro
       }
     >
       <div className="space-y-4">
+
+        {/* ── Paso 2: Mapeo de columnas ── */}
+        {step === "mapping" && (
+          <ImportColumnMappingStep
+            mappings={mappings}
+            fields={ENTITY_FIELDS}
+            onChangeMappings={setMappings}
+            onContinue={handlePreview}
+            onBack={() => setStep("config")}
+            busy={busy}
+            title="Mapeo de columnas del archivo"
+          />
+        )}
 
         {/* ── Paso 1: Configuración ── */}
         {step === "config" && (
@@ -469,7 +505,7 @@ export default function BulkImportModal({ open, role, onClose, onImported }: Pro
           </>
         )}
 
-        {/* ── Pasos 2 y 3: Preview / Done ── */}
+        {/* ── Pasos 3 y 4: Preview / Done ── */}
         {(step === "preview" || step === "done") && summaryData && (
           <>
             {/* Contadores */}

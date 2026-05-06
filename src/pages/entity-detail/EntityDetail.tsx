@@ -1,4 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
+import { fmtNumber2 } from "../../lib/format";
+import { useFieldFormats } from "../../context/FieldFormatsContext";
 import { useParams, useNavigate, useLocation } from "react-router-dom";
 import { ArrowLeft, Pencil, X, Check, FileText, Receipt, CreditCard, Mail, Phone, Plus, Building2, MapPin, Users, Tag, Receipt as ReceiptIcon, StickyNote, Paperclip, Loader2, MoreVertical, Trash2, Power, PowerOff, UserPlus, ShoppingCart, ShoppingBag, Banknote, BarChart2, Percent, Link2, ArrowLeftRight } from "lucide-react";
 
@@ -622,9 +624,7 @@ function TabBalance({
 function fmtGrams(v: number) {
   return v.toLocaleString("es-AR", { minimumFractionDigits: 3, maximumFractionDigits: 3 }) + " g";
 }
-function fmtMoney(v: number) {
-  return v.toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-}
+const fmtMoney = fmtNumber2;
 
 function BalanceDisplay({
   balance,
@@ -979,6 +979,7 @@ function BalanceEntriesTable({
 export default function EntityDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const { fmtPhone, fmtDoc } = useFieldFormats();
   const location = useLocation();
 
   // Detect context from URL path
@@ -1413,7 +1414,7 @@ export default function EntityDetail() {
                       <div className="flex items-center gap-3.5 flex-wrap">
                         {entity!.phone && (
                           <span className="flex items-center gap-1 text-xs text-muted">
-                            <Phone size={11} className="shrink-0 text-muted/60" />{entity!.phone}
+                            <Phone size={11} className="shrink-0 text-muted/60" />{fmtPhone("", entity!.phone)}
                           </span>
                         )}
                         {entity!.email && (
@@ -1424,7 +1425,7 @@ export default function EntityDetail() {
                         {(entity!.documentType || entity!.documentNumber) && (
                           <span className="flex items-center gap-1 text-xs text-muted">
                             <FileText size={11} className="shrink-0 text-muted/60" />
-                            {[entity!.documentType, entity!.documentNumber].filter(Boolean).join(": ")}
+                            {[entity!.documentType, entity!.documentNumber ? fmtDoc(entity!.documentNumber) : ""].filter(Boolean).join(": ")}
                           </span>
                         )}
                       </div>
@@ -1527,12 +1528,12 @@ export default function EntityDetail() {
                   )}
                   <FactPair label="Tipo de persona" value={ENTITY_TYPE_LABELS[entity.entityType]} />
                   {(entity.documentType || entity.documentNumber) && (
-                    <FactPair label="Documento" value={[entity.documentType, entity.documentNumber].filter(Boolean).join(": ")} />
+                    <FactPair label="Documento" value={[entity.documentType, entity.documentNumber ? fmtDoc(entity.documentNumber) : ""].filter(Boolean).join(": ")} />
                   )}
                   {entity.ivaCondition && (
                     <FactPair label="Condición IVA" value={entity.ivaCondition} />
                   )}
-                  {entity.phone && <FactPair label="Teléfono" value={entity.phone} />}
+                  {entity.phone && <FactPair label="Teléfono" value={fmtPhone("", entity.phone)} />}
                   {entity.email && <FactPair label="Email" value={entity.email} />}
                 </div>
               </div>

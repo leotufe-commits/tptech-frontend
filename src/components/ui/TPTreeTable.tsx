@@ -60,6 +60,8 @@ export type TreeColDef = {
    * Útil para "hidden md:table-cell".
    */
   className?: string;
+  /** Estilo inline aplicado solo al <th>. Útil para width dinámica (resize). */
+  thStyle?: React.CSSProperties;
   /**
    * Render del contenido de la celda.
    * La primera columna recibe automáticamente el indent + botón expand/collapse.
@@ -122,6 +124,17 @@ export type TPTreeTableProps = {
    * - `PaginationConfig`→ configuración personalizada o modo controlado
    */
   pagination?: boolean | PaginationConfig;
+  /**
+   * Activa table-layout:fixed para que los widths de <th> se respeten estrictamente.
+   * Necesario cuando se usa resize de columnas.
+   */
+  tableFixed?: boolean;
+  /**
+   * Ancho mínimo en px para la columna de acciones.
+   * Obligatorio cuando `tableFixed=true` para que la columna no colapse a 0.
+   * Valor recomendado: mide el contenido máximo de `renderActions` (botones + gaps + padding).
+   */
+  actionsMinWidth?: number;
 };
 
 /* =========================================================
@@ -226,9 +239,12 @@ function RowInner({
         </TPTd>
       ))}
 
-      {/* Acciones */}
+      {/* Acciones — sticky right para que no quede oculta al hacer scroll horizontal */}
       {renderActions && (
-        <TPTd className="text-right" onClick={(e) => e.stopPropagation()}>
+        <TPTd
+          className="text-right sticky right-0 z-10 bg-card !overflow-visible"
+          onClick={(e) => e.stopPropagation()}
+        >
           {renderActions(node)}
         </TPTd>
       )}
@@ -280,14 +296,16 @@ export function TPTreeTable({
   expanded,
   onToggleExpand,
   onRowClick,
-  draggable    = false,
-  isSearching  = false,
-  loading      = false,
+  draggable       = false,
+  isSearching     = false,
+  loading         = false,
   loadingElement,
-  emptyText    = "No hay resultados.",
-  indentPx     = 24,
+  emptyText       = "No hay resultados.",
+  indentPx        = 24,
   rowClassName,
   pagination,
+  tableFixed      = false,
+  actionsMinWidth,
 }: TPTreeTableProps) {
   const visibleCols = columns.filter((c) => c.visible !== false);
   const useDnd      = draggable && !isSearching;
@@ -367,17 +385,22 @@ export function TPTreeTable({
   return (
     <>
       <TPTableXScroll>
-        <TPTableElBase responsive="stack">
+        <TPTableElBase responsive="stack" tableFixed={tableFixed}>
           <TPThead>
             <tr>
               {useDnd && <th className="w-6" />}
               {visibleCols.map((col) => (
-                <TPTh key={col.key} className={col.className}>
+                <TPTh key={col.key} className={col.className} style={col.thStyle}>
                   {col.header}
                 </TPTh>
               ))}
               {renderActions && (
-                <TPTh className="text-right">Acciones</TPTh>
+                <TPTh
+                  className="text-right sticky right-0 z-20 bg-surface2"
+                  style={actionsMinWidth ? { width: actionsMinWidth, minWidth: actionsMinWidth } : undefined}
+                >
+                  Acciones
+                </TPTh>
               )}
             </tr>
           </TPThead>

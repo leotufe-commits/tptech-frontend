@@ -29,8 +29,13 @@ type Props = {
   /** hace que el header sea clickeable y oculte/muestre el body */
   collapsible?: boolean;
 
-  /** estado inicial cuando collapsible=true (default: true = expandido) */
+  /** estado inicial cuando collapsible=true y no es controlado (default: true = expandido) */
   defaultOpen?: boolean;
+
+  /** Modo controlado: si se pasa, el card refleja este valor en lugar del state interno. */
+  open?: boolean;
+  /** Modo controlado: callback al togglear (requerido si pasás `open`). */
+  onOpenChange?: (open: boolean) => void;
 };
 
 export function TPCard({
@@ -47,10 +52,19 @@ export function TPCard({
   divider = false,
   collapsible = false,
   defaultOpen = true,
+  open,
+  onOpenChange,
 }: Props) {
-  const [open, setOpen] = useState(defaultOpen);
+  const [internalOpen, setInternalOpen] = useState(defaultOpen);
+  const isControlled = open !== undefined;
+  const openValue    = isControlled ? open : internalOpen;
+  const setOpenValue = (next: boolean) => {
+    if (isControlled) onOpenChange?.(next);
+    else setInternalOpen(next);
+  };
+
   const hasHeader = Boolean(title || right);
-  const isOpen = collapsible ? open : true;
+  const isOpen = collapsible ? openValue : true;
 
   return (
     <div className={cn("rounded-2xl border border-border bg-card", className)}>
@@ -63,7 +77,7 @@ export function TPCard({
             collapsible && "cursor-pointer select-none",
             headerClassName
           )}
-          onClick={collapsible ? () => setOpen((v) => !v) : undefined}
+          onClick={collapsible ? () => setOpenValue(!openValue) : undefined}
         >
           <div className={cn("min-w-0", titleClassName)}>
             {typeof title === "string" || typeof title === "number" ? (

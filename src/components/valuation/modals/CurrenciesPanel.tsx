@@ -1,7 +1,7 @@
 // src/components/valuation/modals/CurrenciesPanel.tsx
 import React, { useMemo, useState } from "react";
 import { TPColumnPicker } from "../../ui/TPColumnPicker";
-import { Loader2, Plus, Search, X } from "lucide-react";
+import { GripVertical, Loader2, Plus, Search, X } from "lucide-react";
 import { TPRowActions } from "../../ui/TPRowActions";
 
 import type { CurrencyRow } from "../../../hooks/useValuation";
@@ -39,6 +39,7 @@ const CURR_COLUMNS: CurrColDef[] = [
 
 const LS_KEY_CURR = "tptech_col_currencies";
 const LS_KEY_CURR_ORDER = "tptech_col_order_currencies";
+const LS_KEY_CURR_ROW_ORDER = "tptech_curr_row_order";
 
 
 export default function CurrenciesPanel({
@@ -71,6 +72,16 @@ export default function CurrenciesPanel({
   const [q, setQ] = useState("");
   const [sortKey, setSortKey] = useState<SortKey>("code");
   const [sortDir, setSortDir] = useState<SortDir>("asc");
+
+  const [currDragIdx, setCurrDragIdx] = useState<number | null>(null);
+  const [currOverIdx, setCurrOverIdx] = useState<number | null>(null);
+  const [currRowOrder, setCurrRowOrder] = useState<string[]>(() => {
+    try {
+      const saved = localStorage.getItem(LS_KEY_CURR_ROW_ORDER);
+      if (saved) return JSON.parse(saved);
+    } catch {}
+    return [];
+  });
 
   // ── Visibilidad de columnas ──
   const [colVis, setColVis] = useState<Record<string, boolean>>(() => {
@@ -130,12 +141,29 @@ export default function CurrenciesPanel({
   }
 
   function toggleSort(nextKey: SortKey) {
+    setCurrRowOrder([]);
+    try { localStorage.removeItem(LS_KEY_CURR_ROW_ORDER); } catch {}
     if (sortKey === nextKey) {
       setSortDir((d) => (d === "asc" ? "desc" : "asc"));
       return;
     }
     setSortKey(nextKey);
     setSortDir(nextKey === "status" ? "desc" : "asc");
+  }
+
+  function onCurrDrop(fromIdx: number, toIdx: number) {
+    if (fromIdx === toIdx) return;
+    const dragged = list[fromIdx];
+    if (dragged?.isBase) return;
+    const next = [...list];
+    const [moved] = next.splice(fromIdx, 1);
+    next.splice(toIdx, 0, moved);
+    const base = next.filter(c => c.isBase);
+    const nonBase = next.filter(c => !c.isBase);
+    const ordered = [...base, ...nonBase];
+    const newOrder = ordered.map(c => c.id);
+    setCurrRowOrder(newOrder);
+    try { localStorage.setItem(LS_KEY_CURR_ROW_ORDER, JSON.stringify(newOrder)); } catch {}
   }
 
   function priceOf(r: CurrencyRow) {
@@ -158,6 +186,18 @@ export default function CurrenciesPanel({
         })
       : rows;
 
+    if (!s && currRowOrder.length > 0) {
+      const orderMap = new Map(currRowOrder.map((id, i) => [id, i]));
+      const base = filtered.filter(c => c.isBase);
+      const nonBase = filtered.filter(c => !c.isBase);
+      nonBase.sort((a, b) => {
+        const ai = orderMap.has(a.id) ? orderMap.get(a.id)! : currRowOrder.length;
+        const bi = orderMap.has(b.id) ? orderMap.get(b.id)! : currRowOrder.length;
+        return ai - bi;
+      });
+      return [...base, ...nonBase];
+    }
+
     filtered.sort((a, b) => {
       const abase = a.isBase ? 0 : 1;
       const bbase = b.isBase ? 0 : 1;
@@ -176,7 +216,7 @@ export default function CurrenciesPanel({
     });
 
     return filtered;
-  }, [currencies, q, sortKey, sortDir]);
+  }, [currencies, q, sortKey, sortDir, currRowOrder]);
 
   async function onSetBaseClick(row: CurrencyRow) {
     if (!row?.id) return;
@@ -342,6 +382,7 @@ export default function CurrenciesPanel({
               <table className="w-full">
                 <TPThead>
                   <tr>
+                    <TPTh style={{ width: "36px" }}>{null}</TPTh>
                     {visibleCurrCols.map((col) => (
                       <TPTh
                         key={col.key}
@@ -371,13 +412,39 @@ export default function CurrenciesPanel({
                   ) : list.length === 0 ? (
                     <TPEmptyRow colSpan={currColSpan} text="Sin monedas." />
                   ) : (
-                    list.map((row) => {
+                    list.map((row, idx) => {
                       const isBase = !!row.isBase;
                       const isActive = row.isActive !== false;
                       const lockActions = saving || deleteBusy;
+                      const isDraggingThis = currDragIdx === idx;
+                      const isOverThis = currOverIdx === idx && currDragIdx !== null && currDragIdx !== idx;
 
                       return (
-                        <TPTr key={row.id} className={!isActive ? "opacity-60" : undefined} onClick={() => openView(row.id)}>
+                        <TPTr
+                          key={row.id}
+                          draggable={!isBase}
+                          onDragStart={() => { if (!isBase) setCurrDragIdx(idx); }}
+                          onDragOver={(e) => { e.preventDefault(); setCurrOverIdx(idx); }}
+                          onDragEnd={() => {
+                            if (currDragIdx !== null && currOverIdx !== null && currDragIdx !== currOverIdx) {
+                              onCurrDrop(currDragIdx, currOverIdx);
+                            }
+                            setCurrDragIdx(null);
+                            setCurrOverIdx(null);
+                          }}
+                          onDragLeave={() => setCurrOverIdx(null)}
+                          className={cn(
+                            !isActive && "opacity-60",
+                            isDraggingThis && "opacity-40",
+                            isOverThis && "ring-1 ring-inset ring-primary/40 bg-primary/5"
+                          )}
+                          onClick={() => openView(row.id)}
+                        >
+                          <TPTd key="drag" className="px-2 w-9" onClick={(e) => e.stopPropagation()}>
+                            {!isBase && (
+                              <GripVertical size={14} className="text-muted opacity-40 hover:opacity-80 mx-auto cursor-grab active:cursor-grabbing" />
+                            )}
+                          </TPTd>
                           {visibleCurrCols.map((col) => {
                             switch (col.key) {
                               case "currency":
@@ -439,8 +506,9 @@ export default function CurrenciesPanel({
             <div className="flex items-center justify-between border-t border-border bg-surface2/30 px-5 py-3 text-xs text-muted">
               <div>
                 {list.length} moneda{list.length === 1 ? "" : "s"}
+                {currRowOrder.length > 0 && <span className="ml-2 text-primary opacity-70">· Orden personalizado</span>}
               </div>
-              <div>Tip: la base no puede desactivarse ni eliminarse, y su precio es 1.</div>
+              <div>Arrastrá filas para ordenar · La base siempre es primera</div>
             </div>
           </TPTableWrap>
         </div>

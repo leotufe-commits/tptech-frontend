@@ -2,7 +2,8 @@
 // Renderiza una etiqueta individual a partir de una plantilla y datos de artículo.
 // Usa posicionamiento absoluto en px convertidos desde mm.
 // Válido tanto para preview en pantalla como referencia visual del layout.
-import React, { CSSProperties } from "react";
+import React, { CSSProperties, useEffect, useRef } from "react";
+import QRCode from "qrcode";
 
 import { mmToPx }              from "../../utils/units";
 import { resolveField }        from "../../utils/labelResolver";
@@ -48,7 +49,7 @@ type ElemProps = {
 };
 
 // -- TEXT -----------------------------------------------------------------------
-function TextElement({ el, item, wpx, hpx, debug }: ElemProps) {
+function TextElement({ el, item, wpx: _wpx, hpx: _hpx, debug }: ElemProps) {
   const staticText = el.label || "";
   const value      = el.fieldKey === "static"
     ? staticText
@@ -56,24 +57,25 @@ function TextElement({ el, item, wpx, hpx, debug }: ElemProps) {
 
   if (!value) return null; // autoHideIfEmpty
 
-  const align   = (el.align || "left") as CSSProperties["textAlign"];
-  const justify = el.align === "right" ? "flex-end" : el.align === "center" ? "center" : "flex-start";
+  const isMultiline = value.includes("\n");
+  const align       = (el.align || "left") as CSSProperties["textAlign"];
+  const justify     = el.align === "right" ? "flex-end" : el.align === "center" ? "center" : "flex-start";
 
   return (
     <div
       style={{
-        width:       "100%",
-        height:      "100%",
-        display:     "flex",
-        alignItems:  "center",
+        width:          "100%",
+        height:         "100%",
+        display:        "flex",
+        alignItems:     isMultiline ? "flex-start" : "center",
         justifyContent: justify,
-        fontSize:    el.fontSize,
-        fontWeight:  el.fontWeight as CSSProperties["fontWeight"],
-        textAlign:   align,
-        overflow:    "hidden",
-        whiteSpace:  "nowrap",
-        lineHeight:  1.2,
-        outline:     debug ? "1px dashed #3b82f6" : undefined,
+        fontSize:       el.fontSize,
+        fontWeight:     el.fontWeight as CSSProperties["fontWeight"],
+        textAlign:      align,
+        overflow:       "hidden",
+        whiteSpace:     isMultiline ? "pre-line" : "nowrap",
+        lineHeight:     1.3,
+        outline:        debug ? "1px dashed #3b82f6" : undefined,
       }}
     >
       {value}
@@ -118,33 +120,54 @@ function BarcodeElementWrapper({ el, item, wpx, hpx, debug }: ElemProps) {
   );
 }
 
-// -- QR (placeholder — QRCode real requeriría otra librería) -------------------
-const QR_PATTERN = "repeating-linear-gradient(0deg, #111 0, #111 3px, transparent 3px, transparent 6px), repeating-linear-gradient(90deg, #111 0, #111 3px, transparent 3px, transparent 6px)";
+// -- QR (real — usa la librería qrcode) ---------------------------------------
+const QR_PLACEHOLDER = "repeating-linear-gradient(0deg, #111 0, #111 3px, transparent 3px, transparent 6px), repeating-linear-gradient(90deg, #111 0, #111 3px, transparent 3px, transparent 6px)";
 
 function QRElement({ el, item, wpx, hpx, debug }: ElemProps) {
-  const value = resolveField(item, el.fieldKey);
-  const side  = Math.min(wpx, hpx) * 0.85;
+  const value     = resolveField(item, el.fieldKey);
+  const side      = Math.max(Math.min(wpx, hpx) * 0.9, 16);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas || !value) return;
+    QRCode.toCanvas(canvas, value, {
+      width:                Math.ceil(side),
+      margin:               1,
+      errorCorrectionLevel: "M",
+      color: { dark: "#000000", light: "#ffffff" },
+    }).catch(() => { /* valor inválido — deja el placeholder */ });
+  }, [value, side]);
 
   return (
     <div
       style={{
-        width:   "100%",
-        height:  "100%",
-        display: "flex",
-        alignItems: "center",
+        width:          "100%",
+        height:         "100%",
+        display:        "flex",
+        alignItems:     "center",
         justifyContent: "center",
-        outline: debug ? "1px dashed #8b5cf6" : undefined,
+        outline:        debug ? "1px dashed #8b5cf6" : undefined,
       }}
     >
-      <div
-        style={{
-          width:      side,
-          height:     side,
-          background: QR_PATTERN,
-          opacity:    value ? 1 : 0.25,
-          border:     "1px solid #333",
-        }}
-      />
+      {value ? (
+        <canvas
+          ref={canvasRef}
+          width={Math.ceil(side)}
+          height={Math.ceil(side)}
+          style={{ imageRendering: "pixelated", display: "block" }}
+        />
+      ) : (
+        <div
+          style={{
+            width:      side,
+            height:     side,
+            background: QR_PLACEHOLDER,
+            opacity:    0.25,
+            border:     "1px solid #333",
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -233,15 +256,21 @@ export default function LabelRenderer({
         const elW = px(el.width);
         const elH = px(el.height);
 
+        let cfg: Record<string, unknown> = {};
+        try { cfg = JSON.parse(el.configJson || "{}"); } catch { /* ok */ }
+        const rotation = typeof cfg.rotation === "number" ? cfg.rotation : 0;
+
         return (
           <div
             key={el.id}
             style={{
-              position: "absolute",
-              left:     elX,
-              top:      elY,
-              width:    elW,
-              height:   Math.max(elH, 1),
+              position:        "absolute",
+              left:            elX,
+              top:             elY,
+              width:           elW,
+              height:          Math.max(elH, 1),
+              transform:       rotation ? `rotate(${rotation}deg)` : undefined,
+              transformOrigin: "center center",
             }}
           >
             <ElementSwitch

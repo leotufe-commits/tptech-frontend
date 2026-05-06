@@ -89,7 +89,7 @@ export function PriceSummaryCard({
         <div className="text-[11px] text-muted tabular-nums">
           Neto: {fmtMoney(netAmount, sym)}
           {" · "}
-          imp.: +{fmtMoney(effectiveTax, sym)}
+          +imp.: {fmtMoney(effectiveTax, sym)}
         </div>
       )}
 

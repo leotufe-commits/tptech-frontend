@@ -1,5 +1,6 @@
 import React from "react";
 import { TPCard } from "../../components/ui/TPCard";
+import { fmtNumberSmart } from "../../lib/format";
 
 export default function WarehousesKpis({
   total,
@@ -38,10 +39,21 @@ export default function WarehousesKpis({
       </TPCard>
 
       <TPCard className="p-4">
-        <div className="text-xs text-muted">Stock</div>
-        <div className="mt-1 text-sm text-text tabular-nums">
-          <div>{totalGrams} g</div>
-          <div>{totalPieces} piezas</div>
+        <div className="text-xs text-muted mb-2">Stock total</div>
+        <div className="space-y-1.5 tabular-nums">
+          <div>
+            <div className="text-[10px] text-muted leading-none mb-0.5">Piezas</div>
+            <div className="text-xl font-semibold text-text leading-tight">
+              {fmtNumberSmart(totalPieces)}
+            </div>
+          </div>
+          <div>
+            <div className="text-[10px] text-muted leading-none mb-0.5">Metales padre</div>
+            <div className="text-xl font-semibold text-text leading-tight">
+              {fmtNumberSmart(totalGrams)}
+              <span className="text-xs font-normal text-muted ml-1">g</span>
+            </div>
+          </div>
         </div>
       </TPCard>
     </div>

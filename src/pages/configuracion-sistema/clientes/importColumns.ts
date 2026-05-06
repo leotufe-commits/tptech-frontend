@@ -67,9 +67,6 @@ export function getImportLabelsXLSX(role: "client" | "supplier"): string[] {
   return IMPORT_COLUMNS.map((c) => required.has(c.field) ? `${c.label} *` : c.label);
 }
 
-/** @deprecated usar getImportLabelsXLSX(role) */
-export const IMPORT_LABELS_XLSX = getImportLabelsXLSX("supplier");
-
 // ─── Mapeo label → field ──────────────────────────────────────────────────────
 
 /** Mapa label exacto → field */

@@ -21,6 +21,7 @@ import { cn } from "../../components/ui/tp";
 import { TPCard } from "../../components/ui/TPCard";
 import { TPBadge } from "../../components/ui/TPBadges";
 import { fmtMoney, COST_MODE_LABELS, articlesApi } from "../../services/articles";
+import { fmtNumber2 } from "../../lib/format";
 import type { PricingPreviewResult, PricingStepResult, PricingAlert } from "../../services/articles";
 import type { TaxRow } from "../../services/taxes";
 
@@ -50,14 +51,6 @@ type LineEnrichment = {
   currentUnitValue: string | null;
   source: "METAL_QUOTE" | "REGISTERED" | "NO_REFERENCE";
   quotedAt: string | null;
-};
-
-type TaxDetail = {
-  id: string;
-  name: string;
-  rate: string | null;
-  fixedAmount: string | null;
-  calculationType: string;
 };
 
 type BaseCurrency = { id: string; code: string; symbol: string } | null;
@@ -92,7 +85,13 @@ export type CostosTabProps = {
 };
 
 // ---------------------------------------------------------------------------
-// Helpers de cálculo
+// Helpers de cálculo — exclusivos para mostrar "Costo registrado"
+//
+// Estas funciones son helpers de VISUALIZACIÓN, no duplicaciones del motor
+// de precios del backend. Sirven para calcular el "costo registrado" usando
+// los valores almacenados en cada línea al momento de guardado, y así
+// mostrarlo comparado con el "costo valorizado actual" que devuelve el backend
+// (computedCostBase). No se usan para escribir ni persistir datos.
 // ---------------------------------------------------------------------------
 
 function n(v: any): number {
@@ -100,9 +99,7 @@ function n(v: any): number {
   return Number.isFinite(r) ? r : 0;
 }
 
-function fmtN(v: number) {
-  return v.toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-}
+const fmtN = fmtNumber2;
 
 function fmtPct(v: number) {
   const abs = Math.abs(v);
@@ -143,11 +140,8 @@ function applyAdj(
   return { amount: signed, adjusted: base + signed };
 }
 
-/** Calcula impuesto sobre una base */
-function computeTax(tax: TaxDetail, base: number): number {
-  if (tax.calculationType === "PERCENTAGE") return base * (n(tax.rate) / 100);
-  return n(tax.fixedAmount);
-}
+// El desglose de impuestos lo produce el pricing-engine del backend
+// (computePurchaseTaxes). No se calcula en el frontend.
 
 // ---------------------------------------------------------------------------
 // Sub-componentes de UI
@@ -209,8 +203,8 @@ function TotalsRow({
   label, reg, cur, regColor, curColor, bold, separator,
 }: {
   label: string;
-  reg: string;
-  cur?: string | null;
+  reg: React.ReactNode;
+  cur?: React.ReactNode;
   regColor?: string;
   curColor?: string;
   bold?: boolean;
@@ -289,14 +283,32 @@ function stepFormula(step: PricingStepResult): string | null {
   switch (step.key) {
     case "COST_LINES_METAL":
       if (m.qty && m.quotePrice) {
-        const merma = m.merma != null && Number(m.merma) > 0 ? ` · merma ${m.merma}%` : "";
-        return `${m.qty} g × $${m.quotePrice}/g${merma}`;
+        const mermaVal = m.merma != null ? Number(m.merma) : 0;
+        const priceWithMerma = Number(m.quotePrice) * (1 + mermaVal / 100);
+        const fmt2 = (v: number) => v.toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+        const fmt3 = (v: number) => v.toLocaleString("es-AR", { minimumFractionDigits: 3, maximumFractionDigits: 3 });
+        const vSku  = m.variantSku  ? String(m.variantSku)  : "";
+        const vName = m.variantName ? String(m.variantName) : "";
+        const vId   = vSku && vName ? `${vSku} · ${vName}` : vSku || vName;
+        const calcLine = `${fmt2(Number(m.qty))} g × $${fmt2(priceWithMerma)}/g`;
+        const lines = [vId, calcLine].filter(Boolean);
+        if (mermaVal > 0) lines.push(`merma ${fmt3(mermaVal)}%`);
+        return lines.join("\n");
       }
       return null;
     case "METAL_QUOTE":
       if (m.grams && m.price) {
-        const merma = m.merma != null && Number(m.merma) > 0 ? ` · merma ${m.merma}%` : "";
-        return `${m.grams} g × $${m.price}/g${merma}`;
+        const mermaVal = m.merma != null ? Number(m.merma) : 0;
+        const priceWithMerma = Number(m.price) * (1 + mermaVal / 100);
+        const fmt2 = (v: number) => v.toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+        const fmt3 = (v: number) => v.toLocaleString("es-AR", { minimumFractionDigits: 3, maximumFractionDigits: 3 });
+        const vSku  = m.variantSku  ? String(m.variantSku)  : "";
+        const vName = m.variantName ? String(m.variantName) : "";
+        const vId   = vSku && vName ? `${vSku} · ${vName}` : vSku || vName;
+        const calcLine = `${fmt2(Number(m.grams))} g × $${fmt2(priceWithMerma)}/g`;
+        const lines = [vId, calcLine].filter(Boolean);
+        if (mermaVal > 0) lines.push(`merma ${fmt3(mermaVal)}%`);
+        return lines.join("\n");
       }
       return null;
     case "HECHURA":
@@ -365,7 +377,9 @@ function StepRow({ step, sym }: { step: PricingStepResult; sym: string }) {
         </span>
         {(formula || msg) && (
           <div className="text-[10px] text-muted/80 mt-0.5 font-mono">
-            {formula ?? msg}
+            {formula
+              ? formula.split("\n").map((line, li) => <div key={li}>{line}</div>)
+              : msg}
           </div>
         )}
       </div>
@@ -515,18 +529,22 @@ function MetalHechuraBreakdown({
               </span>
             </div>
           ))}
-          <div className="grid grid-cols-[1fr_auto] gap-x-3 px-3 py-1.5 border-t border-border/40 bg-surface2/20">
-            <span className="text-muted font-medium">Subtotal hechura</span>
-            <span className="tabular-nums font-bold text-text">{fmtMoney(hechura.total, sym)}</span>
-          </div>
+          {hechura.adjustments.length > 0 && (
+            <div className="grid grid-cols-[1fr_auto] gap-x-3 px-3 py-1.5 border-t border-border/40 bg-surface2/20">
+              <span className="text-muted font-medium">Subtotal hechura</span>
+              <span className="tabular-nums font-bold text-text">{fmtMoney(hechura.total, sym)}</span>
+            </div>
+          )}
         </>
       )}
 
-      {/* Total unificado */}
-      <div className="grid grid-cols-[1fr_auto] gap-x-3 px-3 py-2 border-t-2 border-primary/20 bg-primary/5">
-        <span className="font-semibold text-text">Total (Metal + Hechura)</span>
-        <span className="tabular-nums font-bold text-primary text-sm">{fmtMoney(totals.unified, sym)}</span>
-      </div>
+      {/* Total unificado — solo cuando ambos componentes (metal + hechura) están presentes */}
+      {metalItems.length > 0 && hasHechura && (
+        <div className="grid grid-cols-[1fr_auto] gap-x-3 px-3 py-2 border-t-2 border-primary/20 bg-primary/5">
+          <span className="font-semibold text-text">Total (Metal + Hechura)</span>
+          <span className="tabular-nums font-bold text-primary text-sm">{fmtMoney(totals.unified, sym)}</span>
+        </div>
+      )}
     </div>
   );
 }
@@ -567,7 +585,7 @@ function PricingBreakdown({ data, sym }: { data: PricingPreviewResult; sym: stri
               <StepRow key={`price-${i}`} step={step} sym={sym} />
             ))}
           <TotalRow
-            label="Precio neto"
+            label="Sin impuestos"
             value={data.unitPrice}
             sym={sym}
             highlight={!hasSaleTaxes}
@@ -658,6 +676,22 @@ export default function CostosTab({ article, taxes: _taxes, refreshing, onRefres
   const [pricingError, setPricingError]   = useState<string | null>(null);
   const [breakdownOpen, setBreakdownOpen] = useState(false);
 
+  // Tax breakdown sobre el costo REGISTRADO (líneas persistidas, sin enriquecer).
+  // Para el CURRENT usamos directamente `pricing.costTaxBreakdown`.
+  const [regCostTax, setRegCostTax] = useState<{
+    costBase: string | null;
+    costTaxAmount: string | null;
+    costWithTax: string | null;
+    costTaxBreakdown: Array<{
+      taxId: string;
+      name: string;
+      calculationType: string;
+      rate: number | null;
+      fixedAmount: number | null;
+      taxAmount: number;
+    }>;
+  } | null>(null);
+
   const articleId = article?.id as string | undefined;
 
   useEffect(() => {
@@ -668,6 +702,38 @@ export default function CostosTab({ article, taxes: _taxes, refreshing, onRefres
       .then(data => { setPricing(data); setPricingLoading(false); })
       .catch(() => { setPricingError("No se pudo cargar el desglose."); setPricingLoading(false); });
   }, [articleId]);
+
+  // Tax breakdown sobre el costo registrado — va al pricing-engine del backend.
+  // El frontend NO calcula impuestos localmente.
+  useEffect(() => {
+    if (!articleId) return;
+    const raw = (article?.costComposition ?? []) as Array<any>;
+    const lines = raw.map((l, idx) => ({
+      id:             l.id,
+      type:           l.type,
+      label:          l.label ?? "",
+      quantity:       Number(l.quantity ?? 0),
+      unitValue:      Number(l.unitValue ?? 0),
+      currencyId:     l.currencyId ?? null,
+      mermaPercent:   l.mermaPercent != null ? Number(l.mermaPercent) : null,
+      metalVariantId: l.metalVariantId ?? null,
+      catalogItemId:  l.catalogItemId ?? null,
+      sortOrder:      l.sortOrder ?? idx,
+      lineAdjKind:    l.lineAdjKind ?? "",
+      lineAdjType:    l.lineAdjType ?? "",
+      lineAdjValue:   l.lineAdjValue != null ? Number(l.lineAdjValue) : null,
+    }));
+    const mAdjKind  = (article?.manualAdjustmentKind  as string | null) ?? null;
+    const mAdjType  = (article?.manualAdjustmentType  as string | null) ?? null;
+    const mAdjValue = article?.manualAdjustmentValue != null ? Number(article.manualAdjustmentValue) : null;
+
+    articlesApi.previewCostLines(articleId, {
+      lines,
+      manualAdjustment: { kind: mAdjKind, type: mAdjType, value: mAdjValue },
+    })
+      .then(data => setRegCostTax(data.purchaseTaxes))
+      .catch(() => setRegCostTax(null));
+  }, [articleId, article?.costComposition, article?.manualAdjustmentKind, article?.manualAdjustmentType, article?.manualAdjustmentValue]);
 
   // ── Datos del artículo ────────────────────────────────────────────────────
   const costMode         = (article.costCalculationMode as string) ?? "MANUAL";
@@ -691,7 +757,6 @@ export default function CostosTab({ article, taxes: _taxes, refreshing, onRefres
 
   const costLines        = (article.costComposition ?? []) as CostLineView[];
   const enrichments      = (article.costLineCurrentValues ?? []) as LineEnrichment[];
-  const taxDetails       = (article.taxDetails ?? []) as TaxDetail[];
   const baseCurrency     = article.baseCurrency as BaseCurrency;
 
   const hechuraPriceMode = article.hechuraPriceMode as string | undefined;
@@ -736,11 +801,30 @@ export default function CostosTab({ article, taxes: _taxes, refreshing, onRefres
   // Para efectos de cards: usamos backendCurCost; para tabla línea a línea: curLinesSum
   const displayCurTotal = backendCurCost ?? curBeforeTax;
 
-  // Impuestos
-  const taxRowsReg = taxDetails.map(t => ({ ...t, amt: computeTax(t, regBeforeTax) }));
-  const taxRowsCur = curBeforeTax != null
-    ? taxDetails.map(t => ({ ...t, amt: computeTax(t, curBeforeTax) }))
+  // Impuestos — vienen del pricing-engine del backend.
+  //   · Registered: endpoint /articles/:id/cost-lines/preview (delega en el motor).
+  //   · Current:    incluido en /articles/:id/pricing-preview (pricing.costTaxBreakdown).
+  // El frontend no calcula fórmulas base × tasa: solo renderiza lo que el backend devuelve.
+  type TaxRow = { taxId: string; name: string; calculationType: string; rate: number | null; amt: number };
+
+  const taxRowsReg: TaxRow[] = (regCostTax?.costTaxBreakdown ?? []).map(t => ({
+    taxId:           t.taxId,
+    name:            t.name,
+    calculationType: t.calculationType,
+    rate:            t.rate,
+    amt:             t.taxAmount,
+  }));
+
+  const taxRowsCur: TaxRow[] | null = pricing?.costTaxBreakdown
+    ? pricing.costTaxBreakdown.map(t => ({
+        taxId:           t.taxId,
+        name:            t.name,
+        calculationType: t.calculationType,
+        rate:            t.rate,
+        amt:             t.taxAmount,
+      }))
     : null;
+
   const totalTaxReg = taxRowsReg.reduce((s, r) => s + r.amt, 0);
   const totalTaxCur = taxRowsCur?.reduce((s, r) => s + r.amt, 0) ?? null;
 
@@ -748,6 +832,8 @@ export default function CostosTab({ article, taxes: _taxes, refreshing, onRefres
   const totalCur = displayCurTotal != null
     ? (displayCurTotal + (totalTaxCur ?? totalTaxReg))
     : null;
+  // Flag para que la UI pueda marcar como "estimado" mientras el backend responde.
+  const taxesLoading = regCostTax === null || (pricingLoading && taxRowsCur == null);
 
   const diffAbs = totalCur != null ? totalCur - totalReg : null;
   const diffPct = totalCur != null && totalReg !== 0
@@ -766,19 +852,16 @@ export default function CostosTab({ article, taxes: _taxes, refreshing, onRefres
   return (
     <div className="space-y-4">
 
-      {/* ── Barra superior: modo + recalcular ──────────────────────────── */}
+      {/* ── Barra superior: estado + recalcular ────────────────────────── */}
       <div className="flex items-center gap-2 flex-wrap text-xs">
         <Calculator size={12} className="text-muted shrink-0" />
-        <span className="font-medium text-text">
-          {COST_MODE_LABELS[costMode as keyof typeof COST_MODE_LABELS] ?? costMode}
-        </span>
-        <span className="text-border">·</span>
-        <span className="text-muted">
-          {costMode === "MANUAL"              && "Costo ingresado manualmente."}
-          {costMode === "MULTIPLIER"          && `Cantidad × valor unitario${multiplierBase ? ` (base: ${multiplierBase.toLowerCase()})` : ""}.`}
-          {costMode === "METAL_MERMA_HECHURA" && "Composición metálica con merma y hechura."}
-          {hasCostLines                       && "Composición por líneas de costo."}
-        </span>
+        <span className="font-medium text-text">Composición de costo</span>
+        {!hasCostLines && (
+          <>
+            <span className="text-border">·</span>
+            <span className="text-muted">Sin líneas de costo registradas.</span>
+          </>
+        )}
         {isPartial && (
           <span className="flex items-center gap-1 text-[10px] text-amber-600 dark:text-amber-400 bg-amber-500/10 border border-amber-500/20 rounded px-1.5 py-0.5">
             <AlertCircle size={10} />
@@ -803,7 +886,7 @@ export default function CostosTab({ article, taxes: _taxes, refreshing, onRefres
         <SummaryCard
           label="Costo registrado"
           value={fmtMoney(totalReg, sym)}
-          sub={taxRowsReg.length > 0 ? `Neto: ${fmtMoney(regBeforeTax, sym)}` : undefined}
+          sub={taxRowsReg.length > 0 ? `Sin imp.: ${fmtMoney(regBeforeTax, sym)}` : undefined}
           tone="primary"
           icon={<Calculator size={11} />}
         />
@@ -811,7 +894,7 @@ export default function CostosTab({ article, taxes: _taxes, refreshing, onRefres
           label="Costo valorizado actual"
           value={totalCur != null ? fmtMoney(totalCur, sym) : "—"}
           sub={totalCur != null && taxRowsCur != null && taxRowsCur.length > 0
-            ? `Neto: ${fmtMoney(curBeforeTax ?? 0, sym)}`
+            ? `Sin imp.: ${fmtMoney(curBeforeTax ?? 0, sym)}`
             : totalCur == null ? "Sin referencia de mercado" : undefined}
           tone="neutral"
           icon={<TrendingUp size={11} />}
@@ -972,60 +1055,6 @@ export default function CostosTab({ article, taxes: _taxes, refreshing, onRefres
                 );
               })}
 
-              {/* ── MULTIPLIER: fila única ── */}
-              {!hasCostLines && costMode === "MULTIPLIER" && (
-                <tr className="hover:bg-surface2/20 transition-colors">
-                  <td className="px-3 py-2.5 font-medium text-text">Multiplicador</td>
-                  <td className="px-3 py-2.5">
-                    <TPBadge tone="info" size="sm">Multiplicador</TPBadge>
-                  </td>
-                  <td className="px-3 py-2.5 text-right tabular-nums text-text/80">
-                    {multiplierQty != null ? fmtN(multiplierQty) : "—"}
-                  </td>
-                  <td className="px-3 py-2.5 text-muted">
-                    {multiplierBase === "GRAMS" ? "g"
-                      : multiplierBase === "KILATES" ? "k"
-                      : multiplierBase === "UNITS" ? "ud"
-                      : multiplierBase ?? "—"}
-                  </td>
-                  <td className="px-3 py-2.5 text-right tabular-nums text-text/80">
-                    {multiplierValue != null ? fmtMoney(multiplierValue, sym) : "—"}
-                  </td>
-                  <td className="px-3 py-2.5 text-right text-muted">—</td>
-                  <td className="px-3 py-2.5 text-right tabular-nums font-semibold text-text">
-                    {backendCurCost != null ? fmtMoney(backendCurCost, sym) : "—"}
-                  </td>
-                </tr>
-              )}
-
-              {/* ── MANUAL: fila única ── */}
-              {!hasCostLines && costMode === "MANUAL" && (
-                <tr className="hover:bg-surface2/20 transition-colors">
-                  <td className="px-3 py-2.5 font-medium text-text">Costo base</td>
-                  <td className="px-3 py-2.5">
-                    <TPBadge tone="neutral" size="sm">Manual</TPBadge>
-                  </td>
-                  <td className="px-3 py-2.5 text-right tabular-nums text-text/80">1</td>
-                  <td className="px-3 py-2.5 text-muted">ud</td>
-                  <td className="px-3 py-2.5 text-right tabular-nums text-text/80">
-                    {manualBaseCost != null ? fmtMoney(manualBaseCost, sym) : "—"}
-                  </td>
-                  <td className="px-3 py-2.5 text-right text-muted">—</td>
-                  <td className="px-3 py-2.5 text-right tabular-nums font-semibold text-text">
-                    {manualBaseCost != null ? fmtMoney(manualBaseCost, sym) : "—"}
-                  </td>
-                </tr>
-              )}
-
-              {/* ── METAL_MERMA_HECHURA: sin líneas explícitas ── */}
-              {!hasCostLines && costMode === "METAL_MERMA_HECHURA" && (
-                <tr>
-                  <td colSpan={8} className="px-4 py-6 text-center text-muted text-xs">
-                    Costo calculado automáticamente desde la variante de metal y los gramos del artículo. Ver desglose abajo.
-                  </td>
-                </tr>
-              )}
-
               {/* Estado vacío */}
               {hasCostLines && costLines.length === 0 && (
                 <tr>
@@ -1057,19 +1086,6 @@ export default function CostosTab({ article, taxes: _taxes, refreshing, onRefres
             />
           )}
 
-          {/* Subtotal MANUAL base (solo si tiene ajuste) */}
-          {!hasCostLines && costMode === "MANUAL" && manualBaseCost != null && adjReg.amount !== 0 && (
-            <TotalsRow label="Costo base" reg={fmtMoney(manualBaseCost, sym)} />
-          )}
-
-          {/* Metal / hechura (solo si el backend los reporta) */}
-          {!hasCostLines && costMode === "METAL_MERMA_HECHURA" && computed?.metalCost != null && (
-            <TotalsRow label="Metal (con merma)" reg={fmtMoney(n(computed.metalCost), sym)} />
-          )}
-          {!hasCostLines && costMode === "METAL_MERMA_HECHURA" && computed?.hechuraCost != null && (
-            <TotalsRow label="Hechura" reg={fmtMoney(n(computed.hechuraCost), sym)} />
-          )}
-
           {/* Ajuste */}
           {manualAdjKind !== "" && adjReg.amount !== 0 && (
             <TotalsRow
@@ -1090,17 +1106,31 @@ export default function CostosTab({ article, taxes: _taxes, refreshing, onRefres
             cur={curBeforeTax != null ? fmtMoney(curBeforeTax, sym) : null}
           />
 
-          {/* Impuestos individuales */}
-          {taxRowsReg.map((t, idx) => (
+          {/* Impuestos individuales — el desglose lo produce el pricing-engine */}
+          {taxesLoading && taxRowsReg.length === 0 && (
             <TotalsRow
-              key={t.id}
-              label={`${t.name} (${t.calculationType === "PERCENTAGE" ? `${n(t.rate)}%` : "fijo"}, ref.)`}
-              reg={`+${fmtMoney(t.amt, sym)}`}
-              cur={taxRowsCur ? `+${fmtMoney(taxRowsCur[idx]?.amt ?? 0, sym)}` : null}
+              label="Impuestos"
+              reg={<span className="text-muted text-[10px] italic">Calculando…</span>}
+              cur={null}
               regColor="text-muted"
               curColor="text-muted"
             />
-          ))}
+          )}
+          {taxRowsReg.map((t, idx) => {
+            const rateLabel = t.calculationType === "PERCENTAGE" && t.rate != null
+              ? `${n(t.rate)}%`
+              : "fijo";
+            return (
+              <TotalsRow
+                key={t.taxId}
+                label={`${t.name} (${rateLabel}, ref.)`}
+                reg={`+${fmtMoney(t.amt, sym)}`}
+                cur={taxRowsCur ? `+${fmtMoney(taxRowsCur[idx]?.amt ?? 0, sym)}` : null}
+                regColor="text-muted"
+                curColor="text-muted"
+              />
+            );
+          })}
 
           {/* Total final */}
           <TotalsRow

@@ -121,23 +121,6 @@ function joinUrl(base: string, path: string) {
 }
 
 // =========================
-// LEGACY TOKEN READ (si hay token)
-// =========================
-function readStoredToken(): string | null {
-  try {
-    const ss = sessionStorage.getItem(SS_TOKEN_KEY);
-    if (ss && ss.trim()) return ss.trim();
-  } catch {}
-
-  try {
-    const ls = localStorage.getItem(LS_TOKEN_KEY);
-    if (ls && ls.trim()) return ls.trim();
-  } catch {}
-
-  return null;
-}
-
-// =========================
 // TYPES
 // =========================
 export type ApiFetchOptions = Omit<RequestInit, "body" | "signal"> & {
@@ -152,13 +135,6 @@ export type ApiFetchOptions = Omit<RequestInit, "body" | "signal"> & {
    * - throw
    */
   on401?: "logout" | "throw";
-
-  /**
-   * 🔑 IMPORTANTE
-   * - DEFAULT: NO ENVIAR Bearer (cookie httpOnly manda)
-   * - Para legacy / compat: forceBearer: true
-   */
-  forceBearer?: boolean;
 };
 
 // =========================
@@ -325,14 +301,8 @@ export async function apiFetch<T = any>(path: string, options: ApiFetchOptions =
     }
   }
 
-  // ✅ DEFAULT: NO mandar Bearer (cookie manda)
-  // 🔑 Legacy/compat: solo si forceBearer === true
-  if (options.forceBearer === true) {
-    const token = readStoredToken();
-    if (token && !headers.has("Authorization")) {
-      headers.set("Authorization", `Bearer ${token}`);
-    }
-  }
+  // Auth: cookie httpOnly — credentials: "include" ya la envía automáticamente.
+  // No se envía Bearer token. Ver AuthContext y storeTokenAndEmitLogin para multi-tab sync.
 
   // ✅ Dedupe (GET/HEAD)
   const dedupeKey = `${method}:${url}`;

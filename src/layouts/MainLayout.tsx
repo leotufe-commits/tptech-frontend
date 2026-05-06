@@ -25,6 +25,7 @@ export default function MainLayout() {
 
         {/* Main content */}
         <main
+          data-app-main="1"
           className={[
             "bg-surface pr-[var(--layout-gap)] pl-[var(--layout-gap)]",
             "lg:pl-[calc(var(--sidebar-w,280px)+var(--layout-gap))]",
@@ -49,6 +50,7 @@ export default function MainLayout() {
             }}
           >
             <div
+              data-app-content="1"
               className="w-full rounded-2xl bg-card p-6"
               style={{
                 boxShadow: "var(--shadow)",

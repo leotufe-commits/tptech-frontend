@@ -4,15 +4,16 @@
 import React, { useEffect, useRef, useState, useCallback } from "react";
 import {
   AlignCenter, AlignLeft, AlignRight, ArrowLeft,
-  BarcodeIcon, ChevronDown, ChevronUp, Copy, Eye, EyeOff,
-  GripVertical, Grid, Layers, Maximize2, Minimize2,
+  Check, ChevronDown, ChevronUp, Columns2, Copy, Eye, EyeOff,
+  Grid, LayoutGrid, Layers, Maximize2, Minimize2,
   Pencil, Plus, Printer, QrCode, Save, Sparkles,
-  ScanLine, Tag, Trash2, Type, ZoomIn, ZoomOut,
+  ScanLine, Tag, Trash2, Type, X, ZoomIn, ZoomOut,
 } from "lucide-react";
 
 import { cn }              from "../../components/ui/tp";
 import { TPSectionShell }  from "../../components/ui/TPSectionShell";
 import { TPButton }        from "../../components/ui/TPButton";
+import { TPTabs }          from "../../components/ui/TPTabs";
 import { TPField }         from "../../components/ui/TPField";
 import TPInput             from "../../components/ui/TPInput";
 import { Modal }           from "../../components/ui/Modal";
@@ -76,33 +77,121 @@ const SNAP_OPTIONS: { value: number; label: string }[] = [
   { value: 5,   label: "5mm"   },
 ];
 
+const GRID_OPTIONS: { value: number; label: string }[] = [
+  { value: 1, label: "1mm" },
+  { value: 2, label: "2mm" },
+  { value: 5, label: "5mm" },
+];
+
+const SAFE_MARGIN_MM = 2; // área segura de impresión
+
+const RULER_SIZE = 16;  // grosor de regla en px
+const SNAP_GUIDE = 0.8; // mm — proximidad para activar guía de snap a elemento
+
+type SnapLine = { axis: "x" | "y"; posMm: number };
+
 // Datos de muestra para preview en el editor
 const SAMPLE_MAP: Record<string, string> = {
-  "article.name":      "Anillo Solitario Oro",
-  "article.code":      "ANI-0042",
-  "article.sku":       "JW-042",
-  "article.barcode":   "7790001234567",
-  "article.salePrice": "$28.500",
-  "article.costPrice": "$14.200",
-  "article.brand":     "Vera",
-  "variant.name":      "Talle 15",
-  "variant.code":      "T15",
-  "size":              "15",
-  "static":            "",
+  // Identificación
+  "article.name":          "Anillo Solitario Oro",
+  "article.code":          "ANI-0042",
+  "article.sku":           "JW-042",
+  "article.resolvedSku":   "T15-042",
+  "resolvedSku":           "T15-042",
+  "article.barcode":       "7790001234567",
+  "article.qrCode":        "7790001234567",
+  "qrCode":                "7790001234567",
+  "article.rfid":          "E200342890B90012",
+  "rfidCode":              "E200342890B90012",
+  "manufacturer":          "Taller Propio",
+  "supplierName":          "Metales del Sur",
+  // Variante
+  "variant.name":          "Talle 15",
+  "variant.code":          "T15",
+  "variant.sku":           "T15-042",
+  "size":                  "15",
+  // Precios y costos
+  "article.salePrice":     "$28.500",
+  "article.costPrice":     "$14.200",
+  "article.brand":         "Vera",
+  "hechura":               "$2.500",
+  // Pesos y composición
+  "article.totalWeight":   "3,25 g",
+  "totalWeight":           "3,25 g",
+  "article.metalWeights":  "Oro 18k: 2,85 g\nPlata 925: 0,40 g",
+  "metalVariantWeights":   "Oro 18k: 2,85 g\nPlata 925: 0,40 g",
+  "mainMetal":             "Oro 18k",
+  "purityOrLey":           "750",
+  "resolvedMerma":         "5,00%",
+  "mermaPercent":          "5,00%",
+  "metalMermaSummary":     "Oro 18k: 5,00%\nPlata 925: 3,00%",
+  // Clasificación
+  "categoryName":          "Anillos",
+  "groupName":             "Colección Oro",
+  "articleType":           "Producto",
+  "articleStatus":         "Activo",
+  // Atributos
+  "attributesSummary":          "Talle: 15 · Color: Dorado",
+  "resolvedAttributesSummary":  "Talle: 15 · Color: Dorado",
+  "attr.Talle":            "15",
+  "attr.Color":            "Dorado",
+  "attr.Piedra":           "Zircón",
+  // Inventario
+  "stockTotal":            "12",
+  "reorderPoint":          "3",
+  "defaultQuantity":       "1",
+  // Descriptivos
+  "description":           "Anillo solitario con zircón, plata 925",
+  "notes":                 "Exhibición especial",
+  "unitOfMeasure":         "unidad",
+  "dimensions":            "15×10×3 mm",
+  // Estático
+  "static":                "",
 };
 
 const SAMPLE_ITEM = {
-  id:          "_sample",
-  name:        "Anillo Solitario Oro",
-  code:        "ANI-0042",
-  sku:         "JW-042",
-  barcode:     "7790001234567",
-  barcodeType: "CODE128" as const,
-  salePrice:   "28500",
-  costPrice:   "14200",
-  brand:       "Vera",
-  variantName: "Talle 15",
-  variantCode: "T15",
+  id:                 "_sample",
+  name:               "Anillo Solitario Oro",
+  code:               "ANI-0042",
+  sku:                "JW-042",
+  variantSku:         "T15-042",
+  barcode:            "7790001234567",
+  barcodeType:        "CODE128" as const,
+  salePrice:          "28500",
+  costPrice:          "14200",
+  brand:              "Vera",
+  variantName:        "Talle 15",
+  variantCode:        "T15",
+  weight:             "3.25",
+  weightUnit:         "g",
+  metalWeights:       "Oro 18k: 2,85 g\nPlata 925: 0,40 g",
+  attrs:              { "RFID": "E200342890B90012", "Talle": "15", "Color": "Dorado", "Piedra": "Zircón" },
+  // Descriptivos
+  description:        "Anillo solitario con zircón, plata 925",
+  notes:              "Exhibición especial",
+  unitOfMeasure:      "unidad",
+  dimensions:         "15×10×3 mm",
+  // Clasificación
+  categoryName:       "Anillos",
+  articleType:        "PRODUCT",
+  articleStatus:      "ACTIVE",
+  groupName:          "Colección Oro",
+  // Comerciales
+  manufacturer:       "Taller Propio",
+  supplierName:       "Metales del Sur",
+  hechuraPrice:       "2500",
+  mermaPercent:       "5.00",
+  // Metales
+  mainMetal:          "Oro 18k",
+  purityOrLey:        "750",
+  // Inventario
+  stockTotal:         "12",
+  reorderPoint:       "3",
+  defaultQuantity:    "1",
+  // Atributos
+  attributesSummary:         "Talle: 15 · Color: Dorado",
+  resolvedAttributesSummary: "Talle: 15 · Color: Dorado",
+  metalMermaSummary:         "Oro 18k: 5,00%\nPlata 925: 3,00%",
 };
 
 // ─── LocalElement type ────────────────────────────────────────────────────────
@@ -125,6 +214,7 @@ type LocalElement = {
   autoHideIfEmpty: boolean;
   lineClamp:       number;   // 0 = sin límite
   suffix:          string;
+  rotation:        number;   // grados, 0 = sin rotación
   configJson:      Record<string, unknown>;
   _new?:           boolean;
 };
@@ -149,12 +239,13 @@ function rowToLocal(el: LabelElementRow): LocalElement {
     autoHideIfEmpty: Boolean(cfg.autoHideIfEmpty),
     lineClamp:       typeof cfg.lineClamp === "number" ? cfg.lineClamp : 0,
     suffix:          typeof cfg.suffix    === "string"  ? cfg.suffix    : "",
+    rotation:        typeof cfg.rotation  === "number"  ? cfg.rotation  : 0,
     configJson:      cfg,
   };
 }
 
 function localToRowPayload(el: LocalElement, i: number) {
-  const { autoHideIfEmpty, lineClamp, suffix, configJson, ...rest } = el;
+  const { autoHideIfEmpty, lineClamp, suffix, rotation, configJson } = el;
   return {
     type:       el.type,
     label:      el.label,
@@ -168,7 +259,7 @@ function localToRowPayload(el: LocalElement, i: number) {
     align:      el.align,
     visible:    el.visible,
     sortOrder:  i,
-    configJson: { ...configJson, autoHideIfEmpty, lineClamp, suffix },
+    configJson: { ...configJson, autoHideIfEmpty, lineClamp, suffix, rotation },
   };
 }
 
@@ -188,17 +279,19 @@ function localToElementRow(el: LocalElement): LabelElementRow {
     align:      el.align,
     visible:    el.visible,
     sortOrder:  el.sortOrder,
-    configJson: JSON.stringify(el.configJson),
+    configJson: JSON.stringify({ ...el.configJson, rotation: el.rotation }),
   };
 }
 
 // ─── Element content renderer (canvas) ───────────────────────────────────────
 
 function ElementContent({ el, zoom }: { el: LocalElement; zoom: number }) {
-  const sample = SAMPLE_MAP[el.fieldKey] ?? el.label ?? "";
-  const text   = el.label && el.fieldKey !== "static"
-    ? `${el.label}${sample}${el.suffix}`
-    : `${sample}${el.suffix}`;
+  // Para "static": el label ES el texto a mostrar. Para campos dinámicos: prefijo + muestra.
+  const isStatic = el.fieldKey === "static";
+  const sample   = isStatic ? "" : (SAMPLE_MAP[el.fieldKey] ?? "");
+  const text     = isStatic
+    ? `${el.label}${el.suffix}`
+    : `${el.label}${sample}${el.suffix}`;
   const isLine = el.type === "LINE";
 
   if (isLine) return (
@@ -232,6 +325,8 @@ function ElementContent({ el, zoom }: { el: LocalElement; zoom: number }) {
 
   // TEXT
   const justifyMap: Record<string, string> = { left: "flex-start", center: "center", right: "flex-end" };
+  const hasNewline = text.includes("\n");
+  const fallback   = isStatic ? "← doble clic para escribir" : (el.fieldKey || "Texto");
   return (
     <div style={{
       width:          "100%",
@@ -239,27 +334,150 @@ function ElementContent({ el, zoom }: { el: LocalElement; zoom: number }) {
       fontSize:       `${el.fontSize * zoom * 0.75}px`,
       fontWeight:     el.fontWeight,
       display:        "flex",
-      alignItems:     "center",
+      alignItems:     hasNewline ? "flex-start" : "center",
       justifyContent: justifyMap[el.align] ?? "flex-start",
       overflow:       "hidden",
-      whiteSpace:     "nowrap",
+      whiteSpace:     hasNewline ? "pre-line" : "nowrap",
       padding:        "0 1px",
       lineHeight:     1.2,
       color:          text ? "#111" : "#aaa",
     }}>
-      {text || el.fieldKey || "Texto"}
+      {text || fallback}
     </div>
   );
+}
+
+// ─── Ruler ───────────────────────────────────────────────────────────────────
+
+function Ruler({
+  axis, lengthMm, zoom, cursorMm,
+}: {
+  axis:      "x" | "y";
+  lengthMm:  number;
+  zoom:      number;
+  cursorMm:  number | null;
+}) {
+  const scale = MM_TO_PX * zoom;
+  const px    = lengthMm * scale;
+
+  // Adaptar intervalo al zoom para no saturar de ticks
+  const rawInterval = lengthMm / 60;
+  const interval   = rawInterval <= 1 ? 1 : rawInterval <= 2 ? 2 : rawInterval <= 5 ? 5 : 10;
+  const labelEvery = interval <= 2 ? 5 : 10;
+
+  const ticks: number[] = [];
+  for (let v = 0; v <= lengthMm + 0.001; v = Math.round((v + interval) * 100) / 100) ticks.push(v);
+
+  const isX = axis === "x";
+  const w   = isX ? px : RULER_SIZE;
+  const h   = isX ? RULER_SIZE : px;
+
+  return (
+    <svg
+      width={w} height={h}
+      style={{
+        display: "block", flexShrink: 0, background: "#f8fafc",
+        borderBottom: isX ? "1px solid #e2e8f0" : undefined,
+        borderRight:  isX ? undefined : "1px solid #e2e8f0",
+        overflow: "visible", userSelect: "none",
+      }}
+    >
+      {ticks.map(v => {
+        const pos    = v * scale;
+        const isLong = v % labelEvery === 0;
+        const tick   = isLong ? 8 : 4;
+        return (
+          <g key={v}>
+            {isX ? (
+              <>
+                <line x1={pos} y1={RULER_SIZE - tick} x2={pos} y2={RULER_SIZE} stroke="#94a3b8" strokeWidth={0.5} />
+                {isLong && v > 0 && (
+                  <text x={pos + 1.5} y={RULER_SIZE - tick - 1} fontSize={6.5} fill="#94a3b8" fontFamily="ui-monospace,monospace">{v}</text>
+                )}
+              </>
+            ) : (
+              <>
+                <line x1={RULER_SIZE - tick} y1={pos} x2={RULER_SIZE} y2={pos} stroke="#94a3b8" strokeWidth={0.5} />
+                {isLong && v > 0 && (
+                  <text x={RULER_SIZE - tick - 1} y={pos} fontSize={6.5} fill="#94a3b8" fontFamily="ui-monospace,monospace" textAnchor="end" dominantBaseline="middle">{v}</text>
+                )}
+              </>
+            )}
+          </g>
+        );
+      })}
+      {/* Marcador de cursor */}
+      {cursorMm != null && (
+        isX
+          ? <line x1={cursorMm * scale} y1={0} x2={cursorMm * scale} y2={RULER_SIZE} stroke="#3b82f6" strokeWidth={1} />
+          : <line x1={0} y1={cursorMm * scale} x2={RULER_SIZE} y2={cursorMm * scale} stroke="#3b82f6" strokeWidth={1} />
+      )}
+    </svg>
+  );
+}
+
+// ─── snap-to-element+canvas helper (fuera del componente = sin re-creación) ───
+
+type SnapCandidate = { delta: number; pos: number };
+
+function computeSnapLines(
+  el: LocalElement, nx: number, ny: number,
+  others: LocalElement[],
+  canvasW = 0, canvasH = 0,
+): { snappedX: number; snappedY: number; lines: SnapLine[] } {
+  const elR = nx + el.width,  elCX = nx + el.width  / 2;
+  const elB = ny + el.height, elCY = ny + el.height / 2;
+
+  // Usar objeto para que TypeScript rastree las asignaciones de closures correctamente
+  const best: { x: SnapCandidate | null; y: SnapCandidate | null } = { x: null, y: null };
+
+  function tryX(myEdge: number, target: number) {
+    const d = Math.abs(myEdge - target);
+    if (d < SNAP_GUIDE && (!best.x || d < Math.abs(best.x.delta)))
+      best.x = { delta: target - myEdge, pos: target };
+  }
+  function tryY(myEdge: number, target: number) {
+    const d = Math.abs(myEdge - target);
+    if (d < SNAP_GUIDE && (!best.y || d < Math.abs(best.y.delta)))
+      best.y = { delta: target - myEdge, pos: target };
+  }
+
+  // Bordes y centro del canvas
+  if (canvasW > 0) for (const m of [nx, elR, elCX]) for (const t of [0, canvasW, canvasW / 2]) tryX(m, t);
+  if (canvasH > 0) for (const m of [ny, elB, elCY]) for (const t of [0, canvasH, canvasH / 2]) tryY(m, t);
+
+  // Otros elementos
+  for (const o of others) {
+    if (o.id === el.id) continue;
+    const [oL, oR, oCX] = [o.x, o.x + o.width,  o.x + o.width  / 2];
+    const [oT, oB, oCY] = [o.y, o.y + o.height, o.y + o.height / 2];
+    for (const m of [nx, elR, elCX]) for (const t of [oL, oR, oCX]) tryX(m, t);
+    for (const m of [ny, elB, elCY]) for (const t of [oT, oB, oCY]) tryY(m, t);
+  }
+
+  const lines: SnapLine[] = [];
+  if (best.x) lines.push({ axis: "y", posMm: best.x.pos });
+  if (best.y) lines.push({ axis: "x", posMm: best.y.pos });
+
+  return {
+    snappedX: best.x ? nx + best.x.delta : nx,
+    snappedY: best.y ? ny + best.y.delta : ny,
+    lines,
+  };
 }
 
 // ─── LabelCanvas ─────────────────────────────────────────────────────────────
 
 type DragState = {
-  elementId: string;
-  startX:    number;
-  startY:    number;
-  origX:     number;
-  origY:     number;
+  elementId:    string;
+  startX:       number;
+  startY:       number;
+  origX:        number;
+  origY:        number;
+  currentX:     number;
+  currentY:     number;
+  isAlt:        boolean;
+  groupOrigPos: Record<string, { x: number; y: number }>;
 };
 
 type ResizeState = {
@@ -271,33 +489,118 @@ type ResizeState = {
   origH:     number;
 };
 
-function LabelCanvas({
-  template, elements, selectedId, zoom, snapMm, showGrid,
-  onSelect, onUpdate,
-}: {
-  template:   { widthMm: number; heightMm: number; bgColor: string };
-  elements:   LocalElement[];
-  selectedId: string | null;
-  zoom:       number;
-  snapMm:     number;
-  showGrid:   boolean;
-  onSelect:   (id: string | null) => void;
-  onUpdate:   (id: string, patch: Partial<LocalElement>) => void;
-}) {
-  const drag   = useRef<DragState | null>(null);
-  const resize = useRef<ResizeState | null>(null);
-  const scale  = MM_TO_PX * zoom;
+type RotateState = {
+  elementId:    string;
+  startAngle:   number;   // ángulo mouse→centro al inicio (grados)
+  origRotation: number;   // rotation original del elemento
+  centerX:      number;   // centro del elemento en px de pantalla
+  centerY:      number;
+};
 
-  function startDrag(e: React.MouseEvent, el: LocalElement) {
+/** Ángulo en grados desde el centro (cx,cy) al punto (mx,my). 0° = arriba. */
+function getAngleDeg(cx: number, cy: number, mx: number, my: number): number {
+  return Math.atan2(my - cy, mx - cx) * (180 / Math.PI) + 90;
+}
+
+function LabelCanvas({
+  template, elements, selectedIds, zoom, snapMm, gridMm, showGrid,
+  showSafeArea, previewMode,
+  onSelect, onUpdate, onAltDuplicate, onCursorMove,
+}: {
+  template:       { widthMm: number; heightMm: number; bgColor: string };
+  elements:       LocalElement[];
+  selectedIds:    string[];
+  zoom:           number;
+  snapMm:         number;
+  gridMm:         number;
+  showGrid:       boolean;
+  showSafeArea:   boolean;
+  previewMode:    boolean;
+  onSelect:       (ids: string[]) => void;
+  onUpdate:       (id: string, patch: Partial<LocalElement>) => void;
+  onAltDuplicate: (id: string, x: number, y: number) => void;
+  onCursorMove:   (x: number | null, y: number | null) => void;
+}) {
+  const drag      = useRef<DragState    | null>(null);
+  const resize    = useRef<ResizeState  | null>(null);
+  const rotate    = useRef<RotateState  | null>(null);
+  const canvasRef = useRef<HTMLDivElement | null>(null);
+  const editRef   = useRef<HTMLInputElement | null>(null);
+  const [snapLines,      setSnapLines]      = useState<SnapLine[]>([]);
+  const [editingId,      setEditingId]      = useState<string | null>(null);
+  const [editValue,      setEditValue]      = useState("");
+  const [rotatingAngle,  setRotatingAngle]  = useState<number | null>(null);
+  const scale   = MM_TO_PX * zoom;
+
+  function startEdit(el: LocalElement) {
+    setEditingId(el.id);
+    setEditValue(el.label);
+    setTimeout(() => { editRef.current?.focus(); editRef.current?.select(); }, 30);
+  }
+
+  function commitEdit() {
+    if (editingId) {
+      onUpdate(editingId, { label: editValue });
+      setEditingId(null);
+    }
+  }
+
+  function cancelEdit() {
+    setEditingId(null);
+  }
+
+  function startRotate(e: React.MouseEvent, el: LocalElement) {
     e.stopPropagation();
     e.preventDefault();
-    onSelect(el.id);
+    if (editingId) return;
+    const rect = canvasRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    // Centro del elemento en coordenadas de pantalla
+    const cx = rect.left + mm(el.x + el.width  / 2, zoom);
+    const cy = rect.top  + mm(el.y + el.height / 2, zoom);
+    rotate.current = {
+      elementId:    el.id,
+      startAngle:   getAngleDeg(cx, cy, e.clientX, e.clientY),
+      origRotation: el.rotation ?? 0,
+      centerX:      cx,
+      centerY:      cy,
+    };
+    setRotatingAngle(Math.round(el.rotation ?? 0));
+  }
+
+  function startDrag(e: React.MouseEvent, el: LocalElement) {
+    if (editingId) return; // no arrastrar mientras se edita
+    e.stopPropagation();
+    e.preventDefault();
+
+    // Shift+click → toggle selection sin iniciar drag
+    if (e.shiftKey) {
+      const already = selectedIds.includes(el.id);
+      onSelect(already ? selectedIds.filter(id => id !== el.id) : [...selectedIds, el.id]);
+      return;
+    }
+
+    // Si no está en la selección, seleccionarlo primero
+    if (!selectedIds.includes(el.id)) onSelect([el.id]);
+
+    // Posiciones originales de todos los elementos seleccionados (grupo)
+    const group = selectedIds.includes(el.id) ? selectedIds : [el.id];
+    const groupOrigPos: Record<string, { x: number; y: number }> = {};
+    for (const id of group) {
+      const m = elements.find(e => e.id === id);
+      if (m) groupOrigPos[id] = { x: m.x, y: m.y };
+    }
+
     drag.current = {
       elementId: el.id,
       startX:    e.clientX,
       startY:    e.clientY,
       origX:     el.x,
       origY:     el.y,
+      currentX:  el.x,
+      currentY:  el.y,
+      isAlt:     e.altKey,
+      groupOrigPos,
     };
   }
 
@@ -305,97 +608,181 @@ function LabelCanvas({
     e.stopPropagation();
     e.preventDefault();
     resize.current = {
-      elementId: el.id,
-      handle,
-      startX:    e.clientX,
-      startY:    e.clientY,
-      origW:     el.width,
-      origH:     el.height,
+      elementId: el.id, handle,
+      startX: e.clientX, startY: e.clientY,
+      origW: el.width,   origH: el.height,
     };
   }
 
   function onMouseMove(e: React.MouseEvent) {
+    // Cursor tracking para reglas
+    const rect = (e.currentTarget as HTMLDivElement).getBoundingClientRect();
+    onCursorMove(
+      (e.clientX - rect.left) / scale,
+      (e.clientY - rect.top)  / scale,
+    );
+
     if (drag.current) {
-      const dx  = (e.clientX - drag.current.startX) / scale;
-      const dy  = (e.clientY - drag.current.startY) / scale;
-      const el  = elements.find(el => el.id === drag.current!.elementId);
-      if (!el) return;
-      const nx  = clamp(snapVal(drag.current.origX + dx, snapMm), 0, template.widthMm  - el.width);
-      const ny  = clamp(snapVal(drag.current.origY + dy, snapMm), 0, template.heightMm - el.height);
-      onUpdate(drag.current.elementId, { x: nx, y: ny });
+      const rawDx = (e.clientX - drag.current.startX) / scale;
+      const rawDy = (e.clientY - drag.current.startY) / scale;
+      const primaryEl = elements.find(el => el.id === drag.current!.elementId);
+      if (!primaryEl) return;
+
+      let nx = clamp(snapVal(drag.current.origX + rawDx, snapMm), 0, template.widthMm  - primaryEl.width);
+      let ny = clamp(snapVal(drag.current.origY + rawDy, snapMm), 0, template.heightMm - primaryEl.height);
+
+      // Snap a otros elementos (solo selección individual)
+      const groupIds = Object.keys(drag.current.groupOrigPos);
+      if (groupIds.length === 1) {
+        const others = elements.filter(el => !groupIds.includes(el.id));
+        const { snappedX, snappedY, lines } = computeSnapLines(
+          { ...primaryEl, x: nx, y: ny }, nx, ny, others,
+          template.widthMm, template.heightMm,
+        );
+        nx = clamp(snappedX, 0, template.widthMm  - primaryEl.width);
+        ny = clamp(snappedY, 0, template.heightMm - primaryEl.height);
+        setSnapLines(lines);
+      } else {
+        setSnapLines([]);
+      }
+
+      drag.current.currentX = nx;
+      drag.current.currentY = ny;
+      const dx = nx - drag.current.origX;
+      const dy = ny - drag.current.origY;
+
+      // Mover todos los elementos del grupo con el mismo delta
+      for (const id of groupIds) {
+        const orig   = drag.current.groupOrigPos[id];
+        const member = elements.find(el => el.id === id);
+        if (!member || !orig) continue;
+        onUpdate(id, {
+          x: clamp(orig.x + dx, 0, template.widthMm  - member.width),
+          y: clamp(orig.y + dy, 0, template.heightMm - member.height),
+        });
+      }
     }
+
     if (resize.current) {
-      const dx  = (e.clientX - resize.current.startX) / scale;
-      const dy  = (e.clientY - resize.current.startY) / scale;
-      const el  = elements.find(el => el.id === resize.current!.elementId);
+      const dx = (e.clientX - resize.current.startX) / scale;
+      const dy = (e.clientY - resize.current.startY) / scale;
+      const el = elements.find(el => el.id === resize.current!.elementId);
       if (!el) return;
       const patch: Partial<LocalElement> = {};
-      if (resize.current.handle === "se" || resize.current.handle === "e") {
-        patch.width  = clamp(snapVal(resize.current.origW + dx, snapMm), 1, template.widthMm  - el.x);
-      }
-      if (resize.current.handle === "se" || resize.current.handle === "s") {
+      if (resize.current.handle === "se" || resize.current.handle === "e")
+        patch.width  = clamp(snapVal(resize.current.origW + dx, snapMm), 1,   template.widthMm  - el.x);
+      if (resize.current.handle === "se" || resize.current.handle === "s")
         patch.height = clamp(snapVal(resize.current.origH + dy, snapMm), 0.5, template.heightMm - el.y);
-      }
       onUpdate(resize.current.elementId, patch);
+    }
+
+    if (rotate.current) {
+      const { elementId, startAngle, origRotation, centerX, centerY } = rotate.current;
+      const currentAngle = getAngleDeg(centerX, centerY, e.clientX, e.clientY);
+      let newRot = origRotation + (currentAngle - startAngle);
+      // Normalizar a [0, 360)
+      newRot = ((newRot % 360) + 360) % 360;
+      // Snap a 15° con Shift, a 45° con Ctrl
+      if (e.shiftKey)      newRot = Math.round(newRot / 45) * 45;
+      else if (e.ctrlKey)  newRot = Math.round(newRot / 15) * 15;
+      const rounded = Math.round(newRot);
+      onUpdate(elementId, { rotation: rounded });
+      setRotatingAngle(rounded);
     }
   }
 
   function onMouseUp() {
+    // Rotación: simplemente limpiar
+    if (rotate.current) {
+      setRotatingAngle(null);
+      rotate.current = null;
+      return;
+    }
+    // Alt+drag → el original vuelve a su posición; se crea una copia donde se soltó
+    if (drag.current?.isAlt) {
+      const { elementId, origX, origY, currentX, currentY } = drag.current;
+      onUpdate(elementId, { x: origX, y: origY });
+      onAltDuplicate(elementId, currentX, currentY);
+    }
+    setSnapLines([]);
     drag.current   = null;
     resize.current = null;
   }
 
-  const canvasW = mm(template.widthMm, zoom);
-  const canvasH = mm(template.heightMm, zoom);
-  const gridSize = mm(snapMm, zoom);
-
-  // Sort elements by sortOrder for z-index
-  const sorted = [...elements].sort((a, b) => a.sortOrder - b.sortOrder);
+  const canvasW   = mm(template.widthMm,  zoom);
+  const canvasH   = mm(template.heightMm, zoom);
+  const gridSizePx = mm(gridMm, zoom);
+  const sorted    = [...elements].sort((a, b) => a.sortOrder - b.sortOrder);
 
   return (
     <div
+      ref={canvasRef}
+      data-canvas="1"
       style={{
         position:        "relative",
         width:           canvasW,
         height:          canvasH,
         backgroundColor: template.bgColor || "#ffffff",
         border:          "1px solid #cbd5e1",
-        boxShadow:       "0 4px 20px rgba(0,0,0,0.15)",
+        boxShadow:       "0 4px 24px rgba(0,0,0,0.12)",
         flexShrink:      0,
         overflow:        "visible",
-        cursor:          "default",
+        cursor:          rotatingAngle !== null ? "alias" : drag.current ? "grabbing" : "default",
       }}
       onMouseMove={onMouseMove}
       onMouseUp={onMouseUp}
-      onMouseLeave={onMouseUp}
-      onClick={() => onSelect(null)}
+      onMouseLeave={() => { onMouseUp(); onCursorMove(null, null); }}
+      onClick={() => { if (!drag.current && !rotate.current) onSelect([]); }}
     >
-      {/* Clip region */}
+      {/* ── Clip region: grid + área segura + hint ── */}
       <div style={{ position: "absolute", inset: 0, overflow: "hidden" }}>
+
         {/* Grid */}
-        {showGrid && gridSize > 2 && (
-          <div
-            style={{
-              position: "absolute",
-              inset: 0,
-              pointerEvents: "none",
-              backgroundImage: `
-                linear-gradient(to right, rgba(0,0,0,0.06) 1px, transparent 1px),
-                linear-gradient(to bottom, rgba(0,0,0,0.06) 1px, transparent 1px)
-              `,
-              backgroundSize: `${gridSize}px ${gridSize}px`,
-            }}
-          />
+        {showGrid && !previewMode && gridSizePx > 3 && (
+          <div style={{
+            position: "absolute", inset: 0, pointerEvents: "none",
+            backgroundImage: `
+              linear-gradient(to right, rgba(0,0,0,0.06) 1px, transparent 1px),
+              linear-gradient(to bottom, rgba(0,0,0,0.06) 1px, transparent 1px)
+            `,
+            backgroundSize: `${gridSizePx}px ${gridSizePx}px`,
+          }} />
+        )}
+
+        {/* Área segura de impresión */}
+        {showSafeArea && !previewMode && (
+          <div style={{
+            position: "absolute",
+            top:    mm(SAFE_MARGIN_MM, zoom),
+            left:   mm(SAFE_MARGIN_MM, zoom),
+            right:  mm(SAFE_MARGIN_MM, zoom),
+            bottom: mm(SAFE_MARGIN_MM, zoom),
+            border: "1.5px dashed rgba(239,68,68,0.45)",
+            borderRadius: 1,
+            pointerEvents: "none",
+          }} />
+        )}
+
+        {/* Hint canvas vacío */}
+        {elements.length === 0 && !previewMode && (
+          <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", pointerEvents: "none", gap: 3 }}>
+            <div style={{ fontSize: 10, fontWeight: 600, color: "#94a3b8" }}>Canvas vacío</div>
+            <div style={{ fontSize: 8.5, color: "#cbd5e1", textAlign: "center", lineHeight: 1.4, maxWidth: "80%" }}>
+              Usá los botones de la barra para agregar texto, códigos o líneas
+            </div>
+          </div>
         )}
       </div>
 
-      {/* Elements (rendered above clip, so handles can overflow) */}
-      {sorted.filter(el => el.visible).map(el => {
+      {/* ── Elementos ── */}
+      {sorted.map(el => {
+        if (!el.visible) return null;
         const elW  = mm(el.width, zoom);
         const elH  = mm(el.type === "LINE" ? Math.max(0.3, el.height) : el.height, zoom);
         const elX  = mm(el.x, zoom);
         const elY  = mm(el.y, zoom);
-        const selected = selectedId === el.id;
+        const isPrimary  = selectedIds.length === 1 && selectedIds[0] === el.id;
+        const isSelected = selectedIds.includes(el.id);
 
         return (
           <div
@@ -406,68 +793,160 @@ function LabelCanvas({
               top:             elY,
               width:           elW,
               height:          el.type === "LINE" ? Math.max(1, elH) : elH,
-              outline:         selected ? "2px solid #3b82f6" : "1px dashed rgba(0,0,0,0.15)",
-              outlineOffset:   selected ? "0px" : "-1px",
-              backgroundColor: selected ? "rgba(59,130,246,0.04)" : "transparent",
-              cursor:          "move",
-              zIndex:          el.sortOrder + (selected ? 100 : 1),
+              outline:         previewMode ? "none"
+                              : isPrimary  ? "2px solid #3b82f6"
+                              : isSelected ? "1.5px solid #93c5fd"
+                              : "1px dashed rgba(0,0,0,0.12)",
+              outlineOffset:   isPrimary ? "0px" : "-1px",
+              backgroundColor: !previewMode && isSelected ? "rgba(59,130,246,0.04)" : "transparent",
+              cursor:          previewMode ? "default" : "move",
+              zIndex:          el.sortOrder + (isSelected ? 100 : 1),
               boxSizing:       "border-box",
+              transform:       el.rotation ? `rotate(${el.rotation}deg)` : undefined,
+              transformOrigin: "center center",
             }}
-            onMouseDown={(e) => startDrag(e, el)}
+            onMouseDown={previewMode ? undefined : (e) => startDrag(e, el)}
+            onClick={previewMode ? undefined : (e) => e.stopPropagation()}
+            onDoubleClick={(!previewMode && el.type === "TEXT") ? (e) => { e.stopPropagation(); startEdit(el); } : undefined}
+            title={!previewMode && el.type === "TEXT" ? "Doble clic para editar texto" : undefined}
           >
             <ElementContent el={el} zoom={zoom} />
 
-            {/* Resize handles — only for selected */}
-            {selected && (
+            {/* Edición inline por doble clic (edita el label/texto del elemento) */}
+            {editingId === el.id && (
+              <input
+                ref={editRef}
+                value={editValue}
+                onChange={(e) => setEditValue(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter")  { e.preventDefault(); commitEdit(); }
+                  if (e.key === "Escape") { e.preventDefault(); cancelEdit(); }
+                }}
+                onBlur={commitEdit}
+                placeholder={el.fieldKey === "static" ? "Texto estático…" : "Prefijo / etiqueta…"}
+                title={el.fieldKey === "static" ? "Texto estático — Enter para confirmar, Esc para cancelar" : "Prefijo visible antes del valor del campo — Enter para confirmar, Esc para cancelar"}
+                style={{
+                  position:    "absolute",
+                  inset:       0,
+                  width:       "100%",
+                  height:      "100%",
+                  border:      "2px solid #3b82f6",
+                  borderRadius: 2,
+                  padding:     "1px 3px",
+                  fontSize:    Math.max(9, el.fontSize * zoom * 0.85),
+                  fontWeight:  el.fontWeight,
+                  textAlign:   el.align as React.CSSProperties["textAlign"],
+                  background:  "rgba(255,255,255,0.97)",
+                  color:       "#111",
+                  outline:     "none",
+                  zIndex:      500,
+                  boxSizing:   "border-box",
+                }}
+              />
+            )}
+
+            {/* Handles de resize — solo para el primario, no en preview */}
+            {!previewMode && isPrimary && (
               <>
-                {/* SE corner */}
-                <div
-                  style={{
-                    position: "absolute", right: -5, bottom: -5,
-                    width: 10, height: 10,
-                    background: "#3b82f6", border: "2px solid #fff",
-                    borderRadius: 2, cursor: "se-resize", zIndex: 200,
-                  }}
-                  onMouseDown={(e) => startResize(e, el, "se")}
-                />
-                {/* E midpoint */}
-                <div
-                  style={{
-                    position: "absolute", right: -4, top: "50%", marginTop: -4,
-                    width: 8, height: 8,
-                    background: "#3b82f6", border: "2px solid #fff",
-                    borderRadius: "50%", cursor: "e-resize", zIndex: 200,
-                  }}
-                  onMouseDown={(e) => startResize(e, el, "e")}
-                />
-                {/* S midpoint */}
-                <div
-                  style={{
-                    position: "absolute", left: "50%", marginLeft: -4, bottom: -4,
-                    width: 8, height: 8,
-                    background: "#3b82f6", border: "2px solid #fff",
-                    borderRadius: "50%", cursor: "s-resize", zIndex: 200,
-                  }}
-                  onMouseDown={(e) => startResize(e, el, "s")}
-                />
+                <div style={{ position:"absolute", right:-5, bottom:-5, width:10, height:10, background:"#3b82f6", border:"2px solid #fff", borderRadius:2, cursor:"se-resize", zIndex:200 }}
+                  onMouseDown={(e) => startResize(e, el, "se")} />
+                <div style={{ position:"absolute", right:-4, top:"50%", marginTop:-4, width:8, height:8, background:"#3b82f6", border:"2px solid #fff", borderRadius:"50%", cursor:"e-resize", zIndex:200 }}
+                  onMouseDown={(e) => startResize(e, el, "e")} />
+                <div style={{ position:"absolute", left:"50%", marginLeft:-4, bottom:-4, width:8, height:8, background:"#3b82f6", border:"2px solid #fff", borderRadius:"50%", cursor:"s-resize", zIndex:200 }}
+                  onMouseDown={(e) => startResize(e, el, "s")} />
               </>
+            )}
+
+            {/* Handle de rotación — solo primario, no en preview */}
+            {!previewMode && isPrimary && (
+              <div
+                style={{
+                  position:       "absolute",
+                  top:            -30,
+                  left:           "50%",
+                  transform:      "translateX(-50%)",
+                  display:        "flex",
+                  flexDirection:  "column",
+                  alignItems:     "center",
+                  pointerEvents:  "none",
+                  zIndex:         250,
+                  userSelect:     "none",
+                }}
+              >
+                {/* Tooltip de ángulo — solo mientras se rota */}
+                {rotatingAngle !== null && (
+                  <div style={{
+                    marginBottom: 2,
+                    background:   "rgba(0,0,0,0.72)",
+                    color:        "#fff",
+                    fontSize:     9,
+                    fontFamily:   "monospace",
+                    padding:      "2px 5px",
+                    borderRadius: 3,
+                    whiteSpace:   "nowrap",
+                    pointerEvents:"none",
+                    lineHeight:   1.4,
+                  }}>
+                    {rotatingAngle}°
+                  </div>
+                )}
+                {/* Línea de conexión handle→elemento */}
+                <div style={{ width:1, height:14, background:"#3b82f6", opacity:0.55 }} />
+                {/* Handle circular */}
+                <div
+                  style={{
+                    width:        14,
+                    height:       14,
+                    borderRadius: "50%",
+                    background:   rotatingAngle !== null ? "#1d4ed8" : "#3b82f6",
+                    border:       "2px solid #fff",
+                    cursor:       "alias",
+                    pointerEvents:"all",
+                    boxShadow:    "0 1px 5px rgba(0,0,0,0.28)",
+                    transition:   "background 0.1s",
+                  }}
+                  onMouseDown={(e) => startRotate(e, el)}
+                  title={`Rotar (arrastrá) — Shift: snap 45° · Ctrl: snap 15°\nÁngulo actual: ${Math.round(el.rotation ?? 0)}°`}
+                />
+              </div>
             )}
           </div>
         );
       })}
 
-      {/* Dimension overlay */}
-      <div style={{
-        position: "absolute",
-        bottom: -18,
-        left: 0,
-        fontSize: 9,
-        color: "#94a3b8",
-        whiteSpace: "nowrap",
-        pointerEvents: "none",
-      }}>
-        {template.widthMm}×{template.heightMm}mm
+      {/* ── Guías de snap (SVG overlay) ── */}
+      {!previewMode && snapLines.length > 0 && (
+        <svg style={{ position:"absolute", inset:0, width:canvasW, height:canvasH, pointerEvents:"none", zIndex:300, overflow:"visible" }}>
+          {snapLines.map((line, i) =>
+            line.axis === "y"
+              ? <line key={i} x1={line.posMm * scale} y1={-999} x2={line.posMm * scale} y2={canvasH + 999} stroke="#60a5fa" strokeWidth={1} strokeDasharray="4 3" opacity={0.85} />
+              : <line key={i} x1={-999} y1={line.posMm * scale} x2={canvasW + 999} y2={line.posMm * scale} stroke="#60a5fa" strokeWidth={1} strokeDasharray="4 3" opacity={0.85} />
+          )}
+        </svg>
+      )}
+
+      {/* Dimensión */}
+      {!previewMode && (
+        <div style={{ position:"absolute", bottom:-18, left:0, fontSize:9, color:"#94a3b8", whiteSpace:"nowrap", pointerEvents:"none" }}>
+          {template.widthMm}×{template.heightMm}mm
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Panel section helper ─────────────────────────────────────────────────────
+
+function PanelSection({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center gap-2">
+        <div className="w-0.5 h-3 rounded-full bg-primary opacity-60 flex-shrink-0" />
+        <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-text opacity-40 leading-none select-none">
+          {title}
+        </p>
       </div>
+      {children}
     </div>
   );
 }
@@ -475,128 +954,215 @@ function LabelCanvas({
 // ─── Element properties panel ─────────────────────────────────────────────────
 
 function ElementPanel({
-  el, onChange, onDelete,
+  el, onChange, onDelete, onDuplicate,
 }: {
-  el:       LocalElement;
-  onChange: (patch: Partial<LocalElement>) => void;
-  onDelete: () => void;
+  el:          LocalElement;
+  onChange:    (patch: Partial<LocalElement>) => void;
+  onDelete:    () => void;
+  onDuplicate: () => void;
 }) {
   return (
-    <div className="space-y-3 text-sm">
-      {/* Type badge + delete */}
-      <div className="flex items-center justify-between">
-        <span className={cn("text-[11px] font-semibold px-2 py-0.5 rounded-full border", ELEMENT_TYPE_COLORS[el.type])}>
-          {ELEMENT_TYPE_LABELS[el.type]}
-        </span>
-        <button
-          onClick={onDelete}
-          className="text-muted hover:text-red-500 transition p-1 rounded"
-          title="Eliminar elemento"
-        >
-          <Trash2 size={13} />
-        </button>
-      </div>
+    <div className="space-y-5">
 
-      {/* Field key */}
-      {(el.type === "TEXT" || el.type === "BARCODE" || el.type === "QR") && (
-        <TPField label="Campo de datos">
-          <TPComboFixed
-            value={el.fieldKey}
-            onChange={(v) => onChange({ fieldKey: v })}
-            options={FIELD_KEY_OPTIONS}
-          />
-        </TPField>
-      )}
-
-      {/* Prefix label */}
-      {el.type === "TEXT" && (
-        <div className="grid grid-cols-2 gap-2">
-          <TPField label="Prefijo">
-            <TPInput value={el.label} onChange={(v) => onChange({ label: v })} placeholder="Ej: Precio: " />
-          </TPField>
-          <TPField label="Sufijo">
-            <TPInput value={el.suffix} onChange={(v) => onChange({ suffix: v })} placeholder="Ej: kg" />
-          </TPField>
+      {/* ── Header: tipo + acciones ── */}
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2">
+          <div className={cn("w-2 h-2 rounded-full flex-shrink-0",
+            el.type === "TEXT"    && "bg-blue-500",
+            el.type === "BARCODE" && "bg-violet-500",
+            el.type === "QR"      && "bg-green-500",
+            el.type === "IMAGE"   && "bg-amber-500",
+            el.type === "LINE"    && "bg-gray-400",
+          )} />
+          <span className="text-[12px] font-semibold text-text">
+            {ELEMENT_TYPE_LABELS[el.type]}
+          </span>
         </div>
-      )}
-
-      {/* Position + size */}
-      <div className="grid grid-cols-2 gap-2">
-        <TPField label="X (mm)">
-          <TPNumberInput value={el.x}      onChange={(v) => onChange({ x: v ?? 0 })}      decimals={1} step={0.5} min={0} />
-        </TPField>
-        <TPField label="Y (mm)">
-          <TPNumberInput value={el.y}      onChange={(v) => onChange({ y: v ?? 0 })}      decimals={1} step={0.5} min={0} />
-        </TPField>
-        <TPField label="Ancho (mm)">
-          <TPNumberInput value={el.width}  onChange={(v) => onChange({ width: v ?? 5 })}  decimals={1} step={0.5} min={1} />
-        </TPField>
-        <TPField label="Alto (mm)">
-          <TPNumberInput value={el.height} onChange={(v) => onChange({ height: v ?? 1 })} decimals={1} step={0.5} min={0.3} />
-        </TPField>
+        <div className="flex items-center gap-0.5">
+          <TPButton
+            variant="ghost"
+            onClick={onDuplicate}
+            title="Duplicar elemento"
+            className="h-7 w-7 p-0 text-muted hover:text-text rounded-md"
+          >
+            <Copy size={12} />
+          </TPButton>
+          <TPButton
+            variant="ghost"
+            onClick={onDelete}
+            title="Eliminar elemento (Delete)"
+            className="h-7 w-7 p-0 text-muted hover:bg-red-50 hover:text-red-500 rounded-md"
+          >
+            <Trash2 size={12} />
+          </TPButton>
+        </div>
       </div>
 
-      {/* Typography (TEXT only) */}
-      {el.type === "TEXT" && (
-        <>
-          <div className="grid grid-cols-2 gap-2">
-            <TPField label="Tamaño (pt)">
-              <TPNumberInput value={el.fontSize}  onChange={(v) => onChange({ fontSize: v ?? 8 })}  decimals={0} step={1} min={4} max={72} />
-            </TPField>
-            <TPField label="Peso">
+      {/* ── Contenido ── */}
+      {(el.type === "TEXT" || el.type === "BARCODE" || el.type === "QR") && (
+        <PanelSection title="Contenido">
+          <div className="space-y-3">
+            <TPField label="Campo">
               <TPComboFixed
-                value={el.fontWeight}
-                onChange={(v) => onChange({ fontWeight: v })}
-                options={[
-                  { value: "normal", label: "Normal" },
-                  { value: "bold",   label: "Negrita" },
-                ]}
+                value={el.fieldKey}
+                onChange={(v) => onChange({ fieldKey: v })}
+                options={FIELD_KEY_OPTIONS}
+                searchable
+                searchPlaceholder="Buscar campo…"
+              />
+            </TPField>
+            {el.type === "TEXT" && (
+              <div className="grid grid-cols-2 gap-3">
+                <TPField label="Prefijo">
+                  <TPInput value={el.label} onChange={(v) => onChange({ label: v })} placeholder="Precio: " />
+                </TPField>
+                <TPField label="Sufijo">
+                  <TPInput value={el.suffix} onChange={(v) => onChange({ suffix: v })} placeholder="kg" />
+                </TPField>
+              </div>
+            )}
+          </div>
+        </PanelSection>
+      )}
+
+      {/* ── Tipografía (TEXT) ── */}
+      {el.type === "TEXT" && (
+        <PanelSection title="Tipografía">
+          <div className="space-y-3">
+            <div className="grid grid-cols-2 gap-2">
+              <TPField label="Tamaño (pt)">
+                <TPNumberInput
+                  value={el.fontSize}
+                  onChange={(v) => onChange({ fontSize: v ?? 8 })}
+                  decimals={0} step={1} min={4} max={72}
+                />
+              </TPField>
+              <TPField label="Peso">
+                <TPComboFixed
+                  value={el.fontWeight}
+                  onChange={(v) => onChange({ fontWeight: v })}
+                  options={[
+                    { value: "normal", label: "Normal"  },
+                    { value: "bold",   label: "Negrita" },
+                  ]}
+                />
+              </TPField>
+            </div>
+            <TPField label="Alineación">
+              <div className="flex gap-1.5">
+                {(["left", "center", "right"] as const).map((a) => (
+                  <TPButton
+                    key={a}
+                    variant="ghost"
+                    onClick={() => onChange({ align: a })}
+                    className={cn(
+                      "flex-1 h-8 p-0 border justify-center rounded-md",
+                      el.align === a
+                        ? "bg-primary text-white border-primary hover:bg-primary"
+                        : "border-border text-muted hover:bg-surface2 hover:text-text"
+                    )}
+                  >
+                    {a === "left"   && <AlignLeft   size={14} />}
+                    {a === "center" && <AlignCenter size={14} />}
+                    {a === "right"  && <AlignRight  size={14} />}
+                  </TPButton>
+                ))}
+              </div>
+            </TPField>
+            <TPField label="Máx. líneas">
+              <TPNumberInput
+                value={el.lineClamp}
+                onChange={(v) => onChange({ lineClamp: v ?? 0 })}
+                decimals={0} step={1} min={0} max={10}
               />
             </TPField>
           </div>
-
-          <TPField label="Alineación">
-            <div className="flex gap-1">
-              {(["left", "center", "right"] as const).map((a) => (
-                <button
-                  key={a}
-                  onClick={() => onChange({ align: a })}
-                  className={cn(
-                    "flex-1 flex items-center justify-center h-7 rounded border text-xs transition",
-                    el.align === a
-                      ? "bg-primary text-white border-primary"
-                      : "border-border hover:bg-surface2 text-muted"
-                  )}
-                >
-                  {a === "left"   && <AlignLeft   size={13} />}
-                  {a === "center" && <AlignCenter size={13} />}
-                  {a === "right"  && <AlignRight  size={13} />}
-                </button>
-              ))}
-            </div>
-          </TPField>
-
-          <TPField label="Máx. líneas (0 = sin límite)">
-            <TPNumberInput value={el.lineClamp} onChange={(v) => onChange({ lineClamp: v ?? 0 })} decimals={0} step={1} min={0} max={10} />
-          </TPField>
-        </>
+        </PanelSection>
       )}
 
-      {/* Visibility + behavior */}
-      <div className="space-y-1.5">
-        <TPCheckbox
-          checked={el.visible}
-          onChange={(v) => onChange({ visible: v })}
-          label="Visible"
-        />
-        {el.type === "TEXT" && (
-          <TPCheckbox
-            checked={el.autoHideIfEmpty}
-            onChange={(v) => onChange({ autoHideIfEmpty: v })}
-            label="Ocultar si está vacío"
-          />
-        )}
-      </div>
+      {/* ── Posición y tamaño ── */}
+      <PanelSection title="Posición y tamaño">
+        <div className="grid grid-cols-2 gap-3">
+          <TPField label="X (mm)">
+            <TPNumberInput value={el.x} onChange={(v) => onChange({ x: v ?? 0 })} decimals={1} step={0.5} min={0} />
+          </TPField>
+          <TPField label="Y (mm)">
+            <TPNumberInput value={el.y} onChange={(v) => onChange({ y: v ?? 0 })} decimals={1} step={0.5} min={0} />
+          </TPField>
+          <TPField label="Ancho (mm)">
+            <TPNumberInput value={el.width} onChange={(v) => onChange({ width: v ?? 5 })} decimals={1} step={0.5} min={1} />
+          </TPField>
+          <TPField label="Alto (mm)">
+            <TPNumberInput value={el.height} onChange={(v) => onChange({ height: v ?? 1 })} decimals={1} step={0.5} min={0.3} />
+          </TPField>
+        </div>
+      </PanelSection>
+
+      {/* ── Rotación ── */}
+      <PanelSection title="Rotación">
+        <div className="space-y-3">
+          <TPField label="Ángulo (°)">
+            <TPNumberInput
+              value={el.rotation}
+              onChange={(v) => onChange({ rotation: v ?? 0 })}
+              decimals={0} step={1} min={-360} max={360}
+            />
+          </TPField>
+          <div className="grid grid-cols-4 gap-1.5">
+            {([0, 90, 180, 270] as const).map(deg => (
+              <TPButton
+                key={deg}
+                variant="ghost"
+                title={`Rotar ${deg}°`}
+                onClick={() => onChange({ rotation: deg })}
+                className={cn(
+                  "h-8 text-[11px] font-semibold border rounded-md",
+                  el.rotation === deg
+                    ? "bg-primary/10 text-primary border-primary/30"
+                    : "border-border text-muted hover:bg-surface2 hover:text-text"
+                )}
+              >
+                {deg}°
+              </TPButton>
+            ))}
+          </div>
+        </div>
+      </PanelSection>
+
+      {/* ── Comportamiento ── */}
+      <PanelSection title="Comportamiento">
+        <div className="space-y-2">
+          <label className="flex items-center gap-3 px-3 py-2 rounded-lg border border-border hover:bg-surface2 cursor-pointer select-none transition-colors">
+            <TPCheckbox
+              checked={el.visible}
+              onChange={(v) => onChange({ visible: v })}
+              label=""
+            />
+            <div className="min-w-0">
+              <p className="text-[11px] font-semibold text-text leading-tight">Visible</p>
+              <p className="text-[10px] text-text opacity-40 leading-tight mt-0.5">
+                Mostrar en el canvas y al imprimir
+              </p>
+            </div>
+          </label>
+          {el.type === "TEXT" && (
+            <label className="flex items-center gap-3 px-3 py-2 rounded-lg border border-border hover:bg-surface2 cursor-pointer select-none transition-colors">
+              <TPCheckbox
+                checked={el.autoHideIfEmpty}
+                onChange={(v) => onChange({ autoHideIfEmpty: v })}
+                label=""
+              />
+              <div className="min-w-0">
+                <p className="text-[11px] font-semibold text-text leading-tight">Ocultar si vacío</p>
+                <p className="text-[10px] text-text opacity-40 leading-tight mt-0.5">
+                  No imprime si el campo no tiene valor
+                </p>
+              </div>
+            </label>
+          )}
+        </div>
+      </PanelSection>
+
     </div>
   );
 }
@@ -631,12 +1197,26 @@ function makeElement(type: LabelElementType, count: number): LocalElement {
     autoHideIfEmpty: false,
     lineClamp:       0,
     suffix:          "",
+    rotation:        0,
     configJson:      {},
     _new:            true,
   };
 }
 
 // ─── Preview modal ─────────────────────────────────────────────────────────────
+
+const MM_TO_PX_96 = 96 / 25.4; // 1mm en px a 96dpi
+
+/** Calcula el zoom para que la etiqueta quepa cómodamente en el área de preview */
+function calcPreviewFit(labelWMm: number, labelHMm: number): number {
+  // Modal: maxWidth="7xl" ~1280px, height="92vh". Restamos header+toolbar+footer (~140px) y padding.
+  const availW = Math.min(window.innerWidth  * 0.86, 1200) - 80;
+  const availH = Math.min(window.innerHeight * 0.86, 900)  - 160;
+  const fw = availW / (labelWMm * MM_TO_PX_96);
+  const fh = availH / (labelHMm * MM_TO_PX_96);
+  const fit = Math.min(fw, fh, 10);
+  return Math.max(0.5, Math.round(fit * 4) / 4); // snap a 0.25
+}
 
 function PreviewModal({
   open,
@@ -646,39 +1226,161 @@ function PreviewModal({
 }: {
   open:     boolean;
   onClose:  () => void;
-  template: { widthMm: string; heightMm: string; bgColor: string; dpi: number; orientation: string; name: string; id: string; isDefault: boolean; isActive: boolean; deletedAt: null; createdAt: string };
+  template: LabelTemplateRow;
   elements: LocalElement[];
 }) {
-  const fakeTemplate = {
+  const fakeTemplate: LabelTemplateRow = {
     ...template,
     elements: elements.map(localToElementRow),
-  } as LabelTemplateRow;
+  };
+
+  const labelWMm = parseFloat(String(template.widthMm));
+  const labelHMm = parseFloat(String(template.heightMm));
+
+  const [zoom, setZoom] = useState(3);
+  const previewRef = useRef<HTMLDivElement>(null);
+
+  // Ajustar al abrir
+  useEffect(() => {
+    if (open) setZoom(calcPreviewFit(labelWMm, labelHMm));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
+
+  // Ctrl/⌘ + scroll para zoom — se adjunta al documento para evitar problemas de timing con el portal
+  useEffect(() => {
+    if (!open) return;
+    function onWheel(e: WheelEvent) {
+      if (!e.ctrlKey && !e.metaKey) return;
+      // Solo actuar si el evento viene del área de preview
+      if (previewRef.current && !previewRef.current.contains(e.target as Node)) return;
+      e.preventDefault();
+      setZoom(z => {
+        const delta = e.deltaY > 0 ? -0.25 : 0.25;
+        return Math.max(0.25, Math.min(10, Math.round((z + delta) * 4) / 4));
+      });
+    }
+    document.addEventListener("wheel", onWheel, { passive: false });
+    return () => document.removeEventListener("wheel", onWheel);
+  }, [open]);
+
+  function bumpZoom(delta: number) {
+    setZoom(z => Math.max(0.25, Math.min(10, Math.round((z + delta) * 4) / 4)));
+  }
+
+  const pct = Math.round(zoom * 100);
 
   return (
-    <Modal open={open} title="Vista previa con datos de muestra" onClose={onClose} maxWidth="sm">
-      <div className="flex flex-col items-center gap-4 py-2">
-        <p className="text-xs text-muted text-center">
-          Los datos mostrados son de muestra. La impresión usará los datos reales del artículo.
-        </p>
-        <div className="border border-border rounded shadow-sm overflow-hidden">
-          <LabelRenderer
-            template={fakeTemplate}
-            item={SAMPLE_ITEM}
-            dpi={96}
-            scale={2}
-            debug={false}
-          />
+    <Modal
+      open={open}
+      title={`Vista previa — ${template.name}`}
+      onClose={onClose}
+      maxWidth="7xl"
+      className="h-[92vh]"
+      bodyClassName="p-0 flex flex-col overflow-hidden"
+    >
+      {/* ── Toolbar ── */}
+      <div className="flex items-center gap-2 px-3 py-2 border-b border-border bg-surface flex-shrink-0">
+
+        {/* Info etiqueta */}
+        <span className="text-xs font-mono tabular-nums" style={{ color: "var(--muted)" }}>
+          {template.widthMm}×{template.heightMm}mm
+        </span>
+        <span className="text-xs" style={{ color: "var(--muted)" }}>·</span>
+        <span className="text-xs" style={{ color: "var(--muted)" }}>
+          {elements.length} elemento{elements.length !== 1 ? "s" : ""}
+        </span>
+
+        <div className="w-px h-4 bg-border mx-1" />
+
+        {/* Zoom − % + */}
+        <TPButton
+          variant="ghost"
+          className="h-7 w-7 p-0"
+          title="Reducir zoom (Ctrl+scroll)"
+          onClick={() => bumpZoom(-0.25)}
+        >
+          <ZoomOut size={13} />
+        </TPButton>
+        <span className="text-xs font-mono tabular-nums w-12 text-center" style={{ color: "var(--muted)" }}>
+          {pct}%
+        </span>
+        <TPButton
+          variant="ghost"
+          className="h-7 w-7 p-0"
+          title="Aumentar zoom (Ctrl+scroll)"
+          onClick={() => bumpZoom(0.25)}
+        >
+          <ZoomIn size={13} />
+        </TPButton>
+
+        <div className="w-px h-4 bg-border mx-1" />
+
+        {/* Zoom presets */}
+        {([50, 100, 200, 400] as const).map(p => (
+          <TPButton
+            key={p}
+            variant="ghost"
+            onClick={() => setZoom(p / 100)}
+            className={cn(
+              "h-7 px-2 text-[11px]",
+              pct === p
+                ? "bg-primary/10 text-primary font-semibold"
+                : "text-muted"
+            )}
+          >
+            {p}%
+          </TPButton>
+        ))}
+
+        <div className="w-px h-4 bg-border mx-1" />
+
+        {/* Ajustar a pantalla */}
+        <TPButton
+          variant="ghost"
+          className="h-7 gap-1 px-2 text-xs"
+          title="Ajustar a la ventana"
+          onClick={() => setZoom(calcPreviewFit(labelWMm, labelHMm))}
+        >
+          <Maximize2 size={12} />
+          <span className="hidden sm:inline">Ajustar</span>
+        </TPButton>
+
+        <span className="ml-auto text-[10px] hidden md:inline" style={{ color: "var(--muted)", opacity: 0.7 }}>
+          Ctrl+scroll para zoom
+        </span>
+      </div>
+
+      {/* ── Área de preview ── */}
+      <div
+        ref={previewRef}
+        className="flex-1 min-h-0 overflow-auto"
+        style={{
+          background: "#e2e8f0",
+          backgroundImage: "radial-gradient(circle,#00000014 1px,transparent 1px)",
+          backgroundSize: "16px 16px",
+        }}
+      >
+        {/* Centrado: min-h-full hace que el flex container sea al menos tan alto como el área */}
+        <div className="flex items-center justify-center min-h-full p-10">
+          <div style={{ boxShadow: "0 6px 40px rgba(0,0,0,0.20)", borderRadius: 1, flexShrink: 0 }}>
+            <LabelRenderer
+              template={fakeTemplate}
+              item={SAMPLE_ITEM}
+              dpi={96}
+              scale={zoom}
+              debug={false}
+            />
+          </div>
         </div>
-        <p className="text-xs text-muted tabular-nums">
-          {template.widthMm}×{template.heightMm}mm · {elements.length} elementos
+      </div>
+
+      {/* ── Footer ── */}
+      <div className="flex-shrink-0 px-4 py-2.5 border-t border-border bg-surface">
+        <p className="text-[11px] leading-snug" style={{ color: "var(--muted)" }}>
+          <span className="font-semibold" style={{ color: "#2563eb" }}>Datos de muestra.</span>{" "}
+          La impresión real usará los datos del artículo seleccionado.
+          Márgenes, columnas y gaps de impresora no se aplican aquí — se aplican al imprimir según el perfil configurado.
         </p>
-        {/* ── Separación plantilla / impresora ── */}
-        <div className="w-full rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-[11px] text-blue-700 leading-relaxed">
-          <span className="font-semibold">Solo diseño de etiqueta.</span>{" "}
-          Los márgenes de página, columnas, gaps y offset de impresora{" "}
-          <span className="font-medium">no se aplican aquí</span> — se aplican al momento
-          de imprimir según el perfil de impresora seleccionado.
-        </div>
       </div>
     </Modal>
   );
@@ -690,22 +1392,37 @@ function TemplateEditor({
   template: initialTemplate,
   onBack,
   onSaved,
+  printers = [],
 }: {
   template: LabelTemplateRow;
   onBack:   () => void;
   onSaved:  (t: LabelTemplateRow) => void;
+  printers?: PrinterProfileRow[];
 }) {
   const [template,    setTemplate]    = useState(initialTemplate);
   const [elements,    setElements]    = useState<LocalElement[]>(() => initialTemplate.elements.map(rowToLocal));
-  const [selectedId,  setSelectedId]  = useState<string | null>(null);
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [zoom,        setZoom]        = useState(2.5);
   const [snapMm,      setSnapMm]      = useState(1);
+  const [gridMm,      setGridMm]      = useState(5);
   const [showGrid,    setShowGrid]    = useState(true);
+  const [showSafeArea,setShowSafeArea]= useState(false);
+  const [previewMode, setPreviewMode] = useState(false);
   const [dirty,       setDirty]       = useState(false);
   const [saving,      setSaving]      = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
+  const [cursorMm,    setCursorMm]    = useState<{ x: number; y: number } | null>(null);
+  const [printerModalOpen, setPrinterModalOpen] = useState(false);
 
-  const selectedEl = elements.find(e => e.id === selectedId) ?? null;
+  const canvasAreaRef = useRef<HTMLDivElement>(null);
+  const canvasWrapRef = useRef<HTMLDivElement>(null);
+  const zoomRef       = useRef(zoom);
+  useEffect(() => { zoomRef.current = zoom; }, [zoom]);
+
+  // Derived
+  const selectedId  = selectedIds[0] ?? null;
+  const selectedEl  = elements.find(e => e.id === selectedId) ?? null;
+  const multiSelect = selectedIds.length > 1;
 
   // ── Element CRUD ────────────────────────────────────────────────────────────
 
@@ -717,7 +1434,7 @@ function TemplateEditor({
   function addElement(type: LabelElementType) {
     const el = makeElement(type, elements.length);
     setElements(prev => [...prev, el]);
-    setSelectedId(el.id);
+    setSelectedIds([el.id]);
     setDirty(true);
   }
 
@@ -733,41 +1450,117 @@ function TemplateEditor({
       _new:      true,
     };
     setElements(prev => [...prev, dup]);
-    setSelectedId(dup.id);
+    setSelectedIds([dup.id]);
     setDirty(true);
   }
 
   function deleteElement(id: string) {
     setElements(prev => prev.filter(e => e.id !== id));
-    if (selectedId === id) setSelectedId(null);
+    setSelectedIds(prev => prev.filter(sid => sid !== id));
     setDirty(true);
   }
 
-  function bringForward(id: string) {
-    setElements(prev => {
-      const idx = prev.findIndex(e => e.id === id);
-      if (idx < 0 || idx === prev.length - 1) return prev;
-      const next = [...prev];
-      const tmp  = next[idx].sortOrder;
-      next[idx]         = { ...next[idx],     sortOrder: next[idx + 1].sortOrder };
-      next[idx + 1]     = { ...next[idx + 1], sortOrder: tmp };
-      return next.sort((a, b) => a.sortOrder - b.sortOrder);
-    });
+  // Alt+drag: el original vuelve a su posición y se crea una copia donde se soltó
+  function altDuplicateElement(id: string, x: number, y: number) {
+    const src = elements.find(e => e.id === id);
+    if (!src) return;
+    const dup: LocalElement = { ...src, id: `temp-${Date.now()}`, x, y, sortOrder: elements.length, _new: true };
+    setElements(prev => [...prev, dup]);
+    setSelectedIds([dup.id]);
     setDirty(true);
   }
 
-  function sendBackward(id: string) {
-    setElements(prev => {
-      const idx = prev.findIndex(e => e.id === id);
-      if (idx <= 0) return prev;
-      const next = [...prev];
-      const tmp  = next[idx].sortOrder;
-      next[idx]     = { ...next[idx],     sortOrder: next[idx - 1].sortOrder };
-      next[idx - 1] = { ...next[idx - 1], sortOrder: tmp };
-      return next.sort((a, b) => a.sortOrder - b.sortOrder);
-    });
-    setDirty(true);
-  }
+
+  // ── Zoom centrado en cursor — listener nativo non-passive (React no soporta preventDefault en onWheel) ──
+  useEffect(() => {
+    const area = canvasAreaRef.current;
+    if (!area) return;
+    // Alias no-null para que TypeScript lo acepte dentro del closure
+    const areaEl: HTMLDivElement = area;
+    function onWheelNative(e: WheelEvent) {
+      e.preventDefault();
+      const wrap = canvasWrapRef.current;
+      if (!wrap) return;
+      const z       = zoomRef.current;
+      const delta   = e.deltaY < 0 ? 0.5 : -0.5;
+      const newZoom = Math.max(0.5, Math.min(6, +(z + delta).toFixed(1)));
+      if (newZoom === z) return;
+      zoomRef.current = newZoom; // actualización inmediata para scroll rápido
+      const areaRect = areaEl.getBoundingClientRect();
+      const wrapRect = wrap.getBoundingClientRect();
+      const cmx = (e.clientX - wrapRect.left) / (MM_TO_PX * z);
+      const cmy = (e.clientY - wrapRect.top)  / (MM_TO_PX * z);
+      const wrapLeft = wrapRect.left - areaRect.left + areaEl.scrollLeft;
+      const wrapTop  = wrapRect.top  - areaRect.top  + areaEl.scrollTop;
+      setZoom(newZoom);
+      requestAnimationFrame(() => {
+        areaEl.scrollLeft = Math.max(0, wrapLeft + cmx * MM_TO_PX * newZoom - (e.clientX - areaRect.left));
+        areaEl.scrollTop  = Math.max(0, wrapTop  + cmy * MM_TO_PX * newZoom - (e.clientY - areaRect.top));
+      });
+    }
+    areaEl.addEventListener("wheel", onWheelNative, { passive: false });
+    return () => areaEl.removeEventListener("wheel", onWheelNative);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // ── Keyboard shortcuts ──────────────────────────────────────────────────────
+
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      const tag = (e.target as HTMLElement).tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+
+      // Ctrl/Cmd + = / + / - / 0 → zoom
+      if (e.ctrlKey || e.metaKey) {
+        if (e.key === "=" || e.key === "+") {
+          e.preventDefault();
+          setZoom(z => +(Math.min(6, z + 0.5).toFixed(1)));
+          return;
+        }
+        if (e.key === "-") {
+          e.preventDefault();
+          setZoom(z => +(Math.max(0.5, z - 0.5).toFixed(1)));
+          return;
+        }
+        if (e.key === "0") {
+          e.preventDefault();
+          setZoom(2.5);
+          return;
+        }
+      }
+
+      // Escape → deseleccionar todo
+      if (e.key === "Escape") { setSelectedIds([]); return; }
+
+      // Delete / Backspace → eliminar todos los seleccionados
+      if ((e.key === "Delete" || e.key === "Backspace") && selectedIds.length > 0) {
+        setElements(prev => prev.filter(el => !selectedIds.includes(el.id)));
+        setSelectedIds([]);
+        setDirty(true);
+        return;
+      }
+
+      // Flechas → mover seleccionados (0.5mm / 5mm con Shift)
+      if (selectedIds.length > 0 && ["ArrowUp","ArrowDown","ArrowLeft","ArrowRight"].includes(e.key)) {
+        e.preventDefault();
+        const step = e.shiftKey ? 5 : 0.5;
+        const dx = e.key === "ArrowRight" ? step : e.key === "ArrowLeft" ? -step : 0;
+        const dy = e.key === "ArrowDown"  ? step : e.key === "ArrowUp"   ? -step : 0;
+        setElements(prev => prev.map(el => {
+          if (!selectedIds.includes(el.id)) return el;
+          return {
+            ...el,
+            x: clamp(el.x + dx, 0, parseFloat(String(template.widthMm))  - el.width),
+            y: clamp(el.y + dy, 0, parseFloat(String(template.heightMm)) - el.height),
+          };
+        }));
+        setDirty(true);
+      }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedIds, template.widthMm, template.heightMm]);
 
   // ── Save ────────────────────────────────────────────────────────────────────
 
@@ -794,108 +1587,241 @@ function TemplateEditor({
 
   // ── Render ──────────────────────────────────────────────────────────────────
 
+  const canvasW = parseFloat(template.widthMm);
+  const canvasH = parseFloat(template.heightMm);
+
   return (
     <div className="flex flex-col h-full min-h-0" style={{ height: "100dvh" }}>
       {/* ── Header ──────────────────────────────────────────────────────────── */}
-      <div className="flex items-center gap-2 px-4 py-2 border-b border-border bg-surface flex-shrink-0">
-        {/* Back */}
-        <TPButton variant="ghost" onClick={onBack} className="gap-1 px-2">
-          <ArrowLeft size={14} />
-          <span className="text-xs">Volver</span>
-        </TPButton>
-        <div className="w-px h-5 bg-border" />
+      <div className="flex items-center border-b border-border bg-surface flex-shrink-0 overflow-x-auto" style={{ minHeight: 52 }}>
 
-        {/* Template name */}
-        <div className="flex-1 min-w-0">
-          <span className="text-sm font-semibold text-text truncate">{template.name}</span>
-          <span className="ml-2 text-xs text-muted tabular-nums">
-            {template.widthMm}×{template.heightMm}mm · {template.dpi}dpi
-          </span>
+        {/* ── Grupo 1: Navegación ── */}
+        <div className="flex items-center gap-2.5 px-3 self-stretch border-r border-border">
+          <TPButton
+            variant="ghost"
+            onClick={onBack}
+            className="h-8 w-8 p-0 flex-shrink-0"
+            title="Volver"
+          >
+            <ArrowLeft size={15} />
+          </TPButton>
+          <div className="hidden md:flex flex-col min-w-0 max-w-[180px] gap-0.5">
+            <span className="text-[13px] font-semibold text-text truncate leading-tight tracking-tight">{template.name}</span>
+            <span className="text-[10px] tabular-nums leading-none opacity-50 text-text">
+              {template.widthMm}×{template.heightMm} mm · {template.dpi} dpi
+            </span>
+            <button
+              onClick={() => setPrinterModalOpen(true)}
+              title="Configurar impresora predeterminada"
+              className={cn(
+                "flex items-center gap-1 rounded px-1 -mx-1 text-left transition",
+                template.defaultPrinterProfile
+                  ? "text-primary hover:bg-primary/10"
+                  : "text-muted hover:text-text"
+              )}
+            >
+              <Printer size={9} className="shrink-0" />
+              <span className="text-[10px] truncate leading-none">
+                {template.defaultPrinterProfile
+                  ? template.defaultPrinterProfile.name
+                  : "Sin impresora"}
+              </span>
+            </button>
+          </div>
         </div>
 
-        {/* Quick-add buttons */}
-        <div className="flex items-center gap-1">
+        {/* ── Grupo 2: Insertar elementos ── */}
+        <div className="flex items-center gap-1 px-3 border-r border-border" style={{ background: "var(--surface2)" }}>
           {(["TEXT", "BARCODE", "QR", "LINE"] as LabelElementType[]).map(type => (
-            <button
+            <TPButton
               key={type}
+              variant="ghost"
               title={`Agregar ${ELEMENT_TYPE_LABELS[type]}`}
               onClick={() => addElement(type)}
               className={cn(
-                "flex items-center gap-1 px-2 py-1 rounded-lg border text-[11px] font-medium transition hover:scale-105",
+                "h-8 gap-1.5 px-2.5 border text-[11px] font-medium flex-shrink-0 rounded-md",
                 ELEMENT_TYPE_COLORS[type]
               )}
             >
-              {type === "TEXT"    && <Type       size={11} />}
-              {type === "BARCODE" && <ScanLine   size={11} />}
-              {type === "QR"      && <QrCode     size={11} />}
-              {type === "LINE"    && <Minimize2  size={11} />}
-              <span className="hidden sm:inline">{ELEMENT_TYPE_LABELS[type]}</span>
-            </button>
+              {type === "TEXT"    && <Type      size={12} />}
+              {type === "BARCODE" && <ScanLine  size={12} />}
+              {type === "QR"      && <QrCode    size={12} />}
+              {type === "LINE"    && <Minimize2 size={12} />}
+              <span className="hidden xl:inline">{ELEMENT_TYPE_LABELS[type]}</span>
+            </TPButton>
           ))}
         </div>
 
-        <div className="w-px h-5 bg-border" />
+        {/* ── Grupo 3: Canvas — Grid + Snap ── */}
+        <div className="flex items-center gap-2 px-3 flex-shrink-0">
 
-        {/* Grid toggle */}
-        <button
-          title={showGrid ? "Ocultar grilla" : "Mostrar grilla"}
-          onClick={() => setShowGrid(g => !g)}
-          className={cn(
-            "p-1.5 rounded border text-xs transition",
-            showGrid
-              ? "bg-primary/10 border-primary/30 text-primary"
-              : "border-border text-muted hover:border-primary/30"
-          )}
-        >
-          <Grid size={13} />
-        </button>
+          {/* ─ Grid ─ */}
+          <div className="flex items-center gap-2 flex-shrink-0">
+            <span className="text-[10px] font-bold uppercase tracking-[0.08em] text-text opacity-35 select-none leading-none">
+              Grid
+            </span>
+            <TPButton
+              variant="ghost"
+              title={showGrid ? "Ocultar grilla de referencia" : "Mostrar grilla de referencia"}
+              onClick={() => setShowGrid(g => !g)}
+              className={cn(
+                "h-7 w-7 p-0 rounded-md border flex-shrink-0",
+                showGrid
+                  ? "bg-primary/10 text-primary border-primary/30"
+                  : "border-border text-muted hover:text-text"
+              )}
+            >
+              <Grid size={13} />
+            </TPButton>
+            <div
+              className={cn(
+                "flex rounded-md border border-border overflow-hidden flex-shrink-0 transition-opacity duration-150",
+                !showGrid && "opacity-40 pointer-events-none"
+              )}
+            >
+              {GRID_OPTIONS.map(o => (
+                <TPButton
+                  key={o.value}
+                  variant="ghost"
+                  onClick={() => setGridMm(o.value)}
+                  title={`Grilla de ${o.label}`}
+                  className={cn(
+                    "h-7 px-2 text-[10px] font-medium rounded-none border-0 border-r border-border last:border-r-0",
+                    showGrid && gridMm === o.value
+                      ? "bg-primary/10 text-primary font-semibold"
+                      : "text-muted hover:text-text"
+                  )}
+                >
+                  {o.label}
+                </TPButton>
+              ))}
+            </div>
+          </div>
 
-        {/* Snap selector */}
-        <div className="flex items-center gap-1">
-          <span className="text-xs text-muted">Snap</span>
-          <select
-            value={snapMm}
-            onChange={e => setSnapMm(Number(e.target.value))}
-            className="text-xs border border-border rounded px-1 py-0.5 bg-surface text-text h-6"
+          <div className="w-px h-5 bg-border flex-shrink-0" />
+
+          {/* ─ Snap ─ */}
+          <div className="flex items-center gap-2 flex-shrink-0">
+            <span className="text-[10px] font-bold uppercase tracking-[0.08em] text-text opacity-35 select-none leading-none">
+              Snap
+            </span>
+            <div className="flex rounded-md border border-border overflow-hidden flex-shrink-0">
+              {SNAP_OPTIONS.map(o => (
+                <TPButton
+                  key={o.value}
+                  variant="ghost"
+                  onClick={() => setSnapMm(o.value)}
+                  title={`Ajustar automáticamente a ${o.label}`}
+                  className={cn(
+                    "h-7 px-2 text-[10px] font-medium rounded-none border-0 border-r border-border last:border-r-0",
+                    snapMm === o.value ? "bg-primary/10 text-primary font-semibold" : "text-muted hover:text-text"
+                  )}
+                >
+                  {o.label}
+                </TPButton>
+              ))}
+            </div>
+          </div>
+
+          <div className="w-px h-5 bg-border flex-shrink-0" />
+
+          {/* ─ Área segura ─ */}
+          <TPButton
+            variant="ghost"
+            title={showSafeArea ? "Ocultar área segura de impresión" : `Mostrar área segura (${SAFE_MARGIN_MM}mm)`}
+            onClick={() => setShowSafeArea(s => !s)}
+            className={cn(
+              "h-7 w-7 p-0 rounded-md border flex-shrink-0",
+              showSafeArea
+                ? "bg-red-50 text-red-500 border-red-200"
+                : "border-border text-muted hover:text-text"
+            )}
           >
-            {SNAP_OPTIONS.map(o => (
-              <option key={o.value} value={o.value}>{o.label}</option>
-            ))}
-          </select>
+            <Maximize2 size={13} />
+          </TPButton>
+
         </div>
 
-        {/* Zoom */}
-        <div className="flex items-center gap-1">
-          <button
-            onClick={() => setZoom(z => +(Math.max(0.5, z - 0.5).toFixed(1)))}
-            className="p-1 rounded hover:bg-surface2 text-muted"
-          ><ZoomOut size={13} /></button>
-          <span className="text-xs text-muted w-9 text-center tabular-nums">{Math.round(zoom * 100)}%</span>
-          <button
-            onClick={() => setZoom(z => +(Math.min(6, z + 0.5).toFixed(1)))}
-            className="p-1 rounded hover:bg-surface2 text-muted"
-          ><ZoomIn size={13} /></button>
+        {/* ── Separador flexible — empuja el bloque derecho al extremo ── */}
+        <div className="flex-1 min-w-0" />
+
+        {/* ── Grupo 4: Zoom + Vista + Guardar (bloque derecho fijo, nunca se encima) ── */}
+        <div className="flex items-center flex-shrink-0 border-l border-border divide-x divide-border">
+
+          {/* A — Zoom */}
+          <div className="flex items-center px-3 py-0">
+            <div className="flex items-center rounded-md border border-border overflow-hidden">
+              <TPButton
+                variant="ghost"
+                className="h-7 w-7 p-0 rounded-none border-r border-border text-muted hover:text-text"
+                title="Reducir zoom (Ctrl+scroll)"
+                onClick={() => setZoom(z => +(Math.max(0.5, z - 0.5).toFixed(1)))}
+              >
+                <ZoomOut size={12} />
+              </TPButton>
+              <span className="text-[11px] w-12 text-center tabular-nums font-semibold select-none text-text opacity-55 font-mono">
+                {Math.round(zoom * 100)}%
+              </span>
+              <TPButton
+                variant="ghost"
+                className="h-7 w-7 p-0 rounded-none border-l border-border text-muted hover:text-text"
+                title="Aumentar zoom (Ctrl+scroll)"
+                onClick={() => setZoom(z => +(Math.min(6, z + 0.5).toFixed(1)))}
+              >
+                <ZoomIn size={12} />
+              </TPButton>
+            </div>
+          </div>
+
+          {/* B — Preview + Muestra */}
+          <div className="flex items-center gap-2 px-3">
+            <TPButton
+              variant="ghost"
+              onClick={() => setPreviewMode(m => !m)}
+              className={cn(
+                "h-8 px-2.5 text-[11px] font-medium rounded-md flex-shrink-0 border",
+                previewMode
+                  ? "bg-primary/10 text-primary border-primary/30"
+                  : "border-border text-muted hover:bg-surface2 hover:text-text"
+              )}
+              title={previewMode ? "Salir del preview" : "Ver sin overlays de edición"}
+            >
+              <Layers size={13} />
+              <span className="hidden lg:inline">{previewMode ? "Editar" : "Preview"}</span>
+            </TPButton>
+
+            <TPButton
+              variant="ghost"
+              onClick={() => setPreviewOpen(true)}
+              className="h-8 px-2.5 text-[11px] font-medium rounded-md border border-border flex-shrink-0 text-muted hover:bg-surface2 hover:text-text"
+              title="Vista previa con datos de muestra"
+            >
+              <Eye size={13} />
+              <span className="hidden lg:inline">Muestra</span>
+            </TPButton>
+          </div>
+
+          {/* C — Guardar */}
+          <div className="flex items-center gap-3 px-3">
+            {dirty && (
+              <div className="hidden md:flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-50 border border-amber-200">
+                <div className="w-1.5 h-1.5 rounded-full bg-amber-400 flex-shrink-0" />
+                <span className="text-[10px] font-semibold text-amber-600 whitespace-nowrap leading-none">Sin guardar</span>
+              </div>
+            )}
+            <TPButton
+              variant="primary"
+              onClick={handleSave}
+              loading={saving}
+              disabled={!dirty}
+              iconLeft={<Save size={13} />}
+              className="h-8 px-4 text-[12px] font-semibold"
+              title="Guardar cambios (Ctrl+S)"
+            >
+              Guardar
+            </TPButton>
+          </div>
         </div>
-
-        <div className="w-px h-5 bg-border" />
-
-        {/* Preview */}
-        <TPButton
-          variant="ghost"
-          onClick={() => setPreviewOpen(true)}
-          className="gap-1 px-2"
-          title="Vista previa del diseño base (sin ajustes de impresora)"
-        >
-          <Eye size={13} />
-          <span className="text-xs hidden sm:inline">Preview</span>
-        </TPButton>
-
-        {/* Save */}
-        {dirty && <span className="text-xs text-amber-500 font-medium hidden sm:inline">Sin guardar</span>}
-        <TPButton variant="primary" onClick={handleSave} loading={saving} disabled={!dirty} className="gap-1 px-3">
-          <Save size={13} />
-          <span className="text-xs">Guardar</span>
-        </TPButton>
       </div>
 
       {/* ── Body ─────────────────────────────────────────────────────────────── */}
@@ -903,74 +1829,150 @@ function TemplateEditor({
 
         {/* ── Canvas area ──────────────────────────────────────────────────── */}
         <div
-          className="flex-1 overflow-auto flex items-start justify-center p-10"
+          ref={canvasAreaRef}
+          className="flex-1 overflow-auto"
           style={{
             background: "#e2e8f0",
             backgroundImage: "radial-gradient(circle,#00000014 1px,transparent 1px)",
             backgroundSize: "16px 16px",
           }}
         >
-          <LabelCanvas
-            template={{
-              widthMm:  parseFloat(template.widthMm),
-              heightMm: parseFloat(template.heightMm),
-              bgColor:  template.bgColor || "#ffffff",
-            }}
-            elements={elements}
-            selectedId={selectedId}
-            zoom={zoom}
-            snapMm={snapMm}
-            showGrid={showGrid}
-            onSelect={setSelectedId}
-            onUpdate={updateEl}
-          />
+          {/* Padding interior + centrado */}
+          <div style={{ display:"flex", flexDirection:"column", alignItems:"flex-start", padding:"40px", minWidth:"max-content" }}>
+
+            {/* Fila 1: esquina + regla X — sticky top (se queda visible al hacer scroll vertical) */}
+            <div style={{ display:"flex", flexShrink:0, position:"sticky", top:0, zIndex:10, background:"#e2e8f0" }}>
+              {/* Esquina — sticky left también para que el cuadrado siempre esté en la intersección */}
+              <div style={{ width:RULER_SIZE, height:RULER_SIZE, flexShrink:0, background:"#f1f5f9", borderRight:"1px solid #e2e8f0", borderBottom:"1px solid #e2e8f0", position:"sticky", left:0, zIndex:11 }} />
+              <Ruler axis="x" lengthMm={canvasW} zoom={zoom} cursorMm={cursorMm?.x ?? null} />
+            </div>
+
+            {/* Fila 2: regla Y + canvas */}
+            <div style={{ display:"flex", flexShrink:0 }}>
+              {/* Regla Y — sticky left (se queda visible al hacer scroll horizontal) */}
+              <div style={{ position:"sticky", left:0, zIndex:9, flexShrink:0 }}>
+                <Ruler axis="y" lengthMm={canvasH} zoom={zoom} cursorMm={cursorMm?.y ?? null} />
+              </div>
+              <div ref={canvasWrapRef}>
+                <LabelCanvas
+                  template={{
+                    widthMm:  parseFloat(template.widthMm),
+                    heightMm: parseFloat(template.heightMm),
+                    bgColor:  template.bgColor || "#ffffff",
+                  }}
+                  elements={elements}
+                  selectedIds={selectedIds}
+                  zoom={zoom}
+                  snapMm={snapMm}
+                  gridMm={gridMm}
+                  showGrid={showGrid}
+                  showSafeArea={showSafeArea}
+                  previewMode={previewMode}
+                  onSelect={setSelectedIds}
+                  onUpdate={updateEl}
+                  onAltDuplicate={altDuplicateElement}
+                  onCursorMove={(x, y) => setCursorMm(x != null && y != null ? { x, y } : null)}
+                />
+              </div>
+            </div>
+
+          </div>
         </div>
 
         {/* ── Right panel ───────────────────────────────────────────────────── */}
-        <div className="w-64 flex-shrink-0 border-l border-border bg-surface flex flex-col min-h-0">
+        <div className="w-[320px] flex-shrink-0 border-l border-border bg-surface flex flex-col min-h-0">
 
           {/* Element list or properties */}
-          <div className="flex-1 overflow-y-auto p-3 space-y-3">
-            {selectedEl ? (
-              <>
-                {/* Selected element actions */}
-                <div className="flex items-center gap-1 flex-wrap">
-                  <button
-                    title="Duplicar"
-                    onClick={() => duplicateElement(selectedEl.id)}
-                    className="flex items-center gap-1 px-2 py-1 rounded border border-border text-xs text-muted hover:bg-surface2 transition"
-                  >
-                    <Copy size={11} /> Duplicar
-                  </button>
-                  <button
-                    title="Traer al frente"
-                    onClick={() => bringForward(selectedEl.id)}
-                    className="flex items-center gap-1 px-2 py-1 rounded border border-border text-xs text-muted hover:bg-surface2 transition"
-                  >
-                    <ChevronUp size={11} /> Subir
-                  </button>
-                  <button
-                    title="Enviar atrás"
-                    onClick={() => sendBackward(selectedEl.id)}
-                    className="flex items-center gap-1 px-2 py-1 rounded border border-border text-xs text-muted hover:bg-surface2 transition"
-                  >
-                    <ChevronDown size={11} /> Bajar
-                  </button>
+          <div className="flex-1 overflow-y-auto p-5 space-y-5">
+            {multiSelect ? (
+              /* ── Multi-selección ── */
+              <div className="space-y-3">
+                <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-text opacity-40">
+                  {selectedIds.length} elementos seleccionados
+                </p>
+                <div className="space-y-1">
+                  {selectedIds.map(id => {
+                    const el = elements.find(e => e.id === id);
+                    if (!el) return null;
+                    return (
+                      <div key={id} className="flex items-center gap-2 px-3 py-2 rounded-lg bg-primary/5 border border-primary/15 text-xs">
+                        <span className={cn("w-2 h-2 rounded-full flex-shrink-0",
+                          el.type === "TEXT"    && "bg-blue-500",
+                          el.type === "BARCODE" && "bg-violet-500",
+                          el.type === "QR"      && "bg-green-500",
+                          el.type === "IMAGE"   && "bg-amber-500",
+                          el.type === "LINE"    && "bg-gray-400",
+                        )} />
+                        <span className="flex-1 truncate font-medium text-text">{ELEMENT_TYPE_LABELS[el.type]}</span>
+                      </div>
+                    );
+                  })}
                 </div>
+                <p className="text-[10px] text-text opacity-40 leading-snug">
+                  Usá flechas para mover el grupo. Shift+click para agregar/quitar.
+                </p>
+                <TPButton
+                  variant="ghost"
+                  className="w-full text-red-500 hover:bg-red-50 hover:text-red-600 text-xs gap-1.5 border border-red-200 rounded-lg"
+                  onClick={() => {
+                    setElements(prev => prev.filter(el => !selectedIds.includes(el.id)));
+                    setSelectedIds([]);
+                    setDirty(true);
+                  }}
+                >
+                  <Trash2 size={12} /> Eliminar seleccionados
+                </TPButton>
+              </div>
+            ) : selectedEl ? (
+              /* ── Selección simple ── */
+              <>
+                <PanelSection title="Alinear">
+                  <div className="grid grid-cols-3 gap-1">
+                    {([
+                      ["←", "Alinear borde izquierdo",  { x: 0 }],
+                      ["⇔", "Centrar horizontalmente",  { x: Math.max(0, (canvasW - selectedEl.width) / 2) }],
+                      ["→", "Alinear borde derecho",     { x: Math.max(0, canvasW - selectedEl.width) }],
+                      ["↑", "Alinear borde superior",    { y: 0 }],
+                      ["⇕", "Centrar verticalmente",     { y: Math.max(0, (canvasH - selectedEl.height) / 2) }],
+                      ["↓", "Alinear borde inferior",    { y: Math.max(0, canvasH - selectedEl.height) }],
+                    ] as [string, string, Partial<LocalElement>][]).map(([icon, tip, patch]) => (
+                      <TPButton
+                        key={tip}
+                        variant="ghost"
+                        title={tip}
+                        onClick={() => updateEl(selectedEl.id, patch)}
+                        className="h-8 p-0 text-base font-mono text-muted border border-border rounded-md hover:bg-surface2 hover:text-text"
+                      >
+                        {icon}
+                      </TPButton>
+                    ))}
+                  </div>
+                </PanelSection>
 
                 <ElementPanel
                   el={selectedEl}
                   onChange={(patch) => updateEl(selectedEl.id, patch)}
                   onDelete={() => deleteElement(selectedEl.id)}
+                  onDuplicate={() => duplicateElement(selectedEl.id)}
                 />
               </>
             ) : (
+              /* ── Sin selección ── */
               <>
-                <p className="text-xs text-muted font-medium uppercase tracking-wide">Elementos ({elements.length})</p>
-                {elements.length === 0 ? (
-                  <p className="text-xs text-muted/60 italic text-center py-4">
-                    Sin elementos. Usá los botones de la barra superior para agregar.
+                <div className="flex items-center justify-between">
+                  <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-text opacity-40">
+                    Capas ({elements.length})
                   </p>
+                </div>
+                {elements.length === 0 ? (
+                  <div className="flex flex-col items-center justify-center py-8 gap-2 text-center">
+                    <div className="w-10 h-10 rounded-xl border-2 border-dashed border-border flex items-center justify-center">
+                      <Type size={18} className="text-muted opacity-40" />
+                    </div>
+                    <p className="text-[11px] text-text opacity-35 leading-snug max-w-[150px]">
+                      Sin elementos. Usá los botones de la barra para agregar.
+                    </p>
+                  </div>
                 ) : (
                   <div className="space-y-1">
                     {[...elements]
@@ -978,49 +1980,78 @@ function TemplateEditor({
                       .map(el => (
                         <button
                           key={el.id}
-                          onClick={() => setSelectedId(el.id)}
-                          className="w-full text-left flex items-center gap-2 px-2.5 py-2 rounded-lg border border-border hover:bg-primary/5 hover:border-primary/30 text-xs transition"
+                          onClick={(e) => {
+                            if (e.shiftKey) {
+                              setSelectedIds(prev => prev.includes(el.id) ? prev.filter(id => id !== el.id) : [...prev, el.id]);
+                            } else {
+                              setSelectedIds([el.id]);
+                            }
+                          }}
+                          className={cn(
+                            "w-full text-left flex items-center gap-2.5 px-3 py-2 rounded-lg border text-xs transition-colors",
+                            selectedIds.includes(el.id)
+                              ? "border-primary/40 bg-primary/8 text-text"
+                              : "border-transparent hover:border-border hover:bg-surface2"
+                          )}
                         >
-                          <span className={cn(
-                            "w-2 h-2 rounded-full flex-shrink-0",
+                          <span className={cn("w-2 h-2 rounded-full flex-shrink-0",
                             el.type === "TEXT"    && "bg-blue-500",
                             el.type === "BARCODE" && "bg-violet-500",
                             el.type === "QR"      && "bg-green-500",
                             el.type === "IMAGE"   && "bg-amber-500",
                             el.type === "LINE"    && "bg-gray-400",
                           )} />
-                          <span className="flex-1 truncate font-medium">{ELEMENT_TYPE_LABELS[el.type]}</span>
-                          <span className="text-muted/60 truncate max-w-[60px]">{el.fieldKey || el.label || "—"}</span>
-                          {!el.visible && <EyeOff size={9} className="text-muted/50 flex-shrink-0" />}
+                          <span className="flex-1 truncate font-semibold text-[11px] text-text">{ELEMENT_TYPE_LABELS[el.type]}</span>
+                          <span className="truncate max-w-[56px] text-[10px] text-text opacity-35 font-mono">{el.fieldKey || el.label || "—"}</span>
+                          {!el.visible && <EyeOff size={10} className="flex-shrink-0 text-muted opacity-50" />}
                         </button>
                       ))
                     }
                   </div>
                 )}
+                <p className="text-[10px] leading-snug text-text opacity-30 text-center">
+                  Shift+click para seleccionar múltiples
+                </p>
               </>
             )}
           </div>
 
           {/* Footer info */}
-          <div className="p-3 border-t border-border space-y-1 text-xs text-muted flex-shrink-0">
+          <div className="px-4 py-3 border-t border-border flex-shrink-0" style={{ background: "var(--surface2)" }}>
             {selectedEl ? (
-              <>
-                <div className="flex justify-between">
-                  <span>Posición</span>
-                  <span className="font-mono">{selectedEl.x.toFixed(1)},{selectedEl.y.toFixed(1)}mm</span>
+              <div className="grid grid-cols-2 gap-x-4 gap-y-1">
+                <div className="flex justify-between col-span-2">
+                  <span className="text-[10px] text-text opacity-35 font-medium">Posición</span>
+                  <span className="text-[10px] font-mono font-semibold text-text opacity-60">{selectedEl.x.toFixed(1)}, {selectedEl.y.toFixed(1)} mm</span>
                 </div>
-                <div className="flex justify-between">
-                  <span>Tamaño</span>
-                  <span className="font-mono">{selectedEl.width.toFixed(1)}×{selectedEl.height.toFixed(1)}mm</span>
+                <div className="flex justify-between col-span-2">
+                  <span className="text-[10px] text-text opacity-35 font-medium">Tamaño</span>
+                  <span className="text-[10px] font-mono font-semibold text-text opacity-60">{selectedEl.width.toFixed(1)} × {selectedEl.height.toFixed(1)} mm</span>
                 </div>
-              </>
+                {selectedEl.rotation !== 0 && (
+                  <div className="flex justify-between col-span-2">
+                    <span className="text-[10px] text-text opacity-35 font-medium">Rotación</span>
+                    <span className="text-[10px] font-mono font-semibold text-text opacity-60">{selectedEl.rotation}°</span>
+                  </div>
+                )}
+              </div>
             ) : (
-              <>
-                <div className="flex justify-between"><span>Etiqueta</span><span className="font-mono">{template.widthMm}×{template.heightMm}mm</span></div>
-                <div className="flex justify-between"><span>DPI</span><span className="font-mono">{template.dpi}</span></div>
-                <div className="flex justify-between"><span>Elementos</span><span className="font-mono">{elements.length}</span></div>
-                <div className="flex justify-between"><span>Snap activo</span><span className="font-mono">{snapMm}mm</span></div>
-              </>
+              <div className="space-y-1">
+                <div className="flex justify-between">
+                  <span className="text-[10px] text-text opacity-35 font-medium">Etiqueta</span>
+                  <span className="text-[10px] font-mono font-semibold text-text opacity-60">{template.widthMm}×{template.heightMm} mm</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-[10px] text-text opacity-35 font-medium">DPI / Capas</span>
+                  <span className="text-[10px] font-mono font-semibold text-text opacity-60">{template.dpi} dpi · {elements.length}</span>
+                </div>
+                {cursorMm && (
+                  <div className="flex justify-between">
+                    <span className="text-[10px] text-text opacity-35 font-medium">Cursor</span>
+                    <span className="text-[10px] font-mono font-semibold text-text opacity-60">{cursorMm.x.toFixed(1)}, {cursorMm.y.toFixed(1)} mm</span>
+                  </div>
+                )}
+              </div>
             )}
           </div>
 
@@ -1037,8 +2068,20 @@ function TemplateEditor({
       <PreviewModal
         open={previewOpen}
         onClose={() => setPreviewOpen(false)}
-        template={template as any}
+        template={template}
         elements={elements}
+      />
+
+      {/* Assign printer modal */}
+      <AssignPrinterModal
+        open={printerModalOpen}
+        onClose={() => setPrinterModalOpen(false)}
+        template={template}
+        printers={printers}
+        onSave={(updated) => {
+          setTemplate(updated);
+          onSaved(updated);
+        }}
       />
     </div>
   );
@@ -1046,14 +2089,16 @@ function TemplateEditor({
 
 // ─── TemplateCard ─────────────────────────────────────────────────────────────
 
-function TemplateCard({ t, onEdit, onDelete, onDuplicate }: {
+function TemplateCard({ t, onEdit, onDelete, onDuplicate, onAssignPrinter }: {
   t: LabelTemplateRow;
-  onEdit:      () => void;
-  onDelete:    () => void;
-  onDuplicate: () => void;
+  onEdit:           () => void;
+  onDelete:         () => void;
+  onDuplicate:      () => void;
+  onAssignPrinter:  () => void;
 }) {
   const elCount = t.elements?.length ?? 0;
   const zoom    = 1;
+  const printer = t.defaultPrinterProfile;
 
   return (
     <div className={cn(
@@ -1098,10 +2143,10 @@ function TemplateCard({ t, onEdit, onDelete, onDuplicate }: {
 
       {/* Info + actions */}
       <div className="px-3 pt-2 pb-2">
-        <div className="flex items-start justify-between gap-1">
+        <div className="flex items-start justify-between gap-1 mb-1.5">
           <div className="min-w-0">
             <p className="text-sm font-semibold text-text truncate">{t.name}</p>
-            <p className="text-xs text-muted tabular-nums">
+            <p className="text-[11px] text-muted tabular-nums">
               {t.widthMm}×{t.heightMm}mm · {elCount} elemento{elCount !== 1 ? "s" : ""}
             </p>
           </div>
@@ -1111,13 +2156,246 @@ function TemplateCard({ t, onEdit, onDelete, onDuplicate }: {
             </span>
           )}
         </div>
+
+        {/* Printer badge — always visible */}
+        <button
+          onClick={(e) => { e.stopPropagation(); onAssignPrinter(); }}
+          title="Configurar impresora predeterminada"
+          className={cn(
+            "w-full flex items-center gap-1.5 px-2 py-1 rounded-md border text-[10px] font-medium transition",
+            printer
+              ? "border-primary/25 bg-primary/5 text-primary hover:bg-primary/10"
+              : "border-dashed border-border text-muted hover:border-primary/30 hover:text-text"
+          )}
+        >
+          <Printer size={10} className="shrink-0" />
+          <span className="truncate">{printer ? printer.name : "Sin impresora asignada"}</span>
+          {!printer && <span className="ml-auto text-[9px] font-semibold uppercase tracking-wide opacity-50 shrink-0">Asignar</span>}
+        </button>
+
+        {/* Hover actions */}
         <div className="flex items-center gap-1 mt-2 opacity-0 group-hover:opacity-100 transition">
-          <TPButton variant="ghost" onClick={onEdit}      className="text-xs px-2 py-1 gap-1"><Pencil size={10} /> Editar</TPButton>
-          <TPButton variant="ghost" onClick={onDuplicate} className="text-xs px-2 py-1 gap-1"><Copy   size={10} /></TPButton>
-          <TPButton variant="ghost" onClick={onDelete}    className="text-xs px-2 py-1 text-red-500 hover:text-red-600"><Trash2 size={10} /></TPButton>
+          <TPButton variant="ghost" onClick={onEdit} className="text-xs px-2 py-1 gap-1 flex-1 justify-center">
+            <Pencil size={10} /> Editar
+          </TPButton>
+          <TPButton variant="ghost" onClick={onDuplicate} title="Duplicar plantilla" className="text-xs px-2 py-1">
+            <Copy size={10} />
+          </TPButton>
+          <TPButton variant="ghost" onClick={onDelete} title="Eliminar plantilla" className="text-xs px-2 py-1 text-red-500 hover:text-red-600">
+            <Trash2 size={10} />
+          </TPButton>
         </div>
       </div>
     </div>
+  );
+}
+
+// ─── AssignPrinterModal ───────────────────────────────────────────────────────
+
+const PRINTER_TYPE_COLORS: Record<PrinterType, string> = {
+  THERMAL: "bg-amber-500/15 text-amber-700 border-amber-300/50",
+  ZEBRA:   "bg-violet-500/15 text-violet-700 border-violet-300/50",
+  A4:      "bg-blue-500/15 text-blue-700 border-blue-300/50",
+  INKJET:  "bg-cyan-500/15 text-cyan-700 border-cyan-300/50",
+};
+
+function AssignPrinterModal({
+  open, onClose, template, printers, onSave, onCreatePrinter,
+}: {
+  open:              boolean;
+  onClose:           () => void;
+  template:          LabelTemplateRow;
+  printers:          PrinterProfileRow[];
+  onSave:            (updated: LabelTemplateRow) => void;
+  onCreatePrinter?:  () => void;
+}) {
+  const [printerId, setPrinterId] = useState<string | null>(null);
+  const [saving, setSaving]       = useState(false);
+
+  // Sincronizar con la plantilla actual al abrir
+  useEffect(() => {
+    if (open) setPrinterId(template.defaultPrinterProfileId ?? null);
+  }, [open, template.defaultPrinterProfileId]);
+
+  const hasChange = printerId !== (template.defaultPrinterProfileId ?? null);
+
+  async function handleSave() {
+    setSaving(true);
+    try {
+      const updated = await labelTemplatesApi.update(template.id, {
+        defaultPrinterProfileId: printerId,
+      });
+      onSave(updated);
+      onClose();
+      toast.success(printerId ? "Impresora asignada." : "Impresora quitada de la plantilla.");
+    } catch {
+      toast.error("No se pudo guardar.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <Modal
+      open={open}
+      onClose={onClose}
+      title="Asignar impresora"
+      maxWidth="sm"
+    >
+      <div className="space-y-4">
+
+        {/* Plantilla info */}
+        <div className="flex items-center gap-3 px-3 py-2.5 rounded-lg border border-border" style={{ background: "var(--surface2)" }}>
+          <Tag size={15} className="text-muted shrink-0" />
+          <div className="min-w-0">
+            <p className="text-[13px] font-semibold text-text truncate">{template.name}</p>
+            <p className="text-[11px] text-muted tabular-nums">{template.widthMm}×{template.heightMm} mm · {template.dpi} dpi</p>
+          </div>
+        </div>
+
+        {printers.length === 0 ? (
+
+          /* ── Sin impresoras: estado vacío accionable ── */
+          <div className="flex flex-col items-center gap-4 py-8 px-4 text-center">
+            <div className="w-14 h-14 rounded-2xl border-2 border-dashed border-border flex items-center justify-center">
+              <Printer size={26} className="text-muted opacity-40" />
+            </div>
+            <div className="space-y-1">
+              <p className="text-[15px] font-semibold text-text">Sin impresoras configuradas</p>
+              <p className="text-sm text-muted leading-relaxed max-w-[260px]">
+                Primero creá un perfil de impresora y luego podrás asignarlo a esta etiqueta.
+              </p>
+            </div>
+            {onCreatePrinter ? (
+              <TPButton
+                variant="primary"
+                onClick={() => { onClose(); onCreatePrinter(); }}
+                className="gap-2"
+              >
+                <Printer size={14} />
+                Crear impresora
+              </TPButton>
+            ) : (
+              <p className="text-xs text-muted border border-border rounded-lg px-3 py-2">
+                Salí del editor y creá una impresora desde la pestaña <strong>Impresoras</strong>.
+              </p>
+            )}
+          </div>
+
+        ) : (
+
+          /* ── Con impresoras: lista seleccionable ── */
+          <div className="space-y-1.5">
+
+            {/* Opción: sin impresora */}
+            <button
+              type="button"
+              onClick={() => setPrinterId(null)}
+              className={cn(
+                "w-full flex items-center gap-3 px-3 py-2.5 rounded-xl border text-left transition-all",
+                printerId === null
+                  ? "border-primary bg-primary/5 ring-1 ring-primary/20"
+                  : "border-border hover:border-primary/30 hover:bg-surface2"
+              )}
+            >
+              <div className={cn(
+                "w-8 h-8 rounded-lg border-2 border-dashed flex items-center justify-center flex-shrink-0 transition-colors",
+                printerId === null ? "border-primary/40" : "border-border"
+              )}>
+                <Printer size={14} className={printerId === null ? "text-primary opacity-50" : "text-muted opacity-30"} />
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className={cn("text-[12px] font-medium leading-tight",
+                  printerId === null ? "text-primary" : "text-muted"
+                )}>Sin impresora predeterminada</p>
+                <p className="text-[10px] text-muted opacity-60 leading-tight mt-0.5">
+                  Se seleccionará al momento de imprimir
+                </p>
+              </div>
+              {printerId === null && (
+                <Check size={14} className="text-primary flex-shrink-0" />
+              )}
+            </button>
+
+            {/* Lista de impresoras */}
+            {printers.map(p => {
+              const isSelected = printerId === p.id;
+              const typeColor  = PRINTER_TYPE_COLORS[p.type as PrinterType] ?? "bg-gray-500/15 text-gray-700";
+              return (
+                <button
+                  key={p.id}
+                  type="button"
+                  onClick={() => setPrinterId(p.id)}
+                  className={cn(
+                    "w-full flex items-center gap-3 px-3 py-2.5 rounded-xl border text-left transition-all",
+                    isSelected
+                      ? "border-primary bg-primary/5 ring-1 ring-primary/20"
+                      : "border-border hover:border-primary/30 hover:bg-surface2"
+                  )}
+                >
+                  <div className={cn(
+                    "w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 border",
+                    isSelected ? "bg-primary/10 border-primary/30" : "border-border"
+                  )}>
+                    <Printer size={15} className={isSelected ? "text-primary" : "text-muted"} />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <p className="text-[13px] font-semibold text-text truncate leading-tight">{p.name}</p>
+                      {p.isDefault && (
+                        <span className="text-[9px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded-full bg-primary/10 text-primary border border-primary/20 flex-shrink-0">
+                          Default
+                        </span>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+                      <span className={cn(
+                        "text-[10px] font-medium px-1.5 py-0.5 rounded-md border",
+                        typeColor
+                      )}>
+                        {PRINTER_TYPE_LABELS[p.type as PrinterType]}
+                      </span>
+                      <span className="text-[11px] text-muted tabular-nums">
+                        {parseFloat(String(p.pageWidthMm)).toFixed(0)}×{parseFloat(String(p.pageHeightMm)).toFixed(0)} mm
+                      </span>
+                      <span className="text-[11px] text-muted tabular-nums">
+                        {p.dpi} dpi
+                      </span>
+                      {p.columns > 1 && (
+                        <span className="text-[11px] text-muted">{p.columns} col.</span>
+                      )}
+                    </div>
+                  </div>
+                  {isSelected && (
+                    <Check size={14} className="text-primary flex-shrink-0" />
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        )}
+
+        {/* Acciones */}
+        <div className={cn(
+          "flex gap-2 pt-1",
+          printers.length === 0 ? "justify-center" : "justify-end"
+        )}>
+          <TPButton variant="ghost" onClick={onClose}>
+            {printers.length === 0 ? "Cerrar" : "Cancelar"}
+          </TPButton>
+          {printers.length > 0 && (
+            <TPButton
+              variant="primary"
+              onClick={handleSave}
+              loading={saving}
+              disabled={!hasChange}
+            >
+              Guardar
+            </TPButton>
+          )}
+        </div>
+      </div>
+    </Modal>
   );
 }
 
@@ -1129,14 +2407,9 @@ const PRESET_DISPLAY: {
   badge?:      string;
   badgeColor?: string;
 }[] = [
-  { description: "Precio + código + nombre" },
-  { description: "Compacta para talle / precio" },
-  { description: "Código + costo + control interno" },
-  {
-    description: "Etiqueta técnica tipo operario/engranaje",
-    badge:      "Precargada",
-    badgeColor: "bg-violet-500/15 text-violet-600 border-violet-300/40",
-  },
+  { description: "Formato estándar",  badge: "Precargada", badgeColor: "bg-violet-500/15 text-violet-600 border-violet-300/40" },
+  { description: "Formato compacto",  badge: "Precargada", badgeColor: "bg-violet-500/15 text-violet-600 border-violet-300/40" },
+  { description: "Formato reducido",  badge: "Precargada", badgeColor: "bg-violet-500/15 text-violet-600 border-violet-300/40" },
 ];
 
 // Tarjeta de preset individual
@@ -1153,7 +2426,7 @@ function PresetCard({
       type="button"
       onClick={onClick}
       className={cn(
-        "relative flex flex-col gap-1 p-3 rounded-xl border text-left transition",
+        "relative flex flex-col items-center gap-1.5 p-3 rounded-xl border text-center transition",
         selected
           ? "border-primary bg-primary/8 ring-1 ring-primary/30"
           : "border-border hover:border-primary/40 hover:bg-surface2"
@@ -1167,12 +2440,10 @@ function PresetCard({
           {meta.badge}
         </span>
       )}
-      <div className="flex items-center gap-1.5">
-        <Tag size={12} className={selected ? "text-primary" : "text-muted"} />
-        <span className={cn("text-xs font-semibold leading-tight", selected ? "text-primary" : "text-text")}>
-          {preset.name}
-        </span>
-      </div>
+      <Tag size={18} className={cn("mb-0.5", selected ? "text-primary" : "text-muted")} />
+      <span className={cn("text-xs font-semibold leading-tight", selected ? "text-primary" : "text-text")}>
+        {preset.name}
+      </span>
       <span className="text-[11px] font-mono text-muted/80">
         {preset.widthMm}×{preset.heightMm} mm
       </span>
@@ -1183,22 +2454,25 @@ function PresetCard({
   );
 }
 
-function NewTemplateModal({ open, onClose, onCreate }: {
+function NewTemplateModal({ open, onClose, onCreate, printers }: {
   open:     boolean;
   onClose:  () => void;
   onCreate: (t: LabelTemplateRow) => void;
+  printers: PrinterProfileRow[];
 }) {
-  const [name,      setName]      = useState("");
-  const [widthMm,   setWidthMm]   = useState<number | null>(null);
-  const [heightMm,  setHeightMm]  = useState<number | null>(null);
-  const [dpi,       setDpi]       = useState<number | null>(203);
-  const [busy,      setBusy]      = useState(false);
-  // null = Manual; 0..N = índice en PRESET_TEMPLATES
-  const [usePreset, setUsePreset] = useState<number | null>(null);
+  const [name,                   setName]                   = useState("");
+  const [widthMm,                setWidthMm]                = useState<number | null>(null);
+  const [heightMm,               setHeightMm]               = useState<number | null>(null);
+  const [dpi,                    setDpi]                    = useState<number | null>(203);
+  const [busy,                   setBusy]                   = useState(false);
+  const [defaultPrinterId,       setDefaultPrinterId]       = useState<string | null>(null);
+  // 0..N = índice en PRESET_TEMPLATES
+  const [usePreset, setUsePreset] = useState<number | null>(0);
 
   useEffect(() => {
     if (!open) {
-      setName(""); setWidthMm(null); setHeightMm(null); setDpi(203); setUsePreset(null);
+      setName(""); setWidthMm(null); setHeightMm(null); setDpi(203); setUsePreset(0);
+      setDefaultPrinterId(null);
     }
   }, [open]);
 
@@ -1227,11 +2501,12 @@ function NewTemplateModal({ open, onClose, onCreate }: {
     setBusy(true);
     try {
       const t = await labelTemplatesApi.create({
-        name:      name.trim(),
+        name:                    name.trim(),
         widthMm,
         heightMm,
-        dpi:       dpi ?? 203,
-        orientation: usePreset !== null ? (PRESET_TEMPLATES[usePreset] as any).orientation ?? "horizontal" : "horizontal",
+        dpi:                     dpi ?? 203,
+        orientation:             usePreset !== null ? (PRESET_TEMPLATES[usePreset] as any).orientation ?? "horizontal" : "horizontal",
+        defaultPrinterProfileId: defaultPrinterId ?? null,
       });
       if (usePreset !== null && PRESET_TEMPLATES[usePreset]) {
         const preset  = PRESET_TEMPLATES[usePreset];
@@ -1253,12 +2528,12 @@ function NewTemplateModal({ open, onClose, onCreate }: {
       open={open}
       title="Nueva plantilla de etiqueta"
       onClose={onClose}
-      maxWidth="lg"
+      maxWidth="xl"
       footer={
         <div className="flex justify-end gap-2">
-          <TPButton variant="ghost" onClick={onClose}>Cancelar</TPButton>
+          <TPButton variant="secondary" onClick={onClose}><X size={15} />Cancelar</TPButton>
           <TPButton variant="primary" onClick={handleCreate} loading={busy}>
-            Crear plantilla
+            <Plus size={15} />Crear plantilla
           </TPButton>
         </div>
       }
@@ -1283,26 +2558,6 @@ function NewTemplateModal({ open, onClose, onCreate }: {
                 onClick={() => applyPreset(i)}
               />
             ))}
-            {/* Manual card */}
-            <button
-              type="button"
-              onClick={clearToManual}
-              className={cn(
-                "flex flex-col gap-1 p-3 rounded-xl border text-left transition",
-                usePreset === null
-                  ? "border-primary bg-primary/8 ring-1 ring-primary/30"
-                  : "border-border border-dashed hover:border-primary/40 hover:bg-surface2"
-              )}
-            >
-              <div className="flex items-center gap-1.5">
-                <Plus size={12} className={usePreset === null ? "text-primary" : "text-muted"} />
-                <span className={cn("text-xs font-semibold", usePreset === null ? "text-primary" : "text-text")}>
-                  Manual
-                </span>
-              </div>
-              <span className="text-[11px] text-muted">Desde cero</span>
-              <span className="text-[11px] text-muted/70">Medidas personalizadas</span>
-            </button>
           </div>
         </div>
 
@@ -1352,6 +2607,19 @@ function NewTemplateModal({ open, onClose, onCreate }: {
                 />
               </TPField>
             </div>
+
+            {printers.length > 0 && (
+              <TPField label="Impresora predeterminada">
+                <TPComboFixed
+                  value={defaultPrinterId ?? "__none__"}
+                  onChange={(v) => setDefaultPrinterId(v === "__none__" ? null : v)}
+                  options={[
+                    { value: "__none__", label: "— Sin impresora predeterminada —" },
+                    ...printers.map(p => ({ value: p.id, label: p.name + (p.isDefault ? " ★" : "") })),
+                  ]}
+                />
+              </TPField>
+            )}
 
             {/* Info si hay preset con elementos */}
             {usePreset !== null && PRESET_TEMPLATES[usePreset]?.elements?.length > 0 && (
@@ -1800,37 +3068,41 @@ function PrinterModal({ open, profile, onClose, onSave }: {
     }
   }
 
+  const PRESET_ICONS = [Printer, LayoutGrid, Columns2] as const;
+
   return (
     <Modal
       open={open}
       title={profile ? "Editar impresora" : "Nueva impresora"}
       onClose={onClose}
-      maxWidth="sm"
+      maxWidth="xl"
       footer={
         <div className="flex justify-end gap-2">
-          <TPButton variant="ghost" onClick={onClose}>Cancelar</TPButton>
-          <TPButton variant="primary" onClick={handleSave} loading={busy}>Guardar</TPButton>
+          <TPButton variant="secondary" onClick={onClose}><X size={15} />Cancelar</TPButton>
+          <TPButton variant="primary" onClick={handleSave} loading={busy}><Save size={15} />Guardar</TPButton>
         </div>
       }
     >
-      <div className="space-y-4">
+      <div className="space-y-5">
         {!profile && (
           <div className="grid grid-cols-3 gap-2">
-            {PRESET_PRINTERS.map((p, i) => (
-              <button
-                key={i}
-                onClick={() => applyPreset(i)}
-                className={cn(
-                  "flex flex-col items-center gap-1 p-2.5 rounded-xl border text-xs transition",
-                  usePreset === i
-                    ? "border-primary bg-primary/10 text-primary"
-                    : "border-border hover:border-primary/40"
-                )}
-              >
-                <Printer size={13} />
-                <span className="font-medium text-center leading-tight">{p.name}</span>
-              </button>
-            ))}
+            {PRESET_PRINTERS.map((p, i) => {
+              const Icon = PRESET_ICONS[i] ?? Printer;
+              return (
+                <TPButton
+                  key={i}
+                  variant="secondary"
+                  onClick={() => applyPreset(i)}
+                  className={cn(
+                    "flex flex-col items-center gap-1.5 h-auto py-3 !justify-center",
+                    usePreset === i && "border-primary bg-primary/10 text-primary"
+                  )}
+                >
+                  <Icon size={18} />
+                  <span className="text-xs font-medium text-center leading-tight">{p.name}</span>
+                </TPButton>
+              );
+            })}
           </div>
         )}
         <TPField label="Nombre">
@@ -1855,11 +3127,19 @@ function PrinterModal({ open, profile, onClose, onSave }: {
           </TPField>
         </div>
         <p className="text-xs text-muted font-medium">Márgenes (mm)</p>
-        <div className="grid grid-cols-4 gap-2">
-          <TPField label="↑"><TPNumberInput value={mTop}    onChange={setMTop}    decimals={1} min={0} /></TPField>
-          <TPField label="↓"><TPNumberInput value={mBottom} onChange={setMBottom} decimals={1} min={0} /></TPField>
-          <TPField label="←"><TPNumberInput value={mLeft}   onChange={setMLeft}   decimals={1} min={0} /></TPField>
-          <TPField label="→"><TPNumberInput value={mRight}  onChange={setMRight}  decimals={1} min={0} /></TPField>
+        <div className="grid grid-cols-2 gap-3">
+          <TPField label="Superior">
+            <TPNumberInput value={mTop}    onChange={setMTop}    decimals={1} min={0} />
+          </TPField>
+          <TPField label="Inferior">
+            <TPNumberInput value={mBottom} onChange={setMBottom} decimals={1} min={0} />
+          </TPField>
+          <TPField label="Izquierdo">
+            <TPNumberInput value={mLeft}   onChange={setMLeft}   decimals={1} min={0} />
+          </TPField>
+          <TPField label="Derecho">
+            <TPNumberInput value={mRight}  onChange={setMRight}  decimals={1} min={0} />
+          </TPField>
         </div>
         <div className="grid grid-cols-2 gap-3">
           <TPField label="Gap horizontal (mm)">
@@ -1925,13 +3205,14 @@ function PrinterModal({ open, profile, onClose, onSave }: {
 type TabKey = "plantillas" | "impresoras";
 
 export default function ConfiguracionSistemaEtiquetas() {
-  const [templates,     setTemplates]     = useState<LabelTemplateRow[]>([]);
-  const [printers,      setPrinters]      = useState<PrinterProfileRow[]>([]);
-  const [loading,       setLoading]       = useState(true);
-  const [tab,           setTab]           = useState<TabKey>("plantillas");
-  const [editTemplate,  setEditTemplate]  = useState<LabelTemplateRow | null>(null);
-  const [newTplOpen,    setNewTplOpen]    = useState(false);
-  const [printerModal,  setPrinterModal]  = useState<PrinterProfileRow | null | undefined>(undefined); // undefined = closed
+  const [templates,            setTemplates]            = useState<LabelTemplateRow[]>([]);
+  const [printers,             setPrinters]             = useState<PrinterProfileRow[]>([]);
+  const [loading,              setLoading]              = useState(true);
+  const [tab,                  setTab]                  = useState<TabKey>("plantillas");
+  const [editTemplate,         setEditTemplate]         = useState<LabelTemplateRow | null>(null);
+  const [newTplOpen,           setNewTplOpen]           = useState(false);
+  const [printerModal,         setPrinterModal]         = useState<PrinterProfileRow | null | undefined>(undefined); // undefined = closed
+  const [assignPrinterTpl,     setAssignPrinterTpl]     = useState<LabelTemplateRow | null>(null);
   const { askDelete, dialogProps, closeDelete } = useConfirmDelete();
 
   async function load() {
@@ -1979,9 +3260,12 @@ export default function ConfiguracionSistemaEtiquetas() {
     return (
       <TemplateEditor
         template={editTemplate}
+        printers={printers}
         onBack={() => { setEditTemplate(null); load(); }}
         onSaved={(updated) => {
           setTemplates(prev => prev.map(t => t.id === updated.id ? updated : t));
+          // Actualizar editTemplate para que el toolbar refleje el printer
+          setEditTemplate(updated);
         }}
       />
     );
@@ -1989,41 +3273,63 @@ export default function ConfiguracionSistemaEtiquetas() {
 
   return (
     <TPSectionShell title="Etiquetas">
-      {/* Tabs */}
-      <div className="flex items-center gap-1 mb-4">
-        {(["plantillas", "impresoras"] as TabKey[]).map(t => (
-          <button
-            key={t}
-            onClick={() => setTab(t)}
-            className={cn(
-              "px-4 py-1.5 rounded-full text-sm font-medium border transition capitalize",
-              tab === t
-                ? "bg-primary text-white border-primary"
-                : "border-border text-muted hover:border-primary/30"
-            )}
-          >
-            {t === "plantillas" ? "Plantillas" : "Impresoras"}
-          </button>
-        ))}
+
+      {/* ── Tabs + botón de acción — misma línea ── */}
+      <div className="flex items-center justify-between mb-4">
+        <TPTabs
+          options={[
+            { label: "Plantillas", value: "plantillas" },
+            { label: "Impresoras", value: "impresoras" },
+          ]}
+          value={tab}
+          onChange={(v) => setTab(v as TabKey)}
+        />
+        {tab === "plantillas" && (
+          <TPButton variant="primary" onClick={() => setNewTplOpen(true)}>
+            <Plus size={15} strokeWidth={2.5} />
+            Nueva plantilla
+          </TPButton>
+        )}
+        {tab === "impresoras" && (
+          <TPButton variant="primary" onClick={() => setPrinterModal(null)}>
+            <Plus size={15} strokeWidth={2.5} />
+            Nueva impresora
+          </TPButton>
+        )}
       </div>
 
       {/* ── Plantillas ────────────────────────────────────────────────────── */}
       {tab === "plantillas" && (
         <>
-          <div className="flex items-center justify-between mb-4">
-            <p className="text-sm text-muted">{templates.length} plantilla{templates.length !== 1 ? "s" : ""}</p>
-            <TPButton variant="primary" onClick={() => setNewTplOpen(true)}>
-              <Plus size={14} /> Nueva plantilla
-            </TPButton>
-          </div>
+
+          {/* Banner: sin impresoras configuradas */}
+          {!loading && templates.length > 0 && printers.length === 0 && (
+            <div className="flex items-start gap-3 mb-4 px-3 py-2.5 rounded-lg border border-amber-200 bg-amber-50">
+              <Printer size={16} className="text-amber-500 mt-0.5 shrink-0" />
+              <div className="min-w-0">
+                <p className="text-sm font-medium text-amber-700 leading-tight">Sin impresoras configuradas</p>
+                <p className="text-xs text-amber-600 mt-0.5">
+                  Creá una impresora en la pestaña <strong>Impresoras</strong> para asignarla a cada plantilla y simplificar el flujo de impresión.
+                </p>
+              </div>
+              <TPButton
+                variant="ghost"
+                onClick={() => setTab("impresoras")}
+                className="shrink-0 text-amber-600 hover:text-amber-700 text-xs px-2 border border-amber-200 hover:bg-amber-100"
+              >
+                Ir a Impresoras
+              </TPButton>
+            </div>
+          )}
+
           {loading ? (
             <p className="text-sm text-muted text-center py-8">Cargando…</p>
           ) : templates.length === 0 ? (
             <div className="text-center py-12">
-              <Tag size={32} className="text-muted/30 mx-auto mb-2" />
+              <Tag size={32} className="mx-auto mb-2" style={{ color: "var(--muted)", opacity: 0.3 }} />
               <p className="text-sm text-muted">No hay plantillas. Creá la primera.</p>
               <TPButton variant="ghost" onClick={() => setNewTplOpen(true)} className="mt-3">
-                <Plus size={13} /> Nueva plantilla
+                <Plus size={15} strokeWidth={2.5} /> Nueva plantilla
               </TPButton>
             </div>
           ) : (
@@ -2034,6 +3340,7 @@ export default function ConfiguracionSistemaEtiquetas() {
                   t={t}
                   onEdit={() => setEditTemplate(t)}
                   onDuplicate={() => duplicateTemplate(t)}
+                  onAssignPrinter={() => setAssignPrinterTpl(t)}
                   onDelete={() => askDelete({
                     entityName:  "Plantilla",
                     entityLabel: t.name,
@@ -2052,20 +3359,14 @@ export default function ConfiguracionSistemaEtiquetas() {
       {/* ── Impresoras ────────────────────────────────────────────────────── */}
       {tab === "impresoras" && (
         <>
-          <div className="flex items-center justify-between mb-4">
-            <p className="text-sm text-muted">{printers.length} perfil{printers.length !== 1 ? "es" : ""}</p>
-            <TPButton variant="primary" onClick={() => setPrinterModal(null)}>
-              <Plus size={14} /> Nueva impresora
-            </TPButton>
-          </div>
           {loading ? (
             <p className="text-sm text-muted text-center py-8">Cargando…</p>
           ) : printers.length === 0 ? (
             <div className="text-center py-12">
-              <Printer size={32} className="text-muted/30 mx-auto mb-2" />
+              <Printer size={32} className="text-muted opacity-30 mx-auto mb-2" />
               <p className="text-sm text-muted">No hay perfiles de impresora.</p>
               <TPButton variant="ghost" onClick={() => setPrinterModal(null)} className="mt-3">
-                <Plus size={13} /> Nueva impresora
+                <Plus size={15} strokeWidth={2.5} /> Nueva impresora
               </TPButton>
             </div>
           ) : (
@@ -2105,6 +3406,7 @@ export default function ConfiguracionSistemaEtiquetas() {
         open={newTplOpen}
         onClose={() => setNewTplOpen(false)}
         onCreate={(t) => { setTemplates(prev => [...prev, t]); setEditTemplate(t); }}
+        printers={printers}
       />
 
       {printerModal !== undefined && (
@@ -2113,6 +3415,24 @@ export default function ConfiguracionSistemaEtiquetas() {
           profile={printerModal}
           onClose={() => setPrinterModal(undefined)}
           onSave={load}
+        />
+      )}
+
+      {assignPrinterTpl && (
+        <AssignPrinterModal
+          open={true}
+          onClose={() => setAssignPrinterTpl(null)}
+          template={assignPrinterTpl}
+          printers={printers}
+          onSave={(updated) => {
+            setTemplates(prev => prev.map(t => t.id === updated.id ? updated : t));
+            setAssignPrinterTpl(null);
+          }}
+          onCreatePrinter={() => {
+            setAssignPrinterTpl(null);
+            setTab("impresoras");
+            setPrinterModal(null); // abre modal de nueva impresora
+          }}
         />
       )}
 

@@ -14,8 +14,6 @@ import {
   X,
   Bookmark,
   Factory,
-  Ruler,
-  CalculatorIcon,
 } from "lucide-react";
 
 import { cn } from "../../components/ui/tp";
@@ -131,20 +129,9 @@ export default function ConfiguracionSistemaItems() {
         group: "Artículos",
         icon: <Factory size={18} />,
       },
-      {
-        key: "UNIT_OF_MEASURE",
-        title: "Unidades de medida",
-        desc: "Unidades para cuantificar artículos (UND, KG, MT, PAR…).",
-        group: "Artículos",
-        icon: <Ruler size={18} />,
-      },
-      {
-        key: "MULTIPLIER_BASE",
-        title: "Unidades de peso",
-        desc: "Unidades para expresar el peso de los artículos y calcular costos (Gramos, Kilates, Onzas…).",
-        group: "Artículos",
-        icon: <CalculatorIcon size={18} />,
-      },
+      // Las opciones "Unidades de medida" y "Unidades de peso" se unificaron
+      // en la entidad Unit. Ver pantalla:
+      //   /configuracion-sistema/unidades
     ],
     []
   );

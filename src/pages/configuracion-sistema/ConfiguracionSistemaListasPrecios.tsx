@@ -1,6 +1,7 @@
 // src/pages/configuracion-sistema/ConfiguracionSistemaListasPrecios.tsx
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { Plus, Save, Star, X } from "lucide-react";
+import { useNavigate } from "react-router-dom";
+import { ExternalLink, Plus, Save, Star, X } from "lucide-react";
 
 import { cn } from "../../components/ui/tp";
 import { TPSectionShell } from "../../components/ui/TPSectionShell";
@@ -30,6 +31,131 @@ import {
   type RoundingDirection,
   type RoundingApplyOn,
 } from "../../services/price-lists";
+import {
+  fetchDocumentRoundingConfig,
+  type DocumentRoundingConfig,
+  type DocumentRoundingMode,
+  type DocumentRoundingDirection,
+} from "../../services/company";
+
+// Labels para mostrar la política doc en modo lectura dentro del card.
+const DOC_ROUNDING_MODE_LABELS: Record<DocumentRoundingMode, string> = {
+  NONE:      "Sin redondeo",
+  DECIMAL_2: "Al centavo (0,01)",
+  DECIMAL_1: "Al décimo (0,10)",
+  INTEGER:   "Al entero (1)",
+  TEN:       "A la decena (10)",
+  HUNDRED:   "A la centena (100)",
+};
+
+const DOC_ROUNDING_DIRECTION_LABELS: Record<DocumentRoundingDirection, string> = {
+  NEAREST: "Más cercano",
+  UP:      "Hacia arriba",
+  DOWN:    "Hacia abajo",
+};
+
+type RoundingScope = "LINE" | "DOCUMENT" | "BOTH";
+
+// Etiqueta corta usada en el pill del header del card y en el ejemplo.
+const DOC_ROUNDING_MODE_SHORT: Record<DocumentRoundingMode, string> = {
+  NONE:      "—",
+  DECIMAL_2: "Centavo",
+  DECIMAL_1: "Décimo",
+  INTEGER:   "Entero",
+  TEN:       "Decena",
+  HUNDRED:   "Centena",
+};
+
+// Misma representación corta para los modos de redondeo de PriceList — los
+// valores son idénticos a `DocumentRoundingMode`. Se duplica el mapping a
+// propósito para no acoplar tipos de dos servicios distintos.
+const LINE_ROUNDING_MODE_SHORT: Record<RoundingMode, string> = {
+  NONE:      "—",
+  DECIMAL_2: "Centavo",
+  DECIMAL_1: "Décimo",
+  INTEGER:   "Entero",
+  TEN:       "Decena",
+  HUNDRED:   "Centena",
+};
+
+const DOC_ROUNDING_DIRECTION_SHORT: Record<DocumentRoundingDirection, string> = {
+  NEAREST: "más cercano",
+  UP:      "hacia arriba",
+  DOWN:    "hacia abajo",
+};
+
+const DOC_ROUNDING_MODE_DESCRIPTION: Record<DocumentRoundingMode, string> = {
+  NONE:      "Sin redondeo",
+  DECIMAL_2: "Al centavo",
+  DECIMAL_1: "Al décimo",
+  INTEGER:   "Al entero",
+  TEN:       "A la decena",
+  HUNDRED:   "A la centena",
+};
+
+/** Aplica la política doc a un valor numérico (mismo algoritmo que el motor
+ *  backend pero en JS para mostrar el ejemplo en UI). */
+function applyDocRoundExample(
+  value: number,
+  mode: DocumentRoundingMode,
+  direction: DocumentRoundingDirection,
+): number {
+  if (mode === "NONE") return value;
+  const step =
+    mode === "INTEGER"   ? 1
+    : mode === "DECIMAL_1" ? 0.1
+    : mode === "DECIMAL_2" ? 0.01
+    : mode === "TEN"       ? 10
+    : 100;
+  if (direction === "UP")   return Math.ceil (value / step) * step;
+  if (direction === "DOWN") return Math.floor(value / step) * step;
+  return Math.round(value / step) * step;
+}
+
+/** "A la decena (más cercano)" / "Sin redondeo". */
+function describeDocRounding(
+  mode: DocumentRoundingMode,
+  direction: DocumentRoundingDirection,
+): string {
+  if (mode === "NONE") return "Sin redondeo";
+  return `${DOC_ROUNDING_MODE_DESCRIPTION[mode]} (${DOC_ROUNDING_DIRECTION_SHORT[direction]})`;
+}
+
+/** Texto del pill del header del card. Resume el alcance + el modo activo.
+ *  Reusa los campos del draft (no inventa lógica nueva): la granularidad de
+ *  línea sale de `roundingModeHechura` cuando la lista es unificada
+ *  (MARGIN_TOTAL / COST_PER_GRAM) y de la combinación Metal+Hechura cuando
+ *  la lista es METAL_HECHURA. */
+function describeRoundingScope(
+  scope: RoundingScope,
+  draft: Draft,
+  doc: DocumentRoundingConfig | null,
+): string {
+  const docActive = !!(doc?.documentRoundingEnabled && doc.documentRoundingMode !== "NONE");
+  if (scope === "DOCUMENT") {
+    return docActive
+      ? `Redondeo: Comprobante (${DOC_ROUNDING_MODE_SHORT[doc!.documentRoundingMode]})`
+      : "Redondeo: Comprobante (Sin redondeo)";
+  }
+  if (scope === "BOTH") {
+    return "Redondeo: Ambos";
+  }
+  // LINE
+  const hasLine = draft.roundingTarget !== "NONE";
+  if (!hasLine) return "Redondeo: Sin redondeo";
+
+  // METAL_HECHURA: la lista redondea por componente; mostramos eso explícito
+  // sin elegir un único modo (la spec lo pide así).
+  if (draft.mode === "METAL_HECHURA") {
+    return "Redondeo: Línea (Metal/Hechura)";
+  }
+
+  // MARGIN_TOTAL / COST_PER_GRAM: la precisión efectiva vive en
+  // `roundingModeHechura` (ver el bloque "Precio final" del card).
+  const mode = draft.roundingModeHechura;
+  if (mode === "NONE") return "Redondeo: Línea";
+  return `Redondeo: Línea (${LINE_ROUNDING_MODE_SHORT[mode]})`;
+}
 
 /* =========================================================
    Label maps
@@ -63,7 +189,7 @@ const ROUNDING_DIRECTION_LABELS: Record<RoundingDirection, string> = {
 
 const ROUNDING_APPLY_ON_LABELS: Record<RoundingApplyOn, string> = {
   PRICE: "Sobre precio de lista",
-  NET:   "Sobre precio neto (después de descuentos)",
+  NET:   "Sobre precio sin impuestos (después de descuentos)",
   TOTAL: "Sobre total final (con impuestos)",
 };
 
@@ -640,6 +766,31 @@ function PriceListFormModal({
   onClose: () => void;
   onKey: (e: React.KeyboardEvent) => void;
 }) {
+  // ── UI local del card "Redondeo" ──────────────────────────────────────
+  // `roundingScope` decide qué bloque ver dentro del card. NO se persiste
+  // en PriceList: el redondeo por comprobante vive en Jewelry / Política
+  // de precios y este card solo lo muestra en lectura.
+  const [roundingScope, setRoundingScope] = useState<RoundingScope>("LINE");
+
+  // Política doc del tenant (lectura). Se carga al montar el modal y se
+  // muestra como tarjeta informativa cuando el operador elige "Por
+  // comprobante" o "Ambos". Si la lectura falla (ej. permisos), el bloque
+  // muestra un fallback y siempre permite navegar a Política de precios.
+  const [docPolicy, setDocPolicy] = useState<DocumentRoundingConfig | null>(null);
+  const [docPolicyLoading, setDocPolicyLoading] = useState(true);
+
+  const navigate = useNavigate();
+
+  useEffect(() => {
+    let cancelled = false;
+    setDocPolicyLoading(true);
+    fetchDocumentRoundingConfig()
+      .then((p) => { if (!cancelled) setDocPolicy(p); })
+      .catch(() => { if (!cancelled) setDocPolicy(null); })
+      .finally(() => { if (!cancelled) setDocPolicyLoading(false); });
+    return () => { cancelled = true; };
+  }, []);
+
   const nameError = submitted && !draft.name.trim() ? "Campo requerido." : null;
   const marginTotalError =
     submitted && draft.mode === "MARGIN_TOTAL" && draft.marginTotal === null
@@ -845,160 +996,300 @@ function PriceListFormModal({
         {/* C. Redondeo */}
         <TPCard title="Redondeo">
           <div className="space-y-4">
-            {/* Selector principal: Sin redondear / Redondear */}
-            <TPField label="Redondeo">
-              <TPComboFixed
-                value={draft.roundingTarget === "NONE" ? "NONE" : "ACTIVE"}
-                onChange={(v) => toggleRounding(v === "ACTIVE")}
-                options={[
-                  { value: "NONE", label: "Sin redondear" },
-                  { value: "ACTIVE", label: "Redondear" },
-                ]}
-              />
-            </TPField>
+            {/* Pill resumen — refuerza el alcance elegido en el header del card. */}
+            <div className="flex items-center justify-between gap-2">
+              <span className="inline-flex items-center rounded-full border border-primary/30 bg-primary/10 px-2.5 py-0.5 text-[11px] font-semibold text-primary">
+                {describeRoundingScope(roundingScope, draft, docPolicy)}
+              </span>
+            </div>
 
-            {/* Sin redondeo — nota descriptiva */}
-            {!hasRounding && (
-              <p className="text-xs text-muted mt-1">
-                Los valores se mantendrán tal como fueron calculados.
-              </p>
-            )}
+            <p className="text-xs text-muted">
+              El redondeo <span className="font-semibold text-text">por artículo</span> afecta el precio de cada línea de esta lista.
+              {" "}El redondeo <span className="font-semibold text-text">por comprobante</span> afecta el total final del documento y es una política general de la joyería.
+            </p>
 
-            {/* Momento de aplicación del redondeo */}
-            {hasRounding && (
-              <TPField label="Aplicar sobre">
-                <TPComboFixed
-                  value={draft.roundingApplyOn}
-                  onChange={(v) => set("roundingApplyOn", v as RoundingApplyOn)}
-                  options={[
-                    { value: "TOTAL", label: "Total final (con impuestos)" },
-                    { value: "NET",   label: "Precio neto (después de descuentos)" },
-                    { value: "PRICE", label: "Precio de lista (antes de descuentos)" },
-                  ]}
-                />
-              </TPField>
-            )}
+            {/* Selector visual de alcance — local al modal, no se persiste */}
+            <div
+              role="tablist"
+              aria-label="Alcance del redondeo"
+              className="grid grid-cols-3 gap-1 rounded-lg border border-border bg-card p-1"
+            >
+              {([
+                { value: "LINE",     label: "Por artículo / línea" },
+                { value: "DOCUMENT", label: "Por comprobante" },
+                { value: "BOTH",     label: "Ambos" },
+              ] as const).map((t) => {
+                const active = roundingScope === t.value;
+                return (
+                  <button
+                    key={t.value}
+                    type="button"
+                    role="tab"
+                    aria-selected={active}
+                    onClick={() => setRoundingScope(t.value)}
+                    className={cn(
+                      "rounded-md px-3 py-1.5 text-xs font-semibold transition",
+                      active
+                        ? "bg-primary/15 text-primary"
+                        : "text-muted hover:text-text",
+                    )}
+                  >
+                    {t.label}
+                  </button>
+                );
+              })}
+            </div>
 
-            {/* Modo unificado (MARGIN_TOTAL / COST_PER_GRAM): bloque único "Precio final"
-                Bindeado a roundingModeHechura/roundingDirectionHechura para que al pasar a
-                modo desglosado el valor quede visible en el bloque "Hechura" (no en Metal). */}
-            {hasRounding && draft.mode !== "METAL_HECHURA" && (
-              <div className="space-y-3">
-                <p className="text-xs font-semibold text-muted uppercase tracking-wide">Precio final</p>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <TPField label="Precisión">
-                    <TPComboFixed
-                      value={draft.roundingModeHechura}
-                      onChange={(v) => changeRoundingModeHechura(v as RoundingMode)}
-                      options={[
-                        { value: "NONE", label: "Sin redondeo" },
-                        { value: "INTEGER", label: "Entero" },
-                        { value: "DECIMAL_1", label: "1 decimal" },
-                        { value: "DECIMAL_2", label: "2 decimales" },
-                        { value: "TEN", label: "Decena" },
-                        { value: "HUNDRED", label: "Centena" },
-                      ]}
-                    />
-                  </TPField>
-                  <TPField label="Dirección">
-                    <TPComboFixed
-                      value={draft.roundingDirectionHechura}
-                      onChange={(v) => set("roundingDirectionHechura", v as RoundingDirection)}
-                      disabled={draft.roundingModeHechura === "NONE"}
-                      options={[
-                        { value: "NEAREST", label: "Al más cercano" },
-                        { value: "UP", label: "Hacia arriba" },
-                        { value: "DOWN", label: "Hacia abajo" },
-                      ]}
-                    />
-                  </TPField>
-                </div>
+            {/* ── Bloque "Por artículo / línea" ─────────────────────────── */}
+            {(roundingScope === "LINE" || roundingScope === "BOTH") && (
+              <div className={cn(
+                "space-y-4 rounded-lg border p-3",
+                "border-primary/40 bg-primary/10",
+              )}>
+                {roundingScope === "BOTH" && (
+                  <p className="text-[11px] font-semibold uppercase tracking-wide text-muted">
+                    Redondeo por artículo / línea
+                  </p>
+                )}
+                {/* Selector principal: Sin redondear / Redondear */}
+                <TPField label="Redondeo">
+                  <TPComboFixed
+                    value={draft.roundingTarget === "NONE" ? "NONE" : "ACTIVE"}
+                    onChange={(v) => toggleRounding(v === "ACTIVE")}
+                    options={[
+                      { value: "NONE", label: "Sin redondear" },
+                      { value: "ACTIVE", label: "Redondear" },
+                    ]}
+                  />
+                </TPField>
+
+                {/* Sin redondeo — nota descriptiva */}
+                {!hasRounding && (
+                  <p className="text-xs text-muted mt-1">
+                    Los valores se mantendrán tal como fueron calculados.
+                  </p>
+                )}
+
+                {/* applyOn + precisión metal/hechura: solo en alcance "LINE" puro.
+                    En "BOTH" simplificamos para no abrumar — el operador puede
+                    cambiar a "Por línea" si necesita esa granularidad. */}
+                {roundingScope === "LINE" && hasRounding && (
+                  <>
+                    <TPField label="Aplicar sobre">
+                      <TPComboFixed
+                        value={draft.roundingApplyOn}
+                        onChange={(v) => set("roundingApplyOn", v as RoundingApplyOn)}
+                        options={[
+                          { value: "TOTAL", label: "Total final (con impuestos)" },
+                          { value: "NET",   label: "Sin impuestos (después de descuentos)" },
+                          { value: "PRICE", label: "Precio de lista (antes de descuentos)" },
+                        ]}
+                      />
+                    </TPField>
+
+                    {/* Modo unificado (MARGIN_TOTAL / COST_PER_GRAM) — bloque único.
+                        Bindeado a roundingModeHechura para que al pasar a desglosado
+                        el valor quede en "Hechura". */}
+                    {draft.mode !== "METAL_HECHURA" && (
+                      <div className="space-y-3">
+                        <p className="text-xs font-semibold text-muted uppercase tracking-wide">Precio final</p>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                          <TPField label="Precisión">
+                            <TPComboFixed
+                              value={draft.roundingModeHechura}
+                              onChange={(v) => changeRoundingModeHechura(v as RoundingMode)}
+                              options={[
+                                { value: "NONE", label: "Sin redondeo" },
+                                { value: "INTEGER", label: "Entero" },
+                                { value: "DECIMAL_1", label: "1 decimal" },
+                                { value: "DECIMAL_2", label: "2 decimales" },
+                                { value: "TEN", label: "Decena" },
+                                { value: "HUNDRED", label: "Centena" },
+                              ]}
+                            />
+                          </TPField>
+                          <TPField label="Dirección">
+                            <TPComboFixed
+                              value={draft.roundingDirectionHechura}
+                              onChange={(v) => set("roundingDirectionHechura", v as RoundingDirection)}
+                              disabled={draft.roundingModeHechura === "NONE"}
+                              options={[
+                                { value: "NEAREST", label: "Al más cercano" },
+                                { value: "UP", label: "Hacia arriba" },
+                                { value: "DOWN", label: "Hacia abajo" },
+                              ]}
+                            />
+                          </TPField>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Modo desglosado (METAL_HECHURA) — bloques Metal + Hechura. */}
+                    {draft.mode === "METAL_HECHURA" && (
+                      <div className="space-y-3">
+                        {/* Metal */}
+                        <div className="space-y-3">
+                          <p className="text-xs font-semibold text-muted uppercase tracking-wide">Metal</p>
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <TPField label="Precisión">
+                              <TPComboFixed
+                                value={draft.roundingMode}
+                                onChange={(v) => changeRoundingMode(v as RoundingMode)}
+                                options={[
+                                  { value: "NONE", label: "Sin redondeo" },
+                                  { value: "INTEGER", label: "Entero" },
+                                  { value: "DECIMAL_1", label: "1 decimal" },
+                                  { value: "DECIMAL_2", label: "2 decimales" },
+                                  { value: "TEN", label: "Decena" },
+                                  { value: "HUNDRED", label: "Centena" },
+                                ]}
+                              />
+                            </TPField>
+                            <TPField label="Dirección">
+                              <TPComboFixed
+                                value={draft.roundingDirection}
+                                onChange={(v) => set("roundingDirection", v as RoundingDirection)}
+                                disabled={draft.roundingMode === "NONE"}
+                                options={[
+                                  { value: "NEAREST", label: "Al más cercano" },
+                                  { value: "UP", label: "Hacia arriba" },
+                                  { value: "DOWN", label: "Hacia abajo" },
+                                ]}
+                              />
+                            </TPField>
+                          </div>
+                        </div>
+
+                        {/* Hechura */}
+                        <div className="space-y-3">
+                          <p className="text-xs font-semibold text-muted uppercase tracking-wide">Hechura</p>
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <TPField label="Precisión">
+                              <TPComboFixed
+                                value={draft.roundingModeHechura}
+                                onChange={(v) => changeRoundingModeHechura(v as RoundingMode)}
+                                options={[
+                                  { value: "NONE", label: "Sin redondeo" },
+                                  { value: "INTEGER", label: "Entero" },
+                                  { value: "DECIMAL_1", label: "1 decimal" },
+                                  { value: "DECIMAL_2", label: "2 decimales" },
+                                  { value: "TEN", label: "Decena" },
+                                  { value: "HUNDRED", label: "Centena" },
+                                ]}
+                              />
+                            </TPField>
+                            <TPField label="Dirección">
+                              <TPComboFixed
+                                value={draft.roundingDirectionHechura}
+                                onChange={(v) => set("roundingDirectionHechura", v as RoundingDirection)}
+                                disabled={draft.roundingModeHechura === "NONE"}
+                                options={[
+                                  { value: "NEAREST", label: "Al más cercano" },
+                                  { value: "UP", label: "Hacia arriba" },
+                                  { value: "DOWN", label: "Hacia abajo" },
+                                ]}
+                              />
+                            </TPField>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </>
+                )}
+
+                {/* Resumen dinámico del redondeo (LINE puro). En BOTH se omite
+                    para no duplicar info — el bloque doc abajo ya muestra el
+                    resumen con ejemplo del comprobante. */}
+                {roundingScope === "LINE" && hasRounding && roundingLines && roundingLines.length > 0 && (
+                  <div className="rounded-xl border border-primary/20 bg-primary/5 px-4 py-3 space-y-1">
+                    {roundingLines.map((l, i) => (
+                      <div key={i} className="flex items-baseline gap-1.5 text-sm">
+                        <span className="font-medium text-text">{l.label}:</span>
+                        <span className="text-text">{l.detail}</span>
+                        <span className="text-xs text-muted">— ej: {l.example}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* En BOTH avisamos que la edición fina vive en "Por línea" */}
+                {roundingScope === "BOTH" && hasRounding && (
+                  <p className="text-[11px] italic text-muted/70">
+                    Para editar precisión por componente o el momento de aplicación, cambiá a “Por artículo / línea”.
+                  </p>
+                )}
               </div>
             )}
 
-            {/* Modo desglosado (METAL_HECHURA): bloques Metal + Hechura */}
-            {hasRounding && draft.mode === "METAL_HECHURA" && (
-              <div className="space-y-3">
-                {/* Metal */}
-                <div className="space-y-3">
-                  <p className="text-xs font-semibold text-muted uppercase tracking-wide">Metal</p>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <TPField label="Precisión">
-                      <TPComboFixed
-                        value={draft.roundingMode}
-                        onChange={(v) => changeRoundingMode(v as RoundingMode)}
-                        options={[
-                          { value: "NONE", label: "Sin redondeo" },
-                          { value: "INTEGER", label: "Entero" },
-                          { value: "DECIMAL_1", label: "1 decimal" },
-                          { value: "DECIMAL_2", label: "2 decimales" },
-                          { value: "TEN", label: "Decena" },
-                          { value: "HUNDRED", label: "Centena" },
-                        ]}
-                      />
-                    </TPField>
-                    <TPField label="Dirección">
-                      <TPComboFixed
-                        value={draft.roundingDirection}
-                        onChange={(v) => set("roundingDirection", v as RoundingDirection)}
-                        disabled={draft.roundingMode === "NONE"}
-                        options={[
-                          { value: "NEAREST", label: "Al más cercano" },
-                          { value: "UP", label: "Hacia arriba" },
-                          { value: "DOWN", label: "Hacia abajo" },
-                        ]}
-                      />
-                    </TPField>
+            {/* ── Bloque "Por comprobante" — solo lectura + link ───────── */}
+            {(roundingScope === "DOCUMENT" || roundingScope === "BOTH") && (() => {
+              const docMode      = docPolicy?.documentRoundingMode      ?? "NONE";
+              const docDirection = docPolicy?.documentRoundingDirection ?? "NEAREST";
+              const docActive    = !!(docPolicy?.documentRoundingEnabled && docMode !== "NONE");
+              const exampleSrc   = 192065;
+              const exampleDst   = applyDocRoundExample(exampleSrc, docMode, docDirection);
+              const fmtN         = (v: number) => v.toLocaleString("es-AR");
+              return (
+                <div className={cn(
+                  "space-y-2 rounded-lg border p-3",
+                  "border-primary/40 bg-primary/10",
+                )}>
+                  <div className="flex items-baseline justify-between gap-2">
+                    <p className="text-[11px] font-semibold uppercase tracking-wide text-muted">
+                      Redondeo por comprobante
+                    </p>
                   </div>
-                </div>
 
-                {/* Hechura */}
-                <div className="space-y-3">
-                  <p className="text-xs font-semibold text-muted uppercase tracking-wide">Hechura</p>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <TPField label="Precisión">
-                      <TPComboFixed
-                        value={draft.roundingModeHechura}
-                        onChange={(v) => changeRoundingModeHechura(v as RoundingMode)}
-                        options={[
-                          { value: "NONE", label: "Sin redondeo" },
-                          { value: "INTEGER", label: "Entero" },
-                          { value: "DECIMAL_1", label: "1 decimal" },
-                          { value: "DECIMAL_2", label: "2 decimales" },
-                          { value: "TEN", label: "Decena" },
-                          { value: "HUNDRED", label: "Centena" },
-                        ]}
-                      />
-                    </TPField>
-                    <TPField label="Dirección">
-                      <TPComboFixed
-                        value={draft.roundingDirectionHechura}
-                        onChange={(v) => set("roundingDirectionHechura", v as RoundingDirection)}
-                        disabled={draft.roundingModeHechura === "NONE"}
-                        options={[
-                          { value: "NEAREST", label: "Al más cercano" },
-                          { value: "UP", label: "Hacia arriba" },
-                          { value: "DOWN", label: "Hacia abajo" },
-                        ]}
-                      />
-                    </TPField>
-                  </div>
-                </div>
-              </div>
-            )}
+                  {docPolicyLoading ? (
+                    <div className="text-xs italic text-muted">Cargando política…</div>
+                  ) : !docPolicy ? (
+                    <div className="text-xs italic text-muted">
+                      No se pudo cargar la política. Verificá tus permisos o
+                      configurala desde Política de precios.
+                    </div>
+                  ) : (
+                    <>
+                      <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1 text-sm">
+                        <span className={cn(
+                          "inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider",
+                          docActive
+                            ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400"
+                            : "bg-muted/15 text-muted",
+                        )}>
+                          {docActive ? "Activo" : "Sin redondeo"}
+                        </span>
+                        <span className="font-medium text-text">
+                          {describeDocRounding(docMode, docDirection)}
+                        </span>
+                      </div>
+                      {docActive && (
+                        <div className="text-xs text-muted">
+                          Ejemplo:{" "}
+                          <span className="font-medium tabular-nums text-text">
+                            {fmtN(exampleSrc)} → {fmtN(exampleDst)}
+                          </span>
+                        </div>
+                      )}
+                    </>
+                  )}
 
-            {/* Resumen dinámico del redondeo */}
-            {hasRounding && roundingLines && roundingLines.length > 0 && (
-              <div className="rounded-xl border border-primary/20 bg-primary/5 px-4 py-3 space-y-1">
-                {roundingLines.map((l, i) => (
-                  <div key={i} className="flex items-baseline gap-1.5 text-sm">
-                    <span className="font-medium text-text">{l.label}:</span>
-                    <span className="text-text">{l.detail}</span>
-                    <span className="text-xs text-muted">— ej: {l.example}</span>
+                  <div className="mt-1 flex justify-end">
+                    <TPButton
+                      variant="ghost"
+                      className="!px-2.5 !py-1 !text-xs"
+                      iconRight={<ExternalLink size={12} />}
+                      onClick={() => navigate("/configuracion-sistema/politica-precios")}
+                    >
+                      Configurar en Política de precios
+                    </TPButton>
                   </div>
-                ))}
-              </div>
-            )}
+
+                  <p className="text-[11px] italic text-muted/70">
+                    Esta configuración afecta a todos los comprobantes, no solo a esta lista.
+                  </p>
+                </div>
+              );
+            })()}
           </div>
         </TPCard>
 

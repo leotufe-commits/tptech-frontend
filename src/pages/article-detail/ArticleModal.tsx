@@ -4,10 +4,8 @@ import ReactDOM from "react-dom";
 import { useNavigate } from "react-router-dom";
 import {
   AlertCircle,
-  ArrowDown,
   ArrowRight,
   ChevronDown,
-  ArrowUp,
   Calculator,
   Camera,
   Check,
@@ -73,8 +71,15 @@ import {
   setCatalogItemFavorite,
   type CatalogItem,
 } from "../../services/catalogs";
+import {
+  listUnits,
+  setFavoriteUnit,
+  type Unit,
+  type UnitType,
+} from "../../services/units";
 import { toast } from "../../lib/toast";
 import EditVariantModal from "./EditVariantModal.js";
+import ArticleSearchSelect from "../../components/ui/ArticleSearchSelect";
 
 import {
   articlesApi,
@@ -88,6 +93,7 @@ import {
   type ArticleType,
   type ArticleStatus,
   type StockMode,
+  type ArticleCommercialMode,
   type HechuraPriceMode,
   type BarcodeType,
   type BarcodeSource,
@@ -119,7 +125,7 @@ import { taxesApi, type TaxRow } from "../../services/taxes";
 import { type SalePriceResult } from "../../services/sales";
 import { promotionsApi, type PromotionRow } from "../../services/promotions";
 import { quantityDiscountsApi, type QuantityDiscountRow } from "../../services/quantity-discounts";
-import CostCompositionTable, { type MetalVariantOption, type CurrencyOption, TYPE_OPTIONS, TYPE_CFG, applyLineAdj } from "../../components/ui/CostCompositionTable";
+import CostCompositionTable, { type MetalVariantOption, type CurrencyOption, TYPE_OPTIONS, TYPE_CFG } from "../../components/ui/CostCompositionTable";
 import {
   commercialEntitiesApi,
   type EntityRow,
@@ -129,8 +135,8 @@ import EntityEditModal from "../configuracion-sistema/clientes/EntityEditModal";
 import TPAvatarUploader from "../../components/ui/TPAvatarUploader";
 import { CreateCategoryModal } from "../../components/categories/CreateCategoryModal";
 import { TPAlert } from "../../components/ui/TPAlert";
-import { articleMovementsApi } from "../../services/article-movements";
 import { articleGroupsApi, type ArticleGroupRow } from "../../services/article-groups";
+import { SortableCostRow, COST_GRID, COST_TYPE_CHIP, calcCostLine, type ProductItem } from "./CostRow";
 import GroupPickerField from "./GroupPickerField";
 
 // ---------------------------------------------------------------------------
@@ -162,6 +168,11 @@ type Draft = {
   notes: string;
   status: ArticleStatus;
   stockMode: StockMode;
+  // ── COMBO COMERCIAL ────────────────────────────────────────────────────
+  // Solo aplica cuando articleType === "PRODUCT". Cuando commercialMode =
+  // COMBO_COMMERCIAL, el backend fuerza stockMode=NO_STOCK + sellWithoutVariants=true
+  // + useManualSalePrice=false; el precio se calcula desde los componentes.
+  commercialMode: ArticleCommercialMode;
   // Toggles
   isFavorite: boolean;
   showInStore: boolean;
@@ -173,28 +184,20 @@ type Draft = {
   barcodeType: BarcodeType;
   barcodeSource: BarcodeSource;
   autoBarcode: boolean;
-  // Costos
-  costCalculationMode: CostCalculationMode;
-  costPrice: number | null;
+  // Precio de venta
   salePrice: number | null;
   useManualSalePrice: boolean;
-  hechuraPrice: number | null;
-  hechuraPriceMode: HechuraPriceMode;
   mermaPercent: number | null;
-  multiplierBase: string;
-  multiplierCurrencyId: string;
-  multiplierValue: number | null;
-  multiplierQuantity: number | null;
-  // Costo manual — campos de desglose (persistidos en backend)
-  manualBaseCost: number | null;       // costo base antes del ajuste (campo de entrada)
-  manualCurrencyId: string;
+  // Ajuste global sobre composición de costo (se aplica sobre la suma de líneas)
   manualAdjustmentKind: "" | "BONUS" | "SURCHARGE";
   manualAdjustmentType: "" | "PERCENTAGE" | "FIXED_AMOUNT";
   manualAdjustmentValue: number | null;
   manualTaxIds: string[];
-  // Avanzado
+  // Stock del artículo (solo cuando la categoría no tiene ejes de variante)
   reorderPoint: number | null;
-  openingStock: number | null;
+  minSaleQuantity: number | null;
+  maxSaleQuantity: number | null;
+  defaultQuantity: number | null;
   // Dimensiones físicas
   dimensionLength: number | null;
   dimensionWidth: number | null;
@@ -202,10 +205,6 @@ type Draft = {
   dimensionUnit: string;
   weight: number | null;
   weightUnit: string;
-  // Cantidades de venta
-  minSaleQuantity: number | null;
-  maxSaleQuantity: number | null;
-  defaultQuantity: number | null;
   // Contabilidad
   inventoryAccount: string;
 };
@@ -225,6 +224,7 @@ const EMPTY_DRAFT: Draft = {
   notes: "",
   status: "ACTIVE",
   stockMode: "NO_STOCK",
+  commercialMode: "NORMAL",
   isFavorite: false,
   showInStore: false,
   isReturnable: true,
@@ -234,34 +234,23 @@ const EMPTY_DRAFT: Draft = {
   barcodeType: "CODE128",
   barcodeSource: "SKU",
   autoBarcode: false,
-  costCalculationMode: "METAL_MERMA_HECHURA",
-  costPrice: null,
   salePrice: null,
   useManualSalePrice: false,
-  hechuraPrice: null,
-  hechuraPriceMode: "FIXED",
   mermaPercent: null,
-  multiplierBase: "",
-  multiplierCurrencyId: "",
-  multiplierValue: null,
-  multiplierQuantity: null,
-  manualBaseCost: null,
-  manualCurrencyId: "",
   manualAdjustmentKind: "",
   manualAdjustmentType: "",
   manualAdjustmentValue: null,
   manualTaxIds: [],
   reorderPoint: null,
-  openingStock: null,
+  minSaleQuantity: null,
+  maxSaleQuantity: null,
+  defaultQuantity: null,
   dimensionLength: null,
   dimensionWidth: null,
   dimensionHeight: null,
   dimensionUnit: "cm",
   weight: null,
   weightUnit: "",
-  minSaleQuantity: null,
-  maxSaleQuantity: null,
-  defaultQuantity: null,
   inventoryAccount: "Activo de inventario",
 };
 
@@ -281,6 +270,7 @@ function articleToDraft(a: ArticleDetail | ArticleRow): Draft {
     notes:                ("notes" in a ? a.notes : "") ?? "",
     status:               a.status,
     stockMode:            a.stockMode,
+    commercialMode:       (a as any).commercialMode ?? "NORMAL",
     isFavorite:           a.isFavorite,
     showInStore:          a.showInStore,
     isReturnable:         a.isReturnable,
@@ -290,35 +280,23 @@ function articleToDraft(a: ArticleDetail | ArticleRow): Draft {
     barcodeType:          a.barcodeType,
     barcodeSource:        (a as ArticleDetail).barcodeSource ?? "SKU",
     autoBarcode:          false,
-    costCalculationMode:  "METAL_MERMA_HECHURA",
-    costPrice:            a.costPrice != null ? parseFloat(a.costPrice) : null,
     salePrice:            a.salePrice != null ? parseFloat(a.salePrice) : null,
     useManualSalePrice:   (a as any).useManualSalePrice ?? false,
-    hechuraPrice:         a.hechuraPrice != null ? parseFloat(a.hechuraPrice) : null,
-    hechuraPriceMode:     a.hechuraPriceMode,
     mermaPercent:         a.mermaPercent != null ? parseFloat(a.mermaPercent) : null,
-    multiplierBase:       a.multiplierBase ?? "",
-    multiplierCurrencyId: a.multiplierCurrencyId ?? "",
-    multiplierValue:      a.multiplierValue != null ? parseFloat(a.multiplierValue) : null,
-    multiplierQuantity:   a.multiplierQuantity != null ? parseFloat(a.multiplierQuantity) : null,
-    // Campos de costo manual — reconstruidos desde backend
-    manualBaseCost:         a.manualBaseCost != null ? parseFloat(a.manualBaseCost) : null,
-    manualCurrencyId:       a.manualCurrencyId ?? "",
     manualAdjustmentKind:   (a.manualAdjustmentKind as "" | "BONUS" | "SURCHARGE") ?? "",
     manualAdjustmentType:   (a.manualAdjustmentType as "" | "PERCENTAGE" | "FIXED_AMOUNT") ?? "",
     manualAdjustmentValue:  a.manualAdjustmentValue != null ? parseFloat(a.manualAdjustmentValue) : null,
     manualTaxIds:           a.manualTaxIds ?? [],
     reorderPoint:         a.reorderPoint != null ? parseFloat(a.reorderPoint) : null,
-    openingStock:         null, // no se edita en modo edit (bloqueado si hay movimientos)
+    minSaleQuantity:      a.minSaleQuantity != null ? parseFloat(a.minSaleQuantity) : null,
+    maxSaleQuantity:      a.maxSaleQuantity != null ? parseFloat(a.maxSaleQuantity) : null,
+    defaultQuantity:      a.defaultQuantity != null ? parseFloat(a.defaultQuantity) : null,
     dimensionLength:      (a as any).dimensionLength != null ? parseFloat((a as any).dimensionLength) : null,
     dimensionWidth:       (a as any).dimensionWidth  != null ? parseFloat((a as any).dimensionWidth)  : null,
     dimensionHeight:      (a as any).dimensionHeight != null ? parseFloat((a as any).dimensionHeight) : null,
     dimensionUnit:        (a as any).dimensionUnit ?? "cm",
     weight:               (a as any).weight     != null ? parseFloat((a as any).weight)     : null,
     weightUnit:           (a as any).weightUnit ?? "",
-    minSaleQuantity:      (a as any).minSaleQuantity  != null ? parseFloat((a as any).minSaleQuantity)  : null,
-    maxSaleQuantity:      (a as any).maxSaleQuantity  != null ? parseFloat((a as any).maxSaleQuantity)  : null,
-    defaultQuantity:      (a as any).defaultQuantity  != null ? parseFloat((a as any).defaultQuantity)  : null,
     inventoryAccount:     (a as any).inventoryAccount ?? "",
   };
 }
@@ -349,27 +327,13 @@ function normalizeCostLines(lines: any[]): CostLine[] {
 
 // AdjTypeButton ahora vive en src/components/ui/TPAdjTypeButton.tsx
 
-/**
- * Calcula el costo neto (base + ajuste) para guardar en costPrice.
- * Los impuestos son puramente referenciales y NO se suman al costo guardado.
- * El campo de entrada es `manualBaseCost` (antes del ajuste).
- */
-function computeManualFinalCost(d: Draft, _taxes: TaxRow[]): number | null {
-  const base = d.manualBaseCost;
-  if (base == null) return null;
-
-  let adjusted = base;
-  if (d.manualAdjustmentKind !== "" && d.manualAdjustmentValue != null && d.manualAdjustmentValue !== 0) {
-    const absVal = Math.abs(d.manualAdjustmentValue);
-    const adj = d.manualAdjustmentType === "PERCENTAGE" ? base * (absVal / 100) : absVal;
-    const sign = d.manualAdjustmentKind === "SURCHARGE" ? 1 : -1;
-    adjusted = base + sign * adj;
-  }
-
-  return Math.round(adjusted * 10000) / 10000;
-}
-
 function draftToPayload(d: Draft): ArticlePayload {
+  const isCombo = d.commercialMode === "COMBO_COMMERCIAL";
+
+  // Nota: la composición real (líneas tipo PRODUCT que son los componentes del combo)
+  // se inyecta más abajo en handleSave/executeSave usando el state `costLines`.
+  // En combo, el backend fuerza affectsStock=true y stockMode=NO_STOCK al guardar.
+
   return {
     name:                 d.name.trim(),
     code:                 d.code.trim() || undefined,
@@ -384,51 +348,41 @@ function draftToPayload(d: Draft): ArticlePayload {
     unitOfMeasure:        d.unitOfMeasure.trim() || undefined,
     notes:                d.notes.trim() || undefined,
     status:               d.status,
-    stockMode:            d.stockMode,
+    stockMode:            isCombo ? "NO_STOCK" : d.stockMode,
     isFavorite:           d.isFavorite,
     showInStore:          d.showInStore,
     isReturnable:         d.isReturnable,
-    sellWithoutVariants:  d.sellWithoutVariants,
+    sellWithoutVariants:  isCombo ? true : d.sellWithoutVariants,
     sku:                  d.sku.trim() || undefined,
     barcodeSource:        d.barcodeSource,
     barcode:              d.barcodeSource === "CUSTOM" ? (d.barcode.trim() || null) : undefined,
     barcodeType:          d.barcodeType,
     autoBarcode:          d.barcodeSource === "CUSTOM" ? d.autoBarcode : undefined,
-    costCalculationMode:    d.costCalculationMode,
-    // En modo MANUAL, costPrice = resultado de la fórmula (base + ajuste, sin impuestos).
-    // En otros modos, costPrice es el valor directo ingresado (puede ser null).
-    costPrice:              d.costCalculationMode === "MANUAL"
-      ? computeManualFinalCost(d, [])
-      : d.costPrice,
+    // Combos: ahora pueden tener salePrice manual y lista de precios como cualquier producto.
+    // El motor pricing resolverá el precio del combo desde su configuración comercial,
+    // partiendo del costo derivado de los componentes (COMBO_COST step).
     salePrice:              d.salePrice,
     useManualSalePrice:     d.useManualSalePrice,
-    hechuraPrice:           d.hechuraPrice,
-    hechuraPriceMode:       d.hechuraPriceMode,
     mermaPercent:           d.mermaPercent,
-    multiplierBase:         d.multiplierBase.trim() || null,
-    multiplierValue:        d.multiplierValue,
-    multiplierQuantity:     d.multiplierQuantity,
-    multiplierCurrencyId:   d.costCalculationMode === "MULTIPLIER" ? (d.multiplierCurrencyId || null) : null,
-    // manualBaseCost solo aplica en modo MANUAL (en otros modos la base la calcula el backend).
-    manualBaseCost:         d.costCalculationMode === "MANUAL" ? d.manualBaseCost : null,
-    manualCurrencyId:       d.costCalculationMode === "MANUAL" ? (d.manualCurrencyId || null) : null,
-    // Ajuste e impuestos: se persisten en TODOS los modos, el backend los aplica
-    // sobre cualquier base calculada (COST_LINES, MULTIPLIER, METAL_MERMA_HECHURA).
+    // Combo (solo el modo; ya no enviamos ajuste combo: pricing usa flujo estándar).
+    commercialMode:         d.commercialMode,
+    comboAdjustmentKind:    "NONE",
+    comboAdjustmentValue:   null,
+    // Ajuste global (se aplica sobre la suma de ArticleCostLine en el backend)
     manualAdjustmentKind:   d.manualAdjustmentKind,
     manualAdjustmentType:   d.manualAdjustmentType,
     manualAdjustmentValue:  d.manualAdjustmentValue,
     manualTaxIds:           d.manualTaxIds,
     reorderPoint:           d.reorderPoint,
-    openingStock:           d.openingStock,
+    minSaleQuantity:        d.minSaleQuantity,
+    maxSaleQuantity:        d.maxSaleQuantity,
+    defaultQuantity:        d.defaultQuantity,
     dimensionLength:        d.dimensionLength,
     dimensionWidth:         d.dimensionWidth,
     dimensionHeight:        d.dimensionHeight,
     dimensionUnit:          d.dimensionUnit || "cm",
     weight:                 d.weight,
     weightUnit:             d.weightUnit,
-    minSaleQuantity:        d.minSaleQuantity,
-    maxSaleQuantity:        d.maxSaleQuantity,
-    defaultQuantity:        d.defaultQuantity,
     inventoryAccount:       d.inventoryAccount,
   };
 }
@@ -565,6 +519,29 @@ function getVariantDisplayImage(
 }
 
 // ---------------------------------------------------------------------------
+// SortableAxisWrapper — wrapper arrastrable para ejes del generador de variantes
+// ---------------------------------------------------------------------------
+function SortableAxisWrapper({
+  id,
+  children,
+}: {
+  id: string;
+  children: (props: { handleListeners: object; handleAttributes: object; isDragging: boolean }) => React.ReactNode;
+}) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id });
+  const style = { transform: CSS.Transform.toString(transform), transition };
+  return (
+    <div ref={setNodeRef} style={style} className={isDragging ? "opacity-50" : undefined}>
+      {children({
+        handleListeners:  listeners   ?? {},
+        handleAttributes: attributes  ?? {},
+        isDragging,
+      })}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // SortableVariantRow — fila arrastrable de la lista de variantes
 // ---------------------------------------------------------------------------
 interface SortableVariantRowProps {
@@ -664,12 +641,9 @@ function SortableVariantRow({
         )}
       </div>
 
-      {/* Precio / Stock / Reposición (solo desktop) */}
-      {(variant.priceOverride || (stockMode === "BY_ARTICLE" && variantStock[variant.id] != null) || (variant.reorderPoint && Number(variant.reorderPoint) > 0)) && (
+      {/* Stock / Reposición (solo desktop) */}
+      {((stockMode === "BY_ARTICLE" && variantStock[variant.id] != null) || (variant.reorderPoint && Number(variant.reorderPoint) > 0)) && (
         <div className="hidden sm:flex flex-col items-end text-xs text-muted shrink-0 gap-0.5">
-          {variant.priceOverride && (
-            <span className="tabular-nums font-medium text-text">{fmtMoney(variant.priceOverride)}</span>
-          )}
           {stockMode === "BY_ARTICLE" && variantStock[variant.id] != null && (
             <span className="tabular-nums text-[10px]">
               Stock: {Number(variantStock[variant.id]).toLocaleString("es-AR")}
@@ -747,55 +721,6 @@ function SortableChip({
   );
 }
 
-// ---------------------------------------------------------------------------
-// Constantes de estilos de líneas de costo (módulo-level para reutilización)
-// ---------------------------------------------------------------------------
-const COST_ROW_BG: Record<string, string> = {
-  METAL:   "bg-amber-500/5  hover:bg-amber-500/10",
-  HECHURA: "bg-blue-500/5   hover:bg-blue-500/10",
-  PRODUCT: "bg-violet-500/5 hover:bg-violet-500/10",
-  SERVICE: "bg-green-500/5  hover:bg-green-500/10",
-};
-
-// ---------------------------------------------------------------------------
-// Fila sortable de línea de costo (necesita useSortable → componente separado)
-// ---------------------------------------------------------------------------
-function SortableCostLineRow({
-  id, type, children,
-}: {
-  id: string;
-  type: string;
-  children: React.ReactNode;
-}) {
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
-    useSortable({ id });
-  const style = { transform: CSS.Transform.toString(transform), transition };
-  return (
-    <tr
-      ref={setNodeRef}
-      style={style}
-      className={cn(
-        "transition-colors group",
-        COST_ROW_BG[type] ?? "hover:bg-surface2/30",
-        isDragging && "opacity-40 shadow-lg z-10",
-      )}
-    >
-      {/* Handle */}
-      <td className="px-2 py-1.5 align-middle w-6">
-        <button
-          type="button"
-          {...attributes}
-          {...listeners}
-          className="cursor-grab active:cursor-grabbing text-muted/25 hover:text-muted/60 transition touch-none"
-          title="Arrastrar para reordenar"
-        >
-          <GripVertical size={13} />
-        </button>
-      </td>
-      {children}
-    </tr>
-  );
-}
 
 // ---------------------------------------------------------------------------
 // Componente principal
@@ -833,7 +758,6 @@ export default function ArticleModal({
 
   /* ── modal avanzado de identificación ───────────────────────────────── */
   const [advancedModalOpen, setAdvancedModalOpen] = useState(false);
-  const [showNoPriceWarning, setShowNoPriceWarning] = useState(false);
 
   /* ── secciones colapsables — acordeón: solo una abierta a la vez ──────── */
   type AccordionSection = "stock" | "comercial" | "medidas" | "notas" | null;
@@ -853,15 +777,19 @@ export default function ArticleModal({
   const [createCatOpen, setCreateCatOpen] = useState(false);
   const [suppliers,    setSuppliers]    = useState<EntityRow[]>([]);
   const [metalVariants, setMetalVariants] = useState<MetalVariantRow[]>([]);
-  const [productItems,  setProductItems]  = useState<{ id: string; name: string; sku: string; stock: number | null; costPrice: number | null; costPriceNative: number | null; manualCurrencyId: string | null }[]>([]);
-  const [serviceItems,  setServiceItems]  = useState<{ id: string; name: string; sku: string; stock: number | null; costPrice: number | null; costPriceNative: number | null; manualCurrencyId: string | null }[]>([]);
+  const [productItems,  setProductItems]  = useState<ProductItem[]>([]);
+  const [serviceItems,  setServiceItems]  = useState<ProductItem[]>([]);
 
   /* ── catálogos comerciales ────────────────────────────────────────────── */
   const [brandItems,           setBrandItems]           = useState<CatalogItem[]>([]);
   const [manufacturerItems,    setManufacturerItems]    = useState<CatalogItem[]>([]);
-  const [unitItems,            setUnitItems]            = useState<CatalogItem[]>([]);
-  const [multiplierBaseItems,  setMultiplierBaseItems]  = useState<CatalogItem[]>([]);
-  const [weightUnitItems,      setWeightUnitItems]      = useState<CatalogItem[]>([]);
+  // Fase 5 — Units unificados:
+  // unitItems: QUANTITY + WEIGHT (para draft.unitOfMeasure — algunos artículos se venden por unidad/par, otros por gramo).
+  // weightUnits: WEIGHT (para draft.weightUnit).
+  // lengthUnits: LENGTH (para draft.dimensionUnit).
+  const [unitItems,    setUnitItems]    = useState<Unit[]>([]);
+  const [weightUnits,  setWeightUnits]  = useState<Unit[]>([]);
+  const [lengthUnits,  setLengthUnits]  = useState<Unit[]>([]);
 
   /* ── Valores predeterminados para nuevos artículos (estrellita) ─────── */
   const [defaultArticleType, setDefaultArticleType] = useState<ArticleType | null>(
@@ -872,6 +800,9 @@ export default function ArticleModal({
   );
   const [defaultStatus,     setDefaultStatus]     = useState<ArticleStatus | null>(
     () => (localStorage.getItem("tptech_default_status") as ArticleStatus | null)
+  );
+  const [defaultCommercialMode, setDefaultCommercialMode] = useState<ArticleCommercialMode | null>(
+    () => (localStorage.getItem("tptech_default_commercial_mode") as ArticleCommercialMode | null)
   );
   const [defaultInventory,  setDefaultInventory]  = useState<string | null>(
     () => localStorage.getItem("tptech_default_inventory_account")
@@ -894,6 +825,19 @@ export default function ArticleModal({
   function handleSetDefaultStatus(val: string) {
     if (defaultStatus === val) { localStorage.removeItem("tptech_default_status"); setDefaultStatus(null); }
     else { localStorage.setItem("tptech_default_status", val); setDefaultStatus(val as ArticleStatus); }
+  }
+  /** Marca / desmarca como predeterminado el "Modo de venta" (Producto normal / Combo).
+   *  Mismo patrón que los otros defaults: persistido en localStorage por dispositivo. */
+  function handleSetDefaultCommercialMode(val: string) {
+    if (defaultCommercialMode === val) {
+      localStorage.removeItem("tptech_default_commercial_mode");
+      setDefaultCommercialMode(null);
+      toast.success("Predeterminado quitado.");
+    } else {
+      localStorage.setItem("tptech_default_commercial_mode", val);
+      setDefaultCommercialMode(val as ArticleCommercialMode);
+      toast.success("Marcado como predeterminado.");
+    }
   }
   function handleSetDefaultInventory(val: string) {
     if (defaultInventory === val) { localStorage.removeItem("tptech_default_inventory_account"); setDefaultInventory(null); }
@@ -933,8 +877,13 @@ export default function ArticleModal({
   const [variants,      setVariants]      = useState<ArticleVariant[]>([]);
   /* stock por variantId: { variantId → totalQuantity } — se carga en modo edición */
   const [variantStock,  setVariantStock]  = useState<Record<string, number>>({});
-  const [varModal,      setVarModal]      = useState(false);
-  const [varEditId,     setVarEditId]     = useState<string | null>(null);
+  /* para artículos simples: si ya existe algún registro de stock (ArticleStock con variantId=null) */
+  const [simpleArticleHasRecord,  setSimpleArticleHasRecord]  = useState(false);
+  const [simpleArticleStockLoaded, setSimpleArticleStockLoaded] = useState(false);
+  const [varModal,         setVarModal]         = useState(false);
+  const [varEditId,        setVarEditId]        = useState<string | null>(null);
+  /** Variante que se edita con el EditVariantModal completo (solo en modo edit con articleId). */
+  const [fullEditVariant,  setFullEditVariant]  = useState<ArticleVariant | null>(null);
   const [varDraft,      setVarDraft]      = useState<VariantPayload>({ code: "", name: "" });
   const [busyVar,       setBusyVar]       = useState(false);
   const [removingVar,   setRemovingVar]   = useState<string | null>(null);
@@ -944,6 +893,70 @@ export default function ArticleModal({
   const [artAttrs,        setArtAttrs]        = useState<CategoryAttribute[]>([]);
   /* valores de atributos del artículo (indexados por assignmentId) */
   const [artAttrValues,   setArtAttrValues]   = useState<Record<string, string>>({});
+  /* atributos obligatorios sin completar — se actualiza en tiempo real */
+  const missingRequiredAttrs = useMemo(
+    () => artAttrs.filter(a => a.isRequired && !(artAttrValues[a.id] ?? "").trim()),
+    [artAttrs, artAttrValues]
+  );
+  const hasMissingRequired = missingRequiredAttrs.length > 0;
+  /* ── carga de ejes de variante ────────────────────────────────────────── */
+  const [variantAxesLoading, setVariantAxesLoading] = useState(false);
+  /** categoryId para el que ya completó la carga de ejes (null = aún no cargó nada) */
+  const [axesCategory, setAxesCategory] = useState<string | null>(null);
+
+  /** Bloqueo de conversión artículo simple → con variantes (tiene movimientos) */
+  const [conversionBlockOpen, setConversionBlockOpen]         = useState(false);
+  /** Bloqueo de cambio de categoría cuando el artículo ya tiene variantes con ejes distintos */
+  const [variantAxisConflictOpen, setVariantAxisConflictOpen] = useState(false);
+  const [conversionCheckBusy, setConversionCheckBusy]         = useState(false);
+  /** Cantidad de variantes al cargar el artículo en edición (0 = era artículo simple) */
+  const initialVariantsCountRef = useRef<number>(0);
+  /** Datos del artículo simple pendientes de migrar a la primera variante al convertir */
+  const pendingVariantMigrationRef = useRef<Partial<VariantPayload>>({});
+
+  /* al menos 1 variante — solo se exige cuando la categoría tiene ejes de variante configurados,
+     el artículo no está marcado como "vender sin variantes" y aún no tiene ninguna creada */
+  // axesCategory: el categoryId para el que ya cargaron los ejes (null = aún no cargaron)
+  // Esto evita la race condition donde variantAxes.length===0 es true antes de que cargue
+  const axesAreReady = axesCategory === (draft.categoryId ?? null);
+  /**
+   * Categoría EXIGE variantes: tiene al menos un atributo isVariantAxis=true
+   * y el artículo no es SERVICE. Cuando esto es true, la única forma de
+   * satisfacer el requisito es que `variants.length > 0` — sellWithoutVariants
+   * NO puede saltearlo (era el bug original: el default `sellWithoutVariants:true`
+   * hacía bypass del check incluso para categorías con ejes).
+   *
+   * Combos comerciales conservan su flujo (forzaban sellWithoutVariants=true);
+   * la excepción ya estaba en handleSave (`commercialMode !== "COMBO_COMMERCIAL"`)
+   * y la replicamos acá para no romper combos sobre categorías con ejes.
+   */
+  const categoryRequiresVariants =
+    draft.articleType !== "SERVICE" &&
+    draft.commercialMode !== "COMBO_COMMERCIAL" &&
+    axesAreReady &&
+    variantAxes.length > 0;
+  const hasAtLeastOneVariant = categoryRequiresVariants
+    ? variants.length > 0                    // categoría con ejes → SOLO variantes reales lo satisfacen
+    : (
+        draft.articleType === "SERVICE" ||   // SERVICE nunca necesita variantes
+        draft.sellWithoutVariants ||          // artículo configurado para vender sin variante
+        (axesAreReady && variantAxes.length === 0) || // categoría sin ejes → no corresponde exigir variantes
+        variants.length > 0                  // ya tiene al menos una variante creada
+      );
+  /**
+   * El padre tiene código propio para imprimir/escanear cuando:
+   *  - el artículo es simple (sin variantes ni ejes), o
+   *  - tiene variantes pero `sellWithoutVariants=true` y la categoría NO
+   *    exige variantes (si las exige, el padre nunca se vende solo).
+   * En cualquier otro caso, el código que se escanea es el de cada variante.
+   */
+  const parentHasPrintableCode =
+    !categoryRequiresVariants && (variants.length === 0 || draft.sellWithoutVariants);
+  /* costo válido — requerido para PRODUCT y MATERIAL; opcional para SERVICE */
+  const hasCostValid = useMemo(() => {
+    if (draft.articleType === "SERVICE") return true;
+    return costLines.length > 0;
+  }, [draft.articleType, costLines]);
   /* valores de atributos en el mini-modal de variante */
   const [varAttrValues,   setVarAttrValues]   = useState<Record<string, string>>({});
   /* id de variante pendiente de eliminar (confirmar) */
@@ -967,9 +980,6 @@ export default function ArticleModal({
   /* ── composiciones ───────────────────────────────────────────────────── */
   const [compositions, setCompositions] = useState<ArticleComposition[]>([]);
 
-  /* ── existencia de apertura ───────────────────────────────────────────── */
-  const [hasMovements, setHasMovements] = useState(false);
-
   /* ── imágenes ─────────────────────────────────────────────────────────── */
   const [images,            setImages]           = useState<ArticleImage[]>([]);
   const [busyImg,           setBusyImg]          = useState(false);
@@ -984,9 +994,6 @@ export default function ArticleModal({
   const [pendingVarImagePreviews, setPendingVarImagePreviews] = useState<string[]>([]);
   /** Map draftId → File para imágenes pendientes de variantes en modo create-article. */
   const pendingVariantImagesRef = useRef<Map<string, File>>(new Map());
-
-  /* ── carga de ejes de variante ────────────────────────────────────────── */
-  const [variantAxesLoading, setVariantAxesLoading] = useState(false);
 
   /** Recuerda el último "Tipo de valor" elegido para restaurarlo al activar un nuevo ajuste */
   const lastAdjTypeRef = useRef<"PERCENTAGE" | "FIXED_AMOUNT">("PERCENTAGE");
@@ -1003,8 +1010,41 @@ export default function ArticleModal({
    */
   const metalVariantsRef = useRef<MetalVariantRow[]>([]);
   const currenciesRef    = useRef<CurrencyRow[]>([]);
-  const productItemsRef  = useRef<{ id: string; name: string; sku: string; stock: number | null; costPrice: number | null; costPriceNative: number | null; manualCurrencyId: string | null }[]>([]);
-  const serviceItemsRef  = useRef<{ id: string; name: string; sku: string; stock: number | null; costPrice: number | null; costPriceNative: number | null; manualCurrencyId: string | null }[]>([]);
+  const productItemsRef  = useRef<ProductItem[]>([]);
+  const serviceItemsRef  = useRef<ProductItem[]>([]);
+
+  /**
+   * Cache de variantes activas por articleId para los componentes de costo.
+   * Cuando el usuario elige un artículo en una línea PRODUCT, se carga lazy
+   * el listado de variantes para detectar si tiene que pedir variante
+   * específica. La cache vive en un ref + bumper de version para forzar
+   * re-render sin reasignar el state cada vez. La caché se limpia al cerrar
+   * el modal (junto al resto de refs).
+   */
+  const variantsByArticleRef = useRef<Map<string, ArticleVariant[]>>(new Map());
+  const [variantsCacheVersion, setVariantsCacheVersion] = useState(0);
+  const loadVariantsForArticle = useCallback(async (articleId: string) => {
+    if (!articleId) return;
+    if (variantsByArticleRef.current.has(articleId)) return;
+    // Marca "cargando" como [] para evitar fetches en paralelo del mismo id.
+    variantsByArticleRef.current.set(articleId, []);
+    try {
+      // El endpoint `GET /articles/:id/variants` ya filtra deletedAt=null,
+      // solo nos queda eliminar las inactivas para no ofrecer variantes
+      // deshabilitadas como componente de costo.
+      const list = await articlesApi.variants.list(articleId);
+      const active = (list ?? []).filter(v => v.isActive);
+      variantsByArticleRef.current.set(articleId, active);
+    } catch {
+      variantsByArticleRef.current.set(articleId, []);
+    }
+    setVariantsCacheVersion(v => v + 1);
+  }, []);
+  const getVariantsForArticle = useCallback(
+    (articleId: string): ArticleVariant[] | undefined => variantsByArticleRef.current.get(articleId),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [variantsCacheVersion],
+  );
 
   // ── reset al abrir/cerrar ──────────────────────────────────────────────
   useEffect(() => {
@@ -1013,22 +1053,19 @@ export default function ArticleModal({
       const t = setTimeout(() => {
         setActiveTab("principal");
         setArticle(null);
-        const lastMode = (() => {
-          try { return localStorage.getItem("tptech_last_cost_mode") as CostCalculationMode | null; } catch { return null; }
-        })();
         const lastStockMode = (() => {
           try { return localStorage.getItem("tptech_last_stock_mode") as StockMode | null; } catch { return null; }
         })();
         setDraft({
           ...EMPTY_DRAFT,
-          ...(lastMode ? { costCalculationMode: lastMode } : {}),
           ...(lastStockMode ? { stockMode: lastStockMode } : {}),
         });
         setSubmitted(false);
-        setShowNoPriceWarning(false);
         setAdvancedModalOpen(false);
         setVariants([]);
         setVariantStock({});
+        setSimpleArticleHasRecord(false);
+        setSimpleArticleStockLoaded(false);
         setVariantAxes([]);
         setArtAttrs([]);
         setArtAttrValues({});
@@ -1047,7 +1084,7 @@ export default function ArticleModal({
         setPendingImages(prev => { prev.forEach(p => URL.revokeObjectURL(p.url)); return []; });
         setVariantAxesLoading(false);
         setCompositions([]);
-        setHasMovements(false);
+        // hasMovements removed (stock now at variant level)
         setPendingVarImages([]);
         setPendingVarImagePreviews(prev => { prev.forEach(URL.revokeObjectURL); return []; });
         pendingVariantImagesRef.current.clear();
@@ -1077,12 +1114,9 @@ export default function ArticleModal({
       void loadBrandItems();
       void loadManufacturerItems();
       void loadUnitItems();
-      void loadMultiplierBaseItems();
+      void loadWeightUnits();
+      void loadLengthUnits();
       void fetchArticle(articleId);
-      // Verificar si el artículo ya tiene movimientos (para bloquear apertura)
-      articleMovementsApi.list({ articleId, pageSize: 1 })
-        .then(r => setHasMovements(r.total > 0))
-        .catch(() => setHasMovements(false));
     } else {
       // Modo crear / clonar
       const base: Draft = { ...EMPTY_DRAFT };
@@ -1091,7 +1125,7 @@ export default function ArticleModal({
         Object.assign(base, cloneData);
       } else {
         const savedBarcode = localStorage.getItem("tptech.article.barcodeSource.last");
-        if (savedBarcode === "SKU" || savedBarcode === "CODE" || savedBarcode === "CUSTOM") {
+        if (savedBarcode === "SKU" || savedBarcode === "CODE") {
           base.barcodeSource = savedBarcode as BarcodeSource;
         }
         const savedStockMode = localStorage.getItem("tptech_last_stock_mode") as StockMode | null;
@@ -1101,6 +1135,17 @@ export default function ArticleModal({
         if (defStockMode) base.stockMode = defStockMode;
         const defStatus = localStorage.getItem("tptech_default_status") as ArticleStatus | null;
         if (defStatus) base.status = defStatus;
+        // Modo de venta favorito (combo o normal). Si combo, aplicamos también los flags forzados
+        // (mismo criterio que el onChange manual del selector) para mantener UI coherente.
+        const defCommercialMode = localStorage.getItem("tptech_default_commercial_mode") as ArticleCommercialMode | null;
+        if (defCommercialMode) {
+          base.commercialMode = defCommercialMode;
+          if (defCommercialMode === "COMBO_COMMERCIAL") {
+            base.stockMode = "NO_STOCK";
+            base.sellWithoutVariants = true;
+            base.useManualSalePrice = false;
+          }
+        }
         const defInventory = localStorage.getItem("tptech_default_inventory_account");
         if (defInventory !== null) base.inventoryAccount = defInventory;
         // Modo de costo siempre METAL_MERMA_HECHURA (modelo unificado)
@@ -1142,8 +1187,13 @@ export default function ArticleModal({
       return prev.map(line => {
         if (line.type !== "METAL" || !line.metalVariantId) return line;
         const mv = metalVariants.find(m => m.id === line.metalVariantId);
-        if (mv?.finalSalePrice == null) return line;
-        let newVal = Number(mv.finalSalePrice);
+        const basePrice = mv?.suggestedPrice != null ? Number(mv.suggestedPrice)
+          : (mv?.finalSalePrice != null && mv?.saleFactor != null && Number(mv.saleFactor) > 0
+            ? Math.round(Number(mv.finalSalePrice) / Number(mv.saleFactor) * 10000) / 10000
+            : null);
+        if (basePrice == null) return line;
+        const mermaMul = 1 + (line.mermaPercent ?? 0) / 100;
+        let newVal = Math.round(basePrice * mermaMul * 100) / 100;
         if (line.currencyId && line.currencyId !== baseCurrId) {
           const curr = currencies.find(c => c.id === line.currencyId);
           if (curr?.latestRate) newVal = Math.round((newVal / curr.latestRate) * 10000) / 10000;
@@ -1186,6 +1236,19 @@ export default function ArticleModal({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, articleId, productItems, serviceItems, currencies]);
 
+  /* ── Precarga de variantes para componentes de costo ───────────────────────
+     Para cada línea PRODUCT con `catalogItemId`, carga el listado de variantes
+     del componente (si tiene). Esto habilita el sub-selector de variante en
+     CostRow y permite validar al guardar. Lazy + cacheado: solo se pide una
+     vez por artículo. */
+  useEffect(() => {
+    if (!open) return;
+    for (const line of costLines) {
+      if (line.type !== "PRODUCT" || !line.catalogItemId) continue;
+      void loadVariantsForArticle(line.catalogItemId);
+    }
+  }, [open, costLines, loadVariantsForArticle]);
+
   /* ── Sincronización en vivo al cambiar valuación ──────────────────────────
      Al recibir tptech:valuation-changed se recargan metalVariants y currencies.
      Como los efectos de sincronización ya no tienen guard de "una vez", el cambio
@@ -1224,6 +1287,7 @@ export default function ArticleModal({
     try {
       const data = await articlesApi.getOne(id);
       setArticle(data);
+      initialVariantsCountRef.current = data.variants?.length ?? 0;
       const d = articleToDraft(data);
       setDraft(d);
       setVariants(data.variants ?? []);
@@ -1244,20 +1308,18 @@ export default function ArticleModal({
       // Cuando fetchArticle termina, sus deps no cambiaron → efecto no re-corre.
       // Con los refs siempre actualizados, aplicamos el precio vigente ahora.
       let parsedLines = normalizeCostLines(data.costComposition ?? []);
-      // Auto-migrar artículos con modos MANUAL o MULTIPLIER al modelo unificado.
-      // Si el artículo no tiene líneas de composición, generar una línea HECHURA sintética.
-      if (parsedLines.length === 0 && data.costCalculationMode !== "METAL_MERMA_HECHURA") {
-        if (data.costCalculationMode === "MANUAL" && data.manualBaseCost != null) {
-          const base = parseFloat(String(data.manualBaseCost));
-          if (base > 0) {
-            parsedLines = [{ type: "HECHURA" as const, label: "Hechura / Mano de Obra", quantity: 1, quantityUnit: "u" as const, unitValue: base, currencyId: (data as any).manualCurrencyId || null, mermaPercent: null, metalVariantId: null, sortOrder: 0, lineAdjKind: "", lineAdjType: "", lineAdjValue: null }];
-          }
-        } else if (data.costCalculationMode === "MULTIPLIER" && data.multiplierQuantity != null && data.multiplierValue != null) {
-          const qty = parseFloat(String(data.multiplierQuantity));
-          const val = parseFloat(String(data.multiplierValue));
-          if (qty > 0 && val > 0) {
-            parsedLines = [{ type: "HECHURA" as const, label: "Hechura / Mano de Obra", quantity: qty, quantityUnit: "u" as const, unitValue: val, currencyId: (data as any).multiplierCurrencyId || null, mermaPercent: null, metalVariantId: null, sortOrder: 0, lineAdjKind: "", lineAdjType: "", lineAdjValue: null }];
-          }
+      // Compatibilidad temporal: artículos legacy con modo MANUAL o MULTIPLIER y sin
+      // costComposition → crear una línea HECHURA sintética para que el modal los muestre.
+      // Este bloque se puede eliminar cuando todos los artículos hayan sido migrados.
+      if (parsedLines.length === 0) {
+        const legacyMode = (data as any).costCalculationMode as string | undefined;
+        const manualBase = (data as any).manualBaseCost != null ? parseFloat(String((data as any).manualBaseCost)) : null;
+        const multQty    = (data as any).multiplierQuantity != null ? parseFloat(String((data as any).multiplierQuantity)) : null;
+        const multVal    = (data as any).multiplierValue     != null ? parseFloat(String((data as any).multiplierValue))     : null;
+        if (legacyMode === "MANUAL" && manualBase != null && manualBase > 0) {
+          parsedLines = [{ type: "HECHURA" as const, label: "Hechura / Mano de Obra", quantity: 1, quantityUnit: "u" as const, unitValue: manualBase, currencyId: (data as any).manualCurrencyId || null, mermaPercent: null, metalVariantId: null, sortOrder: 0, lineAdjKind: "", lineAdjType: "", lineAdjValue: null }];
+        } else if (legacyMode === "MULTIPLIER" && multQty != null && multVal != null && multQty > 0 && multVal > 0) {
+          parsedLines = [{ type: "HECHURA" as const, label: "Hechura / Mano de Obra", quantity: multQty, quantityUnit: "u" as const, unitValue: multVal, currencyId: (data as any).multiplierCurrencyId || null, mermaPercent: null, metalVariantId: null, sortOrder: 0, lineAdjKind: "", lineAdjType: "", lineAdjValue: null }];
         }
       }
       const variants   = metalVariantsRef.current;
@@ -1273,8 +1335,13 @@ export default function ArticleModal({
               // ── METAL ──────────────────────────────────────────────────────
               if (line.type === "METAL" && line.metalVariantId && hasMeta) {
                 const mv = variants.find(m => m.id === line.metalVariantId);
-                if (mv?.finalSalePrice == null) return line;
-                let newVal = Number(mv.finalSalePrice);
+                const basePrice = mv?.suggestedPrice != null ? Number(mv.suggestedPrice)
+                  : (mv?.finalSalePrice != null && mv?.saleFactor != null && Number(mv.saleFactor) > 0
+                    ? Math.round(Number(mv.finalSalePrice) / Number(mv.saleFactor) * 10000) / 10000
+                    : null);
+                if (basePrice == null) return line;
+                const mermaMul = 1 + (line.mermaPercent ?? 0) / 100;
+                let newVal = Math.round(basePrice * mermaMul * 100) / 100;
                 if (line.currencyId && line.currencyId !== baseCurrId) {
                   const curr = currList.find(c => c.id === line.currencyId);
                   if (curr?.latestRate) newVal = Math.round((newVal / curr.latestRate) * 10000) / 10000;
@@ -1311,12 +1378,17 @@ export default function ArticleModal({
         articlesApi.stock.get(id)
           .then((stockRows) => {
             const map: Record<string, number> = {};
+            let hasSimpleRecord = false;
             for (const row of stockRows) {
               if (row.variantId) {
                 map[row.variantId] = (map[row.variantId] ?? 0) + Number(row.quantity ?? 0);
+              } else {
+                hasSimpleRecord = true;
               }
             }
             setVariantStock(map);
+            setSimpleArticleHasRecord(hasSimpleRecord);
+            setSimpleArticleStockLoaded(true);
           })
           .catch(() => {});
       }
@@ -1330,13 +1402,114 @@ export default function ArticleModal({
 
   // Cargar ejes de variante (isVariantAxis=true) cada vez que cambia la categoría
   useEffect(() => {
-    if (!draft.categoryId) { setVariantAxes([]); return; }
+    if (!draft.categoryId) { setVariantAxes([]); setArtAttrs([]); setAxesCategory(null); return; }
     void loadVariantAxes(draft.categoryId);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [draft.categoryId]);
 
+  /**
+   * Guarda cambio de categoría con validaciones:
+   * - Si el artículo ya tiene variantes: bloquea si los ejes de variante cambian.
+   * - Si el artículo es simple: bloquea conversión si tiene movimientos registrados.
+   */
+  async function handleCategoryChange(newCatId: string) {
+    // En creación → cambio directo sin restricciones
+    if (!isEdit) {
+      set("categoryId", newCatId);
+      return;
+    }
+
+    setConversionCheckBusy(true);
+    try {
+      // Helper: set de definitionIds de ejes efectivos de una categoría
+      const getAxisDefIds = async (catId: string): Promise<Set<string>> => {
+        const all = await categoriesApi.attributes.getEffective(catId);
+        return new Set(
+          (all ?? [])
+            .filter(a => a.definition && a.isVariantAxis)
+            .map(a => a.definition!.id)
+        );
+      };
+
+      if (initialVariantsCountRef.current > 0) {
+        // ── CASO: artículo ya varianteado ─────────────────────────────────
+        // Permitir solo si los ejes son exactamente los mismos (por definitionId)
+        if (!draft.categoryId || draft.categoryId === newCatId) {
+          set("categoryId", newCatId);
+          return;
+        }
+        const [currentDefs, newDefs] = await Promise.all([
+          getAxisDefIds(draft.categoryId),
+          getAxisDefIds(newCatId),
+        ]);
+        const compatible =
+          currentDefs.size === newDefs.size &&
+          [...currentDefs].every(id => newDefs.has(id));
+        if (!compatible) {
+          setVariantAxisConflictOpen(true);
+          return; // draft.categoryId NO cambia
+        }
+        set("categoryId", newCatId);
+        return;
+      }
+
+      // ── CASO: artículo simple ──────────────────────────────────────────
+      // Verificar si la nueva categoría introduce ejes de variante
+      const newAxes = await getAxisDefIds(newCatId);
+      if (newAxes.size === 0) {
+        // Sin ejes → cambio seguro, sin migración
+        set("categoryId", newCatId);
+        return;
+      }
+      // La nueva categoría tiene ejes → potencial conversión
+      if (article?.hasMovements === true) {
+        setConversionBlockOpen(true);
+        return; // draft.categoryId NO cambia
+      }
+      // Sin movimientos → conversión permitida, migrar datos al ref
+      set("categoryId", newCatId);
+      const mig: Partial<VariantPayload> = {};
+      const migrated: string[] = [];
+      if (draft.notes.trim()) {
+        mig.notes = draft.notes.trim();
+        set("notes", "");
+        migrated.push("nota");
+      }
+      if (draft.sku.trim()) {
+        mig.sku = draft.sku.trim();
+        mig.barcodeSource = draft.barcodeSource !== "CODE" ? draft.barcodeSource : "SKU";
+        set("sku", "");
+        migrated.push("SKU");
+      }
+      if (draft.barcodeSource === "CUSTOM" && draft.barcode.trim()) {
+        mig.barcode = draft.barcode.trim();
+        mig.barcodeType = draft.barcodeType;
+        if (!mig.barcodeSource) mig.barcodeSource = "CUSTOM";
+        set("barcode", "");
+        migrated.push("código de barras");
+      }
+      if (draft.reorderPoint != null) {
+        mig.reorderPoint = draft.reorderPoint;
+        set("reorderPoint", null);
+        migrated.push("punto de reposición");
+      }
+      if (article?.mainImageUrl) {
+        mig.imageUrl = article.mainImageUrl;
+      }
+      pendingVariantMigrationRef.current = mig;
+      if (migrated.length > 0) {
+        toast.success(`Datos migrados a la primera variante: ${migrated.join(", ")}.`);
+      }
+    } catch {
+      set("categoryId", newCatId);
+    } finally {
+      setConversionCheckBusy(false);
+    }
+  }
+
   async function loadVariantAxes(categoryId: string) {
     setVariantAxesLoading(true);
+    setArtAttrs([]); // Limpiar attrs anteriores de inmediato para evitar hasMissingRequired stale
     try {
       const all = await categoriesApi.attributes.getEffective(categoryId);
       // Filtrar atributos con definition faltante (relación rota en DB)
@@ -1347,18 +1520,33 @@ export default function ArticleModal({
         }
         return true;
       });
-      const axes = valid.filter(a => a.isVariantAxis);
+      const axes = valid.filter(a => a.isVariantAxis)
+        .sort((a, b) => (a.definition.sortOrder ?? a.sortOrder) - (b.definition.sortOrder ?? b.sortOrder));
       const attrs = valid.filter(a => !a.isVariantAxis);
       // Resetear la preselección para que re-corra con los ejes frescos
       preselectedAxesHashRef.current = "";
       setVariantAxes(axes);
       setArtAttrs(attrs);
+      // Si la categoría exige variantes, desactivar el flag "vender sin variantes"
+      // (el default del draft viene en true). Sin esto, la UI muestra el flag
+      // marcado pero el botón aparece deshabilitado, lo cual confunde.
+      // No tocamos combos comerciales — su flujo fuerza sellWithoutVariants=true.
+      if (axes.length > 0) {
+        setDraft(prev =>
+          prev.articleType !== "SERVICE" &&
+          prev.commercialMode !== "COMBO_COMMERCIAL" &&
+          prev.sellWithoutVariants
+            ? { ...prev, sellWithoutVariants: false }
+            : prev
+        );
+      }
     } catch (e) {
       console.error("[TPTech] Error al cargar atributos de categoría:", e);
       setVariantAxes([]);
       setArtAttrs([]);
     } finally {
       setVariantAxesLoading(false);
+      setAxesCategory(categoryId);
     }
   }
 
@@ -1369,6 +1557,22 @@ export default function ArticleModal({
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [variantAxes.length, variantAxesLoading]);
+
+  // Combo comercial: incompatible con categorías que tienen ejes de variante.
+  // Si el usuario cambia a modo combo con una categoría con ejes ya elegida,
+  // limpiamos la categoría y avisamos. También dispara cuando se elige una
+  // categoría con ejes mientras el modo es combo. La regla
+  // `categoryRequiresVariants` ya excluye combo, así que nunca se exigen
+  // variantes en este flujo — este effect mantiene la UI consistente.
+  useEffect(() => {
+    if (draft.commercialMode !== "COMBO_COMMERCIAL") return;
+    if (!axesAreReady) return;
+    if (variantAxes.length === 0) return;
+    if (!draft.categoryId) return;
+    set("categoryId", "");
+    toast.info("Los combos comerciales no usan categorías con variantes. Categoría limpiada.");
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draft.commercialMode, axesAreReady, variantAxes.length, draft.categoryId]);
 
   // En edición: pre-seleccionar en el configurador los valores de variantes ya existentes.
   // Hash basado solo en IDs de ejes: corre una vez por configuración de ejes, independiente
@@ -1418,7 +1622,6 @@ export default function ArticleModal({
         ...prev,
         stockMode:           "NO_STOCK",
         reorderPoint:        null,
-        costCalculationMode: "METAL_MERMA_HECHURA",
         isReturnable:        false,
         sellWithoutVariants: true,
       }));
@@ -1491,22 +1694,22 @@ export default function ArticleModal({
         const base = r.computedCostBase != null && r.computedCostBase !== "" ? Number(r.computedCostBase) : null;
         return base != null && Number.isFinite(base) && base > 0 ? base : null;
       };
-      const toCostNative = (r: any): number | null => {
-        if (r.costCalculationMode !== "MANUAL") return null;
-        const cp = r.costPrice != null && r.costPrice !== "" ? Number(r.costPrice) : null;
-        return cp != null && Number.isFinite(cp) && cp > 0 ? cp : null;
-      };
-      const mappedProds = prodRows.map((r: any) => ({
+      const toCostNative = (_r: any): number | null => null;
+      const mappedProds: ProductItem[] = prodRows.map((r: any) => ({
         id: r.id, name: r.name, sku: r.sku || "", stock: toStock(r),
         costPrice: toCostBase(r),
         costPriceNative: toCostNative(r),
         manualCurrencyId: r.manualCurrencyId ?? null,
+        mainImageUrl: r.mainImageUrl ?? "",
+        categoryName: r.category?.name ?? undefined,
       }));
-      const mappedSvcs  = svcRows.map((r: any) => ({
+      const mappedSvcs: ProductItem[] = svcRows.map((r: any) => ({
         id: r.id, name: r.name, sku: r.sku || "", stock: toStock(r),
         costPrice: toCostBase(r),
         costPriceNative: toCostNative(r),
         manualCurrencyId: r.manualCurrencyId ?? null,
+        mainImageUrl: r.mainImageUrl ?? "",
+        categoryName: r.category?.name ?? undefined,
       }));
       productItemsRef.current  = mappedProds; // mirror síncrono para fetchArticle
       serviceItemsRef.current  = mappedSvcs;
@@ -1549,47 +1752,90 @@ export default function ArticleModal({
   async function loadManufacturerItems() {
     try { setManufacturerItems(await listCatalog("ARTICLE_MANUFACTURER")); } catch {}
   }
-  /** Carga los 3 catálogos y aplica los favoritos al draft (solo en create mode) */
+  /** Carga catálogos comerciales + Units(QUANTITY+WEIGHT/WEIGHT/LENGTH) y aplica favoritos al draft (solo en create mode) */
   async function loadCatalogItemsWithDefaults() {
     try {
-      const [brands, manufacturers, units, multiplierBases, weightUnits] = await Promise.all([
+      const [brands, manufacturers, allUnits, wUnits, lUnits] = await Promise.all([
         listCatalog("ARTICLE_BRAND").catch(() => [] as CatalogItem[]),
         listCatalog("ARTICLE_MANUFACTURER").catch(() => [] as CatalogItem[]),
-        listCatalog("UNIT_OF_MEASURE").catch(() => [] as CatalogItem[]),
-        listCatalog("MULTIPLIER_BASE").catch(() => [] as CatalogItem[]),
-        listCatalog("WEIGHT_UNIT").catch(() => [] as CatalogItem[]),
+        // Para "Unidad de venta" combinamos QUANTITY + WEIGHT (algunos artículos se venden por gramo).
+        Promise.all([
+          listUnits({ type: "QUANTITY" }).catch(() => [] as Unit[]),
+          listUnits({ type: "WEIGHT"   }).catch(() => [] as Unit[]),
+        ]).then(([q, w]) => [...q, ...w]),
+        listUnits({ type: "WEIGHT" }).catch(() => [] as Unit[]),
+        listUnits({ type: "LENGTH" }).catch(() => [] as Unit[]),
       ]);
       setBrandItems(brands);
       setManufacturerItems(manufacturers);
-      setUnitItems(units);
-      setMultiplierBaseItems(multiplierBases);
-      setWeightUnitItems(weightUnits);
+      setUnitItems(allUnits);
+      setWeightUnits(wUnits);
+      setLengthUnits(lUnits);
 
-      const fBrand         = brands.find((i) => i.isFavorite && i.isActive !== false)?.label ?? "";
-      const fManuf         = manufacturers.find((i) => i.isFavorite && i.isActive !== false)?.label ?? "";
-      const fUnit          = units.find((i) => i.isFavorite && i.isActive !== false)?.label ?? "";
-      const fMultiplierBase = multiplierBases.find((i) => i.isFavorite && i.isActive !== false)?.label ?? "";
+      const fBrand     = brands.find((i) => i.isFavorite && i.isActive !== false)?.label ?? "";
+      const fManuf     = manufacturers.find((i) => i.isFavorite && i.isActive !== false)?.label ?? "";
+      // Unidad de venta: favorito QUANTITY si existe; si no, "UND".
+      const fUnit      = allUnits.find(u => u.type === "QUANTITY" && u.isFavorite && u.isActive)?.code ?? "UND";
+      // Unidad de peso: favorito WEIGHT si existe; si no, "g".
+      const fWeight    = wUnits.find(u => u.isFavorite && u.isActive)?.code ?? "g";
+      // Unidad de dimensión: favorito LENGTH si existe; si no, "cm".
+      const fDimension = lUnits.find(u => u.isFavorite && u.isActive)?.code ?? "cm";
 
-      if (fBrand || fManuf || fUnit || fMultiplierBase) {
-        setDraft((prev) => ({
-          ...prev,
-          brand:          prev.brand          || fBrand,
-          manufacturer:   prev.manufacturer   || fManuf,
-          unitOfMeasure:  prev.unitOfMeasure  || fUnit,
-          weightUnit:     prev.weightUnit     || fMultiplierBase,
-          multiplierBase: prev.multiplierBase || fMultiplierBase,
-        }));
-      }
+      setDraft((prev) => ({
+        ...prev,
+        brand:          prev.brand          || fBrand,
+        manufacturer:   prev.manufacturer   || fManuf,
+        unitOfMeasure:  prev.unitOfMeasure  || fUnit,
+        weightUnit:     prev.weightUnit     || fWeight,
+        dimensionUnit:  prev.dimensionUnit  || fDimension,
+      }));
     } catch {}
   }
   async function loadUnitItems() {
-    try { setUnitItems(await listCatalog("UNIT_OF_MEASURE")); } catch {}
+    try {
+      const [q, w] = await Promise.all([
+        listUnits({ type: "QUANTITY" }),
+        listUnits({ type: "WEIGHT"   }),
+      ]);
+      setUnitItems([...q, ...w]);
+    } catch {}
   }
-  async function loadMultiplierBaseItems() {
-    try { setMultiplierBaseItems(await listCatalog("MULTIPLIER_BASE")); } catch {}
+  async function loadWeightUnits() {
+    try { setWeightUnits(await listUnits({ type: "WEIGHT" })); } catch {}
   }
-  async function loadWeightUnitItems() {
-    try { setWeightUnitItems(await listCatalog("WEIGHT_UNIT")); } catch {}
+  async function loadLengthUnits() {
+    try { setLengthUnits(await listUnits({ type: "LENGTH" })); } catch {}
+  }
+
+  /**
+   * Toggle favorito para Units (Fase 5).
+   * Optimista: solo una unidad favorita por type. Backend `setFavoriteUnit`
+   * ya limpia las demás del mismo type, acá solo replicamos esa regla en UI.
+   */
+  async function toggleUnitFavorite(
+    itemId: string,
+    currentlyFavorite: boolean,
+    setItems: React.Dispatch<React.SetStateAction<Unit[]>>,
+  ) {
+    const next = !currentlyFavorite;
+    let prevItems: Unit[] = [];
+    setItems(prev => {
+      prevItems = prev;
+      // Type del item editado, para limpiar solo dentro del mismo tipo.
+      const target = prev.find(i => i.id === itemId);
+      const targetType: UnitType | undefined = target?.type;
+      return prev.map(i => {
+        if (i.id === itemId) return { ...i, isFavorite: next };
+        if (next && targetType && i.type === targetType) return { ...i, isFavorite: false };
+        return i;
+      });
+    });
+    try {
+      await setFavoriteUnit(itemId, next);
+    } catch {
+      setItems(prevItems);
+      toast.error("No se pudo actualizar el favorito");
+    }
   }
 
   async function toggleCatalogFavorite(
@@ -1628,20 +1874,6 @@ export default function ArticleModal({
 
   // ── helpers draft ──────────────────────────────────────────────────────
   function set<K extends keyof Draft>(k: K, val: Draft[K]) {
-    if (k === "costCalculationMode") {
-      try { localStorage.setItem("tptech_last_cost_mode", val as string); } catch {}
-      // Al cambiar a MULTIPLIER: si multiplierBase está vacío, aplicar favorita del catálogo
-      if (val === "MULTIPLIER") {
-        const favBase = multiplierBaseItems.find(i => i.isFavorite && i.isActive !== false)?.label ?? "";
-        setDraft((prev) => ({
-          ...prev,
-          costCalculationMode: val as CostCalculationMode,
-          multiplierBase: prev.multiplierBase || favBase,
-        }));
-        setDraftChanged(true);
-        return;
-      }
-    }
     if (k === "stockMode" && !articleId) {
       try { localStorage.setItem("tptech_last_stock_mode", val as string); } catch {}
     }
@@ -1660,28 +1892,66 @@ export default function ArticleModal({
         setActiveTab("principal");
         return;
       }
+      // Combo comercial: validar que tenga al menos un componente.
+      // Los componentes son las líneas de costo tipo PRODUCT con catalogItemId.
+      if (draft.commercialMode === "COMBO_COMMERCIAL") {
+        const productLinesWithRef = costLines.filter(l => l.type === "PRODUCT" && l.catalogItemId);
+        if (productLinesWithRef.length === 0) {
+          setActiveTab("principal");
+          toast.error("Un combo comercial debe tener al menos un componente. Agregá productos en \"Composición del combo\".");
+          return;
+        }
+      }
+
+      // Componentes con variantes: bloquear guardado si una línea PRODUCT
+      // referencia un artículo que tiene variantes y el usuario no eligió
+      // cuál. Solo cuenta si la cache ya tiene info del componente — si
+      // todavía está cargando, dejamos pasar (el effect dispara el load al
+      // abrir el modal, así que en el flujo normal está cacheado para cuando
+      // se hace click en Guardar).
+      const productLinesNeedingVariant = costLines.filter(l => {
+        if (l.type !== "PRODUCT" || !l.catalogItemId) return false;
+        const variants = variantsByArticleRef.current.get(l.catalogItemId);
+        if (!variants || variants.length === 0) return false;
+        return !l.catalogVariantId;
+      });
+      if (productLinesNeedingVariant.length > 0) {
+        setActiveTab("principal");
+        toast.error(
+          productLinesNeedingVariant.length === 1
+            ? "Un componente tiene variantes. Seleccioná una variante específica antes de guardar."
+            : `${productLinesNeedingVariant.length} componentes tienen variantes. Seleccioná una variante específica para cada uno antes de guardar.`
+        );
+        return;
+      }
+
+      // Validar que haya al menos 1 variante (no aplica a SERVICE ni a COMBO_COMMERCIAL).
+      // En combos forzamos sellWithoutVariants=true → no requiere variantes.
+      if (!hasAtLeastOneVariant && draft.commercialMode !== "COMBO_COMMERCIAL") {
+        setActiveTab("variantes");
+        toast.error(
+          categoryRequiresVariants
+            ? "Esta categoría requiere variantes. Generá al menos una variante en la pestaña \"Variantes\" antes de guardar el artículo."
+            : "El artículo debe tener al menos una variante."
+        );
+        return;
+      }
       // Advertir si alguna variante no tiene SKU (no bloquea el guardado)
       if (hasVariants && variants.some(v => !v.sku?.trim())) {
         toast.warning("Algunas variantes no tienen SKU. Podés asignarles uno más adelante.");
       }
       // Validar atributos requeridos del artículo
-      const missingArtAttr = artAttrs.find(a => a.isRequired && !(artAttrValues[a.id] ?? "").trim());
-      if (missingArtAttr) {
+      if (hasMissingRequired) {
         setActiveTab("principal");
+        toast.error(
+          missingRequiredAttrs.length === 1
+            ? `El atributo "${missingRequiredAttrs[0].definition.name}" es obligatorio.`
+            : `Hay ${missingRequiredAttrs.length} atributos obligatorios sin completar.`
+        );
         return;
       }
-      // Bloquear guardado si MANUAL con moneda no-base sin cotización
-      if (draft.costCalculationMode === "MANUAL" && draft.manualCurrencyId) {
-        const selCurr = currencies.find(c => c.id === draft.manualCurrencyId);
-        const isBase = selCurr?.isBase ?? false;
-        if (!isBase && !selCurr?.latestRate) {
-          toast.error(`${selCurr?.code ?? "La moneda seleccionada"} no tiene cotización vigente. Sin ella el costo no puede convertirse a la moneda base para el cálculo de precios.`);
-          setActiveTab("principal");
-          return;
-        }
-      }
-      // Bloquear guardado si METAL_MERMA_HECHURA con líneas en moneda no-base sin cotización
-      if (draft.costCalculationMode === "METAL_MERMA_HECHURA" && costLines.length > 0) {
+      // Bloquear guardado si alguna línea de costo usa moneda no-base sin cotización
+      if (costLines.length > 0) {
         const baseCurrId = currencies.find(c => c.isBase)?.id;
         const linesWithIssue = costLines.filter(l =>
           l.currencyId && l.currencyId !== baseCurrId &&
@@ -1699,50 +1969,10 @@ export default function ArticleModal({
           return;
         }
       }
-      // Advertir si el costo efectivo es 0 o nulo.
-      // Cada modo tiene su propia fuente de costo real:
-      // - MANUAL:              calculable en cliente (base + ajuste)
-      // - MULTIPLIER:          calculable en cliente (cantidad × valor)
-      // - METAL_MERMA_HECHURA: requiere cotizaciones → usar `computed` del backend
-      // - COST_LINES:          requiere cotizaciones → usar `computed` del backend
-      let effectiveCost: number | null = null;
-      if (draft.costCalculationMode === "MANUAL") {
-        effectiveCost = computeManualFinalCost(draft, taxes);
-        // Fallback: artículos con costPrice directo (antes de manualBaseCost), compatibilidad
-        if (effectiveCost == null && draft.costPrice != null && draft.costPrice > 0) {
-          effectiveCost = draft.costPrice;
-        }
-      } else if (draft.costCalculationMode === "MULTIPLIER") {
-        const q = draft.multiplierQuantity;
-        const v = draft.multiplierValue;
-        effectiveCost = (q != null && v != null) ? q * v : null;
-      } else {
-        const cv = computed?.value;
-        if (cv != null) {
-          effectiveCost = parseFloat(cv);
-        } else if (costLines.length > 0) {
-          // computed no está disponible (artículo nuevo o líneas editadas sin guardar):
-          // calcular desde las líneas en memoria, igual que "Total estimado"
-          const baseCurrencyId = currencies.find(c => c.isBase)?.id ?? "";
-          const linesTotal = costLines.reduce((sum, line) => {
-            if (!line.quantity || !line.unitValue) return sum;
-            let raw = line.type === "METAL"
-              ? line.quantity * (1 + (line.mermaPercent ?? 0) / 100) * line.unitValue
-              : line.quantity * line.unitValue;
-            if (line.type !== "METAL") raw = applyLineAdj(raw, line.lineAdjKind ?? "", line.lineAdjType ?? "", line.lineAdjValue ?? null);
-            const currId = line.currencyId ?? baseCurrencyId;
-            if (currId !== baseCurrencyId) {
-              const curr = currencies.find(c => c.id === currId);
-              if (curr?.latestRate != null) raw = raw * curr.latestRate;
-              else return sum;
-            }
-            return sum + raw;
-          }, 0);
-          effectiveCost = linesTotal > 0 ? linesTotal : null;
-        }
-      }
-      if ((effectiveCost == null || effectiveCost === 0) && variants.length === 0) {
-        setShowNoPriceWarning(true);
+      // PRODUCT y MATERIAL requieren al menos una línea de costo
+      if ((draft.articleType === "PRODUCT" || draft.articleType === "MATERIAL") && !hasCostValid) {
+        setActiveTab("principal");
+        toast.error("Agregá al menos una línea en la composición de costo antes de guardar.");
         return;
       }
       await executeSave();
@@ -1752,14 +1982,28 @@ export default function ArticleModal({
   }
 
   async function executeSave() {
-    setShowNoPriceWarning(false);
+    // Guards de último recurso: respetar la misma lógica que hasAtLeastOneVariant
+    // (SERVICE siempre ok, sellWithoutVariants ok, sin ejes ok, con variantes ok).
+    if (!hasAtLeastOneVariant) {
+      setActiveTab("variantes");
+      toast.error(
+        categoryRequiresVariants
+          ? "Esta categoría requiere variantes. Generá al menos una variante en la pestaña \"Variantes\" antes de guardar el artículo."
+          : "El artículo debe tener al menos una variante."
+      );
+      return;
+    }
+    if ((draft.articleType === "PRODUCT" || draft.articleType === "MATERIAL") && !hasCostValid) {
+      setActiveTab("principal");
+      toast.error("El artículo no tiene un costo válido.");
+      return;
+    }
     setBusySave(true);
     try {
       const payload = draftToPayload(draft);
       // Si el artículo tiene variantes, ciertos campos del padre no aplican
       const hasVariantsForSave = variantAxes.length > 0 || variants.length > 0;
       if (hasVariantsForSave) {
-        payload.openingStock  = null;
         payload.reorderPoint  = null;
         // El padre con variantes NO debe heredar el SKU base como barcode:
         // cada variante tiene su propio barcode. Solo conservar si el usuario
@@ -1813,9 +2057,6 @@ export default function ArticleModal({
                 barcodeType: dv.barcodeType,
                 barcodeSource: dv.barcodeSource,
                 reorderPoint: dv.reorderPoint != null ? parseFloat(dv.reorderPoint as any) : undefined,
-                openingStock: (dv as any).openingStock != null ? parseFloat((dv as any).openingStock) : undefined,
-                costPrice: dv.costPrice != null ? parseFloat(dv.costPrice as any) : undefined,
-                priceOverride: dv.priceOverride != null ? parseFloat(dv.priceOverride as any) : undefined,
                 sortOrder: dv.sortOrder,
               });
 
@@ -1944,8 +2185,13 @@ export default function ArticleModal({
     setCostLines(prev => prev.map(line => {
       if (line.type !== "METAL" || !line.metalVariantId) return line;
       const mv = metalVariants.find(m => m.id === line.metalVariantId);
-      if (mv?.finalSalePrice == null) return line;
-      let newUnitValue = Number(mv.finalSalePrice);
+      const basePrice = mv?.suggestedPrice != null ? Number(mv.suggestedPrice)
+        : (mv?.finalSalePrice != null && mv?.saleFactor != null && Number(mv.saleFactor) > 0
+          ? Math.round(Number(mv.finalSalePrice) / Number(mv.saleFactor) * 10000) / 10000
+          : null);
+      if (basePrice == null) return line;
+      const mermaMul = 1 + (line.mermaPercent ?? 0) / 100;
+      let newUnitValue = Math.round(basePrice * mermaMul * 100) / 100;
       if (line.currencyId && line.currencyId !== baseCurrId) {
         const curr = currencies.find(c => c.id === line.currencyId);
         if (curr?.latestRate) newUnitValue = Math.round((newUnitValue / curr.latestRate) * 10000) / 10000;
@@ -1958,36 +2204,36 @@ export default function ArticleModal({
     else toast.info("Todos los precios ya están al día.");
   }
 
-  // ── reorder axes ────────────────────────────────────────────────────────
-  function moveAxisUp(axisId: string) {
+  // ── reorder axes (drag and drop) ─────────────────────────────────────────
+  function handleVariantAxisDragEnd(event: DragEndEvent) {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
     setVariantAxes(prev => {
-      const idx = prev.findIndex(a => a.id === axisId);
-      if (idx <= 0) return prev;
-      const next = [...prev];
-      [next[idx - 1], next[idx]] = [next[idx], next[idx - 1]];
-      return next;
-    });
-  }
-  function moveAxisDown(axisId: string) {
-    setVariantAxes(prev => {
-      const idx = prev.findIndex(a => a.id === axisId);
-      if (idx < 0 || idx >= prev.length - 1) return prev;
-      const next = [...prev];
-      [next[idx], next[idx + 1]] = [next[idx + 1], next[idx]];
-      return next;
+      const oldIdx = prev.findIndex(a => a.id === active.id);
+      const newIdx = prev.findIndex(a => a.id === over.id);
+      if (oldIdx === -1 || newIdx === -1) return prev;
+      return arrayMove(prev, oldIdx, newIdx);
     });
   }
 
   // ── variantes ──────────────────────────────────────────────────────────
   function openNewVariant() {
     setVarEditId(null);
-    setVarDraft({ code: "", name: "", barcodeSource: "SKU" });
+    const mig = pendingVariantMigrationRef.current;
+    pendingVariantMigrationRef.current = {};
+    setVarDraft({ code: "", name: "", barcodeSource: "SKU", ...mig });
     setVarAttrValues({});
     setPendingVarImages([]);
     setPendingVarImagePreviews(prev => { prev.forEach(URL.revokeObjectURL); return []; });
     setVarModal(true);
   }
   function openEditVariant(v: ArticleVariant) {
+    // En modo edición (artículo ya guardado): usar EditVariantModal completo
+    if (articleId) {
+      setFullEditVariant(v);
+      return;
+    }
+    // En modo creación: la variante aún no está en la API → usar el mini-modal inline
     setVarEditId(v.id);
     setVarDraft({
       code: v.code,
@@ -1998,10 +2244,8 @@ export default function ArticleModal({
       barcodeSource: v.barcodeSource ?? "SKU",
       costPrice: v.costPrice != null ? parseFloat(v.costPrice) : null,
       reorderPoint: v.reorderPoint != null ? parseFloat(v.reorderPoint) : null,
-      openingStock: v.openingStock != null ? parseFloat(v.openingStock) : null,
       weightOverride: v.weightOverride != null ? parseFloat(v.weightOverride) : null,
       hechuraPriceOverride: v.hechuraPriceOverride != null ? parseFloat(v.hechuraPriceOverride) : null,
-      priceOverride: v.priceOverride != null ? parseFloat(v.priceOverride) : null,
       sortOrder: v.sortOrder,
       notes: v.notes ?? "",
     });
@@ -2021,7 +2265,6 @@ export default function ArticleModal({
     // Auto-derivar nombre desde los valores de eje cuando estén disponibles
     const axisValues = variantAxes
       .filter(ax => (varAttrValues[ax.id] ?? "").trim())
-      .sort((a, b) => a.sortOrder - b.sortOrder)
       .map(ax => varAttrValues[ax.id].trim());
     const autoDerived = axisValues.length > 0 ? axisValues.join(" · ") : "";
     const derivedName = (varDraft.name ?? "").trim() || autoDerived;
@@ -2108,9 +2351,10 @@ export default function ArticleModal({
           barcodeSource: varDraft.barcodeSource ?? "SKU",
           costPrice: null,
           reorderPoint: (varDraft as any).reorderPoint ?? null,
-          openingStock: (varDraft as any).openingStock ?? null,
+          minSaleQuantity: null,
+          maxSaleQuantity: null,
+          defaultQuantity: null,
           notes: "",
-          priceOverride: null,
           weightOverride: null,
           hechuraPriceOverride: null,
           imageUrl: pendingVarImagePreviews[0] ?? "",
@@ -2643,9 +2887,10 @@ export default function ArticleModal({
           barcodeSource: "SKU" as const,
           costPrice: null,
           reorderPoint: null,
-          openingStock: null,
+          minSaleQuantity: null,
+          maxSaleQuantity: null,
+          defaultQuantity: null,
           notes: "",
-          priceOverride: null,
           weightOverride: null,
           hechuraPriceOverride: null,
           imageUrl: "",
@@ -2987,11 +3232,11 @@ export default function ArticleModal({
       if (!byParent.has(key)) byParent.set(key, []);
       byParent.get(key)!.push(c);
     }
-    const result: { value: string; label: string }[] = [{ value: "", label: "Sin categoría" }];
+    const result: { value: string; label: string; depth?: number }[] = [{ value: "", label: "Sin categoría" }];
     function traverse(parentId: string | null, level: number) {
       const children = byParent.get(parentId) ?? [];
       for (const c of children) {
-        result.push({ value: c.id, label: "— ".repeat(level) + c.name });
+        result.push({ value: c.id, label: c.name, depth: level });
         traverse(c.id, level + 1);
       }
     }
@@ -3001,6 +3246,33 @@ export default function ArticleModal({
   const articleTypeOptions = (Object.keys(ARTICLE_TYPE_LABELS) as ArticleType[])
     .filter((k) => k !== "MATERIAL") // MATERIAL no se ofrece como opción nueva
     .map((k) => ({ value: k, label: ARTICLE_TYPE_LABELS[k], isFavorite: defaultArticleType === k }));
+
+  /**
+   * Fase 5 — Opciones para "Unidad de venta" (draft.unitOfMeasure):
+   * combina QUANTITY + WEIGHT, dedup por code, y conserva valor legacy si no existe.
+   * value = unit.code (lo que persiste el backend); label = "Nombre (Cantidad)".
+   */
+  const unitOfMeasureOptions = useMemo(() => {
+    const seen = new Set<string>();
+    const out: { value: string; label: string; isFavorite?: boolean }[] = [];
+    for (const u of unitItems) {
+      if (!u.isActive) continue;
+      const key = u.code;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      const typeLabel = u.type === "QUANTITY" ? "Cantidad" : u.type === "WEIGHT" ? "Peso" : u.type;
+      out.push({
+        value: u.code,
+        label: `${u.name} — ${typeLabel}`,
+        isFavorite: u.isFavorite && u.type === "QUANTITY",
+      });
+    }
+    // Preservar valor legacy si no existe en Units
+    if (draft.unitOfMeasure && !seen.has(draft.unitOfMeasure)) {
+      out.unshift({ value: draft.unitOfMeasure, label: `${draft.unitOfMeasure} (legacy)` });
+    }
+    return out;
+  }, [unitItems, draft.unitOfMeasure]);
   const statusOptions = (Object.keys(ARTICLE_STATUS_LABELS) as ArticleStatus[]).map((k) => ({
     value: k, label: ARTICLE_STATUS_LABELS[k], isFavorite: defaultStatus === k,
   }));
@@ -3059,43 +3331,44 @@ export default function ArticleModal({
         {identityContent}
 
         {/* ② COSTO — card contenedor */}
-        {draft.articleType !== "SERVICE" && (
-          <div className="rounded-xl bg-surface2/40 border border-border/50 overflow-hidden">
-            <div className="flex items-center gap-2 px-4 py-2 border-b border-border/40">
-              <span className="text-[10px] font-bold uppercase tracking-widest text-muted select-none">Costo</span>
-            </div>
-            <div className="p-3">
-              {costContent}
-            </div>
+        <div className="rounded-xl bg-surface2/40 border border-border/50 overflow-hidden">
+          <div className="flex items-center gap-2 px-4 py-2 border-b border-border/40">
+            <span className="text-[10px] font-bold uppercase tracking-widest text-muted select-none">Costo</span>
           </div>
-        )}
+          <div className="p-3">
+            {!hasCostValid && (
+              <div className="mb-3">
+                <TPAlert tone="warning">Ingresá el costo del artículo para poder guardar.</TPAlert>
+              </div>
+            )}
+            {costContent}
+          </div>
+        </div>
 
-        {/* ③ STOCK — colapsable */}
-        {draft.articleType !== "SERVICE" && draft.stockMode !== "NO_STOCK" && (
+        {/* ③ STOCK — colapsable (solo cuando la categoría no tiene ejes de variante) */}
+        {draft.articleType !== "SERVICE" && draft.stockMode !== "NO_STOCK" && variantAxes.length === 0 && (
           <div className="rounded-xl border border-border/50 overflow-hidden">
             <CollapseHeader label="Stock" open={stockOpen} onToggle={() => toggleSection("stock")} />
             {stockOpen && (
               <div className="p-4 space-y-3 border-t border-border/30">
 
                 {/* Fila 1: Punto de reposición + Cant. predeterminada */}
-                {variants.length === 0 && variantAxes.length === 0 && (
-                  <div className="grid grid-cols-2 gap-3">
-                    <TPField label="Punto de reposición" hint="Stock mínimo para alerta">
-                      <TPNumberInput
-                        value={draft.reorderPoint}
-                        onChange={(v) => set("reorderPoint", v)}
-                        decimals={2} min={0} placeholder="0,00"
-                      />
-                    </TPField>
-                    <TPField label="Cant. predeterminada">
-                      <TPNumberInput
-                        value={draft.defaultQuantity}
-                        onChange={(v) => set("defaultQuantity", v)}
-                        decimals={2} min={0} placeholder="0,00"
-                      />
-                    </TPField>
-                  </div>
-                )}
+                <div className="grid grid-cols-2 gap-3">
+                  <TPField label="Punto de reposición" hint="Stock mínimo para alerta">
+                    <TPNumberInput
+                      value={draft.reorderPoint}
+                      onChange={(v) => set("reorderPoint", v)}
+                      decimals={2} min={0} placeholder="0,00"
+                    />
+                  </TPField>
+                  <TPField label="Cant. predeterminada">
+                    <TPNumberInput
+                      value={draft.defaultQuantity}
+                      onChange={(v) => set("defaultQuantity", v)}
+                      decimals={2} min={0} placeholder="0,00"
+                    />
+                  </TPField>
+                </div>
 
                 {/* Fila 2: Cant. mínima + Cant. máxima */}
                 <div className="grid grid-cols-2 gap-3">
@@ -3115,20 +3388,13 @@ export default function ArticleModal({
                   </TPField>
                 </div>
 
-                {/* Fila 3: Existencia de apertura (ancho completo) */}
-                {variants.length === 0 && variantAxes.length === 0 && !hasMovements && (
-                  <TPField
-                    label="Existencia de apertura"
-                    hint={isEdit
-                      ? "Cantidad inicial antes del primer movimiento de inventario."
-                      : "Cantidad inicial con la que ingresa este artículo al sistema."}
-                  >
-                    <TPNumberInput
-                      value={draft.openingStock}
-                      onChange={(v) => set("openingStock", v)}
-                      decimals={4} min={0} placeholder="0"
-                    />
-                  </TPField>
+                {/* Nota: el stock inicial se registra mediante un movimiento de Apertura */}
+                {(!isEdit || (simpleArticleStockLoaded && !simpleArticleHasRecord)) && (
+                  <div className="col-span-2 rounded-xl border border-border bg-surface2/20 px-3 py-2.5 text-xs text-muted">
+                    El stock inicial se registra desde{" "}
+                    <span className="font-semibold text-text">Movimientos de artículos</span>{" "}
+                    mediante un movimiento de <span className="font-semibold text-text">Apertura</span>.
+                  </div>
                 )}
               </div>
             )}
@@ -3241,29 +3507,35 @@ export default function ArticleModal({
                         className="h-8 w-full flex items-center gap-1.5 px-2 rounded border border-border bg-surface2/40 hover:border-primary/50 transition text-left"
                       >
                         <Ruler size={11} className="text-muted shrink-0" />
-                        <span className="text-xs font-semibold truncate">{draft.unitOfMeasure || "—"}</span>
+                        <span className="text-xs font-semibold truncate">{draft.dimensionUnit || "—"}</span>
                       </button>
                       {unitPickerOpen === "dimension" && (
-                        <div className="absolute top-full left-0 mt-1 z-50 min-w-[120px] rounded-lg border border-border bg-surface shadow-lg py-1 max-h-48 overflow-y-auto">
-                          {unitItems.filter(u => u.isActive !== false).map(u => (
+                        <div className="absolute top-full left-0 mt-1 z-50 min-w-[140px] rounded-lg border border-border bg-surface shadow-lg py-1 max-h-48 overflow-y-auto">
+                          {lengthUnits.filter(u => u.isActive).map(u => (
                             <div key={u.id} className="flex items-center gap-1 px-2 hover:bg-surface2 transition">
                               <button
                                 type="button"
-                                onMouseDown={() => { set("unitOfMeasure", u.label); setUnitPickerOpen(null); }}
-                                className={cn("flex-1 text-left py-1.5 text-xs", draft.unitOfMeasure === u.label && "text-primary font-semibold")}
+                                onMouseDown={() => { set("dimensionUnit", u.code); setUnitPickerOpen(null); }}
+                                className={cn("flex-1 text-left py-1.5 text-xs", draft.dimensionUnit === u.code && "text-primary font-semibold")}
                               >
-                                {u.label}
+                                {u.name} <span className="text-muted">({u.code})</span>
                               </button>
                               <button
                                 type="button"
                                 title={u.isFavorite ? "Quitar de favoritos" : "Marcar como favorito"}
-                                onMouseDown={(e) => { e.preventDefault(); if (!u.isFavorite) set("unitOfMeasure", u.label); void toggleCatalogFavorite(u.id, !!u.isFavorite, setUnitItems); }}
+                                onMouseDown={(e) => { e.preventDefault(); if (!u.isFavorite) set("dimensionUnit", u.code); void toggleUnitFavorite(u.id, !!u.isFavorite, setLengthUnits); }}
                                 className={cn("shrink-0 transition-colors", u.isFavorite ? "text-yellow-400" : "text-muted/20 hover:text-yellow-400")}
                               >
                                 <Star size={11} className={u.isFavorite ? "fill-yellow-400" : ""} />
                               </button>
                             </div>
                           ))}
+                          {/* Preserva valor legacy si no existe en lengthUnits */}
+                          {draft.dimensionUnit && !lengthUnits.some(u => u.code === draft.dimensionUnit) && (
+                            <div className="px-2 py-1.5 text-[11px] text-muted italic border-t border-border/30">
+                              {draft.dimensionUnit} (legacy)
+                            </div>
+                          )}
                         </div>
                       )}
                     </div>
@@ -3302,26 +3574,32 @@ export default function ArticleModal({
                         <span className="text-xs font-semibold truncate">{draft.weightUnit || "—"}</span>
                       </button>
                       {unitPickerOpen === "weight" && (
-                        <div className="absolute top-full left-0 mt-1 z-50 min-w-[120px] rounded-lg border border-border bg-surface shadow-lg py-1 max-h-48 overflow-y-auto">
-                          {multiplierBaseItems.filter(u => u.isActive !== false).map(u => (
+                        <div className="absolute top-full left-0 mt-1 z-50 min-w-[140px] rounded-lg border border-border bg-surface shadow-lg py-1 max-h-48 overflow-y-auto">
+                          {weightUnits.filter(u => u.isActive).map(u => (
                             <div key={u.id} className="flex items-center gap-1 px-2 hover:bg-surface2 transition">
                               <button
                                 type="button"
-                                onMouseDown={() => { set("weightUnit", u.label); setUnitPickerOpen(null); }}
-                                className={cn("flex-1 text-left py-1.5 text-xs", draft.weightUnit === u.label && "text-primary font-semibold")}
+                                onMouseDown={() => { set("weightUnit", u.code); setUnitPickerOpen(null); }}
+                                className={cn("flex-1 text-left py-1.5 text-xs", draft.weightUnit === u.code && "text-primary font-semibold")}
                               >
-                                {u.label}
+                                {u.name} <span className="text-muted">({u.code})</span>
                               </button>
                               <button
                                 type="button"
                                 title={u.isFavorite ? "Quitar de favoritos" : "Marcar como favorito"}
-                                onMouseDown={(e) => { e.preventDefault(); if (!u.isFavorite) set("weightUnit", u.label); void toggleCatalogFavorite(u.id, !!u.isFavorite, setMultiplierBaseItems); }}
+                                onMouseDown={(e) => { e.preventDefault(); if (!u.isFavorite) set("weightUnit", u.code); void toggleUnitFavorite(u.id, !!u.isFavorite, setWeightUnits); }}
                                 className={cn("shrink-0 transition-colors", u.isFavorite ? "text-yellow-400" : "text-muted/20 hover:text-yellow-400")}
                               >
                                 <Star size={11} className={u.isFavorite ? "fill-yellow-400" : ""} />
                               </button>
                             </div>
                           ))}
+                          {/* Preserva valor legacy si no existe en weightUnits */}
+                          {draft.weightUnit && !weightUnits.some(u => u.code === draft.weightUnit) && (
+                            <div className="px-2 py-1.5 text-[11px] text-muted italic border-t border-border/30">
+                              {draft.weightUnit} (legacy)
+                            </div>
+                          )}
                         </div>
                       )}
                     </div>
@@ -3339,12 +3617,18 @@ export default function ArticleModal({
           <CollapseHeader label="Notas y opciones" open={notasOpen} onToggle={() => toggleSection("notas")} />
           {notasOpen && (
             <div className="p-4 border-t border-border/30">
-              <TPField label="Notas internas">
+              <TPField
+                label="Notas generales del artículo"
+                hint={axesAreReady && variantAxes.length > 0
+                  ? "Este artículo usa variantes. Las notas específicas deben cargarse en cada variante."
+                  : undefined}
+              >
                 <TPTextarea
                   value={draft.notes}
                   onChange={(v) => set("notes", v)}
                   rows={2}
                   placeholder="Notas internas (no visible al cliente)"
+                  disabled={axesAreReady && variantAxes.length > 0}
                 />
               </TPField>
             </div>
@@ -3594,10 +3878,16 @@ export default function ArticleModal({
                   >
                     <TPComboFixed
                       value={draft.categoryId}
-                      onChange={(v) => set("categoryId", v)}
+                      onChange={(v) => void handleCategoryChange(v)}
                       options={categoryOptions}
                       searchable
+                      disabled={conversionCheckBusy}
                     />
+                    {draft.commercialMode === "COMBO_COMMERCIAL" && (
+                      <p className="mt-1 text-[10px] leading-tight text-muted/70">
+                        Los combos comerciales no usan categorías con variantes. Seleccioná una categoría sin ejes o dejá Sin categoría.
+                      </p>
+                    )}
                   </TPField>
                 )}
                 <GroupPickerField
@@ -3639,8 +3929,10 @@ export default function ArticleModal({
               {/* Separador visual */}
               <div className="border-t border-border/40" />
 
-              {/* Config 2×2: Tipo / Estado / StockMode / ReorderPoint */}
-              <div className="grid grid-cols-3 gap-2">
+              {/* Config: Tipo / Modo de venta / Modo de stock / Estado / Unidades.
+                  Cuando articleType=PRODUCT son 5 campos en línea (grid-cols-5);
+                  cuando es SERVICE/MATERIAL "Modo de venta" no aplica → 4 campos (grid-cols-4). */}
+              <div className={cn("grid gap-2", draft.articleType === "PRODUCT" ? "grid-cols-5" : "grid-cols-4")}>
                 <TPField label="Tipo">
                   <TPComboFixed
                     value={draft.articleType}
@@ -3649,15 +3941,45 @@ export default function ArticleModal({
                     onSetFavorite={handleSetDefaultArticleType}
                   />
                 </TPField>
+                {draft.articleType === "PRODUCT" && (
+                  <TPField
+                    label="Modo de venta"
+                    hint="Combo comercial: precio y stock derivan de los componentes"
+                  >
+                    <TPComboFixed
+                      value={draft.commercialMode}
+                      onChange={(v) => {
+                        const next = v as ArticleCommercialMode;
+                        set("commercialMode", next);
+                        // Cuando se entra a COMBO_COMMERCIAL → forzar Sin stock (combo no tiene stock propio).
+                        // Cuando se sale a NORMAL → volver a Por artículo (default razonable para producto normal).
+                        // Esto evita que quede heredado "Sin stock" al alternar entre modos.
+                        set("stockMode", next === "COMBO_COMMERCIAL" ? "NO_STOCK" : "BY_ARTICLE");
+                      }}
+                      options={[
+                        { value: "NORMAL",           label: "Producto normal" },
+                        { value: "COMBO_COMMERCIAL", label: "Combo comercial" },
+                      ]}
+                      onSetFavorite={handleSetDefaultCommercialMode}
+                      favoriteValue={defaultCommercialMode}
+                    />
+                  </TPField>
+                )}
                 <TPField
                   label="Modo de stock"
-                  hint={draft.articleType === "SERVICE" ? "Los servicios no manejan stock" : undefined}
+                  hint={
+                    draft.commercialMode === "COMBO_COMMERCIAL"
+                      ? "Bloqueado: los combos no manejan stock propio"
+                      : draft.articleType === "SERVICE"
+                        ? "Los servicios no manejan stock"
+                        : undefined
+                  }
                 >
                   <TPComboFixed
-                    value={draft.stockMode}
+                    value={draft.commercialMode === "COMBO_COMMERCIAL" ? "NO_STOCK" : draft.stockMode}
                     onChange={(v) => set("stockMode", v as StockMode)}
                     options={stockModeOptions}
-                    disabled={draft.articleType === "SERVICE"}
+                    disabled={draft.articleType === "SERVICE" || draft.commercialMode === "COMBO_COMMERCIAL"}
                     onSetFavorite={handleSetDefaultStockMode}
                     favoriteValue={defaultStockMode}
                   />
@@ -3671,14 +3993,27 @@ export default function ArticleModal({
                     favoriteValue={defaultStatus}
                   />
                 </TPField>
+                <TPField label="Unidades" hint="Cantidad o peso, según cómo se vende.">
+                  <TPComboFixed
+                    value={draft.unitOfMeasure || ""}
+                    onChange={(v) => set("unitOfMeasure", v)}
+                    options={unitOfMeasureOptions}
+                    searchable
+                  />
+                </TPField>
               </div>
+
 
             </div>
           </div>
         </div>
 
         {/* ── Código de barras CUSTOM (condicional) ─────────────────── */}
-        {draft.barcodeSource === "CUSTOM" && (
+        {/* Solo se muestra cuando el padre tiene código propio escaneable.
+            Si la categoría exige variantes o sellWithoutVariants=false, el
+            padre no se vende y mostramos en su lugar la guía a la pestaña
+            Variantes (cada variante tiene su propio código). */}
+        {parentHasPrintableCode && draft.barcodeSource === "CUSTOM" && (
           <div className="rounded-lg border border-border bg-surface2 p-4 space-y-3">
             <div>
               <p className="text-sm font-medium text-foreground">Código que se imprimirá y escaneará</p>
@@ -3713,10 +4048,29 @@ export default function ArticleModal({
             </TPField>
           </div>
         )}
+        {!parentHasPrintableCode && (
+          <div className="rounded-xl border border-amber-500/20 bg-amber-500/5 p-4 flex items-start gap-3">
+            <Info size={16} className="text-amber-500 shrink-0 mt-0.5" />
+            <p className="text-sm text-text">
+              Cada variante tiene su propio código a imprimir en la pestaña <span className="font-medium">Variantes</span>.
+            </p>
+          </div>
+        )}
 
         {/* ── Atributos de categoría (condicional) ──────────────────── */}
         {draft.categoryId && artAttrs.length > 0 && (
           <TPCard title="Atributos de categoría" bodyClassName="pt-3">
+            {hasMissingRequired && (
+              <div className="flex items-start gap-2 rounded-lg bg-amber-500/10 border border-amber-500/20 px-3 py-2 text-xs text-amber-700 dark:text-amber-400 mb-3">
+                <AlertCircle size={13} className="shrink-0 mt-0.5" />
+                <span>
+                  {missingRequiredAttrs.length === 1
+                    ? <>El atributo <strong>{missingRequiredAttrs[0].definition.name}</strong> es obligatorio para esta categoría.</>
+                    : <>Completá los <strong>{missingRequiredAttrs.length} atributos obligatorios</strong> de la categoría para poder guardar.</>
+                  }
+                </span>
+              </div>
+            )}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               {artAttrs.map(attr => (
                 <TPField
@@ -3788,7 +4142,7 @@ export default function ArticleModal({
                   <button key={src} type="button"
                     onClick={() => {
                       set("barcodeSource", src);
-                      localStorage.setItem("tptech.article.barcodeSource.last", src);
+                      if (!isEdit) localStorage.setItem("tptech.article.barcodeSource.last", src);
                     }}
                     className={cn(
                       "w-full text-left px-4 py-3 rounded-lg border transition-colors",
@@ -3867,12 +4221,19 @@ export default function ArticleModal({
       label:          type === "HECHURA" ? "Precio / Hechura" : "",
       quantity:       1,
       quantityUnit:   type === "HECHURA"
-        ? (multiplierBaseItems.find(w => w.isFavorite && w.isActive !== false)?.label ?? defaultQuantityUnit(type))
+        ? (weightUnits.find(w => w.isFavorite && w.isActive)?.code ?? defaultQuantityUnit(type))
         : defaultQuantityUnit(type),
       unitValue:      type === "METAL" ? (metalVariants.find(m => m.isFavorite)?.finalSalePrice != null ? Number(metalVariants.find(m => m.isFavorite)!.finalSalePrice) : 0) : 0,
       currencyId:     null,
-      mermaPercent:   type === "METAL" ? (draft.mermaPercent ?? null) : null,
+      mermaPercent:   (() => {
+        if (type !== "METAL") return null;
+        const favSf = metalVariants.find(m => m.isFavorite)?.saleFactor;
+        if (favSf != null && Math.abs(favSf - 1) > 0.000001)
+          return Math.round((favSf - 1) * 10000) / 100;
+        return draft.mermaPercent ?? null;
+      })(),
       metalVariantId: type === "METAL" ? (metalVariants.find(m => m.isFavorite)?.id ?? null) : null,
+      affectsStock:   type === "PRODUCT",
       sortOrder:      costLines.length,
       lineAdjKind:    "",
       lineAdjType:    "",
@@ -3915,20 +4276,7 @@ export default function ArticleModal({
           const dropLine = (i: number) => {
             setConfirmDropIdx(i);
           };
-          const calcLine = (line: CostLine): number => {
-            if (!line.quantity || !line.unitValue) return 0;
-            let raw = line.type === "METAL"
-              ? line.quantity * (1 + (line.mermaPercent ?? 0) / 100) * line.unitValue
-              : line.quantity * line.unitValue;
-            if (line.type !== "METAL") raw = applyLineAdj(raw, line.lineAdjKind ?? "", line.lineAdjType ?? "", line.lineAdjValue ?? null);
-            const currId = line.currencyId ?? baseCurrencyId;
-            if (currId !== baseCurrencyId) {
-              const curr = currencyOptions.find(c => c.id === currId);
-              if (curr?.latestRate != null) raw = raw * curr.latestRate;
-              else return 0;
-            }
-            return raw;
-          };
+          const calcLine = (line: CostLine) => calcCostLine(line, currencyOptions, baseCurrencyId);
 
           const metalLinesIdx   = costLines.map((l, i) => ({ line: l, i })).filter(({ line }) => line.type === "METAL");
           const hechuraLinesIdx = costLines.map((l, i) => ({ line: l, i })).filter(({ line }) => line.type === "HECHURA");
@@ -3963,20 +4311,24 @@ export default function ArticleModal({
           const finalCost    = adjustedCost + taxAmount;
           const selSym       = baseCurrencySymbol;
 
-          // Chip de tipo de línea
-          const TYPE_CHIP: Record<string, { label: string; cls: string }> = {
-            METAL:   { label: "Metal",    cls: "bg-amber-500/15 text-amber-600 dark:text-amber-400" },
-            HECHURA: { label: "Hechura",  cls: "bg-blue-500/15 text-blue-600 dark:text-blue-400"   },
-            PRODUCT: { label: "Producto", cls: "bg-violet-500/15 text-violet-600 dark:text-violet-400" },
-            SERVICE: { label: "Servicio", cls: "bg-green-500/15 text-green-600 dark:text-green-400" },
+          // Callback para marcar variante de metal como favorita
+          const handleSetMetalFavorite = async (variantId: string) => {
+            const mv = metalVariants.find(m => m.id === variantId);
+            if (!mv) return;
+            const wasFav = mv.isFavorite;
+            const prevVariants = metalVariants;
+            setMetalVariants(prev => prev.map(m => ({
+              ...m,
+              isFavorite: m.metalId === mv.metalId ? m.id === variantId && !wasFav : m.isFavorite,
+            })));
+            try {
+              if (!wasFav) await setFavoriteVariant(variantId, mv.metalId);
+              else await clearFavoriteVariant(mv.metalId);
+            } catch {
+              setMetalVariants(prevVariants);
+              toast.error("No se pudo actualizar el favorito");
+            }
           };
-          const SUBTOTAL_COLOR: Record<string, string> = {
-            METAL:   "text-amber-600 dark:text-amber-400",
-            HECHURA: "text-blue-600 dark:text-blue-400",
-            PRODUCT: "text-violet-600 dark:text-violet-400",
-            SERVICE: "text-green-600 dark:text-green-400",
-          };
-          // ROW_BG se usa en SortableCostLineRow (módulo level: COST_ROW_BG)
 
           return (
             <div className="space-y-2">
@@ -4012,13 +4364,30 @@ export default function ArticleModal({
                 </div>
               )}
 
+              {/* Aviso "sin stock propio" — solo cuando el artículo es combo comercial.
+                  Se renderiza arriba de la composición porque la composición ES la lista de
+                  componentes del combo en este modo. */}
+              {draft.commercialMode === "COMBO_COMMERCIAL" && (
+                <div className="rounded-lg border border-amber-500/30 bg-amber-50 dark:bg-amber-950/20 px-3 py-2 text-xs text-amber-800 dark:text-amber-300 flex items-start gap-2">
+                  <Package size={14} className="shrink-0 mt-0.5" />
+                  <div>
+                    <strong>Este combo no tiene stock propio.</strong> Al venderlo se descontará
+                    automáticamente el stock de cada uno de sus componentes según la cantidad indicada.
+                  </div>
+                </div>
+              )}
+
               {/* ── TABLA DE LÍNEAS ───────────────────────────────── */}
               <div className="rounded-xl border border-border overflow-hidden">
 
                 {/* Header con botones de agregar */}
                 <div className="flex items-center justify-between gap-2 px-3 py-2 bg-surface2/40 border-b border-border/60">
                   <div className="flex items-center gap-1.5">
-                    <span className="text-xs font-semibold text-text">Composición de costo</span>
+                    <span className="text-xs font-semibold text-text">
+                      {draft.commercialMode === "COMBO_COMMERCIAL"
+                        ? "Composición del combo"
+                        : "Composición de costo"}
+                    </span>
                     {costLines.length > 0 && (
                       <span className="inline-flex items-center justify-center h-4 min-w-4 px-1 rounded-full bg-primary/15 text-[10px] font-bold text-primary">
                         {costLines.length}
@@ -4026,15 +4395,20 @@ export default function ArticleModal({
                     )}
                   </div>
                   <div className="flex items-center gap-1 flex-wrap justify-end">
-                    {metalLinesIdx.some(({ line }) => line.metalVariantId) && (
+                    {metalLinesIdx.some(({ line }) => line.metalVariantId) && draft.commercialMode !== "COMBO_COMMERCIAL" && (
                       <button type="button" onClick={updateMetalPrices}
                         className="inline-flex items-center gap-1 px-2 py-0.5 text-[11px] rounded-md border transition bg-amber-500/10 border-amber-500/30 text-amber-500 hover:bg-amber-500/20">
                         <RefreshCw size={9} />
                         Actualizar
                       </button>
                     )}
-                    {(["METAL","HECHURA","PRODUCT","SERVICE"] as CostLineType[]).map((type) => {
-                      const cfg = TYPE_CHIP[type];
+                    {(draft.commercialMode === "COMBO_COMMERCIAL"
+                      ? ["PRODUCT"] as CostLineType[]               // combo: solo +Producto
+                      : isService
+                        ? ["HECHURA","SERVICE"] as CostLineType[]
+                        : ["METAL","HECHURA","PRODUCT","SERVICE"] as CostLineType[]
+                    ).map((type) => {
+                      const cfg = COST_TYPE_CHIP[type];
                       return (
                         <button key={type} type="button" onClick={() => addCostLine(type)}
                           className={cn(
@@ -4049,335 +4423,59 @@ export default function ArticleModal({
                   </div>
                 </div>
 
-                {/* Tabla de líneas */}
+                {/* Grilla de líneas de costo */}
                 {costLines.length === 0 ? (
                   <div className="px-4 py-8 text-center">
-                    <p className="text-sm text-muted">Sin líneas de costo. Usá los botones de arriba para agregar metal, hechura u otros costos.</p>
+                    <p className="text-sm text-muted">
+                      {draft.commercialMode === "COMBO_COMMERCIAL"
+                        ? "Sin componentes. Usá el botón \"+ Producto\" para agregar artículos al combo."
+                        : "Sin líneas de costo. Usá los botones de arriba para agregar metal, hechura u otros costos."}
+                    </p>
                   </div>
                 ) : (
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-xs min-w-[600px]">
-                      <thead>
-                        <tr className="border-b border-border/50 bg-surface2/20">
-                          <th className="w-6"></th>
-                          <th className="pl-[18px] pr-[9px] py-1.5 text-left text-[10px] font-semibold text-muted/70 uppercase tracking-wider whitespace-nowrap w-[70px]">Tipo</th>
-                          <th className="pl-[9px] pr-[18px] py-1.5 text-left text-[10px] font-semibold text-muted/70 uppercase tracking-wider whitespace-nowrap w-[44px]">Mon.</th>
-                          <th className="px-[18px] py-1.5 text-left text-[10px] font-semibold text-muted/70 uppercase tracking-wider w-[160px]">Descripción / Variante</th>
-                          <th className="px-[18px] py-1.5 text-left text-[10px] font-semibold text-muted/70 uppercase tracking-wider whitespace-nowrap w-[80px]">Cant.</th>
-                          <th className="px-[18px] py-1.5 text-left text-[10px] font-semibold text-muted/70 uppercase tracking-wider whitespace-nowrap w-[110px]">Precio unit.</th>
-                          <th className="px-[18px] py-1.5 text-left text-[10px] font-semibold text-muted/70 uppercase tracking-wider whitespace-nowrap w-[130px]">Bonif. / Recargo</th>
-                          <th className="px-[18px] py-1.5 text-right text-[10px] font-semibold text-muted/70 uppercase tracking-wider whitespace-nowrap w-[110px]">Subtotal</th>
-                          <th className="w-8"></th>
-                        </tr>
-                      </thead>
-                      <DndContext sensors={dndSensors} collisionDetection={closestCenter} onDragEnd={handleCostLineDragEnd}>
-                        <SortableContext items={costLines.map(l => l.id!)} strategy={verticalListSortingStrategy}>
-                      <tbody className="divide-y divide-border/30">
-                        {costLines.map((line, i) => {
-                          const isMetal    = line.type === "METAL";
-                          const lineTotal  = calcLine(line);
-                          const currForLine = currencyOptions.find(c => c.id === (line.currencyId ?? baseCurrencyId)) ?? currencyOptions.find(c => c.isBase);
-                          const chip = TYPE_CHIP[line.type] ?? { label: line.type, cls: "bg-surface2 text-muted" };
-                          return (
-                            <SortableCostLineRow key={line.id ?? i} id={line.id!} type={line.type}>
-
-                              {/* Tipo */}
-                              <td className="pl-[18px] pr-[9px] py-1.5 align-middle">
-                                <span className={cn("inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold leading-none", chip.cls)}>
-                                  {chip.label}
-                                </span>
-                              </td>
-
-                              {/* Moneda */}
-                              <td className="pl-[9px] pr-[18px] py-1.5 align-middle">
-                                <TPComboFixed
-                                  value={line.currencyId ?? baseCurrencyId}
-                                  onChange={(v) => {
-                                    const newCurrId  = v || null;
-                                    const oldRate    = currencyOptions.find(c => c.id === (line.currencyId ?? baseCurrencyId))?.latestRate ?? 1;
-                                    const newRate    = currencyOptions.find(c => c.id === (newCurrId    ?? baseCurrencyId))?.latestRate ?? 1;
-                                    const inBase     = line.unitValue * oldRate;
-                                    const converted  = newRate ? Math.round((inBase / newRate) * 10000) / 10000 : line.unitValue;
-                                    patchLine(i, { currencyId: newCurrId, unitValue: converted });
-                                  }}
-                                  options={currencyOptions.map(c => ({ value: c.id, label: c.code }))}
-                                />
-                              </td>
-
-                              {/* Descripción / Variante */}
-                              <td className="px-[18px] py-1.5 align-middle">
-                                {isMetal ? (
-                                  <TPComboFixed
-                                    value={line.metalVariantId ?? ""}
-                                    onChange={(v) => {
-                                      const mv = metalVariantOptions.find(m => m.id === v);
-                                      // latestQuotePrice está en moneda base; si la línea ya tiene otra moneda, convertir
-                                      let unitValue = mv?.latestQuotePrice ?? line.unitValue;
-                                      if (mv?.latestQuotePrice != null && line.currencyId && line.currencyId !== baseCurrencyId) {
-                                        const lineRate = currencyOptions.find(c => c.id === line.currencyId)?.latestRate ?? 1;
-                                        if (lineRate) unitValue = Math.round((mv.latestQuotePrice / lineRate) * 10000) / 10000;
-                                      }
-                                      patchLine(i, { metalVariantId: v || null, unitValue });
-                                    }}
-                                    options={[
-                                      { value: "", label: "Seleccionar variante…" },
-                                      ...metalVariantOptions.map(mv => ({ value: mv.id, label: mv.label, isFavorite: mv.isFavorite })),
-                                    ]}
-                                    searchable
-                                    favoriteValue={metalVariants.find(m => m.isFavorite)?.id}
-                                    onSetFavorite={async (variantId) => {
-                                      const mv = metalVariants.find(m => m.id === variantId);
-                                      if (!mv) return;
-                                      const wasFav = mv.isFavorite;
-                                      const prevVariants = metalVariants;
-                                      setMetalVariants(prev => prev.map(m => ({
-                                        ...m,
-                                        isFavorite: m.metalId === mv.metalId
-                                          ? m.id === variantId && !wasFav
-                                          : m.isFavorite,
-                                      })));
-                                      try {
-                                        if (!wasFav) {
-                                          await setFavoriteVariant(variantId, mv.metalId);
-                                        } else {
-                                          await clearFavoriteVariant(mv.metalId);
-                                        }
-                                      } catch {
-                                        setMetalVariants(prevVariants);
-                                        toast.error("No se pudo actualizar el favorito");
-                                      }
-                                    }}
-                                  />
-                                ) : line.type === "PRODUCT" ? (
-                                  <TPComboFixed
-                                    value={line.catalogItemId ?? ""}
-                                    onChange={(v) => {
-                                      const item = productItems.find(p => p.id === v);
-                                      if (!item) { patchLine(i, { label: v, catalogItemId: null }); return; }
-                                      let unitValue  = item.costPrice ?? line.unitValue;
-                                      let currencyId = item.manualCurrencyId ?? line.currencyId;
-                                      // Si el usuario ya eligió moneda, convertir precio del artículo a esa moneda
-                                      if (line.currencyId && item.costPrice != null) {
-                                        const itemRate = currencyOptions.find(c => c.id === (item.manualCurrencyId ?? baseCurrencyId))?.latestRate ?? 1;
-                                        const lineRate = currencyOptions.find(c => c.id === line.currencyId)?.latestRate ?? 1;
-                                        const inBase   = item.costPrice * itemRate;
-                                        unitValue  = lineRate ? Math.round((inBase / lineRate) * 10000) / 10000 : inBase;
-                                        currencyId = line.currencyId;
-                                      }
-                                      patchLine(i, { label: item.name ?? v, catalogItemId: item.id, unitValue, currencyId });
-                                    }}
-                                    options={[
-                                      { value: "", label: "Seleccionar producto…" },
-                                      ...productItems.map(p => ({ value: p.id, label: p.name })),
-                                    ]}
-                                    searchable
-                                  />
-                                ) : line.type === "SERVICE" ? (
-                                  <TPComboFixed
-                                    value={line.catalogItemId ?? ""}
-                                    onChange={(v) => {
-                                      const item = serviceItems.find(s => s.id === v);
-                                      if (!item) { patchLine(i, { label: v, catalogItemId: null }); return; }
-                                      let unitValue  = item.costPrice ?? line.unitValue;
-                                      let currencyId = item.manualCurrencyId ?? line.currencyId;
-                                      // Si el usuario ya eligió moneda, convertir precio del artículo a esa moneda
-                                      if (line.currencyId && item.costPrice != null) {
-                                        const itemRate = currencyOptions.find(c => c.id === (item.manualCurrencyId ?? baseCurrencyId))?.latestRate ?? 1;
-                                        const lineRate = currencyOptions.find(c => c.id === line.currencyId)?.latestRate ?? 1;
-                                        const inBase   = item.costPrice * itemRate;
-                                        unitValue  = lineRate ? Math.round((inBase / lineRate) * 10000) / 10000 : inBase;
-                                        currencyId = line.currencyId;
-                                      }
-                                      patchLine(i, { label: item.name ?? v, catalogItemId: item.id, unitValue, currencyId });
-                                    }}
-                                    options={[
-                                      { value: "", label: "Seleccionar servicio…" },
-                                      ...serviceItems.map(s => ({ value: s.id, label: s.name })),
-                                    ]}
-                                    searchable
-                                  />
-                                ) : (
-                                  <TPInput
-                                    value={line.label}
-                                    onChange={(v) => patchLine(i, { label: v })}
-                                    placeholder="Precio / Hechura…"
-                                  />
-                                )}
-                              </td>
-
-                              {/* Cantidad */}
-                              <td className="px-[18px] py-1.5 align-middle">
-                                <div className="flex items-center gap-1">
-                                  <div className="flex-1 min-w-0">
-                                    <TPNumberInput
-                                      value={line.quantity}
-                                      onChange={(v) => patchLine(i, { quantity: v ?? 0 })}
-                                      decimals={2}
-                                      step={isMetal ? 0.1 : undefined}
-                                      min={0}
-                                    />
-                                  </div>
-                                  {line.type === "HECHURA" && (() => {
-                                    const pickerId = `qty-${line.id}`;
-                                    return (
-                                      <div
-                                        className="relative shrink-0"
-                                        onBlur={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node)) setUnitPickerOpen(null); }}
-                                      >
-                                        <button
-                                          type="button"
-                                          onClick={(e) => {
-                                            const rect = (e.currentTarget as HTMLButtonElement).getBoundingClientRect();
-                                            setUnitPickerPos({ top: rect.bottom + 4, left: rect.left, width: Math.max(rect.width, 120) });
-                                            setUnitPickerOpen(v => v === pickerId ? null : pickerId);
-                                          }}
-                                          className="h-7 px-1.5 flex items-center rounded border border-border bg-transparent text-[10px] font-bold text-muted hover:text-text hover:border-primary/50 transition"
-                                          title="Unidad de cantidad"
-                                        >
-                                          {line.quantityUnit || "u"}
-                                        </button>
-                                        {unitPickerOpen === pickerId && ReactDOM.createPortal(
-                                          <div
-                                            style={{ position: "fixed", top: unitPickerPos.top, left: unitPickerPos.left, minWidth: unitPickerPos.width, zIndex: 9999 }}
-                                            className="rounded-lg border border-border bg-surface shadow-lg py-1 max-h-48 overflow-y-auto"
-                                          >
-                                            {multiplierBaseItems.filter(w => w.isActive !== false).map(w => (
-                                              <div key={w.id} className="flex items-center gap-1 px-2 hover:bg-surface2 transition">
-                                                <button
-                                                  type="button"
-                                                  onMouseDown={() => { patchLine(i, { quantityUnit: w.label as QuantityUnit }); setUnitPickerOpen(null); }}
-                                                  className={cn("flex-1 text-left py-1.5 text-xs", line.quantityUnit === w.label && "text-primary font-semibold")}
-                                                >
-                                                  {w.label}
-                                                </button>
-                                                <button
-                                                  type="button"
-                                                  title={w.isFavorite ? "Quitar de favoritos" : "Marcar como favorito"}
-                                                  onMouseDown={(e) => {
-                                                    e.preventDefault();
-                                                    if (!w.isFavorite) patchLine(i, { quantityUnit: w.label as QuantityUnit });
-                                                    void toggleCatalogFavorite(w.id, !!w.isFavorite, setMultiplierBaseItems);
-                                                  }}
-                                                  className={cn("shrink-0 transition-colors", w.isFavorite ? "text-yellow-400" : "text-muted/20 hover:text-yellow-400")}
-                                                >
-                                                  <Star size={11} className={w.isFavorite ? "fill-yellow-400" : ""} />
-                                                </button>
-                                              </div>
-                                            ))}
-                                          </div>,
-                                          document.body
-                                        )}
-                                      </div>
-                                    );
-                                  })()}
-                                </div>
-                              </td>
-
-
-                              {/* Precio unitario */}
-                              <td className="px-[18px] py-1.5 align-middle">
-                                <TPNumberInput
-                                  value={line.unitValue}
-                                  onChange={(v) => patchLine(i, { unitValue: v ?? 0 })}
-                                  decimals={2}
-                                  min={0}
-                                  leftIcon={<span className="text-[10px] font-semibold text-muted">{currForLine?.symbol ?? selSym}</span>}
-                                />
-                              </td>
-
-                              {/* Bonif. / Recargo — oculto para METAL */}
-                              <td className="px-[18px] py-1.5 align-middle">
-                                {line.type !== "METAL" ? (
-                                  <div className="flex items-center gap-1">
-                                    {/* ± toggle: "" → BONUS → SURCHARGE → "" */}
-                                    <button
-                                      type="button"
-                                      onClick={() => {
-                                        if (line.lineAdjKind === "")          patchLine(i, { lineAdjKind: "BONUS",     lineAdjType: line.lineAdjType || "PERCENTAGE" });
-                                        else if (line.lineAdjKind === "BONUS")     patchLine(i, { lineAdjKind: "SURCHARGE" });
-                                        else                                        patchLine(i, { lineAdjKind: "",         lineAdjType: "", lineAdjValue: null });
-                                      }}
-                                      className={cn(
-                                        "shrink-0 h-7 w-7 rounded border text-[11px] font-bold transition grid place-items-center",
-                                        line.lineAdjKind === "BONUS"     && "border-emerald-500/50 text-emerald-500 bg-emerald-500/5",
-                                        line.lineAdjKind === "SURCHARGE" && "border-amber-500/50 text-amber-500 bg-amber-500/5",
-                                        line.lineAdjKind === ""          && "border-border/50 text-muted/35",
-                                      )}
-                                      title="Bonificación (−) / Recargo (+)"
-                                    >
-                                      {line.lineAdjKind === "SURCHARGE" ? "+" : line.lineAdjKind === "BONUS" ? "−" : "±"}
-                                    </button>
-                                    <div className="flex-1 min-w-0">
-                                      <TPNumberInput
-                                        value={line.lineAdjValue}
-                                        onChange={(v) => patchLine(i, { lineAdjValue: v ?? null })}
-                                        decimals={2}
-                                        min={0}
-                                        disabled={line.lineAdjKind === ""}
-                                      />
-                                    </div>
-                                    {/* %/$ toggle */}
-                                    <button
-                                      type="button"
-                                      onClick={() => patchLine(i, {
-                                        lineAdjType: (line.lineAdjType || "PERCENTAGE") === "PERCENTAGE" ? "FIXED_AMOUNT" : "PERCENTAGE",
-                                      })}
-                                      disabled={line.lineAdjKind === ""}
-                                      className={cn(
-                                        "shrink-0 h-7 w-7 rounded border text-[10px] font-bold transition grid place-items-center",
-                                        line.lineAdjKind !== ""
-                                          ? "border-border text-muted hover:text-text hover:border-primary/50"
-                                          : "border-border/30 text-muted/25 cursor-default",
-                                      )}
-                                      title="Cambiar entre % y monto fijo"
-                                    >
-                                      {(line.lineAdjType || "PERCENTAGE") === "PERCENTAGE" ? "%" : "$"}
-                                    </button>
-                                  </div>
-                                ) : (
-                                  <span className="text-[10px] text-muted/30">—</span>
-                                )}
-                              </td>
-
-                              {/* Subtotal */}
-                              <td className="px-[18px] py-1.5 text-right align-middle">
-                                {lineTotal > 0 ? (
-                                  <div>
-                                    <span className={cn("tabular-nums font-bold text-sm", SUBTOTAL_COLOR[line.type] ?? "text-text")}>
-                                      {selSym} {fmtN(lineTotal)}
-                                    </span>
-                                    <div className="text-[10px] text-muted/50 tabular-nums">
-                                      {fmtN(line.quantity)} {line.quantityUnit} × {currForLine?.symbol ?? selSym} {fmtN(line.unitValue)}
-                                    </div>
-                                    {line.currencyId && line.currencyId !== baseCurrencyId && currForLine?.latestRate != null && (
-                                      <div className="text-[10px] text-muted/40 tabular-nums">
-                                        Resultado: {currForLine.symbol} {fmtN(lineTotal / currForLine.latestRate)}
-                                      </div>
-                                    )}
-                                  </div>
-                                ) : (
-                                  <span className="text-muted/30">—</span>
-                                )}
-                              </td>
-
-                              {/* Eliminar */}
-                              <td className="px-[18px] py-1.5 align-middle text-right">
-                                <TPIconButton
-                                  onClick={() => dropLine(i)}
-                                  className="opacity-0 group-hover:opacity-100 h-7 w-7 hover:text-red-400 hover:border-red-400/40 transition-all ml-auto"
-                                  title="Eliminar fila"
-                                >
-                                  <X size={13} />
-                                </TPIconButton>
-                              </td>
-                            </SortableCostLineRow>
-                          );
-                        })}
-                      </tbody>
-                        </SortableContext>
-                      </DndContext>
-                    </table>
-                  </div>
+                  <DndContext sensors={dndSensors} collisionDetection={closestCenter} onDragEnd={handleCostLineDragEnd}>
+                    <SortableContext items={costLines.map(l => l.id!)} strategy={verticalListSortingStrategy}>
+                      {/* Encabezado */}
+                      <div className={cn(COST_GRID, "px-2 py-1.5 bg-surface2/20 border-b border-border/50 text-[10px] font-semibold text-muted/70 uppercase tracking-wider whitespace-nowrap")}>
+                        <div></div>
+                        <div>Tipo</div>
+                        <div>Mon.</div>
+                        <div>Descripción / Variante</div>
+                        <div>Cant.</div>
+                        <div>Precio unit.</div>
+                        <div>Merma / Stock</div>
+                        <div>Bonif. / Recargo</div>
+                        <div className="text-right">Subtotal</div>
+                        <div></div>
+                      </div>
+                      {/* Filas */}
+                      <div className="divide-y divide-border/30 overflow-x-auto">
+                        {costLines.map((line, i) => (
+                          <SortableCostRow
+                            key={line.id ?? i}
+                            id={line.id!}
+                            line={line}
+                            baseCurrencyId={baseCurrencyId}
+                            selSym={selSym}
+                            metalVariants={metalVariants}
+                            metalVariantOptions={metalVariantOptions}
+                            currencyOptions={currencyOptions}
+                            productItems={productItems}
+                            serviceItems={serviceItems}
+                            weightUnits={weightUnits}
+                            onPatch={(patch) => patchLine(i, patch)}
+                            onRemove={() => dropLine(i)}
+                            onSetMetalFavorite={handleSetMetalFavorite}
+                            onToggleUnitFavorite={(itemId, isFav) => void toggleUnitFavorite(itemId, isFav, setWeightUnits)}
+                            isCombo={draft.commercialMode === "COMBO_COMMERCIAL"}
+                            getVariantsForArticle={getVariantsForArticle}
+                            loadVariantsForArticle={loadVariantsForArticle}
+                            submitted={submitted}
+                          />
+                        ))}
+                      </div>
+                    </SortableContext>
+                  </DndContext>
                 )}
 
                 {/* Advertencia: variante sin cotización */}
@@ -4423,10 +4521,19 @@ export default function ArticleModal({
               {/* ── AJUSTE + IMPUESTOS (lado a lado) ─────────────── */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
 
-                {/* Ajuste de costo */}
+                {/* Ajuste de costo (renombrado a "Ajuste del combo" cuando es combo
+                    para que el usuario entienda que se aplica sobre la suma de los productos
+                    incluidos en el combo, sin lógica de pricing paralela). */}
                 <div className="rounded-xl border border-border overflow-hidden">
-                  <div className="px-3 py-2 bg-surface2/40 border-b border-border/60">
-                    <span className="text-xs font-semibold text-text">Ajuste de costo</span>
+                  <div className="px-3 py-2 bg-surface2/40 border-b border-border/60 flex items-center justify-between gap-2">
+                    <span className="text-xs font-semibold text-text">
+                      {draft.commercialMode === "COMBO_COMMERCIAL" ? "Ajuste del combo" : "Ajuste de costo"}
+                    </span>
+                    {draft.commercialMode === "COMBO_COMMERCIAL" && (
+                      <span className="text-[10px] text-muted/70 italic">
+                        Se aplica sobre la suma de los productos del combo
+                      </span>
+                    )}
                   </div>
                   <div className="px-3 py-2 space-y-2">
                     <TPComboFixed
@@ -4580,12 +4687,16 @@ export default function ArticleModal({
                         </span>
                       </div>
                     )}
-                    {taxAmount > 0 && (
-                      <div className="flex items-center justify-between text-xs text-muted">
-                        <span>Impuestos ({fmtN(totalTaxPct)}%)</span>
-                        <span className="tabular-nums font-medium text-text">+ {selSym} {fmtN(taxAmount)}</span>
-                      </div>
-                    )}
+                    {taxAmount > 0 && selectedTaxes.map((t) => {
+                      const pct  = parseFloat(t.rate ?? "0");
+                      const amt  = adjustedCost * (pct / 100);
+                      return (
+                        <div key={t.id} className="flex items-center justify-between text-xs text-muted">
+                          <span>{t.name} ({fmtN(pct)}%)</span>
+                          <span className="tabular-nums font-medium text-text">+ {selSym} {fmtN(amt)}</span>
+                        </div>
+                      );
+                    })}
                   </div>
                   <div className="border-t border-primary/20 px-3 py-2 flex items-center justify-between gap-4">
                     <span className="text-sm font-semibold text-text">
@@ -4630,6 +4741,13 @@ export default function ArticleModal({
     return (
       <div className="space-y-4">
 
+        {/* ── Aviso cuando el artículo no tiene ninguna variante ─────────── */}
+        {!hasAtLeastOneVariant && (
+          <TPAlert tone="warning">
+            Esta categoría requiere variantes. Generá al menos una variante en la pestaña "Variantes" antes de guardar el artículo.
+          </TPAlert>
+        )}
+
         {/* ── Aviso cuando la categoría no tiene ejes de variante ────────── */}
         {variantAxes.length === 0 && (
           <div className="rounded-xl border border-amber-500/20 bg-amber-500/5 p-4 flex items-start gap-3">
@@ -4658,41 +4776,27 @@ export default function ArticleModal({
                 </div>
 
                 {/* Selector multiselect por eje */}
+                <DndContext sensors={dndSensors} collisionDetection={closestCenter} onDragEnd={handleVariantAxisDragEnd}>
+                  <SortableContext items={variantAxes.map(a => a.id)} strategy={verticalListSortingStrategy}>
                 {variantAxes.map((axis, axisIdx) => {
                   const selected = genSelected[axis.id] ?? [];
                   const hasOptions = axisHasOptions(axis);
-                  const isFirst = axisIdx === 0;
-                  const isLast  = axisIdx === variantAxes.length - 1;
                   return (
-                    <div key={axis.id} className="space-y-2">
+                    <SortableAxisWrapper key={axis.id} id={axis.id}>
+                      {({ handleListeners, handleAttributes }) => (
+                    <div className="space-y-2">
                       <div className="flex items-center gap-1.5 flex-wrap">
                         {variantAxes.length > 1 && (
-                          <div className="flex flex-col gap-0.5 shrink-0">
-                            <button
-                              type="button"
-                              onClick={() => moveAxisUp(axis.id)}
-                              disabled={isFirst}
-                              title="Mover este eje arriba"
-                              className={cn(
-                                "h-4 w-4 flex items-center justify-center rounded transition-colors",
-                                isFirst ? "text-muted/30 cursor-not-allowed" : "text-muted hover:text-text hover:bg-surface2 cursor-pointer"
-                              )}
-                            >
-                              <ArrowUp size={10} />
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => moveAxisDown(axis.id)}
-                              disabled={isLast}
-                              title="Mover este eje abajo"
-                              className={cn(
-                                "h-4 w-4 flex items-center justify-center rounded transition-colors",
-                                isLast ? "text-muted/30 cursor-not-allowed" : "text-muted hover:text-text hover:bg-surface2 cursor-pointer"
-                              )}
-                            >
-                              <ArrowDown size={10} />
-                            </button>
-                          </div>
+                          <button
+                            type="button"
+                            {...handleAttributes}
+                            {...handleListeners}
+                            className="cursor-grab active:cursor-grabbing text-muted hover:text-text p-0.5 rounded transition-colors shrink-0"
+                            tabIndex={-1}
+                            title="Arrastrá para reordenar este eje"
+                          >
+                            <GripVertical size={14} />
+                          </button>
                         )}
                         <span className="text-sm font-medium">{axis.definition.name}</span>
                         {axis.isRequired && <span className="text-primary text-sm leading-none">*</span>}
@@ -4759,23 +4863,6 @@ export default function ArticleModal({
                               );
                             })}
                           </div>
-                          {selected.filter(v => !isAxisValueExisting(axis.id, v)).length > 1 && (
-                            <div className="space-y-1 pt-1">
-                              <p className="text-[10px] text-muted uppercase tracking-wide font-semibold">Orden de generación (nuevas)</p>
-                              <DndContext sensors={dndSensors} collisionDetection={closestCenter} onDragEnd={(e) => handleAxisOptionDragEnd(axis.id, e)}>
-                                <SortableContext items={selected} strategy={horizontalListSortingStrategy}>
-                                  <div className="flex flex-wrap gap-1.5">
-                                    {selected.map(val => {
-                                      const opt = genOptionsForAxis(axis).find(o => o.value === val);
-                                      return (
-                                        <SortableChip key={val} id={val} label={opt?.label ?? val} existing={isAxisValueExisting(axis.id, val)} />
-                                      );
-                                    })}
-                                  </div>
-                                </SortableContext>
-                              </DndContext>
-                            </div>
-                          )}
                         </div>
                       ) : (
                         <div className="space-y-2">
@@ -4818,8 +4905,12 @@ export default function ArticleModal({
                         <p className="text-xs text-amber-500 opacity-80">Seleccioná al menos un valor para este eje.</p>
                       )}
                     </div>
+                      )}
+                    </SortableAxisWrapper>
                   );
                 })}
+                  </SortableContext>
+                </DndContext>
 
                 {/* Warning: opciones sin codeExtension */}
                 {genSkuMode === "auto" && (() => {
@@ -5141,58 +5232,49 @@ export default function ArticleModal({
         maxWidth="7xl"
         className="!max-w-[104rem]"
         busy={busySave}
+        resizable
+        maximizable
+        maximizedMode="embedded"
+        modalKey="articulos-editor"
         onEnter={activeTab !== "variantes" ? handleSave : undefined}
         footer={
-          showNoPriceWarning ? (
-            <div className="flex flex-col gap-3 w-full">
-              <TPAlert tone="warning" title="Artículo sin costo">
-                Este artículo tiene costo 0. Podés guardarlo igual, pero revisá su costo porque puede afectar cálculos, márgenes y precios derivados.
-              </TPAlert>
-              <div className="flex justify-end gap-2">
-                <TPButton
-                  variant="secondary"
-                  iconLeft={<X size={14} />}
-                  onClick={() => setShowNoPriceWarning(false)}
-                  disabled={busySave}
-                >
-                  Cancelar
-                </TPButton>
-                <TPButton
-                  onClick={executeSave}
-                  loading={busySave}
-                  iconLeft={<Save size={14} />}
-                >
-                  {isEdit ? "Guardar igual" : "Crear igual"}
-                </TPButton>
-              </div>
-            </div>
-          ) : (
-            <div className="flex items-center gap-2 w-full">
-              {isEdit && articleId && (
-                <button
-                  type="button"
-                  onClick={() => { onClose(); navigate(`/articulos/${articleId}`); }}
-                  className="flex items-center gap-1.5 text-xs text-muted hover:text-primary transition-colors"
-                >
-                  <ExternalLink size={12} />
-                  Página completa
-                </button>
-              )}
-              <div className="flex-1" />
-              <TPButton variant="secondary" iconLeft={<X size={14} />}
-                onClick={() => {
-                  if (draftChanged && !busySave) { setShowUnsavedDialog(true); return; }
-                  onClose();
-                }}
-                disabled={busySave}
+          <div className="flex items-center gap-2 w-full">
+            {isEdit && articleId && (
+              <button
+                type="button"
+                onClick={() => { onClose(); navigate(`/articulos/${articleId}`); }}
+                className="flex items-center gap-1.5 text-xs text-muted hover:text-primary transition-colors"
               >
-                Cancelar
-              </TPButton>
-              <TPButton onClick={handleSave} loading={busySave} iconLeft={<Save size={14} />}>
+                <ExternalLink size={12} />
+                Página completa
+              </button>
+            )}
+            <div className="flex-1" />
+            <TPButton variant="secondary" iconLeft={<X size={14} />}
+              onClick={() => {
+                if (draftChanged && !busySave) { setShowUnsavedDialog(true); return; }
+                onClose();
+              }}
+              disabled={busySave}
+            >
+              Cancelar
+            </TPButton>
+            <div className="flex flex-col items-end gap-1">
+              {hasMissingRequired && (
+                <p className="text-[11px] text-amber-600 dark:text-amber-400 text-right">
+                  Completá los atributos obligatorios para continuar.
+                </p>
+              )}
+              <TPButton
+                onClick={handleSave}
+                loading={busySave}
+                iconLeft={<Save size={14} />}
+                disabled={busySave || variantAxesLoading || !hasAtLeastOneVariant || hasMissingRequired || !hasCostValid}
+              >
                 {isEdit ? "Guardar cambios" : "Crear artículo"}
               </TPButton>
             </div>
-          )
+          </div>
         }
       >
         {loading ? (
@@ -5276,9 +5358,13 @@ export default function ArticleModal({
                         </span>
                       ) : variantAxes.length > 0 ? (
                         <span className={cn(
-                          "w-1.5 h-1.5 rounded-full inline-block",
-                          activeTab === "variantes" ? "bg-white/60" : "bg-primary/50"
-                        )} />
+                          "rounded-full px-1 text-[10px] font-bold leading-tight",
+                          activeTab === "variantes"
+                            ? "bg-white/25 text-white"
+                            : "bg-rose-500/15 text-rose-500"
+                        )}>
+                          !
+                        </span>
                       ) : null}
                     </span>
                   )}
@@ -5293,7 +5379,25 @@ export default function ArticleModal({
         )}
       </Modal>
 
-      {/* Mini-modal de variante */}
+      {/* Modal completo de variante — modo edición (artículo ya guardado en API) */}
+      {fullEditVariant && articleId && (
+        <EditVariantModal
+          open={!!fullEditVariant}
+          onClose={() => setFullEditVariant(null)}
+          articleId={articleId}
+          variant={fullEditVariant}
+          onVariantChange={(updated) => {
+            setVariants(prev => prev.map(v => v.id === updated.id ? updated : v));
+          }}
+          variants={variants}
+          onSwitchVariant={(nextId) => {
+            const next = variants.find(v => v.id === nextId);
+            if (next) setFullEditVariant(next);
+          }}
+        />
+      )}
+
+      {/* Mini-modal de variante — creación / edición draft (artículo nuevo, sin API) */}
       <Modal
         open={varModal}
         title={varEditId ? "Editar identificación de variante" : "Nueva variante"}
@@ -5425,15 +5529,13 @@ export default function ArticleModal({
                 min={0}
               />
             </TPField>
-            <TPField label="Existencia de apertura" hint="Stock inicial de esta variante">
-              <TPNumberInput
-                value={(varDraft as any).openingStock ?? null}
-                onChange={(v) => setVarDraft((p) => ({ ...p, openingStock: v }))}
-                placeholder="0"
-                min={0}
-                decimals={4}
-              />
-            </TPField>
+            {(!varEditId || !(varEditId in variantStock)) && (
+              <div className="rounded-xl border border-border bg-surface2/20 px-3 py-2.5 text-xs text-muted">
+                El stock inicial se registra desde{" "}
+                <span className="font-semibold text-text">Movimientos de artículos</span>{" "}
+                mediante un movimiento de <span className="font-semibold text-text">Apertura</span>.
+              </div>
+            )}
 
             {/* Atributos de variante (ejes configurados en la categoría) */}
             {variantAxes.length > 0 && (
@@ -5501,6 +5603,72 @@ export default function ArticleModal({
         onClose={() => setDeleteVariantId(null)}
         onConfirm={() => { if (deleteVariantId) void doRemoveVariant(deleteVariantId); }}
       />
+
+      {/* Bloqueo: cambio de categoría con ejes incompatibles cuando el artículo ya tiene variantes */}
+      <Modal
+        open={variantAxisConflictOpen}
+        onClose={() => setVariantAxisConflictOpen(false)}
+        title="No se puede cambiar la categoría"
+        maxWidth="sm"
+      >
+        <div className="flex flex-col gap-4 p-1">
+          <p className="text-sm text-text">
+            Este artículo ya tiene variantes creadas con la estructura de atributos de su categoría
+            actual y no puede cambiarse a una categoría con ejes distintos.
+          </p>
+          <p className="text-sm text-muted">
+            Cambiar la categoría rompería los atributos, nombres y stock de las variantes existentes.
+            Si necesitás reorganizar el artículo, creá uno nuevo en la categoría destino.
+          </p>
+          <div className="flex items-center justify-end pt-2 border-t border-border/40">
+            <button
+              type="button"
+              onClick={() => setVariantAxisConflictOpen(false)}
+              className="px-3 py-1.5 text-sm rounded-lg border border-border text-muted hover:text-text hover:border-border/80 transition"
+            >
+              Entendido
+            </button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* Bloqueo: conversión artículo simple → con variantes cuando tiene movimientos */}
+      <Modal
+        open={conversionBlockOpen}
+        onClose={() => setConversionBlockOpen(false)}
+        title="No se puede convertir este artículo"
+        maxWidth="sm"
+      >
+        <div className="flex flex-col gap-4 p-1">
+          <p className="text-sm text-text">
+            Este artículo tiene movimientos registrados (ventas, ajustes, transferencias) y
+            no puede convertirse en un artículo con variantes.
+          </p>
+          <p className="text-sm text-muted">
+            Convertir un artículo con historial rompería la trazabilidad de los movimientos existentes.
+            Si necesitás manejar variantes, creá un nuevo artículo con la categoría correcta.
+          </p>
+          <div className="flex items-center justify-end gap-2 pt-2 border-t border-border/40">
+            <button
+              type="button"
+              onClick={() => setConversionBlockOpen(false)}
+              className="px-3 py-1.5 text-sm rounded-lg border border-border text-muted hover:text-text hover:border-border/80 transition"
+            >
+              Entendido
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setConversionBlockOpen(false);
+                onClose();
+              }}
+              className="px-3 py-1.5 text-sm rounded-lg bg-primary/10 border border-primary/30 text-primary hover:bg-primary/20 transition font-medium"
+            >
+              Crear nuevo artículo con variantes
+            </button>
+          </div>
+        </div>
+      </Modal>
     </>
   );
 }

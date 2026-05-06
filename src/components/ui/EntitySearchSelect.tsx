@@ -7,18 +7,26 @@ import { ChevronDown, Loader2, X } from "lucide-react";
 import { cn, TP_INPUT } from "./tp";
 import { commercialEntitiesApi } from "../../services/commercial-entities";
 import type { EntityRow } from "../../services/commercial-entities";
+import { useFieldFormats } from "../../context/FieldFormatsContext";
 
 // ---------------------------------------------------------------------------
 // Helper: línea secundaria de info
 // ---------------------------------------------------------------------------
-export function entityInfoLine(row: EntityRow): string {
+type InfoFormatters = {
+  fmtPhone?: (prefix: string, number: string) => string;
+  fmtDoc?:   (value: string) => string;
+};
+
+export function entityInfoLine(row: EntityRow, fmt?: InfoFormatters): string {
   const parts: string[] = [];
-  if (row.documentType && row.documentNumber)
-    parts.push(`${row.documentType}: ${row.documentNumber}`);
-  else if (row.documentNumber)
-    parts.push(row.documentNumber);
+  const docNum = row.documentNumber || "";
+  const fmtedDoc = docNum ? (fmt?.fmtDoc?.(docNum) ?? docNum) : "";
+  if (row.documentType && fmtedDoc)
+    parts.push(`${row.documentType}: ${fmtedDoc}`);
+  else if (fmtedDoc)
+    parts.push(fmtedDoc);
   if (row.email) parts.push(row.email);
-  else if (row.phone) parts.push(row.phone);
+  else if (row.phone) parts.push(fmt?.fmtPhone?.("", row.phone) ?? row.phone);
   return parts.join(" · ");
 }
 
@@ -45,6 +53,7 @@ export default function EntitySearchSelect({
     : "Buscar proveedor o cliente…";
 
   const ph = placeholder ?? defaultPlaceholder;
+  const { fmtPhone, fmtDoc } = useFieldFormats();
 
   const wrapRef     = useRef<HTMLDivElement>(null);
   const inputRef    = useRef<HTMLInputElement>(null);
@@ -237,7 +246,7 @@ export default function EntitySearchSelect({
           >
             <div className="max-h-64 overflow-auto p-2">
               {options.map((row, idx) => {
-                const info = entityInfoLine(row);
+                const info = entityInfoLine(row, { fmtPhone, fmtDoc });
                 return (
                   <button
                     key={row.id}

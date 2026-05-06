@@ -1,5 +1,14 @@
 // src/pages/InventarioAlmacenes/types.ts
 
+export type WarehouseAttachment = {
+  id: string;
+  filename: string;
+  url: string;
+  mimeType: string;
+  size: number;
+  createdAt?: string;
+};
+
 export type WarehouseRow = {
   id: string;
   name: string;
@@ -12,6 +21,8 @@ export type WarehouseRow = {
   attn?: string;
   street?: string;
   number?: string;
+  floor?: string;
+  apartment?: string;
   city?: string;
   province?: string;
   postalCode?: string;
@@ -27,6 +38,8 @@ export type WarehouseRow = {
   stockPieces?: number;
 
   deletedAt?: string | null;
+
+  attachments?: WarehouseAttachment[];
 };
 
 export type WarehouseDraft = {
@@ -41,6 +54,8 @@ export type WarehouseDraft = {
   attn: string;
   street: string;
   number: string;
+  floor: string;
+  apartment: string;
   city: string;
   province: string;
   postalCode: string;
@@ -55,6 +70,7 @@ export type WarehouseDraft = {
 export type SortKey =
   | "name"
   | "code"
+  | "city"
   | "location"
   | "isActive"
   | "stockGrams"

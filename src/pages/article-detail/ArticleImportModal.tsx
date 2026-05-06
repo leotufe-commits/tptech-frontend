@@ -1,6 +1,7 @@
 // src/pages/article-detail/ArticleImportModal.tsx
-// Modal de importación masiva de artículos (wizard 3 pasos)
+// Modal de importación masiva de artículos (wizard 4 pasos con mapeo de columnas)
 import React, { useCallback, useRef, useState } from "react";
+import * as XLSX from "xlsx-js-style";
 import {
   AlertCircle,
   AlertTriangle,
@@ -13,13 +14,14 @@ import {
   Loader2,
   RefreshCw,
   Upload,
+  Wand2,
   X,
 } from "lucide-react";
 
 import { Modal } from "../../components/ui/Modal";
 import { TPButton } from "../../components/ui/TPButton";
-import { TPCard } from "../../components/ui/TPCard";
 import { cn } from "../../components/ui/tp";
+import ImportColumnMappingStep from "../../components/ui/ImportColumnMappingStep";
 import { toast } from "../../lib/toast";
 import {
   articlesApi,
@@ -27,33 +29,103 @@ import {
   type ImportPreviewRow,
   type ImportCommitResult,
 } from "../../services/articles";
+import { autoMatchColumns } from "../../lib/import-mapping/autoMatch";
+import { applyMapping } from "../../lib/import-mapping/applyMapping";
+import { ARTICLE_FIELDS } from "../../lib/import-mapping/articleFields";
+import type { ColumnMapping } from "../../lib/import-mapping/types";
 
 // ---------------------------------------------------------------------------
-type Step = "upload" | "preview" | "results";
+// Helpers de parseo de archivo en frontend
+// ---------------------------------------------------------------------------
+
+/**
+ * Lee el archivo localmente y extrae encabezados, filas y ejemplos para el
+ * paso de mapeo de columnas.
+ *
+ * También detecta si el archivo es de formato Guided (primera hoja = "Artículos"
+ * y primera columna = "SKU Padre"). En ese caso `isGuided = true` y el modal
+ * saltea el mapeo de columnas — el archivo se envía directamente al backend.
+ */
+function parseFileHeaders(file: File): Promise<{
+  headers: string[];
+  rows: Record<string, string>[];
+  examples: Record<string, string>;
+  isGuided: boolean;
+}> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const buffer = e.target?.result as ArrayBuffer;
+        const wb = XLSX.read(buffer, { type: "array" });
+        const wsName = wb.SheetNames[0];
+        const ws = wb.Sheets[wsName];
+        const raw = XLSX.utils.sheet_to_json<any[]>(ws, { header: 1, defval: "" });
+        // Detectar formato Guided: hoja "Artículos" + primera columna "SKU Padre"
+        const isGuided =
+          wsName === "Artículos" &&
+          String((raw[0] as any[])?.[0] ?? "").trim() === "SKU Padre";
+        if (raw.length < 2) {
+          resolve({ headers: [], rows: [], examples: {}, isGuided });
+          return;
+        }
+        const headers = (raw[0] as string[])
+          .map(h => String(h ?? "").trim())
+          .filter(Boolean);
+        const dataRows = (raw.slice(1) as any[][])
+          .map(cols => {
+            const row: Record<string, string> = {};
+            headers.forEach((h, i) => {
+              row[h] = String(cols[i] ?? "").trim();
+            });
+            return row;
+          })
+          .filter(r => Object.values(r).some(v => v !== ""));
+        // Primer valor no vacío de cada columna como ejemplo
+        const examples: Record<string, string> = {};
+        for (const h of headers) {
+          examples[h] = dataRows.find(r => r[h])?.[h] ?? "";
+        }
+        resolve({ headers, rows: dataRows, examples, isGuided });
+      } catch (err) {
+        reject(err);
+      }
+    };
+    reader.onerror = () => reject(new Error("No se pudo leer el archivo."));
+    reader.readAsArrayBuffer(file);
+  });
+}
+
+// ---------------------------------------------------------------------------
+type Step = "upload" | "mapping" | "preview" | "results";
 
 const STEP_LABELS: Record<Step, string> = {
   upload:  "1. Cargar archivo",
-  preview: "2. Vista previa",
-  results: "3. Resultados",
+  mapping: "2. Mapeo de columnas",
+  preview: "3. Vista previa",
+  results: "4. Resultados",
 };
 
 const STATUS_COLORS: Record<ImportPreviewRow["status"], string> = {
-  valid:    "text-emerald-400",
-  existing: "text-amber-300",
-  warning:  "text-yellow-300",
-  error:    "text-red-400",
+  valid:           "text-emerald-400",
+  overwrite:       "text-amber-300",
+  warning:         "text-yellow-300",
+  implicit_parent: "text-blue-400",
+  error:           "text-red-400",
 };
 const STATUS_ICONS: Record<ImportPreviewRow["status"], React.ReactNode> = {
-  valid:    <Check size={12} />,
-  existing: <RefreshCw size={12} />,
-  warning:  <AlertTriangle size={12} />,
-  error:    <X size={12} />,
+  valid:           <Check size={12} />,
+  overwrite:       <RefreshCw size={12} />,
+  warning:         <AlertTriangle size={12} />,
+  implicit_parent: <Wand2 size={12} />,
+  error:           <X size={12} />,
 };
 const STATUS_LABELS: Record<ImportPreviewRow["status"], string> = {
-  valid:    "Nuevo",
-  existing: "Existente",
-  warning:  "Advertencia",
-  error:    "Error",
+  valid:           "Nuevo",
+  overwrite:       "Se sobreescribirá",
+  warning:         "Advertencia",
+  implicit_parent: "Padre implícito",
+  error:           "Error",
 };
 
 // ---------------------------------------------------------------------------
@@ -68,24 +140,38 @@ export default function ArticleImportModal({
   onClose,
   onImported,
 }: ArticleImportModalProps) {
-  const [step,        setStep]        = useState<Step>("upload");
-  const [file,        setFile]        = useState<File | null>(null);
-  const [dragging,    setDragging]    = useState(false);
-  const [preview,     setPreview]     = useState<ImportPreviewResult | null>(null);
-  const [results,     setResults]     = useState<ImportCommitResult | null>(null);
-  const [onConflict,  setOnConflict]  = useState<"skip" | "update">("skip");
-  const [busyPreview, setBusyPreview] = useState(false);
-  const [busyImport,  setBusyImport]  = useState(false);
-  const [dlTemplate,  setDlTemplate]  = useState(false);
+  const [step,         setStep]         = useState<Step>("upload");
+  const [file,         setFile]         = useState<File | null>(null);
+  const [dragging,     setDragging]     = useState(false);
+  const [preview,      setPreview]      = useState<ImportPreviewResult | null>(null);
+  const [results,      setResults]      = useState<ImportCommitResult | null>(null);
+  const [onConflict,   setOnConflict]   = useState<"skip" | "update">("skip");
+  const [busyPreview,  setBusyPreview]  = useState(false);
+  const [busyImport,   setBusyImport]   = useState(false);
+  const [busyParse,    setBusyParse]    = useState(false);
+  const [dlGuided,     setDlGuided]     = useState(false);
+  const [dlExport,     setDlExport]     = useState(false);
+  // true cuando el archivo cargado es formato Guided — saltea el paso de mapeo
+  const [isGuidedFile, setIsGuidedFile] = useState(false);
+
+  // Estado del paso de mapeo
+  const [rawRows,      setRawRows]      = useState<Record<string, string>[]>([]);
+  const [mappings,     setMappings]     = useState<ColumnMapping[]>([]);
+  const [parsedFileName, setParsedFileName] = useState("");
+
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // ── Reset al cerrar ─────────────────────────────────────────────────────
   function handleClose() {
-    if (busyPreview || busyImport) return;
+    if (busyPreview || busyImport || busyParse) return;
     setStep("upload");
     setFile(null);
     setPreview(null);
     setResults(null);
+    setRawRows([]);
+    setMappings([]);
+    setParsedFileName("");
+    setIsGuidedFile(false);
     onClose();
   }
 
@@ -95,6 +181,9 @@ export default function ArticleImportModal({
     if (!ok) { toast.error("Solo se aceptan archivos .xlsx, .xls o .csv"); return; }
     setFile(f);
     setPreview(null);
+    setRawRows([]);
+    setMappings([]);
+    setIsGuidedFile(false);
   }
 
   const onDrop = useCallback((e: React.DragEvent) => {
@@ -104,12 +193,69 @@ export default function ArticleImportModal({
     if (f) handleFileDrop(f);
   }, []);
 
-  // ── Preview ──────────────────────────────────────────────────────────────
-  async function handlePreview() {
+  // ── Avanzar al paso de mapeo (o directo a preview si es Guided) ─────────
+  async function handleGoToMapping() {
     if (!file) return;
+    setBusyParse(true);
+    try {
+      const { headers, rows, examples, isGuided } = await parseFileHeaders(file);
+
+      // ── Formato Guided detectado: saltear mapeo, enviar archivo al backend ──
+      if (isGuided) {
+        setIsGuidedFile(true);
+        // El formato Guided es una plantilla estructurada donde el usuario espera
+        // que los cambios se apliquen. Cambiar el default a "update" para evitar
+        // que una reimportación quede silenciosa con "skip".
+        setOnConflict("update");
+        setBusyPreview(true);
+        try {
+          const result = await articlesApi.import.preview(file);
+          setPreview(result);
+          setStep("preview");
+        } catch (e: any) {
+          toast.error(e?.message || "Error al procesar el archivo Guided.");
+        } finally {
+          setBusyPreview(false);
+        }
+        return;
+      }
+
+      // ── Formato estándar: continuar con el wizard de mapeo ──────────────
+      setIsGuidedFile(false);
+      if (headers.length === 0) {
+        toast.error("El archivo no contiene encabezados válidos.");
+        return;
+      }
+      if (rows.length === 0) {
+        toast.error("El archivo no contiene datos.");
+        return;
+      }
+      if (rows.length > 2000) {
+        toast.error("El archivo supera el límite de 2000 filas.");
+        return;
+      }
+      const autoMapped = autoMatchColumns(headers, ARTICLE_FIELDS, examples);
+      setRawRows(rows);
+      setMappings(autoMapped);
+      setParsedFileName(file.name);
+      setStep("mapping");
+    } catch (e: any) {
+      toast.error(e?.message || "Error al leer el archivo.");
+    } finally {
+      setBusyParse(false);
+    }
+  }
+
+  // ── Confirmar mapeo y llamar al preview ──────────────────────────────────
+  async function handleMappingContinue() {
     setBusyPreview(true);
     try {
-      const result = await articlesApi.import.preview(file);
+      const mapped = applyMapping(rawRows, mappings);
+      if (mapped.length === 0) {
+        toast.error("No hay filas para importar tras el mapeo.");
+        return;
+      }
+      const result = await articlesApi.import.previewJson(mapped);
       setPreview(result);
       setStep("preview");
     } catch (e: any) {
@@ -121,13 +267,19 @@ export default function ArticleImportModal({
 
   // ── Execute ──────────────────────────────────────────────────────────────
   async function handleImport() {
-    if (!file || !preview) return;
-    const hasErrors = preview.errors > 0;
-    const canProceed = preview.valid > 0 || preview.existing > 0 || preview.warnings > 0;
+    if (!preview) return;
+    const canProceed = preview.valid > 0 || preview.overwrite > 0 || preview.warnings > 0 || preview.implicitParents > 0;
     if (!canProceed) { toast.error("No hay filas válidas para importar."); return; }
     setBusyImport(true);
     try {
-      const result = await articlesApi.import.execute(file, onConflict);
+      let result: ImportCommitResult;
+      if (isGuidedFile && file) {
+        // Archivo Guided: enviar el archivo directamente al backend (no JSON mapeado)
+        result = await articlesApi.import.execute(file, onConflict);
+      } else {
+        const mapped = applyMapping(rawRows, mappings);
+        result = await articlesApi.import.executeJson(mapped, onConflict, parsedFileName);
+      }
       setResults(result);
       setStep("results");
       if (result.summary.created > 0 || result.summary.updated > 0) {
@@ -144,11 +296,17 @@ export default function ArticleImportModal({
   }
 
   // ── Descargar template ───────────────────────────────────────────────────
-  async function handleDownloadTemplate() {
-    setDlTemplate(true);
-    try { await articlesApi.import.downloadTemplate(); }
-    catch (e: any) { toast.error(e?.message || "Error al descargar la plantilla."); }
-    finally { setDlTemplate(false); }
+  async function handleDownloadGuided() {
+    setDlGuided(true);
+    try { await articlesApi.import.downloadGuidedTemplate(); }
+    catch (e: any) { toast.error(e?.message || "Error al descargar la plantilla guiada."); }
+    finally { setDlGuided(false); }
+  }
+  async function handleGuidedExport() {
+    setDlExport(true);
+    try { await articlesApi.import.downloadGuidedExport(); }
+    catch (e: any) { toast.error(e?.message || "Error al exportar los artículos."); }
+    finally { setDlExport(false); }
   }
 
   // ── Footer ────────────────────────────────────────────────────────────────
@@ -158,29 +316,41 @@ export default function ArticleImportModal({
         <div className="flex items-center gap-2 w-full">
           <TPButton
             variant="ghost"
-            iconLeft={dlTemplate ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />}
-            loading={dlTemplate}
-            onClick={handleDownloadTemplate}
+            iconLeft={dlGuided ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />}
+            loading={dlGuided}
+            onClick={handleDownloadGuided}
           >
-            Descargar plantilla
+            Plantilla guiada
+          </TPButton>
+          <TPButton
+            variant="ghost"
+            iconLeft={dlExport ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />}
+            loading={dlExport}
+            onClick={handleGuidedExport}
+          >
+            Exportar artículos
           </TPButton>
           <div className="flex-1" />
           <TPButton variant="secondary" onClick={handleClose}>Cancelar</TPButton>
           <TPButton
-            onClick={handlePreview}
+            onClick={handleGoToMapping}
             disabled={!file}
-            loading={busyPreview}
+            loading={busyParse}
             iconLeft={<ChevronRight size={14} />}
           >
-            Vista previa
+            Siguiente
           </TPButton>
         </div>
       );
     }
+    if (step === "mapping") {
+      // El footer del paso de mapeo lo maneja ImportColumnMappingStep internamente
+      return null;
+    }
     if (step === "preview") {
       return (
         <div className="flex items-center gap-2 w-full">
-          <TPButton variant="secondary" onClick={() => setStep("upload")} disabled={busyImport}>
+          <TPButton variant="secondary" onClick={() => setStep(isGuidedFile ? "upload" : "mapping")} disabled={busyImport}>
             ← Volver
           </TPButton>
           <div className="flex-1" />
@@ -198,7 +368,7 @@ export default function ArticleImportModal({
           <TPButton
             onClick={handleImport}
             loading={busyImport}
-            disabled={!preview || (preview.valid === 0 && preview.existing === 0 && preview.warnings === 0)}
+            disabled={!preview || (preview.valid === 0 && preview.overwrite === 0 && preview.warnings === 0)}
             iconLeft={<Upload size={14} />}
           >
             Importar ahora
@@ -222,9 +392,9 @@ export default function ArticleImportModal({
           <div>
             <p className="font-medium text-text mb-1">Instrucciones rápidas</p>
             <ol className="list-decimal list-inside space-y-0.5 text-xs">
-              <li>Descargá la plantilla Excel con el botón de abajo.</li>
-              <li>Completá las filas de artículos (y variantes si aplica).</li>
-              <li>Subí el archivo completo para hacer una vista previa antes de importar.</li>
+              <li>Descargá la plantilla guiada con el botón de abajo (o exportá tus artículos actuales).</li>
+              <li>Completá las filas — los artículos con variantes usan SKU Padre para vincularlas.</li>
+              <li>Subí el archivo. Si usás la plantilla guiada, se importa directamente sin mapeo extra.</li>
             </ol>
           </div>
         </div>
@@ -276,18 +446,19 @@ export default function ArticleImportModal({
   // ── Content: Preview ──────────────────────────────────────────────────────
   function renderPreview() {
     if (!preview) return null;
-    const { total, articles, variants, valid, errors, existing, warnings } = preview;
-    const onlyErrors = errors > 0 && valid === 0 && existing === 0 && warnings === 0;
+    const { total, articles, variants, valid, errors, overwrite, warnings, implicitParents } = preview;
+    const onlyErrors = errors > 0 && valid === 0 && overwrite === 0 && warnings === 0 && implicitParents === 0;
 
     return (
       <div className="space-y-4">
         {/* Summary cards */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
           {[
-            { label: "Nuevos",      count: valid,    color: "text-emerald-400", bg: "bg-emerald-500/10 border-emerald-500/30" },
-            { label: "Existentes",  count: existing, color: "text-amber-300",   bg: "bg-amber-500/10 border-amber-500/30" },
-            { label: "Advertencias",count: warnings, color: "text-yellow-300",  bg: "bg-yellow-500/10 border-yellow-500/30" },
-            { label: "Errores",     count: errors,   color: "text-red-400",     bg: "bg-red-500/10 border-red-500/30" },
+            { label: "Nuevos",             count: valid,            color: "text-emerald-400", bg: "bg-emerald-500/10 border-emerald-500/30" },
+            { label: "Se sobreescribirán", count: overwrite,        color: "text-amber-300",   bg: "bg-amber-500/10 border-amber-500/30" },
+            { label: "Padres implícitos",  count: implicitParents,  color: "text-blue-400",    bg: "bg-blue-500/10 border-blue-500/30" },
+            { label: "Advertencias",       count: warnings,         color: "text-yellow-300",  bg: "bg-yellow-500/10 border-yellow-500/30" },
+            { label: "Errores",            count: errors,           color: "text-red-400",     bg: "bg-red-500/10 border-red-500/30" },
           ].map(({ label, count, color, bg }) => (
             <div key={label} className={cn("rounded-xl border p-3 text-center", bg)}>
               <div className={cn("text-2xl font-bold", color)}>{count}</div>
@@ -463,7 +634,7 @@ export default function ArticleImportModal({
   }
 
   // ── Step indicator ────────────────────────────────────────────────────────
-  const steps: Step[] = ["upload", "preview", "results"];
+  const steps: Step[] = ["upload", "mapping", "preview", "results"];
 
   return (
     <Modal
@@ -471,7 +642,11 @@ export default function ArticleImportModal({
       title="Importar artículos"
       onClose={handleClose}
       maxWidth="2xl"
-      busy={busyPreview || busyImport}
+      busy={busyPreview || busyImport || busyParse}
+      resizable
+      maximizable
+      maximizedMode="embedded"
+      modalKey="articulos-importacion"
       footer={renderFooter()}
     >
       {/* Step indicator */}
@@ -497,9 +672,20 @@ export default function ArticleImportModal({
         ))}
       </div>
 
-      {step === "upload"   && renderUpload()}
-      {step === "preview"  && renderPreview()}
-      {step === "results"  && renderResults()}
+      {step === "upload"  && renderUpload()}
+      {step === "mapping" && (
+        <ImportColumnMappingStep
+          mappings={mappings}
+          fields={ARTICLE_FIELDS}
+          onChangeMappings={setMappings}
+          onContinue={handleMappingContinue}
+          onBack={() => setStep("upload")}
+          busy={busyPreview}
+          title="Mapeo de columnas del archivo"
+        />
+      )}
+      {step === "preview" && renderPreview()}
+      {step === "results" && renderResults()}
     </Modal>
   );
 }

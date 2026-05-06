@@ -1,7 +1,7 @@
 // src/components/ui/CostCompositionTable.tsx
 import React, { useState, useEffect } from "react";
 import {
-  Gem, Plus, X, Wrench, Package, Layers, DollarSign,
+  Gem, Plus, X, Wrench, Package, Layers, DollarSign, Truck,
   Calculator, Trash2, GripVertical, AlertTriangle,
 } from "lucide-react";
 import TPNumberInput    from "./TPNumberInput";
@@ -12,6 +12,7 @@ import TPCurrencyPill  from "./TPCurrencyPill";
 import ArticleSearchSelect from "./ArticleSearchSelect";
 import { cn } from "./tp";
 import type { CostLine, CostLineType, ArticleRow } from "../../services/articles";
+import { fmtNumber2 } from "../../lib/format";
 import ConfirmDeleteDialog from "./ConfirmDeleteDialog";
 import {
   DndContext,
@@ -87,25 +88,27 @@ export const TYPE_CFG: Record<CostLineType, {
   rowBorder: string;
   icon: React.ReactNode;
 }> = {
-  METAL:   { label: "Metal",    badge: "bg-amber-500/15 text-amber-400 border-amber-500/30",    rowBg: "bg-amber-500/[0.08]",   rowBorder: "border-amber-500/30",    icon: <Gem      size={10} /> },
-  HECHURA: { label: "Hechura",  badge: "bg-blue-500/15  text-blue-400  border-blue-500/30",     rowBg: "bg-blue-500/[0.08]",    rowBorder: "border-blue-500/30",     icon: <Wrench   size={10} /> },
-  PRODUCT: { label: "Producto", badge: "bg-violet-500/15 text-violet-400 border-violet-500/30", rowBg: "bg-violet-500/[0.08]",  rowBorder: "border-violet-500/30",   icon: <Package  size={10} /> },
-  SERVICE: { label: "Servicio", badge: "bg-emerald-500/15 text-emerald-400 border-emerald-500/30", rowBg: "bg-emerald-500/[0.08]", rowBorder: "border-emerald-500/30", icon: <Layers size={10} /> },
-  MANUAL:  { label: "Manual",   badge: "bg-slate-500/15  text-slate-400  border-slate-500/30",  rowBg: "bg-slate-500/[0.08]",   rowBorder: "border-slate-500/30",    icon: <DollarSign size={10} /> },
+  METAL:     { label: "Metal",    badge: "bg-amber-500/15 text-amber-400 border-amber-500/30",    rowBg: "bg-amber-500/[0.08]",   rowBorder: "border-amber-500/30",    icon: <Gem      size={10} /> },
+  HECHURA:   { label: "Hechura",  badge: "bg-blue-500/15  text-blue-400  border-blue-500/30",     rowBg: "bg-blue-500/[0.08]",    rowBorder: "border-blue-500/30",     icon: <Wrench   size={10} /> },
+  PRODUCT:   { label: "Producto", badge: "bg-violet-500/15 text-violet-400 border-violet-500/30", rowBg: "bg-violet-500/[0.08]",  rowBorder: "border-violet-500/30",   icon: <Package  size={10} /> },
+  SERVICE:   { label: "Servicio", badge: "bg-emerald-500/15 text-emerald-400 border-emerald-500/30", rowBg: "bg-emerald-500/[0.08]", rowBorder: "border-emerald-500/30", icon: <Layers size={10} /> },
+  MANUAL:    { label: "Manual",   badge: "bg-slate-500/15  text-slate-400  border-slate-500/30",  rowBg: "bg-slate-500/[0.08]",   rowBorder: "border-slate-500/30",    icon: <DollarSign size={10} /> },
+  LOGISTICS: { label: "Envío",    badge: "bg-sky-500/15    text-sky-400    border-sky-500/30",    rowBg: "bg-sky-500/[0.08]",     rowBorder: "border-sky-500/30",      icon: <Truck      size={10} /> },
 };
 
 export const TYPE_OPTIONS: { value: CostLineType; label: string }[] = [
-  { value: "METAL",   label: "Metal" },
-  { value: "HECHURA", label: "Hechura" },
-  { value: "PRODUCT", label: "Producto" },
-  { value: "SERVICE", label: "Servicio" },
+  { value: "METAL",     label: "Metal" },
+  { value: "HECHURA",   label: "Hechura" },
+  { value: "PRODUCT",   label: "Producto" },
+  { value: "SERVICE",   label: "Servicio" },
+  { value: "LOGISTICS", label: "Envío" },
 ];
 
 // ---------------------------------------------------------------------------
 // Layout: grid fijo 9 columnas (handle + 8)
-// [handle 20px] [badge 96px] [moneda 72px] [desc minmax(96px,1fr)] [qty 160px] [op 20px] [price 160px] [adj 180px] [result+x 150px]
+// [handle 20px] [badge 96px] [moneda 86px] [desc minmax(96px,1fr)] [qty 160px] [op 20px] [price 160px] [adj 180px] [result+x 150px]
 // ---------------------------------------------------------------------------
-const GRID = "grid grid-cols-[20px_96px_72px_minmax(276px,4fr)_160px_20px_160px_210px_150px] items-center gap-x-6";
+const GRID = "grid grid-cols-[20px_96px_86px_minmax(276px,4fr)_160px_20px_160px_210px_150px] items-center gap-x-6";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -114,7 +117,22 @@ function emptyLine(type: CostLineType, defaults: Partial<CostLine> = {}): CostLi
   return { type, label: type === "HECHURA" ? "Hechura / Mano de Obra" : "", quantity: 1, quantityUnit: "", unitValue: 0, currencyId: null, mermaPercent: null, metalVariantId: null, sortOrder: 0, lineAdjKind: "", lineAdjType: "", lineAdjValue: null, ...defaults };
 }
 
-export function applyLineAdj(base: number, kind: string, type: string, val: number | null): number {
+/**
+ * ⚠️ SKELETON — solo para feedback visual mientras el usuario edita.
+ *
+ * El cálculo autoritativo de líneas de costo vive en el pricing-engine del
+ * backend (src/lib/pricing-engine) y se consume vía:
+ *   articlesApi.previewCostLines(articleId, { lines, manualAdjustment })
+ *   → POST /articles/:id/cost-lines/preview
+ *
+ * Esta función NO debe usarse para persistir ni para confirmar una venta.
+ * Es solo una aproximación optimista para que la UI no parpadee mientras
+ * viaja la respuesta del backend. El backend aplica además redondeo,
+ * conversiones de moneda y reglas que este skeleton no contempla.
+ *
+ * @internal
+ */
+export function _previewLineAdjSkeleton(base: number, kind: string, type: string, val: number | null): number {
   if (!kind || !type || val == null) return base;
   if (type === "PERCENTAGE") {
     return Math.max(0, base * (kind === "BONUS" ? (1 - val / 100) : (1 + val / 100)));
@@ -125,6 +143,8 @@ export function applyLineAdj(base: number, kind: string, type: string, val: numb
   return base;
 }
 
+
+// Skeleton usado solo para la UI de edición. Ver _previewLineAdjSkeleton.
 function lineRawSubtotal(line: CostLine): number | null {
   if (!line.quantity || !line.unitValue) return null;
   let raw: number;
@@ -133,7 +153,7 @@ function lineRawSubtotal(line: CostLine): number | null {
   } else {
     raw = line.quantity * line.unitValue;
   }
-  return applyLineAdj(raw, line.lineAdjKind ?? "", line.lineAdjType ?? "", line.lineAdjValue ?? null);
+  return _previewLineAdjSkeleton(raw, line.lineAdjKind ?? "", line.lineAdjType ?? "", line.lineAdjValue ?? null);
 }
 
 function lineSubtotal(line: CostLine, currencies: CurrencyOption[], baseCurrencyId: string): number | null {
@@ -148,9 +168,7 @@ function lineSubtotal(line: CostLine, currencies: CurrencyOption[], baseCurrency
   return raw;
 }
 
-function fmtNum(v: number, decimals = 2) {
-  return v.toLocaleString("es-AR", { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
-}
+const fmtNum = fmtNumber2;
 
 
 
@@ -516,11 +534,17 @@ export default function CostCompositionTable({
     onChange(arrayMove(lines, fromIdx, toIdx).map((l, i) => ({ ...l, sortOrder: i })));
   }
 
-  const metalTotal   = lines.filter(l => l.type === "METAL")  .reduce((s, l) => s + (lineSubtotal(l, currencies, baseCurrencyId) ?? 0), 0);
-  const hechuraTotal = lines.filter(l => l.type === "HECHURA").reduce((s, l) => s + (lineSubtotal(l, currencies, baseCurrencyId) ?? 0), 0);
-  const productTotal = lines.filter(l => l.type === "PRODUCT").reduce((s, l) => s + (lineSubtotal(l, currencies, baseCurrencyId) ?? 0), 0);
-  const serviceTotal = lines.filter(l => l.type === "SERVICE").reduce((s, l) => s + (lineSubtotal(l, currencies, baseCurrencyId) ?? 0), 0);
-  const manualTotal  = lines.filter(l => l.type === "MANUAL") .reduce((s, l) => s + (lineSubtotal(l, currencies, baseCurrencyId) ?? 0), 0);
+  const metalLines   = lines.filter(l => l.type === "METAL");
+  const hechuraLines = lines.filter(l => l.type === "HECHURA");
+  const productLines = lines.filter(l => l.type === "PRODUCT");
+  const serviceLines = lines.filter(l => l.type === "SERVICE");
+  const manualLines  = lines.filter(l => l.type === "MANUAL");
+
+  const metalTotal   = metalLines  .reduce((s, l) => s + (lineSubtotal(l, currencies, baseCurrencyId) ?? 0), 0);
+  const hechuraTotal = hechuraLines.reduce((s, l) => s + (lineSubtotal(l, currencies, baseCurrencyId) ?? 0), 0);
+  const productTotal = productLines.reduce((s, l) => s + (lineSubtotal(l, currencies, baseCurrencyId) ?? 0), 0);
+  const serviceTotal = serviceLines.reduce((s, l) => s + (lineSubtotal(l, currencies, baseCurrencyId) ?? 0), 0);
+  const manualTotal  = manualLines .reduce((s, l) => s + (lineSubtotal(l, currencies, baseCurrencyId) ?? 0), 0);
   const hasLines = lines.length > 0;
 
   const pendingLine = confirmRemoveIdx !== null ? lines[confirmRemoveIdx] : null;
@@ -585,7 +609,7 @@ export default function CostCompositionTable({
       {/* ── Totales alineados con columna Subtotal ───────────────────────── */}
       {hasLines && (
         <div className="mt-2">
-          {metalTotal > 0 && (
+          {metalTotal > 0 && metalLines.length > 1 && (
             <div className={cn(GRID, "px-2 py-0.5")}>
               <div className="col-span-8 flex items-center gap-1.5 text-xs text-amber-400 justify-end pr-2">
                 <Gem size={10} /> Subtotal metal
@@ -595,7 +619,7 @@ export default function CostCompositionTable({
               </div>
             </div>
           )}
-          {hechuraTotal > 0 && (
+          {hechuraTotal > 0 && hechuraLines.length > 1 && (
             <div className={cn(GRID, "px-2 py-0.5")}>
               <div className="col-span-8 flex items-center gap-1.5 text-xs text-blue-400 justify-end pr-2">
                 <Wrench size={10} /> Subtotal hechura
@@ -605,7 +629,7 @@ export default function CostCompositionTable({
               </div>
             </div>
           )}
-          {productTotal > 0 && (
+          {productTotal > 0 && productLines.length > 1 && (
             <div className={cn(GRID, "px-2 py-0.5")}>
               <div className="col-span-8 flex items-center gap-1.5 text-xs text-violet-400 justify-end pr-2">
                 <Package size={10} /> Subtotal productos
@@ -615,7 +639,7 @@ export default function CostCompositionTable({
               </div>
             </div>
           )}
-          {serviceTotal > 0 && (
+          {serviceTotal > 0 && serviceLines.length > 1 && (
             <div className={cn(GRID, "px-2 py-0.5")}>
               <div className="col-span-8 flex items-center gap-1.5 text-xs text-emerald-400 justify-end pr-2">
                 <Layers size={10} /> Subtotal servicios
@@ -625,7 +649,7 @@ export default function CostCompositionTable({
               </div>
             </div>
           )}
-          {manualTotal > 0 && (
+          {manualTotal > 0 && manualLines.length > 1 && (
             <div className={cn(GRID, "px-2 py-0.5")}>
               <div className="col-span-8 flex items-center gap-1.5 text-xs text-muted justify-end pr-2">
                 <DollarSign size={10} /> Subtotal otros

@@ -26,6 +26,7 @@ export type AttributeDefRow = {
   unit: string;
   defaultValue: string;
   isActive: boolean;
+  sortOrder: number;
   deletedAt: string | null;
   createdAt: string;
   updatedAt: string;
@@ -106,6 +107,13 @@ export const attributeDefsApi = {
       `/attribute-defs/options/${optionId}/toggle`,
       { method: "PATCH", on401: "throw" }
     ),
+
+  reorder: (ids: string[]) =>
+    apiFetch<{ ok: boolean }>("/attribute-defs/reorder", {
+      method: "PATCH",
+      body: { ids },
+      on401: "throw",
+    }),
 
   reorderOptions: (defId: string, ids: string[]) =>
     apiFetch<{ ok: boolean }>(`/attribute-defs/${defId}/options/reorder`, {

@@ -660,25 +660,9 @@ export function useValuation() {
       if (!id) return { ok: false as const, error: "Variante inválida.", rows: [] as any[] };
 
       const r = await run(async () => {
-        // preferimos endpoint “rico”
-        if (typeof (valuation as any).getVariantQuoteHistory === "function") {
-          const resp = await (valuation as any).getVariantQuoteHistory(id, take);
-
-          const rows = resp?.rows ?? resp?.data?.rows ?? resp?.history ?? resp?.data?.history ?? pickRows(resp) ?? [];
-          const current = resp?.current ?? resp?.data?.current ?? (Array.isArray(rows) ? rows[0] : null);
-
-          return {
-            variant: resp?.variant ?? resp?.data?.variant ?? null,
-            current,
-            rows: Array.isArray(rows) ? rows : [],
-          };
-        }
-
-        // fallback: quotes simple
         const resp = await valuation.getQuotes(id, Math.min(200, Math.max(1, take)));
         const rows = pickRows(resp);
         const current = Array.isArray(rows) ? rows[0] : null;
-
         return { variant: null, current, rows: Array.isArray(rows) ? rows : [] };
       });
 

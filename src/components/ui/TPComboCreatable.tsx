@@ -59,7 +59,6 @@ function catTypeEs(t: CatalogType) {
     PAYMENT_TERM: "Plazo de pago",
     ARTICLE_BRAND: "Marca",
     ARTICLE_MANUFACTURER: "Fabricante",
-    UNIT_OF_MEASURE: "Unidad de medida",
   };
   return map[String(t)] || String(t);
 }

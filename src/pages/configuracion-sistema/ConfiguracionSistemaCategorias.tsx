@@ -5,8 +5,6 @@ import {
   X,
   FolderOpen,
   FolderTree,
-  ChevronsDownUp,
-  ChevronsUpDown,
   SlidersHorizontal,
   Tags,
   Tag,
@@ -39,6 +37,7 @@ import {
   TPTableHeader,
   TPTableFooter,
 } from "../../components/ui/TPTable";
+import { TPExpandToggle } from "../../components/ui/TPExpandToggle";
 import { TPSearchInput } from "../../components/ui/TPSearchInput";
 import { TPColumnPicker, type ColPickerDef } from "../../components/ui/TPColumnPicker";
 import { TPStatusPill } from "../../components/ui/TPStatusPill";
@@ -267,13 +266,14 @@ export default function ConfiguracionSistemaCategorias() {
 
   /* ---------- opciones de padre como árbol con indentación ---------- */
   const parentTreeOptions = useMemo(() => {
-    const result: { value: string; label: string }[] = [];
+    const result: { value: string; label: string; depth?: number }[] = [];
     function traverse(nodes: CategoryNode[]) {
       for (const node of nodes) {
         if (node.isActive && !node.deletedAt && node.id !== editTarget?.id) {
           result.push({
             value: node.id,
-            label: "— ".repeat(node.level) + node.name,
+            label: node.name,
+            depth: node.level,
           });
         }
         traverse(node.children);
@@ -659,18 +659,10 @@ export default function ConfiguracionSistemaCategorias() {
           left={
             <div className="flex items-center gap-2 w-full">
               {!isSearching && tree.some((n) => n.children.length > 0) && (
-                <button
-                  type="button"
-                  title={isAllExpanded ? "Colapsar todo" : "Expandir todo"}
-                  onClick={isAllExpanded ? collapseAll : expandAll}
-                  className="inline-flex items-center justify-center rounded-lg border border-border bg-surface h-9 w-9 text-text hover:bg-surface2/60 transition-colors shrink-0"
-                >
-                  {isAllExpanded ? (
-                    <ChevronsDownUp size={15} />
-                  ) : (
-                    <ChevronsUpDown size={15} />
-                  )}
-                </button>
+                <TPExpandToggle
+                  isExpanded={isAllExpanded}
+                  onToggle={isAllExpanded ? collapseAll : expandAll}
+                />
               )}
               <TPColumnPicker
                 columns={COL_DEFS}

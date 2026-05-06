@@ -1,6 +1,7 @@
 // tptech-frontend/src/context/ThemeContext.tsx
 import React, {
   createContext,
+  useCallback,
   useContext,
   useEffect,
   useMemo,
@@ -8,6 +9,7 @@ import React, {
   useState,
 } from "react";
 import { useAuth } from "./AuthContext";
+import { updateMyTheme } from "../services/users";
 
 export type ThemeName = "classic" | "dark" | "blue" | "gray" | "emerald";
 
@@ -98,16 +100,23 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
   const [theme, setThemeState] = useState<ThemeName>("classic");
   const lastUserIdRef = useRef<string | null>(null);
 
-  const setTheme = (t: ThemeName) => {
+  // useCallback con [user?.id] garantiza que setTheme siempre captura el user actual.
+  // Sin esto, si el usuario cambia pero el tema queda igual, useMemo no re-ejecuta
+  // y setTheme queda con el user del render anterior (stale closure).
+  const setTheme = useCallback((t: ThemeName) => {
     const normalized = normalizeTheme(String(t));
     setThemeState(normalized);
     applyThemeToDom(normalized);
 
-    // ✅ guardado público + por usuario
+    // cache local: boot anti-flash + fallback offline
     safeSet(keyPublic(), normalized);
     const uid = user?.id ?? null;
-    if (uid) safeSet(keyUser(uid), normalized);
-  };
+    if (uid) {
+      safeSet(keyUser(uid), normalized);
+      // persistir en backend (fire-and-forget: no bloqueamos la UI)
+      updateMyTheme(normalized).catch(() => {/* fallo silencioso, localStorage como backup */});
+    }
+  }, [user?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ✅ boot (1 sola vez)
   useEffect(() => {
@@ -117,21 +126,31 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
     applyThemeToDom(saved);
   }, []);
 
-  // ✅ cambio de usuario / quick switch
+  // cambio de usuario / login / quick switch
+  // Prioridad: 1) themePreference del backend  2) localStorage por usuario  3) localStorage público
   useEffect(() => {
     const uid = user?.id ?? null;
-    if (lastUserIdRef.current === uid) return;
+    if (lastUserIdRef.current === uid) return; // mismo usuario, nada que hacer
     lastUserIdRef.current = uid;
 
+    const backendPref = uid ? (user?.themePreference ?? null) : null;
     const next = uid
-      ? normalizeTheme(safeGet(keyUser(uid)) ?? safeGet(keyPublic()))
+      ? normalizeTheme(backendPref ?? safeGet(keyUser(uid)) ?? safeGet(keyPublic()))
       : normalizeTheme(safeGet(keyPublic()));
 
     setThemeState(next);
     applyThemeToDom(next);
-  }, [user?.id]);
 
-  const value = useMemo(() => ({ theme, setTheme, themes }), [theme, themes]);
+    // actualizar localStorage para que el boot próximo no flashee
+    if (uid) {
+      safeSet(keyUser(uid), next);
+      safeSet(keyPublic(), next);
+    }
+  }, [user?.id]); // user?.themePreference se lee vía closure al moment en que user.id cambia
+
+  // setTheme en deps: cuando cambia user?.id, useCallback genera una nueva referencia
+  // → useMemo re-ejecuta → consumidores reciben el setTheme correcto para el user actual
+  const value = useMemo(() => ({ theme, setTheme, themes }), [theme, setTheme, themes]);
 
   return <ThemeContext.Provider value={value}>{children}</ThemeContext.Provider>;
 }

@@ -26,6 +26,9 @@ type Props = {
   busy?: boolean;
   loading?: boolean;
 
+  /** Ícono opcional dentro del cuadro de la izquierda. Default: Trash2. */
+  icon?: React.ReactNode;
+
   onClose: () => void;
   onConfirm: () => void;
 };
@@ -42,6 +45,7 @@ export default function ConfirmDeleteDialog({
   dangerHint,
   busy,
   loading,
+  icon,
   onClose,
   onConfirm,
 }: Props) {
@@ -71,7 +75,7 @@ export default function ConfirmDeleteDialog({
       <div className="relative w-full max-w-lg rounded-2xl border border-border bg-surface p-5 shadow-xl">
         <div className="flex items-start gap-3">
           <div className="mt-0.5 rounded-xl border border-border p-2">
-            <Trash2 className="h-5 w-5" />
+            {icon ?? <Trash2 className="h-5 w-5" />}
           </div>
 
           <div className="min-w-0 flex-1">

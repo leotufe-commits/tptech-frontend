@@ -20,13 +20,16 @@ import {
   Store,
   Database,
   BarChart3,
-  LayoutGrid,
   Mail,
   BadgePercent,
   PackagePlus,
   ShieldAlert,
   Zap,
   TrendingUp,
+  Sliders,
+  FileText,
+  ArrowUpDown,
+  Ticket,
 } from "lucide-react";
 
 function cn(...classes: Array<string | false | null | undefined>) {
@@ -189,9 +192,10 @@ export default function ConfiguracionSistema() {
 
   const sections: SectionCfg[] = useMemo(
     () => [
+      // ── 1. Configuración del negocio ──────────────────────────────────────────
       {
-        title: "Empresa",
-        desc: "Datos generales, fiscales y de comunicación de la joyería.",
+        title: "Configuración del negocio",
+        desc: "Datos generales, comunicación, monedas y formatos de la joyería.",
         cards: [
           {
             to: "/configuracion/joyeria",
@@ -206,21 +210,29 @@ export default function ConfiguracionSistema() {
             icon: <Mail size={18} />,
           },
           {
-            to: "/inventario/almacenes",
-            title: "Almacenes",
-            desc: "Alta y gestión de almacenes, activación y favoritos.",
-            icon: <Boxes size={18} />,
-          },
-          {
             to: "/divisas",
             title: "Divisas",
             desc: "Monedas y tipos de cambio para operar en multi-moneda.",
             icon: <Landmark size={18} />,
           },
+          {
+            to: "/configuracion-sistema/formato-campos",
+            title: "Formato de campos",
+            desc: "Estilo de visualización de teléfonos y documentos en los formularios internos.",
+            icon: <Sliders size={18} />,
+          },
+          {
+            to: "/inventario/almacenes",
+            title: "Almacenes",
+            desc: "Alta y gestión de almacenes, activación y favoritos.",
+            icon: <Boxes size={18} />,
+          },
         ],
       },
+
+      // ── 2. Usuarios y acceso ──────────────────────────────────────────────────
       {
-        title: "Usuarios y seguridad",
+        title: "Usuarios y acceso",
         desc: "Control de accesos, permisos y bloqueo del sistema.",
         cards: [
           {
@@ -244,8 +256,10 @@ export default function ConfiguracionSistema() {
           },
         ],
       },
+
+      // ── 3. Ventas y precios ───────────────────────────────────────────────────
       {
-        title: "Precios y reglas comerciales",
+        title: "Ventas y precios",
         desc: "Definí cómo se calculan los precios, descuentos, promociones y reglas de control.",
         highlight: true,
         cards: [
@@ -273,11 +287,25 @@ export default function ConfiguracionSistema() {
             desc: "Alertas de margen y bloqueos de confirmación de ventas.",
             icon: <ShieldAlert size={18} />,
           },
+          {
+            to: "/configuracion-sistema/canales-venta",
+            title: "Canales de venta",
+            desc: "Configurá recargos o descuentos por canal de venta (Mercado Libre, Mayorista, etc.).",
+            icon: <ArrowUpDown size={18} />,
+          },
+          {
+            to: "/configuracion-sistema/cupones",
+            title: "Cupones de descuento",
+            desc: "Códigos de descuento por evento, cliente o campaña — se aplican al confirmar la venta.",
+            icon: <Ticket size={18} />,
+          },
         ],
       },
+
+      // ── 4. Productos e inventario ─────────────────────────────────────────────
       {
-        title: "Producto",
-        desc: "Estructura y organización del catálogo de artículos.",
+        title: "Productos e inventario",
+        desc: "Estructura, clasificación y organización del catálogo de artículos.",
         cards: [
           {
             to: "/configuracion-sistema/categorias",
@@ -285,10 +313,18 @@ export default function ConfiguracionSistema() {
             desc: "Jerarquía del catálogo, atributos por categoría y lista de precios por defecto.",
             icon: <Layers size={18} />,
           },
+          {
+            to: "/configuracion-sistema/unidades",
+            title: "Unidades",
+            desc: "Unidades de venta, peso, dimensión y volumen — clasificadas por tipo.",
+            icon: <Sliders size={18} />,
+          },
         ],
       },
+
+      // ── 5. Operación diaria ───────────────────────────────────────────────────
       {
-        title: "Operación",
+        title: "Operación diaria",
         desc: "Parámetros del día a día: vendedores, cobros, envíos e impuestos.",
         cards: [
           {
@@ -317,9 +353,38 @@ export default function ConfiguracionSistema() {
           },
         ],
       },
+
+      // ── 6. Documentos e impresión ─────────────────────────────────────────────
       {
-        title: "Sistema",
-        desc: "Catálogos base, reportes y análisis del negocio.",
+        title: "Documentos e impresión",
+        desc: "Plantillas, numeración e impresión de comprobantes y etiquetas.",
+        highlight: true,
+        cards: [
+          {
+            to: "/configuracion-sistema/documentos",
+            title: "Plantillas de documentos PDF",
+            desc: "Encabezado, columnas, secciones y estilo de facturas, presupuestos, remitos y más.",
+            icon: <FileText size={18} />,
+          },
+          {
+            to: "/configuracion-sistema/numeracion",
+            title: "Numeración de comprobantes",
+            desc: "Series, prefijos y numeración por tipo de documento.",
+            icon: <Hash size={18} />,
+          },
+          {
+            to: "/configuracion-sistema/etiquetas",
+            title: "Impresión de etiquetas",
+            desc: "Diseño e impresión de etiquetas para artículos.",
+            icon: <Printer size={18} />,
+          },
+        ],
+      },
+
+      // ── 7. Análisis y sistema ─────────────────────────────────────────────────
+      {
+        title: "Análisis y sistema",
+        desc: "Catálogos base del sistema, reportes y análisis del negocio.",
         cards: [
           {
             to: "/configuracion-sistema/items?type=DOCUMENT_TYPE",
@@ -341,24 +406,8 @@ export default function ConfiguracionSistema() {
           },
         ],
       },
-      {
-        title: "Documentos",
-        desc: "Numeración, plantillas e impresión de comprobantes y etiquetas.",
-        cards: [
-          {
-            to: "/configuracion-sistema/numeracion",
-            title: "Numeración de comprobantes",
-            desc: "Series, prefijos y numeración por tipo de documento.",
-            icon: <Hash size={18} />,
-          },
-          {
-            to: "/configuracion-sistema/etiquetas",
-            title: "Impresión de etiquetas",
-            desc: "Diseño e impresión de etiquetas para artículos.",
-            icon: <Printer size={18} />,
-          },
-        ],
-      },
+
+      // ── 8. Apariencia ─────────────────────────────────────────────────────────
       {
         title: "Apariencia",
         desc: "Preferencias visuales del sistema.",
@@ -368,13 +417,6 @@ export default function ConfiguracionSistema() {
             title: "Tema",
             desc: "Elegí el estilo visual del sistema.",
             icon: <Palette size={18} />,
-          },
-          {
-            to: "/configuracion/apariencia/ui",
-            title: "UI (Catálogo)",
-            desc: "Ver todos los componentes y estilos reales del sistema.",
-            icon: <LayoutGrid size={18} />,
-            badge: <Pill>dev</Pill>,
           },
         ],
       },

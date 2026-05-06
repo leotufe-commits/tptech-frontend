@@ -2,7 +2,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { KeyRound, Save } from "lucide-react";
 
-import { apiFetch } from "../lib/api";
+import { fetchCompanySecuritySettings, updateCompanySecuritySettings } from "../services/company";
 import { useAuth } from "../context/AuthContext";
 import { usePermissions } from "../hooks/usePermissions";
 import { TPSegmentedPills } from "./ui/TPBadges";
@@ -97,13 +97,7 @@ export default function UserPinSettings() {
     setLoading(true);
 
     try {
-      const data = await apiFetch<{ user: any; jewelry: SecuritySettings }>("/auth/me", {
-        method: "GET",
-        cache: "no-store",
-        timeoutMs: 12000,
-      });
-
-      const s = data.jewelry;
+      const s = await fetchCompanySecuritySettings();
       const sec = clamp(Math.trunc(Number(s.pinLockTimeoutSec ?? 300)), 10, 60 * 60 * 12);
 
       const snap: Snapshot = {
@@ -152,11 +146,7 @@ export default function UserPinSettings() {
         pinLockTimeoutSec: safeTimeoutMin * 60,
       };
 
-      await apiFetch("/auth/company/security/pin-lock", {
-        method: "PATCH",
-        body,
-        timeoutMs: 12000,
-      });
+      await updateCompanySecuritySettings(body);
 
       setOk("Guardado correctamente");
       await auth.refreshMe({ silent: true });

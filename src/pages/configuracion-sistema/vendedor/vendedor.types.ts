@@ -22,7 +22,6 @@ export type SellerDraft = {
   isFavorite: boolean;
   notes: string;
   warehouseIds: string[];
-  userId: string | null;
   contactName: string;
   contactPhone: string;
   contactEmail: string;

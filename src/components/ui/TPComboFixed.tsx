@@ -1,10 +1,10 @@
 // src/components/ui/TPComboFixed.tsx
 import React, { useEffect, useRef, useState } from "react";
 import ReactDOM from "react-dom";
-import { ChevronDown, Check, Search, Star } from "lucide-react";
+import { ChevronDown, Check, Layers, Search, Star } from "lucide-react";
 import { cn, TP_INPUT } from "./tp";
 
-type Option = { value: string; label: string; disabled?: boolean; isHeader?: boolean; isFavorite?: boolean };
+type Option = { value: string; label: string; shortLabel?: string; disabled?: boolean; isHeader?: boolean; isFavorite?: boolean; depth?: number; imageUrl?: string; sublabel?: string };
 
 type Props = {
   value: string;
@@ -46,7 +46,8 @@ export default function TPComboFixed({
   const searchRef = useRef<HTMLInputElement | null>(null);
   const itemRefs = useRef<Array<HTMLButtonElement | null>>([]);
 
-  const selectedLabel = options.find((o) => o.value === value)?.label ?? "";
+  const selectedOpt   = options.find((o) => o.value === value);
+  const selectedLabel = selectedOpt?.shortLabel ?? selectedOpt?.label ?? "";
 
   /* Opciones filtradas (solo cuando searchable) */
   const filteredOptions = searchable && searchText.trim()
@@ -67,7 +68,7 @@ export default function TPComboFixed({
         position: "fixed",
         top: rect.bottom + 4,
         left: rect.left,
-        width: rect.width,
+        minWidth: Math.max(rect.width, 264),
         zIndex: 9999,
       };
     }
@@ -75,7 +76,7 @@ export default function TPComboFixed({
       position: "fixed",
       bottom: window.innerHeight - rect.top + 4,
       left: rect.left,
-      width: rect.width,
+      minWidth: Math.max(rect.width, 240),
       zIndex: 9999,
     };
   }
@@ -316,8 +317,9 @@ export default function TPComboFixed({
                 onMouseEnter={() => !isOptDisabled && setActiveIndex(idx)}
                 onClick={() => !isOptDisabled && pick(opt.value)}
                 tabIndex={-1}
+                style={opt.depth ? { paddingLeft: `${opt.depth * 16 + 12}px` } : undefined}
                 className={cn(
-                  "w-full rounded-xl px-3 py-2 text-left text-sm flex items-center gap-2 transition",
+                  "w-full rounded-xl px-3 py-2 text-left text-sm flex items-center gap-2.5 transition",
                   isOptDisabled
                     ? "opacity-40 cursor-not-allowed"
                     : "hover:bg-primary/10 cursor-pointer",
@@ -325,7 +327,37 @@ export default function TPComboFixed({
                   isSelected && "font-semibold"
                 )}
               >
-                <span className="flex-1">{opt.label}</span>
+                {/* Imagen de opción (solo cuando imageUrl está definido) */}
+                {opt.imageUrl !== undefined && (
+                  <span className="shrink-0" aria-hidden="true">
+                    {opt.imageUrl ? (
+                      <img
+                        src={opt.imageUrl}
+                        alt=""
+                        className="w-7 h-7 rounded-lg object-cover"
+                        onError={(e) => {
+                          const t = e.currentTarget;
+                          t.style.display = "none";
+                          (t.nextElementSibling as HTMLElement | null)?.style.setProperty("display", "flex");
+                        }}
+                      />
+                    ) : null}
+                    <span
+                      className={cn(
+                        "w-7 h-7 rounded-lg bg-primary/10 items-center justify-center",
+                        opt.imageUrl ? "hidden" : "flex"
+                      )}
+                    >
+                      <Layers size={12} className="text-primary/50" />
+                    </span>
+                  </span>
+                )}
+                <span className="flex-1 min-w-0">
+                  <span className="block truncate">{opt.label}</span>
+                  {opt.sublabel && (
+                    <span className="block text-xs text-muted truncate">{opt.sublabel}</span>
+                  )}
+                </span>
                 <span className="flex items-center gap-1 shrink-0">
                   <span className="w-[14px] flex items-center justify-center">
                     {isSelected && <Check size={14} className="text-primary" />}

@@ -1,18 +1,17 @@
 // src/pages/InventarioAlmacenes.tsx
-import React, { useEffect, useMemo, useState } from "react";
-import { Plus, AlertTriangle } from "lucide-react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
+import { Plus } from "lucide-react";
 
 import TPSectionShell from "../components/ui/TPSectionShell";
 import { TPCard } from "../components/ui/TPCard";
 import { TPButton } from "../components/ui/TPButton";
-import TPSearchInput from "../components/ui/TPSearchInput";
 import ConfirmDeleteDialog from "../components/ui/ConfirmDeleteDialog";
 import Modal from "../components/ui/Modal";
 import TPAlert from "../components/ui/TPAlert";
 
 import { toast } from "../lib/toast";
 
-import type { SortDir, SortKey, WarehouseDraft, WarehouseRow } from "./InventarioAlmacenes/types";
+import type { SortKey, WarehouseAttachment, WarehouseDraft, WarehouseRow } from "./InventarioAlmacenes/types";
 import { warehousesApi } from "./InventarioAlmacenes/warehouses.api";
 
 import {
@@ -28,9 +27,10 @@ import {
 } from "./InventarioAlmacenes/warehouses.utils";
 
 import WarehousesKpis from "./InventarioAlmacenes/WarehousesKpis";
-import WarehousesTable from "./InventarioAlmacenes/WarehousesTable";
+import WarehousesTable, { WH_COL_LS_KEY } from "./InventarioAlmacenes/WarehousesTable";
 import WarehouseViewModal from "./InventarioAlmacenes/WarehouseViewModal";
 import WarehouseEditModal from "./InventarioAlmacenes/WarehouseEditModal";
+import { usePersistedTableSort } from "../hooks/usePersistedTableSort";
 
 function cleanErrMsg(msg: any) {
   const m = String(msg ?? "").trim();
@@ -47,8 +47,11 @@ export default function InventarioAlmacenes() {
   const [rows, setRows] = useState<WarehouseRow[]>([]);
   const [q, setQ] = useState("");
 
-  const [sortKey, setSortKey] = useState<SortKey>("name");
-  const [sortDir, setSortDir] = useState<SortDir>("asc");
+  const { sortKey, sortDir, toggleSort } = usePersistedTableSort<SortKey>({
+    storageKey: WH_COL_LS_KEY,
+    defaultKey: "name",
+    defaultDir: "asc",
+  });
 
   const [editOpen, setEditOpen] = useState(false);
   const [draft, setDraft] = useState<WarehouseDraft>({ ...EMPTY_DRAFT });
@@ -67,6 +70,15 @@ export default function InventarioAlmacenes() {
   // ✅ busy states para íconos
   const [busyFavoriteId, setBusyFavoriteId] = useState<string | null>(null);
   const [busyRowId, setBusyRowId] = useState<string | null>(null);
+
+  // Evita que marcar favorito dispare un refresh completo (y re-ordene la tabla)
+  const skipNextFavRefreshRef = useRef(false);
+
+  // ✅ attachments del modal de edición
+  const [savedAttachments, setSavedAttachments] = useState<WarehouseAttachment[]>([]);
+  const [pendingFiles, setPendingFiles] = useState<File[]>([]);
+  const [uploadingAttachments, setUploadingAttachments] = useState(false);
+  const [deletingAttId, setDeletingAttId] = useState<string | null>(null);
 
   const editKey = draft.id ? `edit:${draft.id}` : "new";
 
@@ -87,6 +99,10 @@ export default function InventarioAlmacenes() {
 
     let t: any = null;
     const onChanged = () => {
+      if (skipNextFavRefreshRef.current) {
+        skipNextFavRefreshRef.current = false;
+        return;
+      }
       if (t) clearTimeout(t);
       t = setTimeout(() => void refresh(), 180);
     };
@@ -99,16 +115,14 @@ export default function InventarioAlmacenes() {
     };
   }, []);
 
-  function toggleSort(k: SortKey) {
-    setSortKey((prev) => {
-      if (prev !== k) {
-        setSortDir("asc");
-        return k;
-      }
-      setSortDir((d) => (d === "asc" ? "desc" : "asc"));
-      return prev;
-    });
-  }
+  useEffect(() => {
+    function onQuickCreate(e: Event) {
+      const { screen } = (e as CustomEvent).detail ?? {};
+      if (screen === "almacenes") openCreate();
+    }
+    window.addEventListener("tptech:sidebar_quick_create", onQuickCreate);
+    return () => window.removeEventListener("tptech:sidebar_quick_create", onQuickCreate);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const filtered = useMemo(() => {
     const needle = s(q).toLowerCase();
@@ -132,6 +146,9 @@ export default function InventarioAlmacenes() {
 
         case "code":
           return cmpStr(a.code, b.code) * dir;
+
+        case "city":
+          return cmpStr(a.city, b.city) * dir;
 
         case "location":
           return cmpStr(a.location, b.location) * dir;
@@ -167,12 +184,20 @@ export default function InventarioAlmacenes() {
 
   function openCreate() {
     setDraft({ ...EMPTY_DRAFT });
+    setSavedAttachments([]);
+    setPendingFiles([]);
     setEditOpen(true);
   }
 
   function openEdit(r: WarehouseRow) {
     setDraft(rowToDraft(r));
+    setSavedAttachments([]);
+    setPendingFiles([]);
     setEditOpen(true);
+    // cargar adjuntos en background
+    warehousesApi.getAttachments(r.id)
+      .then((atts) => setSavedAttachments(atts))
+      .catch(() => {});
   }
 
   function openView(r: WarehouseRow) {
@@ -196,15 +221,72 @@ export default function InventarioAlmacenes() {
       } else {
         const created = await warehousesApi.create(payload);
         setRows((prev) => [...prev, created]);
+
+        // subir archivos pendientes después de crear
+        if (pendingFiles.length > 0) {
+          for (const file of pendingFiles) {
+            try {
+              await warehousesApi.uploadAttachment(created.id, file);
+            } catch { /* silencioso: el almacén ya se creó */ }
+          }
+        }
+
         toast.success("Almacén creado.");
       }
 
       setEditOpen(false);
+      setPendingFiles([]);
       emitWarehousesChanged();
     } catch (e: any) {
       toast.error(e?.message || "No se pudo guardar.");
     } finally {
       setBusySave(false);
+    }
+  }
+
+  // ✅ subir un archivo en el modal de edición (modo edit)
+  async function handleUploadAttachment(files: File[]) {
+    const id = draft.id;
+    if (!id) {
+      // modo create: staging
+      setPendingFiles((prev) => [...prev, ...files]);
+      return;
+    }
+
+    const MAX = 20 * 1024 * 1024;
+    const ok = files.filter((f) => f.size <= MAX);
+    const rejected = files.filter((f) => f.size > MAX);
+    if (rejected.length) toast.warning(`${rejected.length} archivo(s) superan 20 MB y fueron omitidos.`);
+    if (!ok.length) return;
+
+    setUploadingAttachments(true);
+    try {
+      for (const file of ok) {
+        const att = await warehousesApi.uploadAttachment(id, file);
+        setSavedAttachments((prev) => [...prev, att]);
+      }
+    } catch (e: any) {
+      toast.error(e?.message || "No se pudo subir el adjunto.");
+    } finally {
+      setUploadingAttachments(false);
+    }
+  }
+
+  // ✅ eliminar adjunto en el modal de edición
+  async function handleDeleteAttachment(attId: string) {
+    const id = draft.id;
+    if (!id) return;
+
+    setSavedAttachments((prev) => prev.filter((a) => a.id !== attId));
+    setDeletingAttId(attId);
+    try {
+      await warehousesApi.deleteAttachment(id, attId);
+    } catch (e: any) {
+      toast.error(e?.message || "No se pudo eliminar el adjunto.");
+      // revertir
+      warehousesApi.getAttachments(id).then(setSavedAttachments).catch(() => {});
+    } finally {
+      setDeletingAttId(null);
     }
   }
 
@@ -226,6 +308,9 @@ export default function InventarioAlmacenes() {
         }))
       );
 
+      // Marcar favorito no debe re-ordenar la tabla — el evento se emite
+      // solo para que otros contextos (InventoryContext) actualicen su estado.
+      skipNextFavRefreshRef.current = true;
       emitWarehousesChanged();
     } catch (e: any) {
       toast.error(e?.message || "No se pudo marcar favorito.");
@@ -313,39 +398,29 @@ export default function InventarioAlmacenes() {
         totalPieces={kpis.totalPieces}
       />
 
-      <TPCard className="mt-4">
-        <div className="flex flex-col gap-3 md:flex-row md:items-center mb-3">
-          <div className="flex-1 min-w-0 md:max-w-xl">
-            <TPSearchInput value={q} onChange={setQ} placeholder="Buscar por nombre, código, ubicación, ciudad…" />
-          </div>
-
-          <div className="flex w-full items-center gap-3 md:justify-end md:w-auto">
-            <div className="ml-auto text-xs text-muted">
-              {loading ? "Cargando…" : `Mostrando: ${filtered.length} / ${rows.length}`}
-            </div>
-
-            <TPButton onClick={openCreate} iconLeft={<Plus className="h-4 w-4" />}>
-              Nuevo almacén
-            </TPButton>
-          </div>
-        </div>
-
-        <WarehousesTable
-          loading={loading}
-          rows={filtered}
-          sortKey={sortKey}
-          sortDir={sortDir}
-          onToggleSort={toggleSort}
-          busyFavoriteId={busyFavoriteId}
-          busyRowId={busyRowId}
-          onFavorite={favorite}
-          onView={openView}
-          onEdit={openEdit}
-          onToggleActive={toggleActive}
-          onAskDelete={askDelete}
-          colVis={{}}
-        />
-      </TPCard>
+      <div className="mt-6">
+      <WarehousesTable
+        loading={loading}
+        rows={filtered}
+        sortKey={sortKey}
+        sortDir={sortDir}
+        onToggleSort={toggleSort}
+        busyFavoriteId={busyFavoriteId}
+        busyRowId={busyRowId}
+        onFavorite={favorite}
+        onView={openView}
+        onEdit={openEdit}
+        onToggleActive={toggleActive}
+        onAskDelete={askDelete}
+        search={q}
+        onSearchChange={setQ}
+        actions={
+          <TPButton onClick={openCreate} iconLeft={<Plus size={14} />}>
+            Nuevo almacén
+          </TPButton>
+        }
+      />
+      </div>
 
       <WarehouseViewModal open={viewOpen} onClose={() => setViewOpen(false)} target={viewTarget} />
 
@@ -358,6 +433,12 @@ export default function InventarioAlmacenes() {
         onSave={save}
         editKey={editKey}
         onFormKeyDown={onFormKeyDown}
+        savedAttachments={savedAttachments}
+        pendingFiles={pendingFiles}
+        uploadingAttachments={uploadingAttachments}
+        deletingAttId={deletingAttId}
+        onUpload={handleUploadAttachment}
+        onDeleteAttachment={handleDeleteAttachment}
       />
 
       <ConfirmDeleteDialog

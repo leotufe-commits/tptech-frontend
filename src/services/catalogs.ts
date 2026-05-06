@@ -10,10 +10,7 @@ export type CatalogType =
   | "COUNTRY"
   | "PAYMENT_TERM"
   | "ARTICLE_BRAND"
-  | "ARTICLE_MANUFACTURER"
-  | "UNIT_OF_MEASURE"
-  | "MULTIPLIER_BASE"
-  | "WEIGHT_UNIT";
+  | "ARTICLE_MANUFACTURER";
 
 export type CatalogItem = {
   id: string;

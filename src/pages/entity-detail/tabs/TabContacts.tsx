@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from "react";
+import { useFieldFormats } from "../../../context/FieldFormatsContext";
 import { Plus, Pencil, Trash2, Star, Mail, Phone, Users, X, Save } from "lucide-react";
 import { TPButton } from "../../../components/ui/TPButton";
 import { TPCard } from "../../../components/ui/TPCard";
@@ -81,6 +82,7 @@ export function TabContacts({
   hideHeader = false,
 }: Props) {
   const prefixCat = useCatalog("PHONE_PREFIX");
+  const { fmtPhone } = useFieldFormats();
 
   const isOffline = !!onOfflineItemsChange;
   const effectiveData = isOffline ? (offlineItems ?? []) : data;
@@ -308,7 +310,7 @@ export function TabContacts({
                 )}
                 {c.phone && (
                   <span className="flex items-center gap-1 text-xs text-muted">
-                    <Phone size={11} /> {[c.phonePrefix, c.phone].filter(Boolean).join(" ")}
+                    <Phone size={11} /> {fmtPhone(c.phonePrefix, c.phone)}
                   </span>
                 )}
               </div>

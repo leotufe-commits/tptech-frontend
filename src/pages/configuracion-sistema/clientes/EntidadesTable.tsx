@@ -10,9 +10,11 @@ import { TPRowActions } from "../../../components/ui/TPRowActions";
 import { TPTr, TPTd } from "../../../components/ui/TPTable";
 import { TPBadge } from "../../../components/ui/TPBadges";
 import { TPCheckbox } from "../../../components/ui/TPCheckbox";
+import { selectableRowProps } from "../../../components/ui/selectableRow";
 import ConfirmDeleteDialog from "../../../components/ui/ConfirmDeleteDialog";
 import type { EntityRow, CommercialRuleType } from "../../../services/commercial-entities";
 import type { SortKey } from "./clientes.types";
+import { useFieldFormats } from "../../../context/FieldFormatsContext";
 
 const RULE_LABEL: Record<CommercialRuleType, string> = {
   DISCOUNT:  "Desc.",
@@ -97,6 +99,7 @@ export function EntidadesTable({
   entityLabel,
 }: Props) {
   const navigate = useNavigate();
+  const { fmtPhone, fmtDoc } = useFieldFormats();
 
   // ── Selección masiva ──────────────────────────────────────────────────────
   const [lightboxSrc, setLightboxSrc]         = useState<string | null>(null);
@@ -186,7 +189,9 @@ export function EntidadesTable({
             {/* Checkbox de selección */}
             {sel && (
               <TPTd className="w-10 px-3" onClick={(e) => e.stopPropagation()}>
-                <TPCheckbox checked={sel.checked} onChange={sel.onCheck} />
+                <span {...selectableRowProps({ onToggle: sel.onCheck })}>
+                  <TPCheckbox checked={sel.checked} onChange={sel.onCheck} />
+                </span>
               </TPTd>
             )}
 
@@ -247,7 +252,7 @@ export function EntidadesTable({
               <TPTd className="hidden md:table-cell">
                 <span className="text-sm text-muted">
                   {row.documentType || row.documentNumber
-                    ? `${row.documentType ? row.documentType + " " : ""}${row.documentNumber}`
+                    ? `${row.documentType ? row.documentType + " " : ""}${fmtDoc(row.documentNumber)}`
                     : "—"}
                 </span>
               </TPTd>
@@ -258,8 +263,30 @@ export function EntidadesTable({
               <TPTd className="hidden md:table-cell">
                 <div className="text-sm space-y-0.5">
                   <div className="text-text">{row.email || "—"}</div>
-                  {row.phone && <div className="text-xs text-muted">{row.phone}</div>}
+                  {row.phone && <div className="text-xs text-muted">{fmtPhone("", row.phone)}</div>}
                 </div>
+              </TPTd>
+            )}
+
+            {/* Vendedor asignado — solo el del cliente, sin fallback al
+                favorito del sistema (la regla de fallback aplica en Factura
+                de Venta, no en este listado). */}
+            {vis.vendedor && (
+              <TPTd className="hidden lg:table-cell">
+                {row.seller
+                  ? <span className="text-sm text-text">{row.seller.displayName || `${row.seller.firstName} ${row.seller.lastName}`.trim()}</span>
+                  : <span className="text-sm text-muted/40">—</span>}
+              </TPTd>
+            )}
+
+            {/* Merma personalizada — la merma del cliente es relacional
+                (1 row por variante de metal en `EntityMermaOverride`). Si hay
+                al menos 1 override activo → "Personalizada"; si no → "Global". */}
+            {vis.merma && (
+              <TPTd className="hidden lg:table-cell">
+                {(row._count?.mermaOverrides ?? 0) > 0
+                  ? <TPBadge tone="primary" size="sm">Personalizada</TPBadge>
+                  : <span className="text-sm text-muted">Global</span>}
               </TPTd>
             )}
 

@@ -3,6 +3,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import { ChevronRight, Search, X } from "lucide-react";
 import { cn } from "./tp";
 import { TPCheckbox } from "./TPCheckbox";
+import { selectableRowProps } from "./selectableRow";
 import type { CategoryRow } from "../../services/categories";
 
 /* =========================================================
@@ -47,12 +48,15 @@ export function CategoryTreePicker({
   onChange,
   disabled = false,
   single = false,
+  listMaxHeight = "max-h-52",
 }: {
   categories: CategoryRow[];
   value: string[];
   onChange: (ids: string[]) => void;
   disabled?: boolean;
   single?: boolean;
+  /** Tailwind max-h-* class para la lista del árbol. Default: "max-h-52" */
+  listMaxHeight?: string;
 }) {
   const tree = useMemo(() => buildCategoryTree(categories), [categories]);
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
@@ -129,6 +133,7 @@ export function CategoryTreePicker({
             disabled && "opacity-60"
           )}
           style={{ paddingLeft: `${8 + depth * 18}px`, paddingRight: "8px" }}
+          {...selectableRowProps({ onToggle: () => toggleNode(node), disabled })}
         >
           {/* Botón expand/collapse */}
           {hasChildren ? (
@@ -180,15 +185,16 @@ export function CategoryTreePicker({
     return <p className="text-sm text-muted italic py-2">No hay categorías disponibles.</p>;
   }
 
+  const selectionCount = value.length;
   const selectionLabel = single
-    ? value.length > 0 ? "1 seleccionada" : null
-    : value.length > 0
-    ? `${value.length} seleccionada${value.length !== 1 ? "s" : ""}`
-    : null;
+    ? selectionCount === 1 ? "1 seleccionada" : "Ninguna seleccionada"
+    : selectionCount === 0
+    ? "Ninguna seleccionada"
+    : `${selectionCount} seleccionada${selectionCount !== 1 ? "s" : ""}`;
 
   return (
-    <div className="border border-border rounded-xl overflow-hidden">
-      {/* Buscador interno — dentro del borde */}
+    <div className="border border-border rounded-xl overflow-hidden bg-surface/40">
+      {/* Buscador interno */}
       <div className="relative border-b border-border">
         <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted pointer-events-none" />
         <input
@@ -197,7 +203,7 @@ export function CategoryTreePicker({
           onChange={(e) => setSearch(e.target.value)}
           placeholder="Buscar categoría..."
           disabled={disabled}
-          className="w-full bg-transparent pl-8 pr-3 py-2 text-sm text-text placeholder:text-muted outline-none"
+          className="w-full bg-transparent pl-8 pr-3 py-1.5 text-sm text-text placeholder:text-muted outline-none"
         />
         {search && (
           <button
@@ -210,23 +216,27 @@ export function CategoryTreePicker({
         )}
       </div>
 
-      <div className="max-h-52 overflow-y-auto p-2 space-y-0.5">
+      <div className={cn("overflow-y-auto p-2 space-y-0.5", listMaxHeight)}>
         {tree.map((root) => renderNode(root, 0))}
       </div>
 
-      {selectionLabel && (
-        <div className="border-t border-border px-3 py-2 flex items-center justify-between bg-surface/50">
-          <span className="text-xs text-muted">{selectionLabel}</span>
-          <button
-            type="button"
-            disabled={disabled}
-            onClick={() => onChange([])}
-            className="text-xs text-muted hover:text-primary transition flex items-center gap-1"
-          >
-            <X size={11} /> Limpiar
-          </button>
-        </div>
-      )}
+      {/* Footer siempre visible con dimensiones estables */}
+      <div className="border-t border-border px-3 py-1.5 flex items-center justify-between gap-2 bg-surface/50">
+        <span className="text-xs text-muted whitespace-nowrap shrink-0">{selectionLabel}</span>
+        <button
+          type="button"
+          disabled={disabled || selectionCount === 0}
+          onClick={() => onChange([])}
+          className={cn(
+            "text-xs flex items-center gap-1 shrink-0",
+            selectionCount > 0
+              ? "text-muted hover:text-primary cursor-pointer"
+              : "invisible cursor-default"
+          )}
+        >
+          <X size={11} /> Limpiar
+        </button>
+      </div>
     </div>
   );
 }

@@ -60,7 +60,7 @@ export function TPButton({
       ) : null}
 
       {/* LABEL */}
-      <span className="leading-none">{children}</span>
+      <span className="inline-flex items-center gap-1.5 leading-none">{children}</span>
 
       {/* RIGHT ICON */}
       {!loading && iconRight ? (

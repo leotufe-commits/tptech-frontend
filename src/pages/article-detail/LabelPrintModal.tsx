@@ -4,6 +4,7 @@
 // Impresión: genera HTML con SVGs de barcode serializados inline (sin CDN externo).
 import React, { useState, useEffect, useRef } from "react";
 import JsBarcode from "jsbarcode";
+import QRCode from "qrcode";
 import { Printer, Plus, Minus, Tag, LayoutTemplate } from "lucide-react";
 
 import { Modal }       from "../../components/ui/Modal";
@@ -39,18 +40,83 @@ import "../../styles/print-labels.css";
 // ─── Tipos ────────────────────────────────────────────────────────────────────
 
 export type LabelItem = {
-  id:           string;
-  code:         string;
-  name:         string;
-  barcode:      string | null;
-  barcodeType:  "CODE128" | "EAN13" | "QR";
-  costPrice:    string | null;
-  salePrice:    string | null;
-  variantName?: string;
-  variantCode?: string;
-  brand?:       string;
-  sku?:         string;
-  attrs?:       Record<string, string>;
+  id:            string;
+  code:          string;
+  name:          string;
+  barcode:       string | null;
+  barcodeType:   "CODE128" | "EAN13" | "QR";
+  costPrice:     string | null;
+  salePrice:     string | null;
+  variantName?:  string;
+  variantCode?:  string;
+  brand?:        string;
+  sku?:          string;
+  /** SKU específico de variante (para resolvedSku). */
+  variantSku?:   string | null;
+  /** Peso del artículo/variante como string numérico. */
+  weight?:       string | null;
+  /** Unidad del peso (g, kg, oz, …). */
+  weightUnit?:   string | null;
+  /** Composición metálica formateada. Ej: "Oro 18k: 3,25 g\nPlata 925: 1,10 g" */
+  metalWeights?: string | null;
+  attrs?:        Record<string, string>;
+
+  // ── Descriptivos ────────────────────────────────────────────────────────────
+  description?:        string | null;
+  notes?:              string | null;
+  unitOfMeasure?:      string | null;
+  dimensions?:         string | null;
+
+  // ── Clasificación ────────────────────────────────────────────────────────────
+  categoryName?:       string | null;
+  articleType?:        string | null;
+  articleStatus?:      string | null;
+  groupName?:          string | null;
+
+  // ── Comerciales adicionales ──────────────────────────────────────────────────
+  manufacturer?:       string | null;
+  supplierName?:       string | null;
+  hechuraPrice?:       string | null;
+  mermaPercent?:       string | null;
+
+  // ── Metal / composición ──────────────────────────────────────────────────────
+  mainMetal?:          string | null;
+  purityOrLey?:        string | null;
+
+  // ── Inventario ───────────────────────────────────────────────────────────────
+  stockTotal?:         string | null;
+  reorderPoint?:       string | null;
+  defaultQuantity?:    string | null;
+
+  // ── Atributos formateados ────────────────────────────────────────────────────
+  attributesSummary?:        string | null;
+  resolvedAttributesSummary?: string | null;
+  metalMermaSummary?:        string | null;
+
+  // ── Origen de datos ──────────────────────────────────────────────────────────
+  /** Identifica si los datos vienen de un artículo o de una línea de comprobante. */
+  sourceType?: "article" | "saleLine";
+
+  // ── Snapshots de línea de comprobante ────────────────────────────────────────
+  // Cuando presentes, tienen MAYOR prioridad que los campos del artículo maestro.
+  // Permiten que el dato impreso refleje el comprobante, no el master.
+
+  /** Nombre capturado al momento del comprobante. */
+  nameSnapshot?:           string | null;
+  /** SKU capturado al momento del comprobante. */
+  skuSnapshot?:            string | null;
+  /** Barcode capturado al momento del comprobante. */
+  barcodeSnapshot?:        string | null;
+  /** Precio unitario de la línea (sobreescribe salePrice para impresión). */
+  lineUnitPrice?:          string | null;
+  /** Cantidad de la línea del comprobante. */
+  lineQuantity?:           string | null;
+  /** Peso ajustado manualmente en la línea del comprobante. */
+  lineWeightOverride?:     string | null;
+  /** Peso del artículo capturado al momento del comprobante. */
+  weightSnapshot?:         string | null;
+  /** Composición metálica capturada al momento del comprobante. */
+  metalBreakdownSnapshot?: string | null;
 };
 
 export type LabelPrintModalProps = {
@@ -143,12 +209,21 @@ function barcodeSvgString(
 
 // ─── Renderizado de elemento en HTML de impresión ────────────────────────────
 
-function elementToHtml(el: LabelElementRow, item: LabelItem): string {
+function elementToHtml(el: LabelElementRow, item: LabelItem, qrCache?: Map<string, string>): string {
   const x   = parseFloat(el.x);
   const y   = parseFloat(el.y);
   const w   = parseFloat(el.width);
   const h   = parseFloat(el.height);
-  const base = `position:absolute; left:${x}mm; top:${y}mm; width:${w}mm; height:${h}mm; overflow:hidden;`;
+
+  // Parsear configJson una sola vez para todos los tipos
+  let cfg: Record<string, unknown> = {};
+  try { cfg = JSON.parse(el.configJson || "{}"); } catch { /* ok */ }
+  const suffix   = typeof cfg["suffix"]   === "string"  ? cfg["suffix"]   : "";
+  const autoHide = Boolean(cfg["autoHideIfEmpty"]);
+  const rotation = typeof cfg["rotation"] === "number"  ? cfg["rotation"] : 0;
+  const rotStyle = rotation ? `transform:rotate(${rotation}deg); transform-origin:center center;` : "";
+
+  const base = `position:absolute; left:${x}mm; top:${y}mm; width:${w}mm; height:${h}mm; overflow:hidden; ${rotStyle}`;
 
   if (el.type === "LINE") {
     return `<div style="${base} background:#333; height:0.3mm; top:${y + h / 2}mm;"></div>`;
@@ -157,19 +232,22 @@ function elementToHtml(el: LabelElementRow, item: LabelItem): string {
   const staticText = el.label || "";
   const rawValue   = resolveForHtml(el.fieldKey, item, staticText);
   const prefix     = (el.fieldKey !== "static" && el.label) ? el.label : "";
-  const display    = el.fieldKey === "static" ? staticText : (prefix + rawValue);
+  const display    = el.fieldKey === "static" ? `${staticText}${suffix}` : `${prefix}${rawValue}${suffix}`;
 
-  if (el.type === "BARCODE" || el.type === "QR") {
+  if (el.type === "QR") {
+    if (!rawValue) return "";
+    const qrSvg = qrCache?.get(rawValue) ?? "";
+    if (!qrSvg) return "";
+    const side = Math.min(w, h);
+    return `<div style="${base} display:flex; align-items:center; justify-content:center;"><div style="width:${side}mm; height:${side}mm;">${qrSvg}</div></div>`;
+  }
+
+  if (el.type === "BARCODE") {
     if (!rawValue && el.fieldKey !== "static") return "";
-    let cfg: Record<string, unknown> = {};
-    try { cfg = JSON.parse(el.configJson || "{}"); } catch { /* ok */ }
-    if (el.type === "QR") {
-      // QR real requeriría librería adicional; usar placeholder de texto
-      return `<div style="${base} display:flex; align-items:center; justify-content:center; font-size:${Math.max(el.fontSize * 0.7, 5)}pt; font-family:monospace;">${rawValue}</div>`;
-    }
-    const fmt          = (cfg["barcodeType"] as string) || "CODE128";
-    const showText     = cfg["displayValue"] !== false;
-    const svgHtml      = barcodeSvgString(rawValue, fmt, w, h, showText, el.fontSize || 8);
+    // cfg ya parseado arriba — reusar
+    const fmt      = (cfg["barcodeType"] as string) || "CODE128";
+    const showText = cfg["displayValue"] !== false;
+    const svgHtml  = barcodeSvgString(rawValue, fmt, w, h, showText, el.fontSize || 8);
     if (!svgHtml) return "";
     return `<div style="${base} display:flex; align-items:center; justify-content:center;">${svgHtml}</div>`;
   }
@@ -180,10 +258,14 @@ function elementToHtml(el: LabelElementRow, item: LabelItem): string {
   }
 
   // TEXT
+  // autoHideIfEmpty: si el valor dinámico está vacío (y no es estático), ocultar el elemento
+  if (autoHide && el.fieldKey !== "static" && !rawValue) return "";
+
+  const isMultiline = display.includes("\n");
   const justify = el.align === "right"  ? "flex-end"
                 : el.align === "center" ? "center"
                 :                         "flex-start";
-  const textStyle = `${base} font-size:${el.fontSize}pt; font-weight:${el.fontWeight}; text-align:${el.align}; display:flex; align-items:center; justify-content:${justify}; white-space:nowrap;`;
+  const textStyle = `${base} font-size:${el.fontSize}pt; font-weight:${el.fontWeight}; text-align:${el.align}; display:flex; align-items:${isMultiline ? "flex-start" : "center"}; justify-content:${justify}; white-space:${isMultiline ? "pre-line" : "nowrap"}; line-height:1.3;`;
   return `<div style="${textStyle}">${display}</div>`;
 }
 
@@ -191,11 +273,12 @@ function elementToHtml(el: LabelElementRow, item: LabelItem): string {
 // Usa buildPrintPages para la distribución correcta de etiquetas.
 
 function buildTemplateHtml(
-  tpl:      LabelTemplateRow,
-  printer:  PrinterProfileRow | null,
-  items:    LabelItem[],
-  copies:   CopiesMap,
+  tpl:           LabelTemplateRow,
+  printer:       PrinterProfileRow | null,
+  items:         LabelItem[],
+  copies:        CopiesMap,
   defaultCopies: number,
+  qrCache:       Map<string, string> = new Map(),
 ): string {
   const lw = parseFloat(tpl.widthMm);
   const lh = parseFloat(tpl.heightMm);
@@ -233,7 +316,7 @@ function buildTemplateHtml(
   const pagesHtml = pages.map((page) => {
     const labelsHtml = page.map((row) =>
       row.map((item) => {
-        const elHtml = elements.map((el) => elementToHtml(el, item)).join("\n");
+        const elHtml = elements.map((el) => elementToHtml(el, item, qrCache)).join("\n");
         return `<div style="position:relative; width:${lw}mm; height:${lh}mm; overflow:hidden; display:inline-block;">${elHtml}</div>`;
       }).join("")
     ).join("\n");
@@ -246,7 +329,7 @@ function buildTemplateHtml(
     } else {
       // Térmica: cada etiqueta con salto de página; offset traslada el contenido dentro del área imprimible
       return page.flat().map((item) => {
-        const elHtml = elements.map((el) => elementToHtml(el, item)).join("\n");
+        const elHtml = elements.map((el) => elementToHtml(el, item, qrCache)).join("\n");
         return `<div class="lpage" style="position:relative; width:${lw}mm; height:${lh}mm; overflow:hidden;">
   <div style="position:absolute; left:${offsetX}mm; top:${offsetY}mm; width:${lw}mm; height:${lh}mm;">${elHtml}</div>
 </div>`;
@@ -563,19 +646,72 @@ export default function LabelPrintModal({
         const activePrns = prns.filter((p) => p.isActive  && !p.deletedAt);
         setTemplates(activeTpls);
         setPrinters(activePrns);
-        setTemplateId((prev) => prev !== undefined ? prev : (activeTpls.find((t) => t.isDefault)?.id ?? null));
-        setPrinterId ((prev) => prev !== undefined ? prev : (activePrns.find((p) => p.isDefault)?.id ?? null));
+
+        // Auto-select default template (solo la primera vez)
+        setTemplateId((prev) => {
+          if (prev !== undefined) return prev;
+          return activeTpls.find((t) => t.isDefault)?.id ?? null;
+        });
+
+        // Auto-select printer: prioridad template default → sistema default
+        setPrinterId((prev) => {
+          if (prev !== undefined) return prev;
+          const defaultTpl = activeTpls.find((t) => t.isDefault);
+          if (defaultTpl?.defaultPrinterProfileId) {
+            const tplPrn = activePrns.find((p) => p.id === defaultTpl.defaultPrinterProfileId);
+            if (tplPrn) return tplPrn.id;
+          }
+          return activePrns.find((p) => p.isDefault)?.id ?? null;
+        });
       })
       .catch(() => { /* silently ignore */ })
       .finally(() => setApiLoading(false));
   }, [open]);
 
   // ── Selección de plantilla / impresora ─────────────────────────────────────
-  const [templateId, setTemplateId] = useState<string | null | undefined>(undefined);
-  const [printerId,  setPrinterId]  = useState<string | null | undefined>(undefined);
+  const [templateId,       setTemplateId]       = useState<string | null | undefined>(undefined);
+  const [printerId,        setPrinterId]        = useState<string | null | undefined>(undefined);
+  // Rastrea si el usuario eligió la impresora manualmente (para no sobreescribirla al cambiar plantilla)
+  const [printerIsManual,  setPrinterIsManual]  = useState(false);
+  // Fuente descriptiva de la selección actual de impresora
+  const [printerSource,    setPrinterSource]    = useState<"template" | "system" | "manual" | null>(null);
 
   const selectedTemplate = templates.find((t) => t.id === templateId) ?? null;
   const selectedPrinter  = printers.find((p)  => p.id === printerId)  ?? null;
+
+  // Cuando el modal se cierra, resetear estados de override
+  useEffect(() => {
+    if (!open) {
+      setTemplateId(undefined);
+      setPrinterId(undefined);
+      setPrinterIsManual(false);
+      setPrinterSource(null);
+    }
+  }, [open]);
+
+  // Cuando cambia la plantilla seleccionada, auto-resolver impresora (salvo override manual)
+  useEffect(() => {
+    if (!open) return;                    // modal cerrado — ignorar
+    if (printerIsManual) return;          // el usuario ya eligió — no tocar
+    if (templates.length === 0) return;   // datos aún no cargados
+    if (templateId === undefined) return; // aún no inicializado
+
+    const tpl = templates.find((t) => t.id === templateId) ?? null;
+
+    if (tpl?.defaultPrinterProfileId) {
+      const tplPrn = printers.find((p) => p.id === tpl.defaultPrinterProfileId);
+      if (tplPrn) {
+        setPrinterId(tplPrn.id);
+        setPrinterSource("template");
+        return;
+      }
+    }
+    // Fallback: impresora del sistema
+    const sysPrn = printers.find((p) => p.isDefault);
+    setPrinterId(sysPrn?.id ?? null);
+    setPrinterSource(sysPrn ? "system" : null);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, templateId, templates, printers]);
 
   // ── Modo manual ─────────────────────────────────────────────────────────────
   const [labelSize,   setLabelSize]   = useState<LabelSize>("58x40");
@@ -606,9 +742,37 @@ export default function LabelPrintModal({
   ];
 
   // ── Imprimir ────────────────────────────────────────────────────────────────
-  function handlePrint() {
+  async function handlePrint() {
+    let qrCache: Map<string, string> = new Map();
+
+    // Pre-generar SVGs de QR para todos los elementos QR de la plantilla activa
+    if (selectedTemplate) {
+      const qrEls = selectedTemplate.elements.filter((el) => el.type === "QR" && el.visible !== false);
+      if (qrEls.length > 0) {
+        const valuesToEncode = new Set<string>();
+        for (const el of qrEls) {
+          for (const item of initialItems) {
+            const val = resolveField(item, el.fieldKey);
+            if (val) valuesToEncode.add(val);
+          }
+        }
+        await Promise.all(
+          [...valuesToEncode].map(async (val) => {
+            try {
+              const svg = await QRCode.toString(val, {
+                type:                 "svg",
+                margin:               1,
+                errorCorrectionLevel: "M",
+              });
+              qrCache.set(val, svg);
+            } catch { /* ignorar valores inválidos para QR */ }
+          })
+        );
+      }
+    }
+
     const html = selectedTemplate
-      ? buildTemplateHtml(selectedTemplate, selectedPrinter, initialItems, copies, globalCopies ?? 1)
+      ? buildTemplateHtml(selectedTemplate, selectedPrinter, initialItems, copies, globalCopies ?? 1, qrCache)
       : buildManualHtml(labelSize, showBarcode, showCode, showName, showPrice, showCost, initialItems, copies, globalCopies ?? 1);
 
     const win = window.open("", "_blank", "width=900,height=700");
@@ -656,10 +820,23 @@ export default function LabelPrintModal({
               </TPField>
 
               {selectedTemplate && (
-                <TPField label="Perfil de impresora">
+                <TPField
+                  label="Perfil de impresora"
+                  hint={
+                    printerSource === "template" ? "Predeterminada de la plantilla"
+                    : printerSource === "system"  ? "Impresora del sistema"
+                    : printerSource === "manual"  ? "Selección manual"
+                    : undefined
+                  }
+                >
                   <TPComboFixed
                     value={printerId ?? "__none__"}
-                    onChange={(v) => setPrinterId(v === "__none__" ? null : v)}
+                    onChange={(v) => {
+                      const id = v === "__none__" ? null : v;
+                      setPrinterId(id);
+                      setPrinterIsManual(true);
+                      setPrinterSource("manual");
+                    }}
                     options={printerOptions}
                   />
                 </TPField>

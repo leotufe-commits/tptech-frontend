@@ -40,6 +40,7 @@ export type CategoryAttribute = {
     name: string;
     code: string;
     inputType: string;
+    sortOrder: number;   // sortOrder de la definición global (fuente de verdad de orden)
     options: { id: string; label: string; value: string; codeExtension?: string }[];
   };
 };

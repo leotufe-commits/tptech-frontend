@@ -57,12 +57,12 @@ export function CreateCategoryModal({
       if (!byParent.has(key)) byParent.set(key, []);
       byParent.get(key)!.push(c);
     }
-    const result: { value: string; label: string }[] = [
+    const result: { value: string; label: string; depth?: number }[] = [
       { value: "", label: "Sin padre (categoría raíz)" },
     ];
     function traverse(pid: string | null, level: number) {
       for (const c of byParent.get(pid) ?? []) {
-        result.push({ value: c.id, label: "— ".repeat(level) + c.name });
+        result.push({ value: c.id, label: c.name, depth: level });
         traverse(c.id, level + 1);
       }
     }

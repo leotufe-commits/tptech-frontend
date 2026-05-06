@@ -1,7 +1,7 @@
 import { apiFetch } from "../lib/api";
 
 export type CommissionType = "NONE" | "PERCENTAGE" | "FIXED_AMOUNT";
-export type CommissionBase = "GROSS" | "NET" | "MARGIN";
+export type CommissionBase = "TOTAL" | "TOTAL_AFTER_DISCOUNTS" | "TOTAL_AFTER_PAYMENT" | "METAL" | "HECHURA" | "METAL_Y_HECHURA" | "HECHURA_AFTER_DISCOUNTS";
 
 export type SellerWarehouse = {
   warehouseId: string;
@@ -86,7 +86,7 @@ function normalizePayload(data: SellerPayload): SellerPayload {
       data.commissionType && data.commissionType !== "NONE" && data.commissionValue
         ? String(data.commissionValue)
         : null,
-    commissionBase: data.commissionBase ?? "NET",
+    commissionBase: data.commissionBase ?? "TOTAL",
   };
 }
 

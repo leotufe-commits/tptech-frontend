@@ -28,6 +28,8 @@ export const EMPTY_DRAFT: WarehouseDraft = {
   attn: "",
   street: "",
   number: "",
+  floor: "",
+  apartment: "",
   city: "",
   province: "",
   postalCode: "",
@@ -51,6 +53,8 @@ export function rowToDraft(r: WarehouseRow): WarehouseDraft {
     attn: s(r.attn),
     street: s(r.street),
     number: s(r.number),
+    floor: s(r.floor),
+    apartment: s(r.apartment),
     city: s(r.city),
     province: s(r.province),
     postalCode: s(r.postalCode),
@@ -73,6 +77,8 @@ export function draftPayload(d: WarehouseDraft): Omit<WarehouseDraft, "code"> {
     attn: s(d.attn),
     street: s(d.street),
     number: s(d.number),
+    floor: s(d.floor),
+    apartment: s(d.apartment),
     city: s(d.city),
     province: s(d.province),
     postalCode: s(d.postalCode),
@@ -86,9 +92,7 @@ export function draftPayload(d: WarehouseDraft): Omit<WarehouseDraft, "code"> {
 }
 
 export function cmpStr(a: any, b: any) {
-  const A = s(a).toLowerCase();
-  const B = s(b).toLowerCase();
-  if (A < B) return -1;
-  if (A > B) return 1;
-  return 0;
+  const A = s(a);
+  const B = s(b);
+  return A.localeCompare(B, "es", { sensitivity: "base" });
 }
