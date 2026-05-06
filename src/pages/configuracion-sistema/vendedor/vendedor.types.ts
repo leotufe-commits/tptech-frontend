@@ -22,6 +22,7 @@ export type SellerDraft = {
   isFavorite: boolean;
   notes: string;
   warehouseIds: string[];
+  userId: string | null;
   contactName: string;
   contactPhone: string;
   contactEmail: string;
@@ -29,4 +30,4 @@ export type SellerDraft = {
 
 export type WarehouseOption = { id: string; name: string; isActive: boolean };
 
-export type SortKey = "displayName" | "email" | "commissionType" | "createdAt";
+export type SortKey = "displayName" | "email" | "commissionType" | "createdAt" | "isActive";
