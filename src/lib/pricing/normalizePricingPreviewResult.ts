@@ -54,6 +54,7 @@ import type {
   // Paso 6
   NormalizedCostComponent,
 } from "./contract";
+import { isPricingStrictV1Enabled } from "../featureFlags";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Utils
@@ -359,11 +360,58 @@ export function normalizeArticlePricingPreview(
   // Canal y cupón en el simulador son PER UNIT → escalo a doc para los
   // bloques `channel` y `coupon` del response normalizado. El bloque
   // `documentTotals` viene ya escalado del backend (passthrough).
+  // ⚠️ Estos dos siguen escalando con r2 — no migrados en F1.2 paso 2 (fuera
+  // de scope explícito del usuario). Se evaluarán en paso siguiente.
   const channelPerUnit = result.channelResult?.channelAmount ?? 0;
   const channelDoc     = r2(channelPerUnit * qty);
   const couponApplied  = !!result.couponResult?.applied;
   const couponPerUnit  = couponApplied ? (result.couponResult?.discountAmount ?? 0) : 0;
   const couponDoc      = r2(couponPerUnit * qty);
+
+  // ===========================================================================
+  // FASE 1.2 paso 2 — passthrough con G3 cuando flag está ON.
+  //
+  // Política:
+  //   · Flag OFF (default): legacy idéntico — `r2(unitX * qty)` per-doc.
+  //   · Flag ON: lee top-level del backend (G3 backend commit 539c437):
+  //       result.lineTotal / result.lineTaxAmount / result.lineTotalWithTax.
+  //     Si el campo no viene (backend legacy desplegado), cae a r2 legacy
+  //     para preservar funcionalidad ("mantener legacy bajo flag OFF").
+  //
+  // Justificación POLICY:
+  //   · POLICY.md §4 R4.5 — los normalizadores transforman shape, no valores.
+  //   · POLICY.md §1 R1.4 — frontend no calcula plata; backend es fuente.
+  //
+  // Frontend desbloqueado:
+  //   · Priority 1 — el simulador deja de multiplicar unitPrice × qty con r2().
+  //
+  // GAP CONOCIDO (no bloqueante para este paso):
+  //   G3.1 — backend debería emitir `lineDiscount` top-level en
+  //          /api/articles/:id/pricing-preview, similar a lineTotal/etc.
+  //          Hoy se computa como r2((basePrice - unitPrice) * qty) bajo
+  //          AMBOS flags porque no hay backend field. Mostrar 0 perdería
+  //          info crítica para el operador. Cierra en Fase 1.3 backend.
+  //
+  // GAP RELACIONADO (out of scope F1.2 paso 2):
+  //   G3.2 — channelDoc / couponDoc siguen escalando con r2. La
+  //          alternativa (documentTotals.channelAdjustmentAmount /
+  //          .couponDiscountAmount) ya existe en backend. Migrar en paso
+  //          siguiente cuando el usuario lo pida explícitamente.
+  // ===========================================================================
+  const useStrict = isPricingStrictV1Enabled();
+  const lineTotalRes: number | null = useStrict && result.lineTotal != null
+    ? result.lineTotal
+    : (unitPrice != null ? r2(unitPrice * qty) : null);
+  const lineTaxAmountRes: number = useStrict && result.lineTaxAmount != null
+    ? result.lineTaxAmount
+    : r2(unitTax * qty);
+  const lineTotalWithTaxRes: number | null = useStrict && result.lineTotalWithTax != null
+    ? result.lineTotalWithTax
+    : (unitTotalTax != null ? r2(unitTotalTax * qty) : null);
+  // GAP G3.1 — sin backend field. Legacy bajo ambos flags.
+  const lineDiscountRes: number = basePrice != null && unitPrice != null
+    ? r2((basePrice - unitPrice) * qty)
+    : 0;
 
   const line: NormalizedPricingLine = {
     articleId,
@@ -378,12 +426,10 @@ export function normalizeArticlePricingPreview(
     quantityDiscountAmount:  qtyDiscUnit,
     promotionDiscountAmount: promoDiscU,
 
-    lineTotal:        unitPrice    != null ? r2(unitPrice    * qty) : null,
-    lineTaxAmount:    r2(unitTax * qty),
-    lineTotalWithTax: unitTotalTax != null ? r2(unitTotalTax * qty) : null,
-    lineDiscount:     basePrice != null && unitPrice != null
-      ? r2((basePrice - unitPrice) * qty)
-      : 0,
+    lineTotal:        lineTotalRes,
+    lineTaxAmount:    lineTaxAmountRes,
+    lineTotalWithTax: lineTotalWithTaxRes,
+    lineDiscount:     lineDiscountRes,
 
     priceSource:          result.priceSource ?? "NONE",
     appliedPriceListId:   result.appliedPriceListId   ?? null,
