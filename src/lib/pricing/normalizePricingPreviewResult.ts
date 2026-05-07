@@ -349,6 +349,38 @@ export function normalizeArticlePricingPreview(
   const { result, articleId, variantId, quantity } = args;
   const qty = Number.isFinite(quantity) && quantity > 0 ? quantity : 1;
 
+  // ===========================================================================
+  // FASE 1.2 paso 2 (+ G3.1 + G3.2) — passthrough completo del simulador
+  // bajo flag tptech_pricing_strict_v1=ON.
+  //
+  // Política:
+  //   · Flag OFF (default): legacy idéntico — escalación local con r2().
+  //   · Flag ON: lee top-level del backend:
+  //       G3   (commit 539c437): lineTotal / lineTaxAmount / lineTotalWithTax
+  //       G3.1 (commit c6c4f0e): lineDiscount
+  //       G3.2 (este commit):    channel.amount = documentTotals
+  //                              .channelAdjustmentAmount;
+  //                              coupon.amount = documentTotals
+  //                              .couponDiscountAmount.
+  //     Si algún campo no viene (backend legacy desplegado), cae a legacy.
+  //
+  // Justificación POLICY:
+  //   · POLICY.md §4 R4.5 — los normalizadores transforman shape, no valores.
+  //   · POLICY.md §1 R1.4 — frontend no calcula plata; backend es fuente.
+  //
+  // Frontend desbloqueado:
+  //   · Priority 1 — normalizeArticlePricingPreview es 100% reader-only en
+  //     strict mode para todos los campos comerciales (4 totales per-línea
+  //     + canal + cupón). Cero cálculos monetarios bajo flag ON. La
+  //     migración del simulador queda completa.
+  //
+  // Cálculos restantes en este normalizer bajo flag ON (NO comerciales):
+  //   · `qty = Number.isFinite(quantity) && quantity > 0 ? quantity : 1`
+  //     — sanitización de input no monetario.
+  //   · Mapeos de tipos (asNum / asNumOr / Number) sobre campos NO escalados.
+  // ===========================================================================
+  const useStrict = isPricingStrictV1Enabled();
+
   // Per-unit del simulador
   const basePrice    = asNum(result.basePrice);
   const unitPrice    = asNum(result.unitPrice);
@@ -357,44 +389,24 @@ export function normalizeArticlePricingPreview(
   const qtyDiscUnit  = asNumOr(result.quantityDiscountAmount,  0);
   const promoDiscU   = asNumOr(result.promotionDiscountAmount, 0);
 
-  // Canal y cupón en el simulador son PER UNIT → escalo a doc para los
-  // bloques `channel` y `coupon` del response normalizado. El bloque
-  // `documentTotals` viene ya escalado del backend (passthrough).
-  // ⚠️ Estos dos siguen escalando con r2 — no migrados en F1.2 paso 2 (fuera
-  // de scope explícito del usuario). Se evaluarán en paso siguiente.
+  // documentTotals del backend — fuente única de los agregados doc-level
+  // bajo flag ON. Bajo OFF se usa solo más abajo en el bloque documentTotals.
+  const dt = result.documentTotals;
+
+  // Canal y cupón en el simulador vienen PER UNIT en channelResult /
+  // couponResult, pero documentTotals los emite per-doc (G3.2).
+  // Bajo flag ON: passthrough de doc-level. Bajo OFF: legacy (r2 escalado).
   const channelPerUnit = result.channelResult?.channelAmount ?? 0;
-  const channelDoc     = r2(channelPerUnit * qty);
   const couponApplied  = !!result.couponResult?.applied;
   const couponPerUnit  = couponApplied ? (result.couponResult?.discountAmount ?? 0) : 0;
-  const couponDoc      = r2(couponPerUnit * qty);
+  const channelDoc     = useStrict && dt?.channelAdjustmentAmount != null
+    ? Number(dt.channelAdjustmentAmount)
+    : r2(channelPerUnit * qty);
+  const couponDoc      = useStrict && dt?.couponDiscountAmount != null
+    ? Number(dt.couponDiscountAmount)
+    : r2(couponPerUnit * qty);
 
-  // ===========================================================================
-  // FASE 1.2 paso 2 (+ G3.1) — passthrough con G3 + G3.1 cuando flag está ON.
-  //
-  // Política:
-  //   · Flag OFF (default): legacy idéntico — `r2(unitX * qty)` per-doc.
-  //   · Flag ON: lee top-level del backend:
-  //       G3   (commit 539c437): lineTotal / lineTaxAmount / lineTotalWithTax
-  //       G3.1 (commit c6c4f0e): lineDiscount
-  //     Si algún campo no viene (backend legacy desplegado), cae a r2 legacy
-  //     para preservar funcionalidad ("mantener legacy bajo flag OFF").
-  //
-  // Justificación POLICY:
-  //   · POLICY.md §4 R4.5 — los normalizadores transforman shape, no valores.
-  //   · POLICY.md §1 R1.4 — frontend no calcula plata; backend es fuente.
-  //
-  // Frontend desbloqueado:
-  //   · Priority 1 — el simulador deja de multiplicar unitPrice × qty con r2()
-  //     y deja de derivar (basePrice - unitPrice) × qty. Los 4 totales
-  //     per-línea son passthrough puro del backend.
-  //
-  // GAP RELACIONADO (out of scope F1.2 paso 2):
-  //   G3.2 — channelDoc / couponDoc siguen escalando con r2. La
-  //          alternativa (documentTotals.channelAdjustmentAmount /
-  //          .couponDiscountAmount) ya existe en backend. Migrar en paso
-  //          siguiente cuando el usuario lo pida explícitamente.
-  // ===========================================================================
-  const useStrict = isPricingStrictV1Enabled();
+  // Per-line totals — G3 + G3.1 ya migrados.
   const lineTotalRes: number | null = useStrict && result.lineTotal != null
     ? result.lineTotal
     : (unitPrice != null ? r2(unitPrice * qty) : null);
@@ -404,7 +416,6 @@ export function normalizeArticlePricingPreview(
   const lineTotalWithTaxRes: number | null = useStrict && result.lineTotalWithTax != null
     ? result.lineTotalWithTax
     : (unitTotalTax != null ? r2(unitTotalTax * qty) : null);
-  // G3.1 cerrado — backend ahora emite `lineDiscount` top-level.
   const lineDiscountRes: number = useStrict && result.lineDiscount != null
     ? result.lineDiscount
     : (basePrice != null && unitPrice != null
@@ -481,7 +492,7 @@ export function normalizeArticlePricingPreview(
   // devolvemos un objeto con todos los valores en 0 — la UI lo trata como
   // "sin totales" y NO inventamos números derivados, manteniendo la regla
   // del proyecto "el motor es la única fuente de verdad".
-  const dt = result.documentTotals;
+  // (`dt` se declaró arriba — reutilizado acá; G3.2.)
   const documentTotals: NormalizedPricingResult["documentTotals"] = {
     subtotalBeforeDiscounts:    Number(dt?.subtotalBeforeDiscounts    ?? 0),
     lineDiscountAmount:         Number(dt?.lineDiscountAmount         ?? 0),

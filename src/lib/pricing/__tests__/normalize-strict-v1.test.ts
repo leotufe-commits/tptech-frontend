@@ -228,6 +228,116 @@ describe("normalizeArticlePricingPreview — flag ON (strict v1, G3 passthrough)
     // Cae a legacy: r2((1000-900) × 2) = 200
     expect(norm.lines[0].lineDiscount).toBe(200);
   });
+
+  // ───────────────────────────────────────────────────────────────────────
+  // G3.2 — channel.amount / coupon.amount desde documentTotals
+  // ───────────────────────────────────────────────────────────────────────
+
+  it("G3.2 baseline correct: channel.amount usa documentTotals.channelAdjustmentAmount", () => {
+    const result = makeArticleResult({
+      channelResult: {
+        channelId:     "ch-1",
+        channelName:   "Mayorista",
+        channelAmount: 50,           // per-unit (legacy escalaría a 150 con qty=3)
+      },
+      documentTotals: {
+        channelAdjustmentAmount: 150, // backend doc-level — gana bajo ON
+        // resto de campos pueden estar ausentes para este test
+      },
+    });
+    const norm = normalizeArticlePricingPreview({
+      result: result as any, articleId: "a1", quantity: 3,
+    });
+    expect(norm.channel?.amount).toBe(150);
+  });
+
+  it("G3.2 baseline correct: backend doc emite valor distinto al legacy → gana backend", () => {
+    // Caso real: canal con redondeo o reglas que el cálculo naive no replica.
+    const result = makeArticleResult({
+      channelResult: {
+        channelId:     "ch-1",
+        channelName:   "Web",
+        channelAmount: 50,
+      },
+      documentTotals: {
+        channelAdjustmentAmount: 145,  // backend dice 145, legacy diría 150
+      },
+    });
+    const norm = normalizeArticlePricingPreview({
+      result: result as any, articleId: "a1", quantity: 3,
+    });
+    expect(norm.channel?.amount).toBe(145);  // backend, NO 150
+  });
+
+  it("G3.2 baseline correct: coupon.amount usa documentTotals.couponDiscountAmount", () => {
+    const result = makeArticleResult({
+      couponResult: {
+        couponCode:     "DESC10",
+        couponName:     "10% off",
+        applied:        true,
+        discountAmount: 100,          // per-unit
+      },
+      documentTotals: {
+        couponDiscountAmount: 200,    // backend doc-level — gana bajo ON
+      },
+    });
+    const norm = normalizeArticlePricingPreview({
+      result: result as any, articleId: "a1", quantity: 2,
+    });
+    expect(norm.coupon?.amount).toBe(200);
+  });
+
+  it("G3.2 baseline correct: cupón rechazado → coupon.amount = backend value (probablemente 0)", () => {
+    const result = makeArticleResult({
+      couponResult: {
+        couponCode:     "INVALIDO",
+        applied:        false,        // rechazado
+        reason:         "expirado",
+        discountAmount: 100,
+      },
+      documentTotals: {
+        couponDiscountAmount: 0,      // backend respetó el rechazo
+      },
+    });
+    const norm = normalizeArticlePricingPreview({
+      result: result as any, articleId: "a1", quantity: 3,
+    });
+    expect(norm.coupon?.amount).toBe(0);
+    expect(norm.coupon?.applied).toBe(false);
+  });
+
+  it("G3.2 baseline correct: si backend NO emite documentTotals (legacy), cae a r2 escalado", () => {
+    const result = makeArticleResult({
+      channelResult: {
+        channelId:     "ch-1",
+        channelName:   "Mayorista",
+        channelAmount: 50,
+      },
+      // documentTotals AUSENTE → simula backend pre-G3.2 / pre-doc-totals
+      documentTotals: undefined,
+    });
+    const norm = normalizeArticlePricingPreview({
+      result: result as any, articleId: "a1", quantity: 3,
+    });
+    expect(norm.channel?.amount).toBe(150); // legacy: r2(50 * 3)
+  });
+
+  it("G3.2 baseline correct: channel.amount=0 del backend se respeta", () => {
+    const result = makeArticleResult({
+      channelResult: {
+        channelId:     "ch-1",
+        channelName:   "Mayorista",
+        channelAmount: 50,             // legacy daría 150
+      },
+      documentTotals: {
+        channelAdjustmentAmount: 0,    // backend dice 0 (canal sin ajuste)
+      },
+    });
+    const norm = normalizeArticlePricingPreview({
+      result: result as any, articleId: "a1", quantity: 3,
+    });
+    expect(norm.channel?.amount).toBe(0);
+  });
 });
 
 // =============================================================================
