@@ -141,6 +141,12 @@ export function LineAdvancedOverridesPanel({
   const meta = line.pricingMeta ?? {};
   const composition = meta.composition ?? null;
 
+  // F1.3 G4.1 #8b — products[] / services[] son arrays. Reader-only
+  // (POLICY R4.5): el panel los lee y muestra; cero recálculo. Defaults
+  // seguros para snapshots viejos (v3) que no traen el campo.
+  const products = composition?.products ?? [];
+  const services = composition?.services ?? [];
+
   // Originales del artículo.
   const origGrams    = composition?.metal?.originalGrams    ?? null;
   const origMermaPct = composition?.metal?.originalMermaPct ?? null;
@@ -373,11 +379,15 @@ export function LineAdvancedOverridesPanel({
                 }
                 detail={
                   <div className="grid grid-cols-[max-content_max-content] items-end gap-3">
+                    {/* F1.3 #8b — gramos visuales a 2 decimales (1.30 g)
+                        para densidad financiera consistente con el summary
+                        read-only. Step 0.05 se mantiene; los cálculos
+                        internos (motor backend) siguen en alta precisión. */}
                     <InlineNumberField
                       label="Gramos"
                       value={grams.value ?? 0}
                       onChange={(v) => grams.setValue(v ?? 0)}
-                      decimals={3}
+                      decimals={2}
                       suffix="g"
                       step={0.05}
                     />
@@ -492,6 +502,35 @@ export function LineAdvancedOverridesPanel({
                 }
               />
             )}
+
+            {/* 2.b PRODUCTO / SERVICIO (F1.3 G4.1 #8b)
+                Render uno por cada item de composition.products[] y
+                composition.services[]. SaleColumn separada por item — NO
+                bucketear dentro de HECHURA (regla del usuario).
+                Reader-only:
+                  · NO multiplicar quantity × unitValue (totalValue del backend).
+                  · NO recalcular lineAdjAmount (sin él, no se muestra fila).
+                  · Sin items en arrays → no renderea nada.
+                Si en el futuro el backend emite múltiples METAL/HECHURA, el
+                mismo .map() los soporta — basta con migrar el shape arriba. */}
+            {products.map((p, i) => (
+              <CompositionItemSaleColumn
+                key={p.costLineId ?? `prod-${i}`}
+                kind="PRODUCT"
+                item={p}
+                qtyLine={qtyLine}
+                currency={currency}
+              />
+            ))}
+            {services.map((s, i) => (
+              <CompositionItemSaleColumn
+                key={s.costLineId ?? `svc-${i}`}
+                kind="SERVICE"
+                item={s}
+                qtyLine={qtyLine}
+                currency={currency}
+              />
+            ))}
 
             {/* 3. RENTABILIDAD — costo, ganancia y margen en una sola fila.
                 Ganancia $ agregada como derivación trivial (misma justificación
@@ -857,6 +896,91 @@ function SaleColumn({
         </div>
       )}
     </div>
+  );
+}
+
+/**
+ * F1.3 G4.1 #8b — `SaleColumn` especializada para items de
+ * composition.products[] / services[]. Mismo patrón visual que las
+ * secciones Metal / Hechura: header chico + InfoLineRow read-only.
+ *
+ * Reader-only (POLICY R4.5):
+ *   · totalValue, lineAdjAmount, quantity, unitValue ← backend (passthrough).
+ *   · Sin lineAdjAmount → no se muestra fila Bonif./Recargo.
+ *   · `Stock: Descuenta` solo si affectsStock === true.
+ *   · `Total × qty` solo cuando qtyLine > 1 (paridad con Metal/Hechura).
+ *
+ * Sin `detail` editable: el motor backend es la única autoridad sobre
+ * cantidad/valor/total per cost line.
+ */
+function CompositionItemSaleColumn({
+  kind, item, qtyLine, currency,
+}: {
+  kind: "PRODUCT" | "SERVICE";
+  item: NonNullable<NonNullable<DocumentLine["pricingMeta"]>["composition"]>["products"] extends (infer T)[] | undefined ? T : never;
+  qtyLine: number;
+  currency: string;
+}) {
+  const title = kind === "PRODUCT" ? "Producto" : "Servicio";
+  const name  = item.catalogItemName ?? item.catalogItemCode ?? "—";
+  const code  = item.catalogItemCode && item.catalogItemCode !== name
+    ? item.catalogItemCode : null;
+  const qty       = item.quantity   ?? null;
+  const unit      = item.unitValue  ?? null;
+  const total     = item.totalValue ?? null;
+  const adjKind   = item.lineAdjKind   ?? null;
+  const adjType   = item.lineAdjType   ?? null;
+  const adjValue  = item.lineAdjValue  ?? null;
+  const adjAmount = item.lineAdjAmount ?? null;
+  const showAdj   = adjKind != null && adjAmount != null;
+  const adjWord   = adjKind === "BONUS" ? "Bonif." : "Recargo";
+  const adjPct    = adjType === "PERCENTAGE" && adjValue != null
+    ? ` ${adjValue}%` : "";
+  const adjSign   = adjKind === "BONUS" ? "−" : "+";
+  const adjCls    = adjKind === "BONUS" ? "text-emerald-500" : "text-amber-500";
+
+  return (
+    <SaleColumn
+      title={title}
+      summary={
+        <InfoLineRow>
+          <InfoItem label={kind === "PRODUCT" ? "Producto" : "Servicio"} value={name} />
+          {code && <InfoItem label="Código" value={code} />}
+          {qty != null && (
+            <InfoItem label="Cantidad" value={qty.toLocaleString("es-AR", { maximumFractionDigits: 4 })} />
+          )}
+          {unit != null && (
+            <InfoItem label="Unitario" value={fmtMoney(unit, currency)} />
+          )}
+          {total != null && (
+            <InfoItem label="Total" value={fmtMoney(total, currency)} highlight />
+          )}
+          {/* Total × qty — paridad con Metal/Hechura. Display derivation
+              trivial sobre `totalValue × qty`, mismo nivel que
+              `metalSale × qty` ya aceptado. */}
+          {total != null && qtyLine > 1 && (
+            <InfoItem
+              label={`Total ${kind === "PRODUCT" ? "producto" : "servicio"}`}
+              value={fmtMoney(total * qtyLine, currency)}
+              highlight
+            />
+          )}
+          {showAdj && (
+            <InfoItem
+              label={`${adjWord}${adjPct}`}
+              value={
+                <span className={adjCls}>
+                  {adjSign}{fmtMoney(Math.abs(adjAmount as number), currency)}
+                </span>
+              }
+            />
+          )}
+          {item.affectsStock === true && (
+            <InfoItem label="Stock" value="Descuenta" />
+          )}
+        </InfoLineRow>
+      }
+    />
   );
 }
 
