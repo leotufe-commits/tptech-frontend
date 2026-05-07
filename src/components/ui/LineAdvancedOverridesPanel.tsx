@@ -475,29 +475,44 @@ export function LineAdvancedOverridesPanel({
                   title="Precio venta"
                   summary={
                     <>
-                      <div className="text-base font-bold leading-tight tabular-nums text-text">
-                        {fmtMoney(salePrice ?? 0, currency)}
-                      </div>
-                      <div className="mt-0.5 text-[9px] italic text-muted/70">
-                        Neto, sin impuestos
-                      </div>
+                      {/* 1. BREAKDOWN ARRIBA — grid 2 cols anclado a la izquierda.
+                          Lectura natural: bruto → descuentos → resultado final.
+                          `w-fit min-w-[180px]` mantiene compacto sin cortar cuando
+                          el monto crece. `grid-cols-[auto_max-content]` alinea
+                          columnas con precisión contable (sin micro-saltos). */}
                       {hasDiscount && (
-                        <div className="mt-1.5 space-y-0.5 border-t border-border/40 pt-1">
-                          <div className="flex items-baseline justify-between gap-2 text-[10px] text-muted">
-                            <span>Bruto</span>
-                            <span className="tabular-nums">{fmtMoney(bruto, currency)}</span>
-                          </div>
-                          <div
-                            className="flex items-baseline justify-between gap-2 text-[10px] text-muted"
-                            title="Total consolidado de promociones, bonificaciones y descuentos aplicados por el motor."
-                          >
-                            <span>Descuentos</span>
-                            <span className="tabular-nums text-emerald-500">
-                              −{fmtMoney(lineDisc, currency)}
-                            </span>
-                          </div>
+                        <div className="grid w-fit min-w-[180px] grid-cols-[auto_max-content] gap-x-4 gap-y-0.5 text-[10px] text-muted">
+                          <span>Bruto</span>
+                          <span className="tabular-nums text-right">
+                            {fmtMoney(bruto, currency)}
+                          </span>
+                          <span title="Total consolidado de promociones, bonificaciones y descuentos aplicados por el motor.">
+                            Descuentos
+                          </span>
+                          <span className="tabular-nums text-right text-emerald-500">
+                            −{fmtMoney(lineDisc, currency)}
+                          </span>
                         </div>
                       )}
+
+                      {/* 2. HERO NETO abajo — sin div separador independiente.
+                          El border-t va aplicado directamente al wrapper del hero
+                          cuando hay breakdown arriba (más limpio, evita línea
+                          "flotante" tipo card-en-card). */}
+                      <div
+                        className={
+                          hasDiscount
+                            ? "mt-1 border-t border-border/40 pt-1.5"
+                            : ""
+                        }
+                      >
+                        <div className="text-base font-bold leading-tight tabular-nums text-text">
+                          {fmtMoney(salePrice ?? 0, currency)}
+                        </div>
+                        <div className="mt-0.5 text-[9px] italic text-muted/70">
+                          Neto, sin impuestos
+                        </div>
+                      </div>
                     </>
                   }
                 />

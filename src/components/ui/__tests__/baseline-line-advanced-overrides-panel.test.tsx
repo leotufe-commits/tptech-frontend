@@ -121,11 +121,9 @@ describe("LineAdvancedOverridesPanel — caso CON descuento", () => {
         view="sale"
       />,
     );
+    // Con grid 2-cols, el title vive en el span del label "Descuentos" mismo.
     const descuentosLabel = screen.getByText("Descuentos");
-    // El title vive en el contenedor padre del label.
-    const row = descuentosLabel.closest("div[title]");
-    expect(row).toBeTruthy();
-    expect(row?.getAttribute("title")).toMatch(
+    expect(descuentosLabel.getAttribute("title")).toMatch(
       /Total consolidado.*promociones.*bonificaciones.*descuentos/i,
     );
   });
