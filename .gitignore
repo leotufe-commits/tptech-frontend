@@ -16,6 +16,11 @@ dist-ssr
 coverage
 .vitest-cache
 
+# QA visual screenshots (Fase 1.2). Se trackea el playbook en docs/, no las imágenes.
+docs/screenshots/*
+!docs/screenshots/.gitkeep
+!docs/screenshots/README.md
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
