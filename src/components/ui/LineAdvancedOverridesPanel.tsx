@@ -326,7 +326,10 @@ export function LineAdvancedOverridesPanel({
                     {grams.value != null && (
                       <InfoItem
                         label="Gramos"
-                        value={`${grams.value.toFixed(3)} g`}
+                        // Sale view: 2 decimales para densidad financiera
+                        // (1.30 g en lugar de 1.300 g). El input editable
+                        // mantiene decimals=3 para precisión interna.
+                        value={`${grams.value.toFixed(2)} g`}
                       />
                     )}
                     {merma.value != null && (
@@ -339,6 +342,20 @@ export function LineAdvancedOverridesPanel({
                       <InfoItem
                         label="Valor venta"
                         value={fmtMoney(meta.metalSale, currency)}
+                        highlight
+                      />
+                    )}
+                    {/* Total metal × qty — solo cuando qty>1 (con qty=1
+                        sería redundante con "Valor venta"). Display
+                        derivation trivial, mismo nivel que costTotal=
+                        unitCost×qty (línea 202-207 ya aceptado).
+                        TODO GAP G3.3: backend debería emitir
+                        `lineMetalSaleTotal` per-línea en sales/preview
+                        (paridad con G3 family). Cierra esta derivación. */}
+                    {meta.metalSale != null && qtyLine > 1 && (
+                      <InfoItem
+                        label="Total metal"
+                        value={fmtMoney(meta.metalSale * qtyLine, currency)}
                         highlight
                       />
                     )}
@@ -392,6 +409,16 @@ export function LineAdvancedOverridesPanel({
                       <InfoItem
                         label="Valor venta"
                         value={fmtMoney(meta.hechuraSale, currency)}
+                        highlight
+                      />
+                    )}
+                    {/* Total hechura × qty — solo cuando qty>1. Mismo
+                        criterio que Total metal: display derivation
+                        trivial. TODO GAP G3.3 (per-línea backend). */}
+                    {meta.hechuraSale != null && qtyLine > 1 && (
+                      <InfoItem
+                        label="Total hechura"
+                        value={fmtMoney(meta.hechuraSale * qtyLine, currency)}
                         highlight
                       />
                     )}
@@ -475,43 +502,40 @@ export function LineAdvancedOverridesPanel({
                   title="Precio venta"
                   summary={
                     <>
-                      {/* 1. BREAKDOWN ARRIBA — grid 2 cols anclado a la izquierda.
-                          Lectura natural: bruto → descuentos → resultado final.
-                          `w-fit min-w-[180px]` mantiene compacto sin cortar cuando
-                          el monto crece. `grid-cols-[auto_max-content]` alinea
-                          columnas con precisión contable (sin micro-saltos). */}
-                      {hasDiscount && (
-                        <div className="grid w-fit min-w-[180px] grid-cols-[auto_max-content] gap-x-4 gap-y-0.5 text-[10px] text-muted">
-                          <span>Bruto</span>
-                          <span className="tabular-nums text-right">
-                            {fmtMoney(bruto, currency)}
-                          </span>
-                          <span title="Total consolidado de promociones, bonificaciones y descuentos aplicados por el motor.">
-                            Descuentos
-                          </span>
-                          <span className="tabular-nums text-right text-emerald-500">
-                            −{fmtMoney(lineDisc, currency)}
-                          </span>
-                        </div>
-                      )}
-
-                      {/* 2. HERO NETO abajo — sin div separador independiente.
-                          El border-t va aplicado directamente al wrapper del hero
-                          cuando hay breakdown arriba (más limpio, evita línea
-                          "flotante" tipo card-en-card). */}
-                      <div
-                        className={
-                          hasDiscount
-                            ? "mt-1 border-t border-border/40 pt-1.5"
-                            : ""
-                        }
-                      >
-                        <div className="text-base font-bold leading-tight tabular-nums text-text">
-                          {fmtMoney(salePrice ?? 0, currency)}
-                        </div>
-                        <div className="mt-0.5 text-[9px] italic text-muted/70">
-                          Neto, sin impuestos
-                        </div>
+                      {/* Fila inline mismo patrón que RENTABILIDAD — densidad
+                          financiera, no hero visual.
+                          · Bruto y Descuentos solo si hasDiscount > 0 (sin
+                            ruido cuando no hay descuento).
+                          · Neto siempre — `highlight=true` lo hace font-semibold
+                            text-text dentro del mismo text-[11px] heredado de
+                            InfoLineRow (destacado por peso/color, NO por tamaño).
+                          · Tooltip aclaratorio en label "Descuentos" vía
+                            `labelTitle` para mantener trazabilidad consolidada. */}
+                      <InfoLineRow>
+                        {hasDiscount && (
+                          <InfoItem
+                            label="Bruto"
+                            value={fmtMoney(bruto, currency)}
+                          />
+                        )}
+                        {hasDiscount && (
+                          <InfoItem
+                            label="Descuentos"
+                            value={`−${fmtMoney(lineDisc, currency)}`}
+                            className="text-emerald-500"
+                            labelTitle="Total consolidado de promociones, bonificaciones y descuentos aplicados por el motor."
+                          />
+                        )}
+                        <InfoItem
+                          label="Neto"
+                          value={fmtMoney(salePrice ?? 0, currency)}
+                          highlight
+                        />
+                      </InfoLineRow>
+                      {/* Subtítulo pequeño debajo — preservado del diseño
+                          anterior para conservar la aclaración fiscal. */}
+                      <div className="mt-0.5 text-[9px] italic text-muted/70">
+                        Neto, sin impuestos
                       </div>
                     </>
                   }
@@ -789,20 +813,24 @@ function InfoLineRow({ children }: { children: React.ReactNode }) {
 
 /** Item de `InfoLineRow`: `label: value` en línea. Si `highlight`, el value
  *  se renderiza en font-semibold (para destacar "Valor venta"). El parámetro
- *  `className` permite tonalidad (ej. tonalidad del margen en Rentabilidad). */
+ *  `className` permite tonalidad (ej. tonalidad del margen en Rentabilidad).
+ *  `labelTitle` (opcional) agrega un tooltip al wrapper — útil para
+ *  conceptos consolidados que necesitan aclaración (ej. "Descuentos"). */
 function InfoItem({
   label,
   value,
   highlight,
   className,
+  labelTitle,
 }: {
-  label:     string;
-  value:     React.ReactNode;
+  label:      string;
+  value:      React.ReactNode;
   highlight?: boolean;
   className?: string;
+  labelTitle?: string;
 }) {
   return (
-    <div className="flex items-baseline gap-1">
+    <div className="flex items-baseline gap-1" title={labelTitle}>
       <span className="text-muted">{label}:</span>
       <span
         className={cn(

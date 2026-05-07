@@ -1,20 +1,16 @@
 // src/components/ui/__tests__/baseline-line-advanced-overrides-panel.test.tsx
 // =============================================================================
-// FASE 1.2 paso adicional — Mejora de claridad visual de "Composición del
-// Precio de Venta" en LineAdvancedOverridesPanel.
+// LineAdvancedOverridesPanel — tests del bloque "Composición del Precio de
+// Venta" en sale view (Factura).
 //
-// Cubre los 3 escenarios visuales solicitados por el usuario:
-//   · Con descuento → breakdown Bruto + Descuentos visible
-//   · Sin descuento → solo hero (sin ruido visual)
-//   · Ganancia negativa → tono red-500
-//
-// Reglas verificadas:
-//   · Bruto = line.subtotal + line.discountAmount  (suma de 2 backend fields)
-//   · Descuentos = line.discountAmount             (passthrough G3.1)
-//   · Ganancia = salePrice − costTotal             (derivación trivial, mismo
-//                                                   nivel que margin %)
-//   · Tooltip "Total consolidado de promociones, bonificaciones..." presente
-//     en la fila Descuentos (anti-confusión: no es solo promo).
+// Cubre:
+//   · Layout PRECIO VENTA tipo fila inline (Bruto · Descuentos · Neto)
+//   · Threshold hasDiscount > 0 (sin descuento → solo Neto)
+//   · Tono emerald-500 en Descuentos
+//   · Tooltip aclaratorio en label "Descuentos"
+//   · Ganancia $ en Rentabilidad (positivo / negativo / null)
+//   · Total metal × qty / Total hechura × qty solo cuando qty > 1
+//   · Gramos formateados a 2 decimales en sale view summary
 // =============================================================================
 
 import { describe, it, expect, vi } from "vitest";
@@ -26,14 +22,14 @@ import type { DocumentLine } from "../../../lib/document-types";
 // Helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** Construye un DocumentLine mínimo con composition (necesaria para que el
- *  panel renderice — `showAny = !!(composition?.metal || composition?.hechura)`). */
 function makeLine(overrides: Partial<DocumentLine> & {
   unitCost?: number;
   metalCost?: number;
   hechuraCost?: number;
+  metalSale?: number;
+  hechuraSale?: number;
 } = {}): DocumentLine {
-  const { unitCost, metalCost, hechuraCost, ...rest } = overrides;
+  const { unitCost, metalCost, hechuraCost, metalSale, hechuraSale, ...rest } = overrides;
   return {
     id:               "line-1",
     type:             "ARTICLE",
@@ -43,7 +39,7 @@ function makeLine(overrides: Partial<DocumentLine> & {
     quantity:         2,
     unitPrice:        900,
     discountAmount:   0,
-    subtotal:         1800,         // qty × unitPrice
+    subtotal:         1800,
     taxAmount:        378,
     lineTotal:        2178,
     lineTotalWithTax: 2178,
@@ -52,7 +48,7 @@ function makeLine(overrides: Partial<DocumentLine> & {
       unitPrice:        900,
       composition: {
         metal: {
-          appliedGrams:    5,
+          appliedGrams:    1.30,
           purity:          0.75,
           metalName:       "Oro 18k",
           variantId:       "mv-1",
@@ -67,9 +63,11 @@ function makeLine(overrides: Partial<DocumentLine> & {
           appliesTo:      "UNIT",
         },
       },
-      unitCost:    unitCost,
-      metalCost:   metalCost,
-      hechuraCost: hechuraCost,
+      unitCost,
+      metalCost,
+      hechuraCost,
+      metalSale,
+      hechuraSale,
     } as any,
     ...rest,
   } as DocumentLine;
@@ -78,86 +76,91 @@ function makeLine(overrides: Partial<DocumentLine> & {
 const noopApply = vi.fn();
 
 // =============================================================================
-// 1. Caso CON descuento — breakdown visible
+// 1. PRECIO VENTA — caso CON descuento (fila inline)
 // =============================================================================
 
-describe("LineAdvancedOverridesPanel — caso CON descuento", () => {
-  it("baseline correct: muestra hero NETO + breakdown Bruto/Descuentos", () => {
-    // qty=2, basePrice=$1000, unitPrice=$900 → bruto=$2000, neto=$1800, disc=$200
+describe("LineAdvancedOverridesPanel — PRECIO VENTA con descuento", () => {
+  it("baseline correct: muestra Bruto, Descuentos y Neto en fila inline", () => {
     render(
       <LineAdvancedOverridesPanel
-        line={makeLine({
-          subtotal:       1800,
-          discountAmount: 200,
-          unitCost:       600,
-        })}
+        line={makeLine({ subtotal: 1800, discountAmount: 200, unitCost: 600 })}
         currency="ARS"
         onApply={noopApply}
         view="sale"
       />,
     );
-
-    // Hero: NETO destacado.
-    expect(screen.getByText(/1\.800,00/)).toBeInTheDocument();
+    // InfoItem renderiza label con ":" — usar regex para ambos casos.
+    expect(screen.getByText(/^Bruto:?$/)).toBeInTheDocument();
+    expect(screen.getByText(/^Descuentos:?$/)).toBeInTheDocument();
+    expect(screen.getByText(/^Neto:?$/)).toBeInTheDocument();
+    // Valores
+    expect(screen.getByText(/2\.000,00/)).toBeInTheDocument(); // bruto
+    expect(screen.getByText(/−.*200,00/)).toBeInTheDocument(); // descuento
+    expect(screen.getByText(/1\.800,00/)).toBeInTheDocument(); // neto
+    // Subtítulo aclaratorio preservado
     expect(screen.getByText("Neto, sin impuestos")).toBeInTheDocument();
-
-    // Breakdown filas
-    expect(screen.getByText("Bruto")).toBeInTheDocument();
-    expect(screen.getByText(/2\.000,00/)).toBeInTheDocument();   // bruto
-    expect(screen.getByText("Descuentos")).toBeInTheDocument();
-    expect(screen.getByText(/−.*200,00/)).toBeInTheDocument();   // -200,00
   });
 
-  it("baseline correct: tooltip aclaratorio en la fila Descuentos", () => {
+  it("baseline correct: tooltip en wrapper de Descuentos (labelTitle)", () => {
     render(
       <LineAdvancedOverridesPanel
-        line={makeLine({
-          subtotal:       1800,
-          discountAmount: 200,
-          unitCost:       600,
-        })}
+        line={makeLine({ subtotal: 1800, discountAmount: 200, unitCost: 600 })}
         currency="ARS"
         onApply={noopApply}
         view="sale"
       />,
     );
-    // Con grid 2-cols, el title vive en el span del label "Descuentos" mismo.
-    const descuentosLabel = screen.getByText("Descuentos");
-    expect(descuentosLabel.getAttribute("title")).toMatch(
+    const descuentosLabel = screen.getByText(/^Descuentos:?$/);
+    // labelTitle se aplica al wrapper div del InfoItem.
+    const wrapper = descuentosLabel.closest("div[title]");
+    expect(wrapper).toBeTruthy();
+    expect(wrapper?.getAttribute("title")).toMatch(
       /Total consolidado.*promociones.*bonificaciones.*descuentos/i,
     );
   });
 
-  it("baseline correct: descuento se renderiza con tono emerald-500 (positivo, beneficio)", () => {
+  it("baseline correct: valor de Descuentos lleva tono emerald-500", () => {
     const { container } = render(
       <LineAdvancedOverridesPanel
-        line={makeLine({
-          subtotal:       1800,
-          discountAmount: 200,
-          unitCost:       600,
-        })}
+        line={makeLine({ subtotal: 1800, discountAmount: 200, unitCost: 600 })}
         currency="ARS"
         onApply={noopApply}
         view="sale"
       />,
     );
-    // El span con el monto del descuento usa text-emerald-500
+    // El span del valor es el segundo span dentro del wrapper de Descuentos.
     const emeraldSpan = container.querySelector("span.text-emerald-500");
     expect(emeraldSpan).toBeTruthy();
     expect(emeraldSpan?.textContent).toMatch(/−.*200,00/);
   });
+
+  it("baseline correct: Neto destacado con highlight (font-semibold text-text)", () => {
+    render(
+      <LineAdvancedOverridesPanel
+        line={makeLine({ subtotal: 1800, discountAmount: 200, unitCost: 600 })}
+        currency="ARS"
+        onApply={noopApply}
+        view="sale"
+      />,
+    );
+    const netoLabel = screen.getByText(/^Neto:?$/);
+    const valueSpan = netoLabel.nextElementSibling;
+    // highlight=true aplica font-semibold + text-text al value span.
+    expect(valueSpan?.className).toMatch(/font-semibold/);
+    expect(valueSpan?.className).toMatch(/text-text\b/);
+  });
 });
 
 // =============================================================================
-// 2. Caso SIN descuento — UI limpia, sin breakdown
+// 2. PRECIO VENTA — caso SIN descuento (UI limpia, solo Neto)
 // =============================================================================
 
-describe("LineAdvancedOverridesPanel — caso SIN descuento", () => {
-  it("baseline correct: solo hero, sin filas Bruto/Descuentos", () => {
+describe("LineAdvancedOverridesPanel — PRECIO VENTA sin descuento", () => {
+  it("baseline correct: solo Neto + subtítulo, sin Bruto ni Descuentos", () => {
     render(
       <LineAdvancedOverridesPanel
         line={makeLine({
-          subtotal:       1000,    // qty=1, unitPrice=1000, sin descuento
+          subtotal:       1000,
           quantity:       1,
           unitPrice:      1000,
           discountAmount: 0,
@@ -168,134 +171,187 @@ describe("LineAdvancedOverridesPanel — caso SIN descuento", () => {
         view="sale"
       />,
     );
-
-    // Hero presente
+    // Neto presente
+    expect(screen.getByText(/^Neto:?$/)).toBeInTheDocument();
     expect(screen.getByText(/1\.000,00/)).toBeInTheDocument();
     expect(screen.getByText("Neto, sin impuestos")).toBeInTheDocument();
-
-    // Breakdown ausente
-    expect(screen.queryByText("Bruto")).toBeNull();
-    expect(screen.queryByText("Descuentos")).toBeNull();
-  });
-
-  it("baseline correct: discountAmount=0 NO dispara breakdown (threshold > 0)", () => {
-    render(
-      <LineAdvancedOverridesPanel
-        line={makeLine({ discountAmount: 0, unitCost: 600 })}
-        currency="ARS"
-        onApply={noopApply}
-        view="sale"
-      />,
-    );
-    expect(screen.queryByText("Bruto")).toBeNull();
+    // Bruto y Descuentos ausentes
+    expect(screen.queryByText(/^Bruto:?$/)).toBeNull();
+    expect(screen.queryByText(/^Descuentos:?$/)).toBeNull();
   });
 });
 
 // =============================================================================
-// 3. Caso GANANCIA NEGATIVA — tono red-500
+// 3. RENTABILIDAD — Ganancia $ (positivo / negativo / sin costo)
 // =============================================================================
 
-describe("LineAdvancedOverridesPanel — caso GANANCIA NEGATIVA", () => {
+describe("LineAdvancedOverridesPanel — RENTABILIDAD ganancia", () => {
   it("baseline correct: ganancia < 0 se renderiza con text-red-500", () => {
-    // qty=1, subtotal=$500 (operador hizo descuento manual extremo),
-    // costTotal = 800 → ganancia = -300
-    const { container } = render(
+    render(
       <LineAdvancedOverridesPanel
         line={makeLine({
           subtotal:       500,
-          discountAmount: 0,
           quantity:       1,
           unitPrice:      500,
-          unitCost:       800,   // costo > venta = oferta a pérdida
+          discountAmount: 0,
+          unitCost:       800,    // pérdida
         })}
         currency="ARS"
         onApply={noopApply}
         view="sale"
       />,
     );
-
-    // InfoItem label se renderiza como "Ganancia:" con colon — usar regex.
-    expect(screen.getByText(/^Ganancia:?$/)).toBeInTheDocument();
-    // El monto negativo aparece (fmtMoney muestra valores negativos con "-").
-    expect(screen.getByText(/-.*300,00|−.*300,00/)).toBeInTheDocument();
-    // Tono rojo aplicado en el span del valor de Ganancia.
-    const labelEl = screen.getByText(/^Ganancia:?$/);
-    const valueSpan = labelEl.nextElementSibling;
+    const gananciaLabel = screen.getByText(/^Ganancia:?$/);
+    const valueSpan = gananciaLabel.nextElementSibling;
     expect(valueSpan?.className).toMatch(/text-red-500/);
   });
 
-  it("baseline correct: ganancia >= 0 NO usa text-red-500 (usa text-text)", () => {
+  it("baseline correct: ganancia >= 0 NO usa text-red-500", () => {
     render(
       <LineAdvancedOverridesPanel
-        line={makeLine({
-          subtotal:       1800,
-          discountAmount: 0,
-          unitCost:       600,
-        })}
+        line={makeLine({ subtotal: 1800, discountAmount: 0, unitCost: 600 })}
         currency="ARS"
         onApply={noopApply}
         view="sale"
       />,
     );
-    // InfoItem renderiza label con ":" — usar regex.
-    const labelEl = screen.getByText(/^Ganancia:?$/);
-    expect(labelEl).toBeInTheDocument();
-    const valueSpan = labelEl.nextElementSibling;
-    // El span del valor debe usar text-text (no text-red-500).
+    const gananciaLabel = screen.getByText(/^Ganancia:?$/);
+    const valueSpan = gananciaLabel.nextElementSibling;
     expect(valueSpan?.className).not.toMatch(/text-red-500/);
-    expect(valueSpan?.className).toMatch(/text-text/);
+    expect(valueSpan?.className).toMatch(/text-text\b/);
+  });
+
+  it("baseline correct: sin unitCost ni costos parciales, no renderiza Ganancia", () => {
+    render(
+      <LineAdvancedOverridesPanel
+        line={makeLine({ subtotal: 1800, discountAmount: 0 })}
+        currency="ARS"
+        onApply={noopApply}
+        view="sale"
+      />,
+    );
+    expect(screen.queryByText(/^Ganancia:?$/)).toBeNull();
   });
 });
 
 // =============================================================================
-// 4. Caso sin costo — Ganancia no se renderiza
+// 4. METAL — Gramos 2 decimales en sale view
 // =============================================================================
 
-describe("LineAdvancedOverridesPanel — caso SIN costo (Ganancia null)", () => {
-  it("baseline correct: sin unitCost ni metalCost/hechuraCost, no renderiza Ganancia", () => {
+describe("LineAdvancedOverridesPanel — METAL gramos formato", () => {
+  it("baseline correct: Gramos se renderiza con 2 decimales (no 3) en sale view", () => {
+    render(
+      <LineAdvancedOverridesPanel
+        line={makeLine({ unitCost: 600 })}
+        currency="ARS"
+        onApply={noopApply}
+        view="sale"
+      />,
+    );
+    // appliedGrams=1.30 → "1.30 g" (no "1.300 g")
+    expect(screen.getByText("1.30 g")).toBeInTheDocument();
+    // No debe aparecer "1.300 g"
+    expect(screen.queryByText("1.300 g")).toBeNull();
+  });
+});
+
+// =============================================================================
+// 5. METAL / HECHURA — Total × qty solo cuando qty > 1
+// =============================================================================
+
+describe("LineAdvancedOverridesPanel — Total metal/hechura × qty", () => {
+  it("baseline correct: Total metal aparece cuando qty > 1 y metalSale existe", () => {
     render(
       <LineAdvancedOverridesPanel
         line={makeLine({
-          subtotal:       1800,
-          discountAmount: 0,
-          // Sin unitCost ni metalCost ni hechuraCost
+          quantity:  3,
+          metalSale: 100,           // per unit
+          unitCost:  50,
         })}
         currency="ARS"
         onApply={noopApply}
         view="sale"
       />,
     );
-    expect(screen.queryByText("Ganancia")).toBeNull();
-    expect(screen.queryByText("Costo")).toBeNull();
-    // Margen tampoco — pero el hero "Precio venta" sí
-    expect(screen.getByText(/1\.800,00/)).toBeInTheDocument();
+    expect(screen.getByText(/^Total metal:?$/)).toBeInTheDocument();
+    // 100 × 3 = 300
+    expect(screen.getByText(/^ARS\s+300,00$/)).toBeInTheDocument();
+  });
+
+  it("baseline correct: Total hechura aparece cuando qty > 1 y hechuraSale existe", () => {
+    render(
+      <LineAdvancedOverridesPanel
+        line={makeLine({
+          quantity:    3,
+          hechuraSale: 50,           // per unit
+          unitCost:    30,
+        })}
+        currency="ARS"
+        onApply={noopApply}
+        view="sale"
+      />,
+    );
+    expect(screen.getByText(/^Total hechura:?$/)).toBeInTheDocument();
+    // 50 × 3 = 150
+    expect(screen.getByText(/^ARS\s+150,00$/)).toBeInTheDocument();
+  });
+
+  it("baseline correct: NO muestra Total metal cuando qty = 1 (evita ruido)", () => {
+    render(
+      <LineAdvancedOverridesPanel
+        line={makeLine({
+          quantity:  1,
+          unitPrice: 100,
+          subtotal:  100,
+          metalSale: 100,
+          unitCost:  50,
+        })}
+        currency="ARS"
+        onApply={noopApply}
+        view="sale"
+      />,
+    );
+    expect(screen.queryByText(/^Total metal:?$/)).toBeNull();
+    expect(screen.queryByText(/^Total hechura:?$/)).toBeNull();
+    // Pero "Valor venta" sí (no es redundante con qty=1).
+    expect(screen.getAllByText(/^Valor venta:?$/).length).toBeGreaterThan(0);
+  });
+
+  it("baseline correct: NO muestra Total metal si metalSale es null (sin dato backend)", () => {
+    render(
+      <LineAdvancedOverridesPanel
+        line={makeLine({
+          quantity: 5,
+          // sin metalSale ni hechuraSale
+          unitCost: 50,
+        })}
+        currency="ARS"
+        onApply={noopApply}
+        view="sale"
+      />,
+    );
+    expect(screen.queryByText(/^Total metal:?$/)).toBeNull();
+    expect(screen.queryByText(/^Total hechura:?$/)).toBeNull();
   });
 });
 
 // =============================================================================
-// 5. Smoke — no rompe el render existente (Metal/Hechura siguen visibles)
+// 6. Smoke regresión — bloques existentes siguen renderizando
 // =============================================================================
 
 describe("LineAdvancedOverridesPanel — smoke regresión", () => {
-  it("baseline correct: sigue mostrando bloques Metal y Hechura existentes", () => {
+  it("baseline correct: Metal, Hechura, Rentabilidad y Precio venta presentes", () => {
     render(
       <LineAdvancedOverridesPanel
-        line={makeLine({
-          subtotal:       1800,
-          discountAmount: 200,
-          unitCost:       600,
-        })}
+        line={makeLine({ subtotal: 1800, discountAmount: 200, unitCost: 600 })}
         currency="ARS"
         onApply={noopApply}
         view="sale"
       />,
     );
-    // Encabezado del panel
     expect(screen.getByText("Composición del precio de venta")).toBeInTheDocument();
-    // Bloques previos siguen ahí
     expect(screen.getByText("Metal")).toBeInTheDocument();
     expect(screen.getByText("Hechura")).toBeInTheDocument();
-    // Bloques nuevos también
     expect(screen.getByText("Rentabilidad")).toBeInTheDocument();
     expect(screen.getByText("Precio venta")).toBeInTheDocument();
   });
