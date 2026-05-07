@@ -147,6 +147,18 @@ export function LineAdvancedOverridesPanel({
   const products = composition?.products ?? [];
   const services = composition?.services ?? [];
 
+  // F1.3 G4.x #9-C — metals[]/hechuras[] son arrays (backend v5+).
+  // Snapshots v4 sin arrays → length 0 (el editor del [0] sigue
+  // funcionando vía composition.metal/hechura legacy alias).
+  // Cuando length >= 2, items 2+ se renderean read-only con título
+  // numerado "Metal 2", "Metal 3", etc.
+  const metalItems   = composition?.metals   ?? [];
+  const hechuraItems = composition?.hechuras ?? [];
+  const metalCount   = metalItems.length   > 0 ? metalItems.length   : (composition?.metal   ? 1 : 0);
+  const hechuraCount = hechuraItems.length > 0 ? hechuraItems.length : (composition?.hechura ? 1 : 0);
+  const metalTitle   = metalCount   > 1 ? "Metal 1"   : "Metal";
+  const hechuraTitle = hechuraCount > 1 ? "Hechura 1" : "Hechura";
+
   // Originales del artículo.
   const origGrams    = composition?.metal?.originalGrams    ?? null;
   const origMermaPct = composition?.metal?.originalMermaPct ?? null;
@@ -319,7 +331,7 @@ export function LineAdvancedOverridesPanel({
                 editable (Gramos / Merma) en accordion. */}
             {composition?.metal && (
               <SaleColumn
-                title="Metal"
+                title={metalTitle}
                 manual={grams.manual || merma.manual || composition.metal.variantManual}
                 summary={
                   <InfoLineRow>
@@ -403,6 +415,22 @@ export function LineAdvancedOverridesPanel({
               />
             )}
 
+            {/* 1.b METAL 2..N — read-only (D1: edit inline solo en [0]).
+                Cuando el artículo tiene múltiples cost lines de tipo METAL,
+                el motor (commit 9-A) emite todos en composition.metals[].
+                El primer item (index 0) ya se renderea arriba con editor;
+                los items 2+ van acá sin editor y con texto sutil que
+                indica dónde editarlos. Cero recálculo (POLICY R4.5). */}
+            {metalItems.slice(1).map((m, i) => (
+              <ReadOnlyMetalSaleColumn
+                key={m.costLineId ?? `metal-extra-${i}`}
+                title={`Metal ${i + 2}`}
+                item={m}
+                qtyLine={qtyLine}
+                currency={currency}
+              />
+            ))}
+
             {/* 2. HECHURA — summary read-only (Moneda + Valor venta) +
                 detail editable (Valor / Bonificación). Productos /
                 Servicios — cuando el motor los exponga via
@@ -410,7 +438,7 @@ export function LineAdvancedOverridesPanel({
                 según regla TPTech (todo lo no-metal viaja en Hechura). */}
             {composition?.hechura && (
               <SaleColumn
-                title="Hechura"
+                title={hechuraTitle}
                 manual={hechura.manual}
                 summary={
                   <InfoLineRow>
@@ -503,7 +531,20 @@ export function LineAdvancedOverridesPanel({
               />
             )}
 
-            {/* 2.b PRODUCTO / SERVICIO (F1.3 G4.1 #8b)
+            {/* 2.b HECHURA 2..N — read-only (D1).
+                Mismo patrón que METAL: items 2+ se renderean sin editor.
+                Cero recálculo (POLICY R4.5). */}
+            {hechuraItems.slice(1).map((h, i) => (
+              <ReadOnlyHechuraSaleColumn
+                key={h.costLineId ?? `hechura-extra-${i}`}
+                title={`Hechura ${i + 2}`}
+                item={h}
+                qtyLine={qtyLine}
+                currency={currency}
+              />
+            ))}
+
+            {/* 3. PRODUCTO / SERVICIO (F1.3 G4.1 #8b)
                 Render uno por cada item de composition.products[] y
                 composition.services[]. SaleColumn separada por item — NO
                 bucketear dentro de HECHURA (regla del usuario).
@@ -896,6 +937,136 @@ function SaleColumn({
         </div>
       )}
     </div>
+  );
+}
+
+/**
+ * F1.3 G4.x #9-C — `SaleColumn` read-only para items METAL adicionales
+ * (index >= 1 en composition.metals[]). El primer item se renderea con
+ * editor inline (Gramos/Merma) directamente en el render principal.
+ *
+ * Decisión D1 confirmada por usuario: edición inline solo en [0]; items
+ * adicionales son read-only, con texto sutil indicando dónde editarlos.
+ *
+ * Reader-only (POLICY R4.5):
+ *   · variante / pureza / gramos / merma / lineCost ← passthrough del backend.
+ *   · "Gramos total" cuando qty>1: derivación trivial (appliedGrams × qty),
+ *     mismo nivel que el primer Metal.
+ */
+function ReadOnlyMetalSaleColumn({
+  title, item, qtyLine, currency,
+}: {
+  title:    string;
+  item:     NonNullable<NonNullable<DocumentLine["pricingMeta"]>["composition"]>["metals"] extends (infer T)[] | undefined ? T : never;
+  qtyLine:  number;
+  currency: string;
+}) {
+  const variantLabel = item.metalName ?? item.purityLabel ?? null;
+  const grams        = item.appliedGrams    ?? null;
+  const merma        = item.appliedMermaPct ?? null;
+  const lineCost     = item.lineCost        ?? null;
+  return (
+    <SaleColumn
+      title={title}
+      summary={
+        <InfoLineRow>
+          {variantLabel && <InfoItem label="Variante" value={variantLabel} />}
+          {item.purity != null && (
+            <InfoItem label="Pureza" value={item.purity.toFixed(3)} />
+          )}
+          {grams != null && (
+            <InfoItem label="Gramos" value={`${grams.toFixed(2)} g`} />
+          )}
+          {grams != null && qtyLine > 1 && (
+            <InfoItem
+              label="Gramos total"
+              value={`${(grams * qtyLine).toFixed(2)} g`}
+            />
+          )}
+          {merma != null && (
+            <InfoItem label="Merma" value={`${merma.toFixed(2)}%`} />
+          )}
+          {lineCost != null && (
+            <InfoItem
+              label="Costo"
+              value={fmtMoney(lineCost, currency)}
+              highlight
+            />
+          )}
+          {lineCost != null && qtyLine > 1 && (
+            <InfoItem
+              label="Total metal"
+              value={fmtMoney(lineCost * qtyLine, currency)}
+              highlight
+            />
+          )}
+          {/* Texto sutil — recordatorio de dónde editar componentes
+              adicionales. Solo aparece en items 2+. */}
+          <InfoItem
+            label=""
+            value={
+              <span className="text-[10px] italic text-muted/60">
+                Editar desde la ficha del artículo
+              </span>
+            }
+          />
+        </InfoLineRow>
+      }
+    />
+  );
+}
+
+/**
+ * F1.3 G4.x #9-C — `SaleColumn` read-only para items HECHURA adicionales.
+ * Mismo patrón que ReadOnlyMetalSaleColumn (D1: edit inline solo en [0]).
+ */
+function ReadOnlyHechuraSaleColumn({
+  title, item, qtyLine, currency,
+}: {
+  title:    string;
+  item:     NonNullable<NonNullable<DocumentLine["pricingMeta"]>["composition"]>["hechuras"] extends (infer T)[] | undefined ? T : never;
+  qtyLine:  number;
+  currency: string;
+}) {
+  const value    = item.appliedAmount ?? null;
+  const lineCost = item.lineCost      ?? null;
+  return (
+    <SaleColumn
+      title={title}
+      summary={
+        <InfoLineRow>
+          <InfoItem label="Moneda" value={currency || "—"} />
+          {item.lineLabel && (
+            <InfoItem label="Concepto" value={item.lineLabel} />
+          )}
+          {value != null && (
+            <InfoItem label="Valor" value={fmtMoney(value, currency)} />
+          )}
+          {lineCost != null && (
+            <InfoItem
+              label="Costo"
+              value={fmtMoney(lineCost, currency)}
+              highlight
+            />
+          )}
+          {lineCost != null && qtyLine > 1 && (
+            <InfoItem
+              label="Total hechura"
+              value={fmtMoney(lineCost * qtyLine, currency)}
+              highlight
+            />
+          )}
+          <InfoItem
+            label=""
+            value={
+              <span className="text-[10px] italic text-muted/60">
+                Editar desde la ficha del artículo
+              </span>
+            }
+          />
+        </InfoLineRow>
+      }
+    />
   );
 }
 
