@@ -42,6 +42,9 @@ import type {
   NormalizedComposition,
   // F1.3 G4.1
   NormalizedCompositionItemBlock,
+  // F1.3 G4.x #9-B
+  NormalizedCompositionMetalItem,
+  NormalizedCompositionHechuraItem,
   NormalizedPurchaseTaxItem,
   NormalizedClientCommercialRules,
   // Fase 2.1.b
@@ -99,9 +102,13 @@ function normalizeComposition(
   if (!raw) return null;
   const pureGramsBase = raw.metal?.pureGramsBase ?? null;
   const pureGramsSale = raw.metal?.pureGramsSale ?? null;
-  return {
-    metal: raw.metal
-      ? {
+
+  // F1.3 G4.x #9-B — normalize legacy alias `metal`/`hechura` (objetos
+  // únicos del shape v3/v4) primero. Lo usamos tanto para el campo
+  // `metal`/`hechura` (mantener back-compat) como para el fallback
+  // de `metals`/`hechuras` cuando el backend no emitió arrays.
+  const metalLegacy: NormalizedComposition["metal"] = raw.metal
+    ? {
           originalGrams:     raw.metal.originalGrams     ?? null,
           appliedGrams:      raw.metal.appliedGrams      ?? null,
           gramsManual:       Boolean(raw.metal.gramsManual),
@@ -117,15 +124,25 @@ function normalizeComposition(
           pureGramsBase,
           pureGramsSale,
         }
-      : null,
-    hechura: raw.hechura
-      ? {
-          originalAmount: raw.hechura.originalAmount ?? null,
-          appliedAmount:  raw.hechura.appliedAmount  ?? null,
-          manual:         Boolean(raw.hechura.manual),
-          appliesTo:      raw.hechura.appliesTo      ?? null,
-        }
-      : null,
+    : null;
+  const hechuraLegacy: NormalizedComposition["hechura"] = raw.hechura
+    ? {
+        originalAmount: raw.hechura.originalAmount ?? null,
+        appliedAmount:  raw.hechura.appliedAmount  ?? null,
+        manual:         Boolean(raw.hechura.manual),
+        appliesTo:      raw.hechura.appliesTo      ?? null,
+      }
+    : null;
+
+  return {
+    metal:   metalLegacy,
+    hechura: hechuraLegacy,
+    // F1.3 G4.x #9-B — metals/hechuras siempre arrays (nunca undefined).
+    // Si backend NO emite arrays (snapshot v4/v3), fallback al alias
+    // legacy: 1-item array desde metal/hechura, o [] si no hay nada.
+    // Cuando backend SÍ emite arrays (v5+), se respetan tal cual.
+    metals:   normalizeCompositionMetals(raw.metals, raw.metal),
+    hechuras: normalizeCompositionHechuras(raw.hechuras, raw.hechura),
     // F1.3 G4.1 — products/services con default `[]` para retrocompat
     // snapshots v3 que no traen el campo. Passthrough puro: cero recálculo
     // monetario y cero heurística sobre `lineAdjAmount`.
@@ -143,6 +160,85 @@ function normalizeComposition(
         }))
       : [],
   };
+}
+
+/**
+ * F1.3 G4.x #9-B — normaliza `composition.metals[]` raw con fallback legacy.
+ *
+ * Reglas de retrocompat:
+ *   · Backend v5+ emite `raw.metals` array → se normaliza item a item.
+ *   · Backend v4/v3 NO emite `metals` pero SÍ tiene `raw.metal` (alias) →
+ *     genera `[normalize(metal)]` (1-item array desde el legacy).
+ *   · Sin metals ni metal → `[]`.
+ *
+ * Reader-only: cero recálculo monetario. Si `lineCost` no viene del backend,
+ * cae a 0 (tipo `number`, no null — el tipo lo permite mediante `Number(... ?? 0)`).
+ * `appliedGrams`/`appliedMermaPct`: null cuando no son finitos (defensa).
+ */
+function normalizeCompositionMetals(
+  raw: any,
+  legacyMetal: any,
+): NormalizedCompositionMetalItem[] {
+  if (Array.isArray(raw)) {
+    return raw.map((it: any): NormalizedCompositionMetalItem => ({
+      costLineId:      it?.costLineId      ?? null,
+      metalVariantId:  it?.metalVariantId  ?? null,
+      metalName:       it?.metalName       ?? null,
+      purity:          it?.purity          != null ? Number(it.purity)          : null,
+      purityLabel:     it?.purityLabel     ?? null,
+      appliedGrams:    it?.appliedGrams    != null && Number.isFinite(Number(it.appliedGrams))
+                         ? Number(it.appliedGrams) : null,
+      appliedMermaPct: it?.appliedMermaPct != null && Number.isFinite(Number(it.appliedMermaPct))
+                         ? Number(it.appliedMermaPct) : null,
+      lineCost:        it?.lineCost        != null && Number.isFinite(Number(it.lineCost))
+                         ? Number(it.lineCost) : null,
+    }));
+  }
+  // Fallback legacy — backend pre-v5 sin metals, pero con `metal` único.
+  // Construir array de 1 item desde el legacy para que la UI tenga shape
+  // unificado.
+  if (legacyMetal) {
+    return [{
+      costLineId:      null,                                  // no disponible en legacy
+      metalVariantId:  legacyMetal.appliedVariantId ?? legacyMetal.originalVariantId ?? null,
+      metalName:       legacyMetal.metalName        ?? null,
+      purity:          legacyMetal.purity           ?? null,
+      purityLabel:     legacyMetal.purityLabel      ?? null,
+      appliedGrams:    legacyMetal.appliedGrams     ?? null,
+      appliedMermaPct: legacyMetal.appliedMermaPct  ?? null,
+      lineCost:        null,                                  // no expuesto en legacy
+    }];
+  }
+  return [];
+}
+
+/**
+ * F1.3 G4.x #9-B — normaliza `composition.hechuras[]` raw con fallback
+ * legacy desde `composition.hechura`. Mismo patrón que metals.
+ */
+function normalizeCompositionHechuras(
+  raw: any,
+  legacyHechura: any,
+): NormalizedCompositionHechuraItem[] {
+  if (Array.isArray(raw)) {
+    return raw.map((it: any): NormalizedCompositionHechuraItem => ({
+      costLineId:    it?.costLineId    ?? null,
+      appliedAmount: it?.appliedAmount != null && Number.isFinite(Number(it.appliedAmount))
+                       ? Number(it.appliedAmount) : null,
+      lineCost:      it?.lineCost      != null && Number.isFinite(Number(it.lineCost))
+                       ? Number(it.lineCost) : null,
+      lineLabel:     it?.lineLabel     ?? null,
+    }));
+  }
+  if (legacyHechura) {
+    return [{
+      costLineId:    null,
+      appliedAmount: legacyHechura.appliedAmount ?? null,
+      lineCost:      null,
+      lineLabel:     null,
+    }];
+  }
+  return [];
 }
 
 /**

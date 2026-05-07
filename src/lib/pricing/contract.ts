@@ -288,9 +288,55 @@ export type NormalizedCompositionItemBlock = {
   affectsStock:     boolean | null;
 };
 
+/**
+ * F1.3 G4.x #9-B — item de `composition.metals[]`. Espejo del backend
+ * `CompositionMetalItem` (pricing-composition.ts).
+ *
+ * Reader-only (POLICY R4.5): cero matemática derivada. Snapshots viejos
+ * (v4 o anteriores) sin `metals` array se normalizan a `[normalize(metal)]`
+ * cuando el alias legacy existe, o `[]` cuando no.
+ */
+export type NormalizedCompositionMetalItem = {
+  costLineId:        string | null;
+  metalVariantId:    string | null;
+  metalName:         string | null;
+  purity:            number | null;
+  purityLabel:       string | null;
+  appliedGrams:      number | null;
+  appliedMermaPct:   number | null;
+  /** Costo individual de la cost line en moneda BASE/display. La suma de
+   *  `lineCost` de todos los items === metalCost agregado del motor. */
+  lineCost:          number | null;
+};
+
+/**
+ * F1.3 G4.x #9-B — item de `composition.hechuras[]`. Espejo del backend
+ * `CompositionHechuraItem`. Mismo tratamiento de retrocompat que metals[].
+ */
+export type NormalizedCompositionHechuraItem = {
+  costLineId:        string | null;
+  appliedAmount:     number | null;
+  lineCost:          number | null;
+  lineLabel:         string | null;
+};
+
 export type NormalizedComposition = {
+  /**
+   * F1.3 G4.x #9-B — alias LEGACY = `metals[0] ?? null` (invariante
+   * estructural mantenido por el normalizer y por buildComposition backend).
+   * Consumers viejos (LineAdvancedOverridesPanel pre-9-C, etc.) que solo
+   * leen `metal` siguen funcionando sin cambios. Para soportar múltiples
+   * METAL leer `metals[]`.
+   */
   metal:   NormalizedCompositionMetal   | null;
+  /** F1.3 G4.x #9-B — alias LEGACY = `hechuras[0] ?? null`. Mismo contrato. */
   hechura: NormalizedCompositionHechura | null;
+  /** F1.3 G4.x #9-B — TODAS las cost lines de tipo METAL del artículo.
+   *  SIEMPRE array (nunca undefined). Snapshots v4 sin este campo se
+   *  normalizan a `[metal]` (legacy fallback) o `[]` si no hay metal. */
+  metals:   NormalizedCompositionMetalItem[];
+  /** F1.3 G4.x #9-B — TODAS las cost lines de tipo HECHURA. Mismo contrato. */
+  hechuras: NormalizedCompositionHechuraItem[];
   /** F1.3 G4.1 — items PRODUCT del costo (insumos / piedras / etc.). Vacío
    *  cuando el artículo no tiene PRODUCT lines o el snapshot es v3 (legado). */
   products: NormalizedCompositionItemBlock[];

@@ -420,6 +420,26 @@ export interface DocumentLine {
         manual:         boolean;
         appliesTo:      string | null;
       } | null;
+      /** F1.3 G4.x #9-B — TODAS las cost lines de tipo METAL del artículo.
+       *  Backend v5+ emite arrays. Snapshots v4 sin este campo se
+       *  normalizan a `[metal]` (legacy) o `[]`. */
+      metals?: Array<{
+        costLineId:        string | null;
+        metalVariantId:    string | null;
+        metalName:         string | null;
+        purity:            number | null;
+        purityLabel:       string | null;
+        appliedGrams:      number | null;
+        appliedMermaPct:   number | null;
+        lineCost:          number | null;
+      }>;
+      /** F1.3 G4.x #9-B — TODAS las cost lines de tipo HECHURA. Mismo patrón. */
+      hechuras?: Array<{
+        costLineId:        string | null;
+        appliedAmount:     number | null;
+        lineCost:          number | null;
+        lineLabel:         string | null;
+      }>;
       /** F1.3 G4.1 — items de cost lines de tipo PRODUCT (insumos / piedras
        *  / etc.). El backend emite uno por cost line. Vacío en snapshots
        *  viejos (v3) o cuando el artículo no tiene PRODUCT lines. La UI hace
