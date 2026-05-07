@@ -360,6 +360,10 @@ export type PricingPreviewResult = {
   lineTaxAmount?:    number;
   /** Total con impuestos de la línea = unitTotalWithTax × qty con redondeo. */
   lineTotalWithTax?: number;
+  /** FASE 1.2 G3.1 — descuento per-line top-level (mismo patrón que G3).
+   *  = (basePrice − unitPrice) × qty con redondeo. Sin clamp — puede ser
+   *  negativo cuando hay override manual que sube el precio. */
+  lineDiscount?:     number;
 
   // ── Fase MM — metadata de moneda del response ──────────────────────────
   /** Moneda en la que vienen los importes (si != base, hubo conversión). */
