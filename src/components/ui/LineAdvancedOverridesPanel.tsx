@@ -27,6 +27,11 @@ import TPNumberInput from "./TPNumberInput";
 import { cn } from "./tp";
 import { fmtMoney } from "../../lib/document-helpers";
 import type { DocumentLine } from "../../lib/document-types";
+import {
+  groupCompositionItems,
+  safeSumNumbers,
+  VARIES,
+} from "../../lib/pricing/grouping";
 
 export type AppliesTo = "METAL" | "HECHURA" | "PRODUCT" | "SERVICE" | "TOTAL";
 
@@ -147,17 +152,42 @@ export function LineAdvancedOverridesPanel({
   const products = composition?.products ?? [];
   const services = composition?.services ?? [];
 
-  // F1.3 G4.x #9-C — metals[]/hechuras[] son arrays (backend v5+).
-  // Snapshots v4 sin arrays → length 0 (el editor del [0] sigue
-  // funcionando vía composition.metal/hechura legacy alias).
-  // Cuando length >= 2, items 2+ se renderean read-only con título
-  // numerado "Metal 2", "Metal 3", etc.
+  // F1.3 G4.x #10-B — agrupación visual via helper puro (lib/pricing/grouping).
+  // Cero matemática derivada en el componente (POLICY R4.5):
+  //   · METAL agrupado por metalVariantId (con merma "varies" si difiere).
+  //   · HECHURA / PRODUCT / SERVICE quedan en lista plana + agregado.
+  // Header de cada grupo muestra count + total agregado (Decimal-safe).
+  // Default expandido cuando count cost-lines === 1; colapsado si 2+.
   const metalItems   = composition?.metals   ?? [];
   const hechuraItems = composition?.hechuras ?? [];
-  const metalCount   = metalItems.length   > 0 ? metalItems.length   : (composition?.metal   ? 1 : 0);
-  const hechuraCount = hechuraItems.length > 0 ? hechuraItems.length : (composition?.hechura ? 1 : 0);
-  const metalTitle   = metalCount   > 1 ? "Metal 1"   : "Metal";
-  const hechuraTitle = hechuraCount > 1 ? "Hechura 1" : "Hechura";
+  const productItems = composition?.products ?? [];
+  const serviceItems = composition?.services ?? [];
+  const grouped = groupCompositionItems({
+    metals:   metalItems,
+    hechuras: hechuraItems,
+    products: productItems,
+    services: serviceItems,
+  });
+  // Cantidad TOTAL de cost lines de metal (suma de count de todos los grupos).
+  // Fallback legacy: cuando metals[] está vacío pero composition.metal existe
+  // (snapshot v4 sin arrays), tratamos como 1 línea para mantener edit inline.
+  const metalLineCountFromGroups = grouped.metals.reduce((acc, g) => acc + g.count, 0);
+  const metalLineCount = metalLineCountFromGroups > 0
+    ? metalLineCountFromGroups
+    : (composition?.metal ? 1 : 0);
+  const hechuraLineCount = hechuraItems.length > 0
+    ? hechuraItems.length
+    : (composition?.hechura ? 1 : 0);
+  // Total de gramos físicos (Σ totalAppliedGrams de todos los grupos).
+  const metalTotalGrams = safeSumNumbers(grouped.metals.map(g => g.totalAppliedGrams));
+  // Total de costo monetario por sumatoria.
+  const metalTotalLineCost = safeSumNumbers(grouped.metals.map(g => g.totalLineCost));
+  // Editor inline de gramos/merma sigue siendo SOLO cuando hay 1 line en
+  // total (D1 confirmado). El editor mapea al primer cost line via
+  // costOverrideContext del backend; con múltiples lines la edición grupal
+  // requiere group overrides (Fase B futura, NO en MVP).
+  const metalEditableInline   = metalLineCount   === 1 && !!composition?.metal;
+  const hechuraEditableInline = hechuraLineCount === 1 && !!composition?.hechura;
 
   // Originales del artículo.
   const origGrams    = composition?.metal?.originalGrams    ?? null;
@@ -203,7 +233,17 @@ export function LineAdvancedOverridesPanel({
     null;
   const purityValue = composition?.metal?.purity ?? null;
 
-  const showAny = !!(composition?.metal || composition?.hechura);
+  // F1.3 G4.x #10-B — además de metal/hechura legacy, considerar products/
+  // services para decidir si mostrar la sección. Antes el panel se ocultaba
+  // si el artículo solo tenía PRODUCT/SERVICE sin metal ni hechura.
+  const showAny = !!(
+    composition?.metal ||
+    composition?.hechura ||
+    (composition?.products?.length ?? 0) > 0 ||
+    (composition?.services?.length ?? 0) > 0 ||
+    (composition?.metals?.length   ?? 0) > 0 ||
+    (composition?.hechuras?.length ?? 0) > 0
+  );
 
   // ── Resumen Costo / Venta / Margen ───────────────────────────────────────
   // Datos ya calculados por el motor o presentes en la línea: NO recalculamos
@@ -327,11 +367,15 @@ export function LineAdvancedOverridesPanel({
              centrado entre las secciones con espacio simétrico arriba y
              abajo, sin afectar al primer hijo ni al último. */
           <div className="flex flex-col [&>*+*]:mt-2 [&>*+*]:border-t [&>*+*]:border-border/30 [&>*+*]:pt-2">
-            {/* 1. METAL — summary read-only siempre visible; detail
-                editable (Gramos / Merma) en accordion. */}
-            {composition?.metal && (
+            {/* 1. METAL — accordion grupal F1.3 #10-B.
+                · 1 cost line total → expandido + editor inline (Gramos/
+                  Merma). Mismo bloque actual.
+                · 2+ cost lines (sea misma o distintas variantes) →
+                  colapsado por default. Header con count + total g.
+                  Detail muestra sub-grupos por variante (read-only). */}
+            {metalEditableInline && composition?.metal && (
               <SaleColumn
-                title={metalTitle}
+                title="Metal"
                 manual={grams.manual || merma.manual || composition.metal.variantManual}
                 summary={
                   <InfoLineRow>
@@ -415,30 +459,32 @@ export function LineAdvancedOverridesPanel({
               />
             )}
 
-            {/* 1.b METAL 2..N — read-only (D1: edit inline solo en [0]).
-                Cuando el artículo tiene múltiples cost lines de tipo METAL,
-                el motor (commit 9-A) emite todos en composition.metals[].
-                El primer item (index 0) ya se renderea arriba con editor;
-                los items 2+ van acá sin editor y con texto sutil que
-                indica dónde editarlos. Cero recálculo (POLICY R4.5). */}
-            {metalItems.slice(1).map((m, i) => (
-              <ReadOnlyMetalSaleColumn
-                key={m.costLineId ?? `metal-extra-${i}`}
-                title={`Metal ${i + 2}`}
-                item={m}
+            {/* 1.b METAL grupal read-only — F1.3 #10-B.
+                Caso !metalEditableInline (2+ cost lines o sin alias legacy).
+                Render agregado: header "METAL · N líneas/variantes · X.XX g
+                total" + detalle expandible con sub-grupos por variante.
+                Cero recálculo (POLICY R4.5): totales vienen del helper
+                Decimal-safe. */}
+            {!metalEditableInline && metalLineCount > 0 && (
+              <GroupedMetalAccordion
+                groups={grouped.metals}
+                totalLineCount={metalLineCount}
+                totalGrams={metalTotalGrams}
+                totalLineCost={metalTotalLineCost}
                 qtyLine={qtyLine}
                 currency={currency}
+                metaMetalSale={meta.metalSale ?? null}
               />
-            ))}
+            )}
 
             {/* 2. HECHURA — summary read-only (Moneda + Valor venta) +
                 detail editable (Valor / Bonificación). Productos /
                 Servicios — cuando el motor los exponga via
                 `composition.product` / `composition.service` — caen acá
                 según regla TPTech (todo lo no-metal viaja en Hechura). */}
-            {composition?.hechura && (
+            {hechuraEditableInline && composition?.hechura && (
               <SaleColumn
-                title={hechuraTitle}
+                title="Hechura"
                 manual={hechura.manual}
                 summary={
                   <InfoLineRow>
@@ -531,49 +577,46 @@ export function LineAdvancedOverridesPanel({
               />
             )}
 
-            {/* 2.b HECHURA 2..N — read-only (D1).
-                Mismo patrón que METAL: items 2+ se renderean sin editor.
-                Cero recálculo (POLICY R4.5). */}
-            {hechuraItems.slice(1).map((h, i) => (
-              <ReadOnlyHechuraSaleColumn
-                key={h.costLineId ?? `hechura-extra-${i}`}
-                title={`Hechura ${i + 2}`}
-                item={h}
+            {/* 2.b HECHURA grupal read-only — F1.3 #10-B.
+                Caso !hechuraEditableInline (2+ cost lines). Header
+                agregado + detalle expandible con lines individuales.
+                NO se agrupa por lineLabel (auditoría confirmó: heurístico
+                inseguro). Cada line se muestra separada al expandir. */}
+            {!hechuraEditableInline && hechuraItems.length > 0 && (
+              <GroupedHechuraAccordion
+                items={grouped.hechuras}
+                aggregate={grouped.hechurasAggregate}
                 qtyLine={qtyLine}
                 currency={currency}
               />
-            ))}
+            )}
 
-            {/* 3. PRODUCTO / SERVICIO (F1.3 G4.1 #8b)
-                Render uno por cada item de composition.products[] y
-                composition.services[]. SaleColumn separada por item — NO
-                bucketear dentro de HECHURA (regla del usuario).
-                Reader-only:
-                  · NO multiplicar quantity × unitValue (totalValue del backend).
-                  · NO recalcular lineAdjAmount (sin él, no se muestra fila).
-                  · Sin items en arrays → no renderea nada.
-                Si en el futuro el backend emite múltiples METAL/HECHURA, el
-                mismo .map() los soporta — basta con migrar el shape arriba. */}
-            {products.map((p, i) => (
-              <CompositionItemSaleColumn
-                key={p.costLineId ?? `prod-${i}`}
+            {/* 3. PRODUCTO — accordion grupal F1.3 #10-B.
+                Header agregado "PRODUCTO · N items · AR$ X total".
+                · 1 item → expandido por default + card individual.
+                · 2+ items → colapsado por default + lista de cards. */}
+            {productItems.length > 0 && (
+              <GroupedProductServiceAccordion
                 kind="PRODUCT"
-                item={p}
+                items={grouped.products}
+                aggregate={grouped.productsAggregate}
                 qtyLine={qtyLine}
                 currency={currency}
               />
-            ))}
-            {services.map((s, i) => (
-              <CompositionItemSaleColumn
-                key={s.costLineId ?? `svc-${i}`}
-                kind="SERVICE"
-                item={s}
-                qtyLine={qtyLine}
-                currency={currency}
-              />
-            ))}
+            )}
 
-            {/* 3. RENTABILIDAD — costo, ganancia y margen en una sola fila.
+            {/* 4. SERVICIO — mismo patrón. */}
+            {serviceItems.length > 0 && (
+              <GroupedProductServiceAccordion
+                kind="SERVICE"
+                items={grouped.services}
+                aggregate={grouped.servicesAggregate}
+                qtyLine={qtyLine}
+                currency={currency}
+              />
+            )}
+
+            {/* 5. RENTABILIDAD — costo, ganancia y margen en una sola fila.
                 Ganancia $ agregada como derivación trivial (misma justificación
                 que margin %, ya aceptada en línea 197). Tono rojo si negativa. */}
             {showSummary && (costTotal != null || showMargin) && (
@@ -941,130 +984,291 @@ function SaleColumn({
 }
 
 /**
- * F1.3 G4.x #9-C — `SaleColumn` read-only para items METAL adicionales
- * (index >= 1 en composition.metals[]). El primer item se renderea con
- * editor inline (Gramos/Merma) directamente en el render principal.
+ * F1.3 G4.x #10-B — accordion grupal de METAL.
  *
- * Decisión D1 confirmada por usuario: edición inline solo en [0]; items
- * adicionales son read-only, con texto sutil indicando dónde editarlos.
+ * Header (siempre visible):
+ *   "Metal · N líneas · X.XX g total · AR$ Y total"
+ *   Si hay >1 variante: "Metal · N variantes · X.XX g total"
+ *   Si merma difiere: "Merma: varias"
+ *
+ * Detail (expandible, default colapsado cuando count >= 2):
+ *   Lista de SUB-GRUPOS por metalVariantId. Cada sub-grupo muestra
+ *   su variante + total g del sub-grupo + count + lines individuales.
  *
  * Reader-only (POLICY R4.5):
- *   · variante / pureza / gramos / merma / lineCost ← passthrough del backend.
- *   · "Gramos total" cuando qty>1: derivación trivial (appliedGrams × qty),
- *     mismo nivel que el primer Metal.
+ *   · totales agregados vienen del helper Decimal-safe.
+ *   · "Editar desde la ficha del artículo" SOLO si grupo tiene >1 line
+ *     (regla del usuario — no mostrar ruido innecesario).
  */
-function ReadOnlyMetalSaleColumn({
-  title, item, qtyLine, currency,
+function GroupedMetalAccordion({
+  groups, totalLineCount, totalGrams, totalLineCost,
+  qtyLine, currency, metaMetalSale,
 }: {
-  title:    string;
-  item:     NonNullable<NonNullable<DocumentLine["pricingMeta"]>["composition"]>["metals"] extends (infer T)[] | undefined ? T : never;
-  qtyLine:  number;
-  currency: string;
+  groups:         ReturnType<typeof groupCompositionItems>["metals"];
+  totalLineCount: number;
+  totalGrams:     number | null;
+  totalLineCost:  number | null;
+  qtyLine:        number;
+  currency:       string;
+  metaMetalSale:  number | null;
 }) {
-  const variantLabel = item.metalName ?? item.purityLabel ?? null;
-  const grams        = item.appliedGrams    ?? null;
-  const merma        = item.appliedMermaPct ?? null;
-  const lineCost     = item.lineCost        ?? null;
+  const variantCount = groups.length;
+  const isMultiVariant = variantCount >= 2;
+  // Default collapsed cuando count cost-lines >= 2.
+  const defaultExpanded = totalLineCount === 1;
   return (
     <SaleColumn
-      title={title}
+      title="Metal"
+      defaultExpanded={defaultExpanded}
       summary={
         <InfoLineRow>
-          {variantLabel && <InfoItem label="Variante" value={variantLabel} />}
-          {item.purity != null && (
-            <InfoItem label="Pureza" value={item.purity.toFixed(3)} />
-          )}
-          {grams != null && (
-            <InfoItem label="Gramos" value={`${grams.toFixed(2)} g`} />
-          )}
-          {grams != null && qtyLine > 1 && (
+          <InfoItem
+            label={isMultiVariant ? "Variantes" : "Líneas"}
+            value={String(isMultiVariant ? variantCount : totalLineCount)}
+          />
+          {totalGrams != null && (
             <InfoItem
-              label="Gramos total"
-              value={`${(grams * qtyLine).toFixed(2)} g`}
+              label="Total gramos"
+              value={`${totalGrams.toFixed(2)} g`}
             />
           )}
-          {merma != null && (
-            <InfoItem label="Merma" value={`${merma.toFixed(2)}%`} />
-          )}
-          {lineCost != null && (
+          {totalGrams != null && qtyLine > 1 && (
             <InfoItem
-              label="Costo"
-              value={fmtMoney(lineCost, currency)}
+              label="Gramos doc."
+              value={`${(totalGrams * qtyLine).toFixed(2)} g`}
+            />
+          )}
+          {/* Sub-resumen "Oro 18k: 2.30 g · Plata 925: 0.50 g" cuando
+              hay múltiples variantes. Cada chip = 1 sub-grupo. */}
+          {isMultiVariant && groups.map(g => (
+            <InfoItem
+              key={`m-summary-${g.groupKey}`}
+              label={g.metalName ?? g.purityLabel ?? "—"}
+              value={g.totalAppliedGrams != null
+                ? `${g.totalAppliedGrams.toFixed(2)} g`
+                : "—"}
+            />
+          ))}
+          {/* Total venta agregado solo cuando viene del backend. */}
+          {metaMetalSale != null && (
+            <InfoItem
+              label="Valor venta"
+              value={fmtMoney(metaMetalSale, currency)}
               highlight
             />
           )}
-          {lineCost != null && qtyLine > 1 && (
+          {metaMetalSale != null && qtyLine > 1 && (
             <InfoItem
               label="Total metal"
-              value={fmtMoney(lineCost * qtyLine, currency)}
+              value={fmtMoney(metaMetalSale * qtyLine, currency)}
               highlight
             />
           )}
-          {/* Texto sutil — recordatorio de dónde editar componentes
-              adicionales. Solo aparece en items 2+. */}
-          <InfoItem
-            label=""
-            value={
-              <span className="text-[10px] italic text-muted/60">
-                Editar desde la ficha del artículo
-              </span>
-            }
-          />
         </InfoLineRow>
+      }
+      detail={
+        <div className="flex flex-col gap-1.5 text-[11px]">
+          {groups.map(g => (
+            <div key={`m-detail-${g.groupKey}`} className="space-y-0.5">
+              {/* Header de sub-grupo: variante + count + total. */}
+              <InfoLineRow>
+                <InfoItem
+                  label="Variante"
+                  value={
+                    <span className="font-semibold text-text">
+                      {g.metalName ?? "—"}
+                      {g.purityLabel && (
+                        <span className="ml-1 text-muted">{g.purityLabel}</span>
+                      )}
+                    </span>
+                  }
+                />
+                <InfoItem label="Líneas" value={String(g.count)} />
+                {g.totalAppliedGrams != null && (
+                  <InfoItem
+                    label="Gramos"
+                    value={`${g.totalAppliedGrams.toFixed(2)} g`}
+                  />
+                )}
+                {g.appliedMermaPct === VARIES ? (
+                  <InfoItem label="Merma" value="varias" />
+                ) : g.appliedMermaPct != null ? (
+                  <InfoItem
+                    label="Merma"
+                    value={`${(g.appliedMermaPct as number).toFixed(2)}%`}
+                  />
+                ) : null}
+                {g.totalLineCost != null && (
+                  <InfoItem
+                    label="Costo"
+                    value={fmtMoney(g.totalLineCost, currency)}
+                    highlight
+                  />
+                )}
+              </InfoLineRow>
+              {/* Lines individuales del sub-grupo (cuando >1). */}
+              {g.count > 1 && (
+                <div className="ml-3 space-y-0.5">
+                  {g.items.map((it, j) => (
+                    <InfoLineRow key={`m-line-${g.groupKey}-${it.costLineId ?? j}`}>
+                      {it.appliedGrams != null && (
+                        <InfoItem
+                          label="Gramos"
+                          value={`${it.appliedGrams.toFixed(2)} g`}
+                        />
+                      )}
+                      {it.appliedMermaPct != null && (
+                        <InfoItem
+                          label="Merma"
+                          value={`${it.appliedMermaPct.toFixed(2)}%`}
+                        />
+                      )}
+                      {it.lineCost != null && (
+                        <InfoItem
+                          label="Costo"
+                          value={fmtMoney(it.lineCost, currency)}
+                        />
+                      )}
+                    </InfoLineRow>
+                  ))}
+                </div>
+              )}
+            </div>
+          ))}
+          {/* Texto sutil — solo cuando el grupo total tiene >1 line
+              (regla del usuario: no mostrar innecesariamente). */}
+          {totalLineCount > 1 && (
+            <div className="text-[10px] italic text-muted/60">
+              Editar desde la ficha del artículo
+            </div>
+          )}
+        </div>
       }
     />
   );
 }
 
 /**
- * F1.3 G4.x #9-C — `SaleColumn` read-only para items HECHURA adicionales.
- * Mismo patrón que ReadOnlyMetalSaleColumn (D1: edit inline solo en [0]).
+ * F1.3 G4.x #10-B — accordion grupal de HECHURA.
+ *
+ * NO se agrupa por lineLabel (auditoría: heurístico inseguro). Lista
+ * plana de items + agregado simple en header.
  */
-function ReadOnlyHechuraSaleColumn({
-  title, item, qtyLine, currency,
+function GroupedHechuraAccordion({
+  items, aggregate, qtyLine, currency,
 }: {
-  title:    string;
-  item:     NonNullable<NonNullable<DocumentLine["pricingMeta"]>["composition"]>["hechuras"] extends (infer T)[] | undefined ? T : never;
-  qtyLine:  number;
-  currency: string;
+  items:     ReturnType<typeof groupCompositionItems>["hechuras"];
+  aggregate: ReturnType<typeof groupCompositionItems>["hechurasAggregate"];
+  qtyLine:   number;
+  currency:  string;
 }) {
-  const value    = item.appliedAmount ?? null;
-  const lineCost = item.lineCost      ?? null;
+  const defaultExpanded = aggregate.count === 1;
+  return (
+    <SaleColumn
+      title="Hechura"
+      defaultExpanded={defaultExpanded}
+      summary={
+        <InfoLineRow>
+          <InfoItem label="Líneas" value={String(aggregate.count)} />
+          {aggregate.totalLineCost != null && (
+            <InfoItem
+              label="Total"
+              value={fmtMoney(aggregate.totalLineCost, currency)}
+              highlight
+            />
+          )}
+          {aggregate.totalLineCost != null && qtyLine > 1 && (
+            <InfoItem
+              label="Total doc."
+              value={fmtMoney(aggregate.totalLineCost * qtyLine, currency)}
+              highlight
+            />
+          )}
+        </InfoLineRow>
+      }
+      detail={
+        <div className="flex flex-col gap-1 text-[11px]">
+          {items.map((h, i) => (
+            <InfoLineRow key={`h-line-${h.costLineId ?? i}`}>
+              {h.lineLabel && (
+                <InfoItem label="Concepto" value={h.lineLabel} />
+              )}
+              <InfoItem label="Moneda" value={currency || "—"} />
+              {h.appliedAmount != null && (
+                <InfoItem label="Valor" value={fmtMoney(h.appliedAmount, currency)} />
+              )}
+              {h.lineCost != null && (
+                <InfoItem
+                  label="Costo"
+                  value={fmtMoney(h.lineCost, currency)}
+                  highlight
+                />
+              )}
+            </InfoLineRow>
+          ))}
+          {aggregate.count > 1 && (
+            <div className="text-[10px] italic text-muted/60">
+              Editar desde la ficha del artículo
+            </div>
+          )}
+        </div>
+      }
+    />
+  );
+}
+
+/**
+ * F1.3 G4.x #10-B — accordion grupal de PRODUCTO o SERVICIO.
+ *
+ * NO se agrupa internamente (decisión usuario MVP). Cada item se
+ * muestra como CompositionItemSaleColumn dentro del detail.
+ */
+function GroupedProductServiceAccordion({
+  kind, items, aggregate, qtyLine, currency,
+}: {
+  kind:      "PRODUCT" | "SERVICE";
+  items:     Array<NonNullable<NonNullable<DocumentLine["pricingMeta"]>["composition"]>["products"] extends (infer T)[] | undefined ? T : never>;
+  aggregate: ReturnType<typeof groupCompositionItems>["productsAggregate"];
+  qtyLine:   number;
+  currency:  string;
+}) {
+  const title = kind === "PRODUCT" ? "Producto" : "Servicio";
+  const defaultExpanded = aggregate.count === 1;
   return (
     <SaleColumn
       title={title}
+      defaultExpanded={defaultExpanded}
       summary={
         <InfoLineRow>
-          <InfoItem label="Moneda" value={currency || "—"} />
-          {item.lineLabel && (
-            <InfoItem label="Concepto" value={item.lineLabel} />
-          )}
-          {value != null && (
-            <InfoItem label="Valor" value={fmtMoney(value, currency)} />
-          )}
-          {lineCost != null && (
+          <InfoItem label="Items" value={String(aggregate.count)} />
+          {aggregate.totalValue != null && (
             <InfoItem
-              label="Costo"
-              value={fmtMoney(lineCost, currency)}
+              label="Total"
+              value={fmtMoney(aggregate.totalValue, currency)}
               highlight
             />
           )}
-          {lineCost != null && qtyLine > 1 && (
+          {aggregate.totalValue != null && qtyLine > 1 && (
             <InfoItem
-              label="Total hechura"
-              value={fmtMoney(lineCost * qtyLine, currency)}
+              label="Total doc."
+              value={fmtMoney(aggregate.totalValue * qtyLine, currency)}
               highlight
             />
           )}
-          <InfoItem
-            label=""
-            value={
-              <span className="text-[10px] italic text-muted/60">
-                Editar desde la ficha del artículo
-              </span>
-            }
-          />
         </InfoLineRow>
+      }
+      detail={
+        <div className="flex flex-col gap-2">
+          {items.map((it, i) => (
+            <CompositionItemSaleColumn
+              key={it.costLineId ?? `${kind.toLowerCase()}-${i}`}
+              kind={kind}
+              item={it}
+              qtyLine={qtyLine}
+              currency={currency}
+            />
+          ))}
+        </div>
       }
     />
   );
