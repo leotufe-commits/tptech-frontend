@@ -278,6 +278,15 @@ export type SalePreviewLine = {
   lineTaxAmount:        number;
   /** lineTotal + lineTaxAmount (Fase 4). */
   lineTotalWithTax:     number | null;
+  /** FASE 1.1 G7 — flags explícitos de overrides aplicados a la línea.
+   *  Permite distinguir override de precio / descuento / impuesto sin
+   *  inferir desde priceSource (POLICY.md §3 R3.4). */
+  manualOverridesApplied?: {
+    quantity: boolean;
+    price:    boolean;
+    discount: boolean;
+    tax:      boolean;
+  };
   /** Descuento por cantidad por unidad (Fase 5). */
   quantityDiscountAmount:  number | null;
   /** Descuento de promoción por unidad (Fase 5). */
