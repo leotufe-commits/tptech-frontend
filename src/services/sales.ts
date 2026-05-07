@@ -195,8 +195,17 @@ export type SalePreviewInput = {
   installmentsQty?: number;
   channelId?:       string | null;
   couponCode?:      string | null;
-  /** Costo de envío del documento (Fase 4). */
+  /** Costo de envío del documento (Fase 4). Sigue siendo aceptado por
+   *  el backend como fallback legacy. */
   shippingAmount?:       number | null;
+  /** F1.2 paso 4 — input crudo del envío (mode/value/weight). El backend
+   *  resuelve el monto via `resolveShippingAmount` (POLICY.md §5 capa 10).
+   *  Si se manda este campo, prevalece sobre `shippingAmount`. */
+  shipping?: {
+    mode:    "FIXED" | "BY_WEIGHT" | "FREE";
+    value?:  number | null;
+    weight?: number | null;
+  } | null;
   /** Descuento global del documento ya resuelto a monto (Fase 4). */
   globalDiscountAmount?: number | null;
   /** Descuento global sin resolver (Fase 5) — el backend computa el monto

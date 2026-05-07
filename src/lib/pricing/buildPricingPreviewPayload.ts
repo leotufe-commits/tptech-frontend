@@ -25,6 +25,7 @@ import type {
   PricingPreviewLinePayload,
   PricingShippingPayload,
 } from "./contract";
+import { isPricingStrictV1Enabled } from "../featureFlags";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Adapter para el endpoint del Simulador / Comparador (artículos)
@@ -159,7 +160,16 @@ export type SalesPreviewArgs = {
   installmentsQty?:      number;
   channelId?:            string | null;
   couponCode?:           string | null;
+  /** Legacy fallback. F1.2 paso 4: bajo flag ON, se manda `shipping` crudo
+   *  en lugar de este campo (backend lo resuelve con resolveShippingAmount). */
   shippingAmount?:       number | null;
+  /** F1.2 paso 4 — input crudo del envío bajo flag tptech_pricing_strict_v1.
+   *  Cuando se manda, el backend lo resuelve y prevalece sobre shippingAmount. */
+  shipping?: {
+    mode:    "FIXED" | "BY_WEIGHT" | "FREE";
+    value?:  number | null;
+    weight?: number | null;
+  } | null;
   globalDiscountAmount?: number | null;
   globalDiscount?:       { type: "PERCENT" | "AMOUNT"; value: number } | null;
   /** Fase 2A.7 — override de lista a nivel documento. */
@@ -208,10 +218,47 @@ export function resolveLegacyShippingAmount(
 /**
  * Adapta el payload unificado al shape del endpoint de ventas. Soporta N
  * líneas (a diferencia del de artículos).
+ *
+ * ===========================================================================
+ * F1.2 paso 4 — shipping bajo flag tptech_pricing_strict_v1.
+ *
+ * Política:
+ *   · Flag OFF (default): legacy idéntico — el frontend resuelve el monto
+ *     con resolveLegacyShippingAmount (precio/kg × kg) y lo manda como
+ *     `shippingAmount`. El backend lo absorbe tal cual.
+ *   · Flag ON: pasa `shipping: { mode, value, weight }` crudo al backend
+ *     (sin shippingAmount). El backend resuelve via resolveShippingAmount
+ *     (POLICY.md §5 capa 10) y descarta cálculo local.
+ *
+ * Justificación POLICY:
+ *   · POLICY.md §1 R1.4 / §4 R4.3 — frontend NO calcula shipping.
+ *   · POLICY.md §5 (capa 10) — el motor del backend tiene la única
+ *     implementación válida de resolveShippingAmount.
+ *   · POLICY R12 — frontend NO convierte moneda (no aplica acá; shipping
+ *     viaja en su moneda y backend lo procesa con la rate del documento).
+ *
+ * NO se hace bajo flag ON:
+ *   · NO recalcular shipping en frontend.
+ *   · NO transformar BY_WEIGHT → flat (el backend interpreta el mode).
+ *   · NO inferir montos.
+ *   · NO redondear (cero `r2()` aplicado).
+ *   · NO convertir moneda.
+ *
+ * Pantalla desbloqueada:
+ *   · Factura Ventas — el panel de envío manda inputs (mode/value/weight)
+ *     directos al backend bajo ON. resolveLegacyShippingAmount queda como
+ *     dead-code una vez que todas las pantallas migren.
+ *   · Simulador — ya manda shipping crudo (no pasa por toSalesPreviewArgs).
+ *
+ * Fallback automático:
+ *   · Si el backend está desplegado en versión pre-shipping-input, el
+ *     campo se ignora y el cálculo legacy preserva funcionalidad bajo OFF.
+ * ===========================================================================
  */
 export function toSalesPreviewArgs(
   payload: PricingPreviewPayload,
 ): SalesPreviewArgs {
+  const useStrict = isPricingStrictV1Enabled();
   return {
     lines: (payload.lines ?? []).map((l) => toSalesPreviewLine(l)),
     clientId:        payload.clientId ?? null,
@@ -219,9 +266,11 @@ export function toSalesPreviewArgs(
     installmentsQty: payload.installmentsQty ?? 0,
     channelId:       payload.channelId ?? null,
     couponCode:      payload.couponCode ?? null,
-    // TODO Fase 4: enviar `shipping: { mode, value, weight }` cuando el
-    // backend lo acepte. Hoy mando el monto provisorio.
-    shippingAmount:  resolveLegacyShippingAmount(payload.shipping),
+    // F1.2 paso 4 — bajo ON manda input crudo (sin shippingAmount); bajo OFF
+    // resuelve localmente (legacy preservado).
+    ...(useStrict
+      ? { shipping: payload.shipping ?? null }
+      : { shippingAmount: resolveLegacyShippingAmount(payload.shipping) }),
     globalDiscount:  payload.globalDiscount ?? null,
     // Fase 2A.7 — override de lista doc-level. Backend lo acepta desde la
     // misma fase. Sin esto, sales/preview ignoraba el override y volvía a la
