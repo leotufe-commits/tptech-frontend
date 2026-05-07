@@ -21,9 +21,10 @@
 // ============================================================================
 
 import React, { useState, useEffect, useRef } from "react";
-import { RotateCcw, X as XIcon } from "lucide-react";
+import { RotateCcw, X as XIcon, ChevronDown, ChevronRight } from "lucide-react";
 
 import TPNumberInput from "./TPNumberInput";
+import { cn } from "./tp";
 import { fmtMoney } from "../../lib/document-helpers";
 import type { DocumentLine } from "../../lib/document-types";
 
@@ -45,6 +46,21 @@ export type LineAdvancedOverridesPanelProps = {
   onApply:  (patch: LineOverridePatch) => void;
   onClear?: () => void;
   onClose?: () => void;
+  /**
+   * Orientación del panel:
+   *   · "cost" (default): foco en costos del artículo (Compras, vista
+   *     legacy de documentos). El resumen muestra Costo total como
+   *     valor principal junto a Precio de venta y Margen.
+   *   · "sale": foco en composición del precio de venta (Factura). Cada
+   *     bloque (Metal / Hechura) agrega la fila "Valor venta" leída de
+   *     `pricingMeta.metalSale` / `pricingMeta.hechuraSale` (passthrough
+   *     del motor — el frontend NO calcula). El resumen reorganiza:
+   *     "Precio de venta" como principal, "Costo interno" y "Margen"
+   *     como rentabilidad secundaria.
+   * Default `cost` preserva el comportamiento de Presupuestos / Órdenes
+   * / Compras que comparten este editor.
+   */
+  view?: "sale" | "cost";
 };
 
 const EPS = 1e-6;
@@ -119,7 +135,9 @@ export function LineAdvancedOverridesPanel({
   onApply,
   onClear,
   onClose,
+  view = "cost",
 }: LineAdvancedOverridesPanelProps) {
+  const isSaleView = view === "sale";
   const meta = line.pricingMeta ?? {};
   const composition = meta.composition ?? null;
 
@@ -204,17 +222,50 @@ export function LineAdvancedOverridesPanel({
           : margin > 0
             ? "text-amber-500"
             : "text-red-500";
+  // ── Ganancia $ (mismo nivel de derivación que margin %) ──────────────────
+  // = salePrice (neto sin impuestos) − costTotal. Resta de 2 campos ya en
+  // scope. Si costo o precio faltan → null. Si negativa → tono rojo.
+  // POLICY: misma justificación que margin% (línea 197 — "frontend simple").
+  const gananciaTotal: number | null =
+    costTotal != null && salePrice != null
+      ? salePrice - costTotal
+      : null;
+  const gananciaToneClass =
+    gananciaTotal == null
+      ? "text-muted/60"
+      : gananciaTotal < 0
+        ? "text-red-500"
+        : "text-text";
   const showSummary = salePrice != null;
   // Margen oculto si precio = 0 (o sin precio).
   const showMargin = salePrice != null && salePrice > 0;
+
+  // ── Bonificación de Hechura para el summary colapsado ────────────────────
+  // El componente `BonifValue` mantiene su valor en state local (con debounce
+  // al backend), pero el header del accordion necesita el valor actual
+  // persistido en `pricingMeta.manualDiscount`. Replicamos exactamente la
+  // misma lectura que hace `BonifValue` (line.pricingMeta.manualDiscount con
+  // mode=PERCENT y appliesTo=HECHURA) para que el resumen muestre el % real
+  // entre debounces. NO duplica lógica de cálculo — solo lee el override
+  // ya resuelto por el motor. */
+  const hechuraBonifMd  = meta.manualDiscount ?? null;
+  const hechuraBonifPct = (
+    hechuraBonifMd &&
+    (hechuraBonifMd.appliesTo ?? "TOTAL") === "HECHURA" &&
+    hechuraBonifMd.mode === "PERCENT"
+  )
+    ? hechuraBonifMd.value
+    : 0;
 
   return (
     <div className="space-y-2">
       {/* ── Header secundario, sin protagonismo. ─────────────────────────── */}
       <div className="flex items-center justify-between gap-2">
         <span className="text-[10px] font-medium uppercase tracking-wide text-muted/80">
-          Composición del precio
-          <span className="ml-1 normal-case text-muted/60">— costos del artículo</span>
+          {isSaleView ? "Composición del precio de venta" : "Composición del precio"}
+          {!isSaleView && (
+            <span className="ml-1 normal-case text-muted/60">— costos del artículo</span>
+          )}
         </span>
         <div className="flex items-center gap-1">
           {hasOverrides && (
@@ -241,104 +292,308 @@ export function LineAdvancedOverridesPanel({
         </div>
       </div>
 
-      {/* ── Bloques verticales por componente ──────────────────────────────
-          Orden visual fijo (regla del proyecto, alineado al Simulador):
-            1. Metal  →  2. Hechura  →  3. Productos  →  4. Servicios  →  5. Impuestos.
-          Cada bloque solo se renderiza si el backend lo expone en
-          `pricingMeta.composition`. NO se hacen cálculos en frontend. */}
+      {/* ── Cuerpo de la composición ─────────────────────────────────────
+          Dos vistas separadas:
+            · isSaleView (Factura): stack vertical Metal → Hechura →
+              Rentabilidad → Precio venta. Cada sección tiene una fila
+              horizontal compacta con varios "label: value" (`InfoLineRow`)
+              y, cuando aplica, una sub-grilla de inputs de 2 columnas.
+              Densidad alta, sin grids anchos con espacio vacío.
+            · cost (Presupuestos/Órdenes/Compras): bloques verticales
+              tradicionales + summary de 3 cols. Sin cambios. */}
       {showAny ? (
-        <div className="flex flex-col gap-2">
-          {/* 1. METAL */}
-          {composition?.metal && (
-            <Block
-              title="Metal"
-              manual={grams.manual || merma.manual || composition.metal.variantManual}
-            >
-              {metalVariantLabel && (
-                <FieldRow label="Variante">
-                  <ReadOnlyValue>{metalVariantLabel}</ReadOnlyValue>
-                </FieldRow>
-              )}
-              {purityValue != null && (
-                <FieldRow label="Pureza">
-                  <ReadOnlyValue>{purityValue.toFixed(3)}</ReadOnlyValue>
-                </FieldRow>
-              )}
-              <FieldRow label="Gramos">
-                <NumberValue
-                  value={grams.value ?? 0}
-                  onChange={(v) => grams.setValue(v ?? 0)}
-                  decimals={3}
-                  suffix="g"
-                />
-              </FieldRow>
-              <FieldRow label="Merma">
-                <NumberValue
-                  value={merma.value ?? 0}
-                  onChange={(v) => merma.setValue(v ?? 0)}
-                  decimals={2}
-                  suffix="%"
-                />
-              </FieldRow>
-            </Block>
-          )}
+        isSaleView ? (
+          /* Separador entre secciones (Metal · Hechura · Rentabilidad ·
+             Precio venta): cada hijo no-primero recibe `mt-2 pt-2 border-t`
+             via selector de hermanos (`[&>*+*]:`). El divisor queda
+             centrado entre las secciones con espacio simétrico arriba y
+             abajo, sin afectar al primer hijo ni al último. */
+          <div className="flex flex-col [&>*+*]:mt-2 [&>*+*]:border-t [&>*+*]:border-border/30 [&>*+*]:pt-2">
+            {/* 1. METAL — summary read-only siempre visible; detail
+                editable (Gramos / Merma) en accordion. */}
+            {composition?.metal && (
+              <SaleColumn
+                title="Metal"
+                manual={grams.manual || merma.manual || composition.metal.variantManual}
+                summary={
+                  <InfoLineRow>
+                    {metalVariantLabel && (
+                      <InfoItem label="Variante" value={metalVariantLabel} />
+                    )}
+                    {purityValue != null && (
+                      <InfoItem label="Pureza" value={purityValue.toFixed(3)} />
+                    )}
+                    {grams.value != null && (
+                      <InfoItem
+                        label="Gramos"
+                        value={`${grams.value.toFixed(3)} g`}
+                      />
+                    )}
+                    {merma.value != null && (
+                      <InfoItem
+                        label="Merma"
+                        value={`${merma.value.toFixed(2)}%`}
+                      />
+                    )}
+                    {meta.metalSale != null && (
+                      <InfoItem
+                        label="Valor venta"
+                        value={fmtMoney(meta.metalSale, currency)}
+                        highlight
+                      />
+                    )}
+                  </InfoLineRow>
+                }
+                detail={
+                  <div className="grid grid-cols-[max-content_max-content] items-end gap-3">
+                    <InlineNumberField
+                      label="Gramos"
+                      value={grams.value ?? 0}
+                      onChange={(v) => grams.setValue(v ?? 0)}
+                      decimals={3}
+                      suffix="g"
+                      step={0.05}
+                    />
+                    <InlineNumberField
+                      label="Merma"
+                      value={merma.value ?? 0}
+                      onChange={(v) => merma.setValue(v ?? 0)}
+                      decimals={2}
+                      suffix="%"
+                    />
+                  </div>
+                }
+              />
+            )}
 
-          {/* 2. HECHURA */}
-          {composition?.hechura && (
-            <Block title="Hechura" manual={hechura.manual}>
-              <FieldRow label="Moneda">
-                <ReadOnlyValue>{currency || "—"}</ReadOnlyValue>
-              </FieldRow>
-              <FieldRow label="Valor">
-                <NumberValue
-                  value={hechura.value ?? 0}
-                  onChange={(v) => hechura.setValue(v ?? 0)}
-                  decimals={2}
+            {/* 2. HECHURA — summary read-only (Moneda + Valor venta) +
+                detail editable (Valor / Bonificación). Productos /
+                Servicios — cuando el motor los exponga via
+                `composition.product` / `composition.service` — caen acá
+                según regla TPTech (todo lo no-metal viaja en Hechura). */}
+            {composition?.hechura && (
+              <SaleColumn
+                title="Hechura"
+                manual={hechura.manual}
+                summary={
+                  <InfoLineRow>
+                    <InfoItem label="Moneda" value={currency || "—"} />
+                    {hechura.value != null && (
+                      <InfoItem
+                        label="Valor"
+                        value={fmtMoney(hechura.value, currency)}
+                      />
+                    )}
+                    <InfoItem
+                      label="Bonif."
+                      value={`${hechuraBonifPct.toFixed(2)}%`}
+                    />
+                    {meta.hechuraSale != null && (
+                      <InfoItem
+                        label="Valor venta"
+                        value={fmtMoney(meta.hechuraSale, currency)}
+                        highlight
+                      />
+                    )}
+                  </InfoLineRow>
+                }
+                detail={
+                  <div className="grid grid-cols-[max-content_max-content] items-end gap-3">
+                    <InlineNumberField
+                      label="Valor"
+                      value={hechura.value ?? 0}
+                      onChange={(v) => hechura.setValue(v ?? 0)}
+                      decimals={2}
+                    />
+                    <div className="shrink-0">
+                      <div className="text-[9px] font-semibold uppercase tracking-wide text-muted/70">
+                        Bonificación
+                      </div>
+                      <div className="mt-0.5">
+                        <BonifValue line={line} appliesTo="HECHURA" onApply={onApply} compact />
+                      </div>
+                    </div>
+                  </div>
+                }
+              />
+            )}
+
+            {/* 3. RENTABILIDAD — costo, ganancia y margen en una sola fila.
+                Ganancia $ agregada como derivación trivial (misma justificación
+                que margin %, ya aceptada en línea 197). Tono rojo si negativa. */}
+            {showSummary && (costTotal != null || showMargin) && (
+              <SaleColumn
+                title="Rentabilidad"
+                summary={
+                  <InfoLineRow>
+                    {costTotal != null && (
+                      <InfoItem label="Costo" value={fmtMoney(costTotal, currency)} />
+                    )}
+                    {gananciaTotal != null && (
+                      <InfoItem
+                        label="Ganancia"
+                        value={fmtMoney(gananciaTotal, currency)}
+                        className={gananciaToneClass}
+                      />
+                    )}
+                    {showMargin && (
+                      <InfoItem
+                        label="Margen"
+                        value={margin != null ? `${margin.toFixed(1)}%` : "—"}
+                        className={marginToneClass}
+                      />
+                    )}
+                  </InfoLineRow>
+                }
+              />
+            )}
+
+            {/* 4. PRECIO VENTA — hero de la línea, neto sin impuestos.
+                Sin detail editable: el precio sale del motor.
+
+                Mini breakdown agregado (cuando hay descuento):
+                  · Bruto      = line.subtotal + line.discountAmount
+                                 (suma de 2 campos backend, cero multiplicación
+                                 local; equivalente algebraico a qty × basePrice)
+                  · Descuentos = line.discountAmount (= backend lineDiscount,
+                                 G3.1 — agregado consolidado del motor)
+                Solo se renderiza si lineDiscount > 0 — sin descuento el bloque
+                queda limpio (decisión usuario punto 5).
+
+                Anti double-count: solo mostramos el agregado, NO componentes
+                per-tipo. El motor consolida promo/qty/customer/manual en
+                lineDiscount; mostrar tipo individual requeriría G8 doc-level
+                (decisión γ futura, fuera de scope hoy). */}
+            {showSummary && (() => {
+              const lineDisc = Number.isFinite(line.discountAmount)
+                ? line.discountAmount
+                : 0;
+              const bruto = (salePrice ?? 0) + lineDisc;
+              const hasDiscount = lineDisc > 0;
+              return (
+                <SaleColumn
+                  title="Precio venta"
+                  summary={
+                    <>
+                      <div className="text-base font-bold leading-tight tabular-nums text-text">
+                        {fmtMoney(salePrice ?? 0, currency)}
+                      </div>
+                      <div className="mt-0.5 text-[9px] italic text-muted/70">
+                        Neto, sin impuestos
+                      </div>
+                      {hasDiscount && (
+                        <div className="mt-1.5 space-y-0.5 border-t border-border/40 pt-1">
+                          <div className="flex items-baseline justify-between gap-2 text-[10px] text-muted">
+                            <span>Bruto</span>
+                            <span className="tabular-nums">{fmtMoney(bruto, currency)}</span>
+                          </div>
+                          <div
+                            className="flex items-baseline justify-between gap-2 text-[10px] text-muted"
+                            title="Total consolidado de promociones, bonificaciones y descuentos aplicados por el motor."
+                          >
+                            <span>Descuentos</span>
+                            <span className="tabular-nums text-emerald-500">
+                              −{fmtMoney(lineDisc, currency)}
+                            </span>
+                          </div>
+                        </div>
+                      )}
+                    </>
+                  }
                 />
-              </FieldRow>
-              <FieldRow label="Bonificación">
-                <BonifValue line={line} appliesTo="HECHURA" onApply={onApply} />
-              </FieldRow>
-            </Block>
-          )}
-
-          {/* 3. PRODUCTOS — placeholder hasta que el motor exponga
-              `composition.product`. */}
-          {/* 4. SERVICIOS — idem `composition.service`. */}
-
-          {/* 5. IMPUESTOS — lectura directa de composition.taxes con
-              applyOn por línea. Read-only (la edición sigue en la celda
-              "Impuestos" de la fila principal). */}
-          {composition?.taxes && composition.taxes.length > 0 && (
-            <Block title="Impuestos" manual={composition.taxes.some((t) => t.manual)}>
-              {composition.taxes.map((t) => {
-                const scopeLabel =
-                  t.appliesTo === "METAL"   ? " (sobre metal)"
-                  : t.appliesTo === "HECHURA" ? " (sobre hechura)"
-                  : "";
-                const ratePart =
-                  typeof t.rate === "number" ? ` ${t.rate}%` : "";
-                return (
-                  <FieldRow key={t.id} label={`${t.name}${ratePart}${scopeLabel}`}>
-                    <ReadOnlyValue>{fmtMoney(t.taxAmount, currency)}</ReadOnlyValue>
+              );
+            })()}
+          </div>
+        ) : (
+          // ── Vista cost (legado): bloques verticales tradicionales ─────
+          <div className="flex flex-col gap-2">
+            {/* 1. METAL */}
+            {composition?.metal && (
+              <Block
+                title="Metal"
+                manual={grams.manual || merma.manual || composition.metal.variantManual}
+              >
+                {metalVariantLabel && (
+                  <FieldRow label="Variante">
+                    <ReadOnlyValue>{metalVariantLabel}</ReadOnlyValue>
                   </FieldRow>
-                );
-              })}
-            </Block>
-          )}
-        </div>
+                )}
+                {purityValue != null && (
+                  <FieldRow label="Pureza">
+                    <ReadOnlyValue>{purityValue.toFixed(3)}</ReadOnlyValue>
+                  </FieldRow>
+                )}
+                <FieldRow label="Gramos">
+                  <NumberValue
+                    value={grams.value ?? 0}
+                    onChange={(v) => grams.setValue(v ?? 0)}
+                    decimals={3}
+                    suffix="g"
+                  />
+                </FieldRow>
+                <FieldRow label="Merma">
+                  <NumberValue
+                    value={merma.value ?? 0}
+                    onChange={(v) => merma.setValue(v ?? 0)}
+                    decimals={2}
+                    suffix="%"
+                  />
+                </FieldRow>
+              </Block>
+            )}
+
+            {/* 2. HECHURA */}
+            {composition?.hechura && (
+              <Block title="Hechura" manual={hechura.manual}>
+                <FieldRow label="Moneda">
+                  <ReadOnlyValue>{currency || "—"}</ReadOnlyValue>
+                </FieldRow>
+                <FieldRow label="Valor">
+                  <NumberValue
+                    value={hechura.value ?? 0}
+                    onChange={(v) => hechura.setValue(v ?? 0)}
+                    decimals={2}
+                  />
+                </FieldRow>
+                <FieldRow label="Bonificación">
+                  <BonifValue line={line} appliesTo="HECHURA" onApply={onApply} />
+                </FieldRow>
+              </Block>
+            )}
+
+            {/* 5. IMPUESTOS — solo en cost view (Presupuestos/Órdenes/Compras
+                lo necesitan como única vista del IVA per-línea). En sale
+                view se omite porque ya está el desglose compacto debajo de
+                "TOTAL LÍNEA C/ IMP.". */}
+            {composition?.taxes && composition.taxes.length > 0 && (
+              <Block title="Impuestos" manual={composition.taxes.some((t) => t.manual)}>
+                {composition.taxes.map((t) => {
+                  const scopeLabel =
+                    t.appliesTo === "METAL"   ? " (sobre metal)"
+                    : t.appliesTo === "HECHURA" ? " (sobre hechura)"
+                    : "";
+                  const ratePart =
+                    typeof t.rate === "number" ? ` ${t.rate}%` : "";
+                  return (
+                    <FieldRow key={t.id} label={`${t.name}${ratePart}${scopeLabel}`}>
+                      <ReadOnlyValue>{fmtMoney(t.taxAmount, currency)}</ReadOnlyValue>
+                    </FieldRow>
+                  );
+                })}
+              </Block>
+            )}
+          </div>
+        )
       ) : (
         <div className="rounded-md border border-dashed border-border/60 px-3 py-2 text-[11px] italic text-muted">
           Sin desglose de composición disponible.
         </div>
       )}
 
-      {/* ── Resumen Costo · Venta · Margen ────────────────────────────────
-          Bloque informativo al final de la composición. Muestra valores
-          ya calculados por el motor (NO recalcula precios ni impuestos).
-          El margen es una división simple entre venta y costo, hecha en
-          frontend solo para presentación. */}
-      {showSummary && (
+      {/* ── Resumen Costo · Venta · Margen — solo en vista cost (legado).
+          En sale view, "Precio venta" y "Rentabilidad" ya viven como
+          columnas del grid de arriba; no hace falta repetirlas abajo. */}
+      {showSummary && !isSaleView && (
         <div className="mt-2 border-t border-border/50 pt-2">
           <div className="grid grid-cols-3 gap-2">
             <SummaryStat label="Costo total">
@@ -408,6 +663,200 @@ function FieldRow({
     <div className="grid grid-cols-[88px_minmax(0,1fr)] items-center gap-2">
       <span className="text-[11px] text-muted">{label}</span>
       <div className="min-w-0">{children}</div>
+    </div>
+  );
+}
+
+// ─── Sub-componentes COMPACTOS para vista de venta (Factura) ───────────────
+//
+// La vista de venta apila secciones verticalmente (Metal → Hechura →
+// Rentabilidad → Precio venta). Cada sección usa una fila horizontal
+// compacta con varios `label: value` (`InfoLineRow` + `InfoItem`) y, cuando
+// aplica, una sub-grilla 2 cols con la pareja de inputs (`InlineNumberField`).
+// Sin cajas anidadas; solo header chico con divisor sutil entre secciones.
+//
+// Estos helpers se mantienen separados de `Block`/`FieldRow`/`NumberValue`
+// para no degradar las pantallas legacy (Presupuestos/Órdenes/Compras) que
+// siguen usando los originales.
+
+/** Sección del stack vertical de "Composición del precio de venta".
+ *
+ *  Estructura:
+ *    · header con título + chevron (cuando hay `detail`) + badge "Manual"
+ *    · `summary` — siempre visible (ej. info-row con datos read-only).
+ *    · `detail` — opcional, oculto por default; click en header lo abre.
+ *
+ *  Cuando NO hay `detail` (ej. Rentabilidad y Precio venta, que solo
+ *  muestran info), no se renderiza chevron y la sección queda como un
+ *  bloque simple sin accordion.
+ *
+ *  Por qué default colapsado: el operador ve el resumen completo de
+ *  todas las secciones de un vistazo y solo expande Metal o Hechura
+ *  cuando necesita editar gramos/merma/valor/bonificación. Reduce
+ *  altura inicial del panel. */
+function SaleColumn({
+  title,
+  manual,
+  summary,
+  detail,
+  defaultExpanded = false,
+}: {
+  title:    string;
+  manual?:  boolean;
+  summary:  React.ReactNode;
+  detail?:  React.ReactNode;
+  defaultExpanded?: boolean;
+}) {
+  const [expanded, setExpanded] = useState(defaultExpanded);
+  const isCollapsible = !!detail;
+
+  // Header inline: chevron (si colapsable) + título + badge "Manual" +
+  // resumen — TODO en la misma fila con `flex-wrap` para que en pantallas
+  // angostas el resumen baje de manera elegante. Click en cualquier
+  // parte del header toggles el accordion (cuando es colapsable).
+  const headerContent = (
+    <>
+      {isCollapsible && (
+        expanded
+          ? <ChevronDown size={10} className="shrink-0 text-muted/60" />
+          : <ChevronRight size={10} className="shrink-0 text-muted/60" />
+      )}
+      <span className="shrink-0 text-[9px] font-semibold uppercase tracking-wide text-muted/80">
+        {title}
+      </span>
+      {manual && (
+        <span className="shrink-0 rounded bg-surface2 px-1 text-[8px] uppercase tracking-wide text-muted/80">
+          Manual
+        </span>
+      )}
+      <div className="min-w-0 flex-1">
+        {summary}
+      </div>
+    </>
+  );
+
+  return (
+    <div className="min-w-0">
+      {isCollapsible ? (
+        <button
+          type="button"
+          onClick={() => setExpanded((v) => !v)}
+          aria-expanded={expanded}
+          aria-label={expanded ? `Colapsar ${title}` : `Expandir ${title}`}
+          className="flex w-full flex-wrap items-baseline gap-x-2 gap-y-1 rounded text-left hover:bg-surface2/30"
+        >
+          {headerContent}
+        </button>
+      ) : (
+        <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+          {headerContent}
+        </div>
+      )}
+      {isCollapsible && expanded && (
+        <div className="mt-1 pl-3.5">
+          {detail}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Fila horizontal de "label: value" inline. Usada dentro de `SaleColumn`
+ *  para mostrar 2-3 datos read-only en una sola línea, separados por gap.
+ *  Hace `flex-wrap` en mobile cuando no entran. */
+function InfoLineRow({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1 text-[11px]">
+      {children}
+    </div>
+  );
+}
+
+/** Item de `InfoLineRow`: `label: value` en línea. Si `highlight`, el value
+ *  se renderiza en font-semibold (para destacar "Valor venta"). El parámetro
+ *  `className` permite tonalidad (ej. tonalidad del margen en Rentabilidad). */
+function InfoItem({
+  label,
+  value,
+  highlight,
+  className,
+}: {
+  label:     string;
+  value:     React.ReactNode;
+  highlight?: boolean;
+  className?: string;
+}) {
+  return (
+    <div className="flex items-baseline gap-1">
+      <span className="text-muted">{label}:</span>
+      <span
+        className={cn(
+          "tabular-nums",
+          highlight ? "font-semibold text-text" : "text-text/90",
+          className,
+        )}
+      >
+        {value}
+      </span>
+    </div>
+  );
+}
+
+/** Campo numérico stacked: label ARRIBA (text-[9px] uppercase), input
+ *  compacto debajo, sufijo opcional a la derecha del input. Pensado
+ *  para alinear varios inputs uno al lado del otro con poco gap dentro
+ *  de cada `SaleColumn` (ej. Gramos · Merma, Valor · Bonificación).
+ *
+ *  Estructura:
+ *    LABEL
+ *    [ input ] suf
+ *
+ *  El input tiene un ancho fijo (`w-[126px]`) — coincide con el de
+ *  `BonifValue compact` para que los 4 inputs del panel se vean del
+ *  mismo tamaño. El componente entero es `inline-block` / `shrink-0`
+ *  para que el contenedor padre pueda usar `flex gap-3` y los acerque
+ *  sin separarlos con `justify-between`. */
+function InlineNumberField({
+  label,
+  value,
+  onChange,
+  decimals,
+  suffix,
+  readOnly,
+  step,
+}: {
+  label:     string;
+  value:     number;
+  onChange:  (v: number | null) => void;
+  decimals?: number;
+  suffix?:   string;
+  readOnly?: boolean;
+  /** Incremento que aplica al usar ↑/↓ o el spinner del input.
+   *  Default `undefined` → TPNumberInput usa el step por default (típicamente 1).
+   *  Pasar valores fraccionales (ej. 0.05) para granularidad fina. */
+  step?:     number;
+}) {
+  return (
+    <div className="shrink-0">
+      <div className="text-[9px] font-semibold uppercase tracking-wide text-muted/70">
+        {label}
+      </div>
+      <div className="mt-0.5 flex items-center gap-1">
+        <div className="w-[126px] shrink-0">
+          <TPNumberInput
+            value={value}
+            onChange={onChange}
+            decimals={decimals}
+            min={0}
+            compact
+            readOnly={readOnly}
+            {...(step != null ? { step } : {})}
+          />
+        </div>
+        {suffix && (
+          <span className="w-3 shrink-0 text-[9px] text-muted/70">{suffix}</span>
+        )}
+      </div>
     </div>
   );
 }
@@ -483,10 +932,16 @@ function BonifValue({
   line,
   appliesTo,
   onApply,
+  compact,
 }: {
   line:      DocumentLine;
   appliesTo: AppliesTo;
   onApply:   (patch: LineOverridePatch) => void;
+  /** Si true, el TPNumberInput usa el ancho compacto (`w-[126px]`)
+   *  para igualarse a los otros inputs del panel sale view (Gramos /
+   *  Merma / Valor en `InlineNumberField`). Default false → mantiene
+   *  el ancho original de 140px que usan las pantallas legacy. */
+  compact?: boolean;
 }) {
   const md = line.pricingMeta?.manualDiscount ?? null;
   const matches = md && (md.appliesTo ?? "TOTAL") === appliesTo;
@@ -513,7 +968,7 @@ function BonifValue({
 
   return (
     <div className="flex items-center gap-1">
-      <div className="w-[140px] shrink-0">
+      <div className={cn("shrink-0", compact ? "w-[126px]" : "w-[140px]")}>
         <TPNumberInput
           value={local}
           onChange={(v) => commit(Math.max(0, v ?? 0))}
