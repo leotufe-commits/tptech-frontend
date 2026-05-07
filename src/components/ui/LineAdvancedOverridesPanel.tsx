@@ -332,6 +332,16 @@ export function LineAdvancedOverridesPanel({
                         value={`${grams.value.toFixed(2)} g`}
                       />
                     )}
+                    {/* Gramos total × qty — solo cuando qty>1 (con qty=1
+                        sería redundante con "Gramos"). Display derivation
+                        trivial sobre `appliedGrams × qty`. Mismo patrón
+                        que Total metal/hechura. */}
+                    {grams.value != null && qtyLine > 1 && (
+                      <InfoItem
+                        label="Gramos total"
+                        value={`${(grams.value * qtyLine).toFixed(2)} g`}
+                      />
+                    )}
                     {merma.value != null && (
                       <InfoItem
                         label="Merma"
@@ -526,17 +536,23 @@ export function LineAdvancedOverridesPanel({
                             labelTitle="Total consolidado de promociones, bonificaciones y descuentos aplicados por el motor."
                           />
                         )}
-                        <InfoItem
-                          label="Neto"
-                          value={fmtMoney(salePrice ?? 0, currency)}
-                          highlight
-                        />
+                        {/* Neto + subtítulo agrupados verticalmente para que
+                            "Neto, sin impuestos" se alinee bajo el VALOR
+                            Neto (no bajo el primer label de la fila).
+                            `items-end` empuja al cross-axis end del flex-col
+                            (= right edge), dejando el subtítulo debajo del
+                            valor monetario y no del label. */}
+                        <div className="flex flex-col items-end">
+                          <InfoItem
+                            label="Neto"
+                            value={fmtMoney(salePrice ?? 0, currency)}
+                            highlight
+                          />
+                          <div className="text-[9px] italic text-muted/70">
+                            Neto, sin impuestos
+                          </div>
+                        </div>
                       </InfoLineRow>
-                      {/* Subtítulo pequeño debajo — preservado del diseño
-                          anterior para conservar la aclaración fiscal. */}
-                      <div className="mt-0.5 text-[9px] italic text-muted/70">
-                        Neto, sin impuestos
-                      </div>
                     </>
                   }
                 />

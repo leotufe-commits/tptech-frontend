@@ -336,7 +336,73 @@ describe("LineAdvancedOverridesPanel — Total metal/hechura × qty", () => {
 });
 
 // =============================================================================
-// 6. Smoke regresión — bloques existentes siguen renderizando
+// 6. PRECIO VENTA — subtítulo bajo Neto value (flex-col items-end)
+// =============================================================================
+
+describe("LineAdvancedOverridesPanel — subtítulo Neto bajo el valor", () => {
+  it("baseline correct: subtítulo 'Neto, sin impuestos' es sibling del Neto InfoItem (no del row)", () => {
+    render(
+      <LineAdvancedOverridesPanel
+        line={makeLine({ subtotal: 1800, discountAmount: 200, unitCost: 600 })}
+        currency="ARS"
+        onApply={noopApply}
+        view="sale"
+      />,
+    );
+    const subtitle = screen.getByText("Neto, sin impuestos");
+    // El subtítulo vive dentro de un wrapper flex-col que también contiene
+    // el InfoItem "Neto" — NO es hermano directo del InfoLineRow.
+    const wrapper = subtitle.closest(".flex.flex-col.items-end");
+    expect(wrapper).toBeTruthy();
+    // El wrapper también contiene el label "Neto:".
+    const netoLabel = wrapper?.querySelector("span");
+    expect(netoLabel?.textContent).toMatch(/^Neto:/);
+  });
+});
+
+// =============================================================================
+// 7. METAL — Gramos total × qty solo cuando qty > 1
+// =============================================================================
+
+describe("LineAdvancedOverridesPanel — Gramos total × qty", () => {
+  it("baseline correct: muestra 'Gramos total: 2.60 g' cuando qty=2 y appliedGrams=1.30", () => {
+    render(
+      <LineAdvancedOverridesPanel
+        line={makeLine({ quantity: 2, unitCost: 600 })}
+        currency="ARS"
+        onApply={noopApply}
+        view="sale"
+      />,
+    );
+    expect(screen.getByText(/^Gramos total:?$/)).toBeInTheDocument();
+    // 1.30 × 2 = 2.60
+    expect(screen.getByText("2.60 g")).toBeInTheDocument();
+    // Gramos unitario sigue presente
+    expect(screen.getByText("1.30 g")).toBeInTheDocument();
+  });
+
+  it("baseline correct: NO muestra 'Gramos total' cuando qty=1 (evita ruido)", () => {
+    render(
+      <LineAdvancedOverridesPanel
+        line={makeLine({
+          quantity:  1,
+          unitPrice: 1000,
+          subtotal:  1000,
+          unitCost:  600,
+        })}
+        currency="ARS"
+        onApply={noopApply}
+        view="sale"
+      />,
+    );
+    expect(screen.queryByText(/^Gramos total:?$/)).toBeNull();
+    // Gramos unitario sigue
+    expect(screen.getByText("1.30 g")).toBeInTheDocument();
+  });
+});
+
+// =============================================================================
+// 8. Smoke regresión — bloques existentes siguen renderizando
 // =============================================================================
 
 describe("LineAdvancedOverridesPanel — smoke regresión", () => {
