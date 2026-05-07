@@ -8,6 +8,7 @@
 // ============================================================================
 
 import type { DocumentLine } from "./document-types";
+import { isPricingStrictV1Enabled } from "./featureFlags";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Identificadores y fechas
@@ -39,28 +40,59 @@ export function round2(n: number): number {
 /**
  * Totales de una línea — fuente única de verdad para el render de la UI.
  *
- * Reglas (en orden de prioridad):
- *   1. Si la línea ya viene HIDRATADA por el backend (`pricingMeta.partial === false`
- *      y `lineTotal/subtotal` numéricos), devolver esos valores tal cual.
- *      Estos PRESERVAN el redondeo de la lista de precios aplicado por el
- *      motor (ej. ARS 84.600,00 cuando la lista redondea a decena con
- *      `applyOn=TOTAL`). Reconstruir desde `qty × unitPrice` perdería el
- *      redondeo (ARS 84.609,68).
- *   2. Si la línea tiene `pricingMeta.unitTotalWithTax` (unitario REDONDEADO
- *      del motor), usar `qty × unitTotalWithTax`. Mantiene el redondeo
- *      cuando se cambia la cantidad antes de que el preview responda.
- *   3. Fallback simple: `qty × unitPrice − discount` + `taxAmount`. Solo
- *      durante el debounce (≤350ms) ANTES del primer preview, o cuando la
- *      línea no tiene `articleId` (placeholder).
+ * ===========================================================================
+ * F1.2 paso 5 — comportamiento condicional al flag tptech_pricing_strict_v1.
  *
- * El frontend NO hace nuevos cálculos. Cuando el backend responde, los
- * importes se sobreescriben vía `applySalePreviewToDraft`.
+ * Política:
+ *   · Flag OFF (default): legacy idéntico — 3 ramas:
+ *       1. Backend hidratado → respeta lineTotal/subtotal del backend.
+ *       2. Optimista con unitTotalWithTax → qty × unitTotalWithTax.
+ *       3. Fallback simple → qty × unitPrice − disc + taxAmount.
+ *   · Flag ON:
+ *       1. Backend hidratado → mismo passthrough que OFF (sin cambios).
+ *       2 y 3 (cálculo optimista) → ELIMINADOS. Devuelve `subtotal=NaN,
+ *          lineTotal=NaN, pending=true`. fmtMoney mapea NaN → "—" sin tocar
+ *          consumers; comparaciones (>0, ===) fallan safe → bloquean
+ *          confirmación cuando aún no hay pricing válido (correcto > rápido).
+ *
+ * Justificación POLICY:
+ *   · POLICY.md §1 R1.4 — frontend NO calcula plata.
+ *   · POLICY.md §4 R4.4 — campos sin valor del backend se muestran "—".
+ *   · POLICY.md §4 R4.5 — cero cálculos comerciales en frontend.
+ *
+ * Por qué NaN (no 0):
+ *   · `0` se renderiza como "$0,00" — visualmente confundible con un total
+ *     legítimo de cero. Ocultaría el estado pending al operador.
+ *   · `NaN` propaga: fmtMoney → "—"; sumatorias → NaN (también renderizado
+ *     como "—"); comparaciones → false (Cobrar button queda deshabilitado).
+ *   · Tipo TypeScript sigue siendo `number` — cero refactor en consumers.
+ *
+ * Por qué `pending: boolean`:
+ *   · Consumers que quieran skeleton/shimmer (no solo "—") consultan el
+ *     flag explícitamente. Por defecto, fmtMoney basta.
+ *
+ * UX hit aceptado:
+ *   · ≤350ms mostrando "—" mientras debouncea el preview es preferible a
+ *     un valor optimista incorrecto (especialmente con redondeo de lista).
+ *
+ * Pantalla afectada:
+ *   · VentasFacturas.tsx — único consumer (5 call-sites: 2943, 3412, 3452,
+ *     3462, 3665). Bajo flag ON, las líneas recién agregadas o editadas
+ *     muestran "—" hasta que preview backend responde.
+ *
+ * Falla del preview backend:
+ *   · Out of scope de esta función. La capa que llama a salesApi.preview
+ *     debe manejar el error y NO marcar la línea como hidratada. La línea
+ *     queda en estado pending y los botones de confirmación quedan
+ *     bloqueados naturalmente por las comparaciones NaN.
+ * ===========================================================================
  */
 export function calcLineTotalsFromSnapshot(
   l: Pick<DocumentLine, "quantity" | "unitPrice" | "discountAmount"> &
     Partial<Pick<DocumentLine, "taxAmount" | "pricingMeta" | "subtotal" | "lineTotal">>,
-): { subtotal: number; lineTotal: number } {
+): { subtotal: number; lineTotal: number; pending?: boolean } {
   // (1) Línea ya hidratada por el backend: respetar lo que vino tal cual.
+  // Bajo AMBOS flags — el backend es la fuente de verdad. Sin cambios.
   const meta = l.pricingMeta;
   const backendHydrated =
     !!meta &&
@@ -71,10 +103,16 @@ export function calcLineTotalsFromSnapshot(
     const subtotal = typeof l.subtotal === "number" && Number.isFinite(l.subtotal)
       ? l.subtotal
       : round2(Math.max(0, (l.lineTotal as number) - (l.taxAmount ?? 0)));
-    return { subtotal, lineTotal: l.lineTotal as number };
+    return { subtotal, lineTotal: l.lineTotal as number, pending: false };
   }
 
-  // (2)+(3) Cálculo optimista — durante el debounce o sin backend aún.
+  // F1.2 paso 5 — bajo flag ON, NO calcular optimista. Estado pending.
+  if (isPricingStrictV1Enabled()) {
+    return { subtotal: NaN, lineTotal: NaN, pending: true };
+  }
+
+  // (2)+(3) Cálculo optimista LEGACY — flag OFF (default).
+  // Bajo flag OFF, comportamiento idéntico al pre-paso 5.
   const qty   = Number.isFinite(l.quantity)       ? l.quantity       : 0;
   const price = Number.isFinite(l.unitPrice)      ? l.unitPrice      : 0;
   const disc  = Number.isFinite(l.discountAmount) ? l.discountAmount : 0;
@@ -88,7 +126,7 @@ export function calcLineTotalsFromSnapshot(
   } else {
     lineTotal = subtotal;
   }
-  return { subtotal, lineTotal };
+  return { subtotal, lineTotal, pending: false };
 }
 
 /**
