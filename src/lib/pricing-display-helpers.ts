@@ -19,7 +19,43 @@ import type {
   SalePreviewResult,
   SalePreviewLine,
 } from "../services/sales";
-import { round2 } from "./document-helpers";
+import { round2 as legacyRound2 } from "./document-helpers";
+import { isPricingStrictV1Enabled } from "./featureFlags";
+
+// =============================================================================
+// FASE 1.2 paso 1 — round2 condicional por feature flag.
+//
+// Política:
+//   · Flag OFF (default): comportamiento legacy idéntico — `round2` redondea
+//     a 2 decimales con Math.round(n*100)/100 (compat 100%, rollback inmediato).
+//   · Flag ON:            passthrough puro — el motor backend ya emite los
+//     montos redondeados. Las agregaciones per-línea (qty × qtyDiscUnit, Σ
+//     taxBreakdown items) pueden tener drift de float micro, pero `fmtMoney`
+//     redondea a 2 decimales en display → cero regresión visual.
+//
+// Justificación POLICY:
+//   · POLICY.md §1 R1.4 — frontend no calcula plata; el backend es fuente.
+//   · POLICY.md §4 R4.5 — los normalizadores transforman shape, no valores.
+//
+// Frontend desbloqueado:
+//   · Priority 6 — composeDocumentPricingDetail elimina round2 sobre campos
+//     del backend (subtotalBeforeDiscounts, couponDiscountAmount, taxableBase,
+//     total, etc.) que ya vienen redondeados.
+//
+// GAP CONOCIDO (no bloqueante para este paso):
+//   G8 — el backend debería emitir per-doc:
+//        - quantityDiscountTotal
+//        - promotionDiscountTotal
+//        - customerDiscountTotal
+//        - manualDiscountAmount
+//   Cuando G8 se cierre (Fase 1.3), las 7 agregaciones locales que hoy hacen
+//   `round2(qtyDiscTotal)` / etc. (líneas 229, 230, 311-313, 366, 433) se
+//   reemplazan por passthrough directo de campos del backend. Mientras tanto,
+//   con flag ON, fmtMoney absorbe el drift en display.
+// =============================================================================
+function round2(n: number): number {
+  return isPricingStrictV1Enabled() ? n : legacyRound2(n);
+}
 
 /** Concepto individual del desglose. Si `amount === null` la UI lo trata como
  *  "no aplicado" y lo muestra tenue. */
