@@ -276,6 +276,42 @@ export interface DocumentLine {
     metalSale?:             number | null;
     hechuraCost?:           number | null;
     hechuraSale?:           number | null;
+    /**
+     * Desglose post-descuentos por componente (sale-side). El motor expone
+     * `base + adjustments[] + final` por cada componente (metal / hechura).
+     * `adjustments[]` lista cada ajuste aplicado con su monto absoluto:
+     * MANUAL_DISCOUNT (bonificación del operador), ENTITY_RULE (descuento
+     * de cliente), QUANTITY_DISCOUNT, PROMOTION, etc.
+     *
+     * El frontend SOLO lee — no recalcula. POLICY.md §4 R4.5.
+     *
+     * GAP G3.5 (no abierto todavía) — el backend debería exponer también
+     * un "valor venta antes de bonificación" per-componente para que la UI
+     * pueda mostrar la cadena cost → margin → pre-bonif → bonif → sale
+     * sin riesgo de mezcla cost/sale-side.
+     */
+    componentSaleBreakdown?: {
+      metal?:   { base?: number; final?: number; adjustments?: Array<{
+        kind:    string;
+        label?:  string;
+        amount:  number;
+        applyOn: string;
+        base?:        number | null;
+        percentage?:  number | null;
+        valueType?:   string | null;
+        source?:      string | null;
+      }> };
+      hechura?: { base?: number; final?: number; adjustments?: Array<{
+        kind:    string;
+        label?:  string;
+        amount:  number;
+        applyOn: string;
+        base?:        number | null;
+        percentage?:  number | null;
+        valueType?:   string | null;
+        source?:      string | null;
+      }> };
+    } | null;
     /** El motor no pudo resolver completamente (faltan inputs). */
     partial?:               boolean;
     /** Cliente exento de IVA → impuestos no aplicados. */

@@ -381,6 +381,138 @@ describe("LineAdvancedOverridesPanel — subtítulo Neto bajo el valor", () => {
 });
 
 // =============================================================================
+// 6.c. HECHURA — Bonif. con monto absoluto inline (cuando hay adjustment)
+// =============================================================================
+
+describe("LineAdvancedOverridesPanel — HECHURA Bonif. monto absoluto", () => {
+  it("baseline correct: con adjustment manual de HECHURA, muestra '10.00% (−ARS X)'", () => {
+    const lineWithAdjustment = makeLine({
+      unitCost: 600,
+    });
+    // Inyectar componentSaleBreakdown + manualDiscount HECHURA en pricingMeta.
+    (lineWithAdjustment.pricingMeta as any).manualDiscount = {
+      mode:      "PERCENT",
+      value:     10,
+      appliesTo: "HECHURA",
+    };
+    (lineWithAdjustment.pricingMeta as any).componentSaleBreakdown = {
+      hechura: {
+        base:  480555,
+        final: 432500,
+        adjustments: [
+          {
+            kind:    "MANUAL_DISCOUNT",
+            label:   "Bonificación",
+            amount:  48055.50,
+            applyOn: "HECHURA",
+          },
+        ],
+      },
+    };
+
+    const { container } = render(
+      <LineAdvancedOverridesPanel
+        line={lineWithAdjustment}
+        currency="ARS"
+        onApply={noopApply}
+        view="sale"
+      />,
+    );
+    // El % sigue visible.
+    expect(container.textContent).toMatch(/10\.00%/);
+    // El monto absoluto entre paréntesis con tono emerald.
+    expect(container.textContent).toMatch(/−ARS\s+48\.055,50/);
+    // El span del monto usa text-emerald-500.
+    const emeraldSpans = container.querySelectorAll("span.text-emerald-500");
+    const found = Array.from(emeraldSpans).some(
+      s => s.textContent?.includes("48.055,50"),
+    );
+    expect(found).toBe(true);
+  });
+
+  it("baseline correct: sin componentSaleBreakdown (backend legacy), solo muestra el %", () => {
+    const lineNoAdjustment = makeLine({ unitCost: 600 });
+    (lineNoAdjustment.pricingMeta as any).manualDiscount = {
+      mode:      "PERCENT",
+      value:     10,
+      appliesTo: "HECHURA",
+    };
+    // SIN componentSaleBreakdown.
+    const { container } = render(
+      <LineAdvancedOverridesPanel
+        line={lineNoAdjustment}
+        currency="ARS"
+        onApply={noopApply}
+        view="sale"
+      />,
+    );
+    expect(container.textContent).toMatch(/10\.00%/);
+    // NO hay paréntesis con monto.
+    expect(container.textContent).not.toMatch(/\(−ARS/);
+  });
+
+  it("baseline correct: con bonif=0, solo muestra el % sin paréntesis (evita ruido)", () => {
+    const lineZeroBonif = makeLine({ unitCost: 600 });
+    (lineZeroBonif.pricingMeta as any).componentSaleBreakdown = {
+      hechura: {
+        base:  500000,
+        final: 500000,
+        adjustments: [],   // sin descuentos aplicados
+      },
+    };
+    const { container } = render(
+      <LineAdvancedOverridesPanel
+        line={lineZeroBonif}
+        currency="ARS"
+        onApply={noopApply}
+        view="sale"
+      />,
+    );
+    expect(container.textContent).toMatch(/0\.00%/);
+    expect(container.textContent).not.toMatch(/\(−ARS/);
+  });
+
+  it("baseline correct: NO afecta METAL (filtra applyOn=HECHURA)", () => {
+    // Adjustment de METAL no debería aparecer en la fila de Bonif. de HECHURA.
+    const lineMetalAdj = makeLine({ unitCost: 600 });
+    (lineMetalAdj.pricingMeta as any).manualDiscount = {
+      mode:      "PERCENT",
+      value:     0,        // bonif HECHURA en 0
+      appliesTo: "HECHURA",
+    };
+    (lineMetalAdj.pricingMeta as any).componentSaleBreakdown = {
+      metal: {
+        base: 100000,
+        final: 90000,
+        adjustments: [{
+          kind: "MANUAL_DISCOUNT",
+          label: "Descuento sobre metal",
+          amount: 10000,
+          applyOn: "METAL",   // NO HECHURA
+        }],
+      },
+      hechura: {
+        base: 200000,
+        final: 200000,
+        adjustments: [],     // Hechura sin adjustments
+      },
+    };
+    const { container } = render(
+      <LineAdvancedOverridesPanel
+        line={lineMetalAdj}
+        currency="ARS"
+        onApply={noopApply}
+        view="sale"
+      />,
+    );
+    // Bonif HECHURA queda 0%, sin paréntesis.
+    expect(container.textContent).toMatch(/0\.00%/);
+    // El monto del adjustment de METAL NO aparece como paréntesis junto a Bonif.
+    expect(container.textContent).not.toMatch(/\(−ARS\s+10\.000,00\)/);
+  });
+});
+
+// =============================================================================
 // 6.b. METAL — Gramos total / Total metal sin highlight en label (text-muted)
 // =============================================================================
 

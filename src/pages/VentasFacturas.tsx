@@ -67,10 +67,11 @@ import { TPDocumentLineAdvancedEditor } from "../components/ui/TPDocumentLineAdv
 import ConfirmDeleteDialog from "../components/ui/ConfirmDeleteDialog";
 import { TPTotalCell } from "../components/ui/TPTotalCell";
 import SalePricingPanel from "../components/sales/SalePricingPanel";
-import SaleLineCompositionPre from "../components/sales/SaleLineCompositionPre";
 import { normalizeSalesPreview } from "../lib/pricing/normalizePricingPreviewResult";
 import { logParity } from "../lib/pricing";
 import { selectInvoiceLineView } from "../lib/sales/selectInvoiceLineView";
+import { isPreviewableLine, matchPreviewLines } from "../lib/sales/matchPreviewLines";
+import { sortLinesPreservingHeaders, articleSkuSortKey } from "../lib/sales/sortLines";
 import {
   TPArticleVariantSearchSelect,
   type TPArticleLite,
@@ -113,6 +114,7 @@ import {
 } from "../lib/sales/generateLineHeaders";
 import { priceListsApi, type PriceListRow } from "../services/price-lists";
 import { salesChannelsApi, type SalesChannelRow } from "../services/sales-channels";
+import { listUnits, type Unit as UnitRow } from "../services/units";
 import { couponsApi, type ValidateCouponResult } from "../services/coupons";
 import { salesApi, type SaleDocumentTotals, type SalePreviewResult, type SalePreviewLine } from "../services/sales";
 import { taxesApi, type TaxRow } from "../services/taxes";
@@ -155,7 +157,6 @@ import {
   CURRENCY_MOCK_OPTIONS,
   SELLER_MOCK_OPTIONS,
   PAYMENT_TERM_MOCK_OPTIONS,
-  ARTICLE_META_MOCK,
   LS_KEYS,
   lsKey,
   isBaseCurrency,
@@ -722,16 +723,11 @@ function buildSalePreviewPayload(
   hasRealLines: boolean;
   payload:      Parameters<typeof salesApi.preview>[0];
 } {
-  // Líneas que entran al preview:
-  //   · ARTICLE: con `articleId` (catálogo).
-  //   · MANUAL : `isManual=true` + descripción no vacía.
-  // Antes el filtro descartaba las MANUAL → el backend nunca recibía esas
-  // líneas y los inputs de bonif / impuesto del editor quedaban inertes.
-  const realLines = draft.lines.filter(
-    (l) =>
-      ((!!l.articleId) || (l.isManual === true && !!(l.manualDescription ?? "").trim())) &&
-      (l.quantity ?? 0) > 0,
-  );
+  // Líneas que entran al preview — predicado canónico en `isPreviewableLine`.
+  // ARTICLE: con `articleId` (catálogo). MANUAL: `isManual=true` + descripción
+  // no vacía. Cualquier cambio del filtro debe hacerse en una sola fuente
+  // (`matchPreviewLines.ts`) — ver el comentario allí sobre la invariante.
+  const realLines = draft.lines.filter(isPreviewableLine);
   return {
     hasRealLines: realLines.length > 0,
     payload: {
@@ -880,13 +876,12 @@ function applySalePreviewToDraft(
   let realIdx = 0;
   const previewLines = preview.lines;
   const updatedLines: DocumentLine[] = draft.lines.map((line) => {
-    // Coherente con `buildSalePreviewPayload`: ARTICLE (con articleId) o
-    // MANUAL (con isManual=true). Las demás (placeholders, headers) no
-    // entraron al preview y se devuelven tal cual.
-    const isPreviewable =
-      (!!line.articleId || line.isManual === true) &&
-      (line.quantity ?? 0) > 0;
-    if (!isPreviewable) return line;
+    // Coherente con `buildSalePreviewPayload` y `linesForView`: el filtro
+    // canónico vive en `isPreviewableLine`. Cualquier desalineamiento entre
+    // los tres consumidores corre los totales del backend de una línea a la
+    // siguiente (bug histórico: el "Total línea c/ imp." de un manual se
+    // pegaba al artículo siguiente).
+    if (!isPreviewableLine(line)) return line;
     const pl: SalePreviewLine | undefined = previewLines[realIdx++];
     if (!pl) return line;
 
@@ -947,6 +942,11 @@ function applySalePreviewToDraft(
         metalSale:               pl.metalHechuraBreakdown?.metalSale   ?? null,
         hechuraCost:             pl.metalHechuraBreakdown?.hechuraCost ?? null,
         hechuraSale:             pl.metalHechuraBreakdown?.hechuraSale ?? null,
+        // Desglose por componente con adjustments (MANUAL_DISCOUNT / ENTITY_RULE
+        // / QUANTITY_DISCOUNT / PROMOTION). Permite que la UI muestre el monto
+        // absoluto de la bonificación junto al porcentaje configurado, leyendo
+        // backend sin recalcular en frontend (POLICY.md §4 R4.5).
+        componentSaleBreakdown:  (pl as any).componentSaleBreakdown ?? null,
         // Composition (metal/hechura/taxes) — fuente única de `metalName`
         // y `purityLabel` para cabeceras automáticas, panel de composición
         // y otros consumidores. El backend ya lo emite per-line desde
@@ -1048,36 +1048,6 @@ function mockDerivedDocuments(r: SalesInvoice): TPDocumentTimelineItem[] {
 // Mocks compartidos: SELLER / PAYMENT_TERM / ARTICLE_META importados de
 // `document-types.ts` para evitar duplicación con pantallas hermanas.
 // ─────────────────────────────────────────────────────────────────────────────
-
-type LineSortMode =
-  | "manual"
-  | "article"
-  | "brand"
-  | "group"
-  | "category"
-  | "metal"
-  | "metalVariant";
-
-const SORT_MODE_OPTIONS: ReadonlyArray<{ value: LineSortMode; label: string }> = [
-  { value: "manual",        label: "Manual" },
-  { value: "article",       label: "Artículo" },
-  { value: "brand",         label: "Marca" },
-  { value: "group",         label: "Grupo" },
-  { value: "category",      label: "Categoría" },
-  { value: "metal",         label: "Metal" },
-  { value: "metalVariant",  label: "Variante de metal" },
-];
-
-function getSortKey(l: DocumentLine, mode: LineSortMode): string | undefined {
-  if (mode === "article")      return l.article;
-  if (mode === "metalVariant") return l.variant;
-  const meta = l.articleId ? ARTICLE_META_MOCK[l.articleId] : undefined;
-  if (mode === "brand")    return meta?.brand;
-  if (mode === "group")    return meta?.group;
-  if (mode === "category") return meta?.category;
-  if (mode === "metal")    return meta?.metal;
-  return undefined;
-}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Columnas
@@ -1842,38 +1812,34 @@ function InvoiceEditorModal(props: {
   }, [backendPreview, previewSignature]);
 
   /**
-   * Líneas para visualización (Fase 9). Por cada `draft.lines[i]`, el helper
-   * `selectInvoiceLineView` reemplaza los 4 campos visuales (`unitPrice`,
-   * `lineTotal`, `discountAmount`, `taxAmount`) por los del normalizer si
-   * la firma del backend coincide. El resto del shape (id, articleId,
-   * pricingMeta, overrides, etc.) queda intacto.
+   * Mapeo posicional draft ↔ normalizedPreview, por slot de draft.
    *
-   * `applySalePreviewToDraft` y `saveDraftToBackend` siguen leyendo
-   * `draft.lines` original — esta variable es SOLO para el render del
-   * editor de líneas.
+   * Fuente única para cualquier consumidor visual que lea el normalizado
+   * por línea (`linesForView`, `renderLineExtras`, etc.). `matchPreviewLines`
+   * aplica el predicado canónico `isPreviewableLine` y devuelve un array del
+   * mismo largo que `draft.lines`, con `null` en los slots no previewables.
    *
-   * Matcheo: el preview backend NO incluye líneas manuales (sin `articleId`)
-   * ni vacías (`quantity <= 0`); ver `buildSalePreviewPayload:761` y
-   * `applySalePreviewToDraft:760-763`. Acá replicamos el mismo filtro con
-   * un `realIdx` que solo avanza para líneas reales — sin esto, una línea
-   * manual mezclada antes de un artículo recibiría el `metalHechuraBreakdown`
-   * y los importes del artículo que viene después.
+   * Cualquier `normalizedPreview.lines[idx]` directo fuera de este memo es
+   * un bug — debe leerse desde acá.
+   *
+   * Bug histórico cubierto (regresión del 990): el reader visual saltaba las
+   * líneas manuales sin avanzar el índice del preview, así que el artículo
+   * siguiente leía el preview de la manual y mostraba su `lineTotalWithTax`
+   * (ej. 990) pegado al total. La invariante a mantener es que los tres
+   * consumidores (`buildSalePreviewPayload`, `applySalePreviewToDraft`,
+   * y este memo) usen el MISMO predicado.
    */
+  const matchedNormalized = useMemo(() => {
+    return matchPreviewLines(draft.lines, normalizedPreview?.lines ?? null);
+  }, [draft.lines, normalizedPreview]);
+
   const linesForView = useMemo(() => {
     const signatureMatches =
       !!backendPreview && backendPreview.signature === previewSignature;
-    let realIdx = 0;
-    return draft.lines.map((l) => {
-      if (!l.articleId || (l.quantity ?? 0) <= 0) {
-        // Línea manual / vacía / cabecera: no participa del preview.
-        // `selectInvoiceLineView(_, null, false)` devuelve el draft tal cual,
-        // sin tocar los campos visuales (que para manual viven en el draft).
-        return selectInvoiceLineView(l, null, false);
-      }
-      const norm = normalizedPreview?.lines?.[realIdx++] ?? null;
-      return selectInvoiceLineView(l, norm, signatureMatches);
-    });
-  }, [draft.lines, normalizedPreview, backendPreview, previewSignature]);
+    return draft.lines.map((l, i) =>
+      selectInvoiceLineView(l, matchedNormalized[i], signatureMatches),
+    );
+  }, [draft.lines, matchedNormalized, backendPreview, previewSignature]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -1968,10 +1934,25 @@ function InvoiceEditorModal(props: {
   // "+ Escanear artículo") cuando quiera empezar a cargar.
 
   // ── Expand/collapse de cada línea (lifteado del editor avanzado) ────────
-  // Vivir acá permite agregar el botón global "Expandir/Colapsar todo" en
-  // el header del card de Líneas.
-  const [expandedLineIds, setExpandedLineIds] = useState<Set<string>>(() => new Set());
+  // Vivir acá permite que el botón global "Expandir/Colapsar todo" del
+  // header del card de Líneas sincronice DOS estados:
+  //   1. `expandedLineIds`     — fila principal de la línea expandida
+  //   2. `advancedOpenLineIds` — panel avanzado interno
+  //                              (`LineAdvancedOverridesPanel` =
+  //                               "Composición del precio de venta")
+  // Antes el segundo state vivía dentro del editor sin acceso del padre,
+  // así que "Expandir todo" abría la fila pero no el bloque interno.
+  const [expandedLineIds, setExpandedLineIds]         = useState<Set<string>>(() => new Set());
+  const [advancedOpenLineIds, setAdvancedOpenLineIds] = useState<Set<string>>(() => new Set());
+  // Intención global del operador: cuando presiona "Expandir todo" queremos
+  // que las líneas NUEVAS que agregue después también nazcan expandidas
+  // (sticky). Cualquier toggle individual sale del modo sticky para no
+  // pisar la decisión del usuario sobre líneas específicas.
+  const stickyAllExpandedRef = useRef(false);
+
   function toggleLineExpand(lineId: string) {
+    // Toggle individual → salimos del modo sticky.
+    stickyAllExpandedRef.current = false;
     setExpandedLineIds((prev) => {
       const next = new Set(prev);
       if (next.has(lineId)) next.delete(lineId); else next.add(lineId);
@@ -1979,18 +1960,27 @@ function InvoiceEditorModal(props: {
     });
   }
 
-  // Singleton: solo una línea expandida a la vez para el detalle de pricing.
-  // Independiente del toggle de overrides — el operador puede ver la
-  // composición sin abrir el panel de edición avanzada.
-  const [expandedLineId, setExpandedLineId] = useState<string | null>(null);
-  function toggleLinePricingDetail(lineId: string) {
-    setExpandedLineId((prev) => (prev === lineId ? null : lineId));
+  function toggleLineAdvancedOpen(lineId: string) {
+    // Toggle individual del panel avanzado → también sale del modo sticky
+    // global, para que la próxima línea nueva no se auto-expanda si el
+    // operador empezó a tomar decisiones por línea.
+    stickyAllExpandedRef.current = false;
+    setAdvancedOpenLineIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(lineId)) next.delete(lineId); else next.add(lineId);
+      return next;
+    });
   }
+
   // Solo líneas con artículo cuentan para "Expandir todo" (el placeholder
   // vacío y las cabeceras no tienen simulador / detalle que mostrar).
-  const realLineIds  = draft.lines
-    .filter((l) => !isEmptyLine(l) && !isHeaderLine(l))
-    .map((l) => l.id);
+  const realLineIds = useMemo(
+    () =>
+      draft.lines
+        .filter((l) => !isEmptyLine(l) && !isHeaderLine(l))
+        .map((l) => l.id),
+    [draft.lines],
+  );
 
   // Subtotales por cabecera: sumar los `lineTotal` de las líneas que vienen
   // después de cada HEADER hasta la próxima HEADER. Las líneas previas a la
@@ -2011,14 +2001,66 @@ function InvoiceEditorModal(props: {
     if (currentHeaderId !== null) map.set(currentHeaderId, currentSum);
     return map;
   }, [draft.lines]);
-  const allExpanded  = realLineIds.length > 0 && realLineIds.every((id) => expandedLineIds.has(id));
+  // "Expandir todo" se considera activo cuando AMBOS sets cubren todas las
+  // líneas reales. Sin la condición sobre `advancedOpenLineIds`, el botón
+  // mostraba "Colapsar todo" cuando solo las filas estaban abiertas pero
+  // los paneles internos no — operador veía un toggle en estado mixto.
+  const allExpanded = useMemo(
+    () =>
+      realLineIds.length > 0 &&
+      realLineIds.every((id) => expandedLineIds.has(id)) &&
+      realLineIds.every((id) => advancedOpenLineIds.has(id)),
+    [realLineIds, expandedLineIds, advancedOpenLineIds],
+  );
   function toggleAllLinesExpand() {
     if (allExpanded) {
+      stickyAllExpandedRef.current = false;
       setExpandedLineIds(new Set());
+      setAdvancedOpenLineIds(new Set());
     } else {
-      setExpandedLineIds(new Set(realLineIds));
+      stickyAllExpandedRef.current = true;
+      const all = new Set(realLineIds);
+      setExpandedLineIds(all);
+      setAdvancedOpenLineIds(new Set(all));
     }
   }
+
+  // Sincronizar AMBOS sets con el conjunto vigente de líneas reales:
+  //   1. Drop de IDs huérfanos (líneas eliminadas / vaciadas / convertidas
+  //      a cabecera) — sin esto los Sets crecen indefinidamente y conservan
+  //      decisiones de líneas que ya no existen.
+  //   2. Si el operador estaba en modo "Expandir todo" sticky, agregar las
+  //      líneas nuevas a AMBOS sets para que respeten el estado global
+  //      (fila principal + panel avanzado interno). Sin esto, duplicar /
+  //      agregar una línea con "Expandir todo" activo la dejaba a medio
+  //      expandir.
+  // El effect corre solo cuando cambia el conjunto de IDs (no en cada
+  // hidratación de preview, porque `realLineIds` está memoizado por
+  // `draft.lines` y los IDs son estables). NO modifica los Sets si no
+  // hay cambios.
+  useEffect(() => {
+    const valid = new Set(realLineIds);
+    const sticky = stickyAllExpandedRef.current;
+    const reconcile = (prev: Set<string>): Set<string> => {
+      let changed = false;
+      const next = new Set<string>();
+      for (const id of prev) {
+        if (valid.has(id)) next.add(id);
+        else changed = true;
+      }
+      if (sticky) {
+        for (const id of realLineIds) {
+          if (!next.has(id)) {
+            next.add(id);
+            changed = true;
+          }
+        }
+      }
+      return changed ? next : prev;
+    };
+    setExpandedLineIds(reconcile);
+    setAdvancedOpenLineIds(reconcile);
+  }, [realLineIds]);
 
   // ── Modal de FX (moneda + cotización) ────────────────────────────────────
   const [fxOpen, setFxOpen] = useState(false);
@@ -2269,6 +2311,19 @@ function InvoiceEditorModal(props: {
   // ajuste del canal en pricing-preview vía `channelId`.
   const [salesChannels, setSalesChannels] = useState<SalesChannelRow[]>([]);
 
+  // Catálogo de unidades de medida (GET /company/units). Lo usamos solo
+  // para resolver el `code` que viaja en `picked.unitOfMeasure` al
+  // `name` legible (ej. UND → "Unidad", G → "Gramos") en el label de
+  // Cantidad. NO se envía al motor; es solo display.
+  const [unitsCatalog, setUnitsCatalog] = useState<UnitRow[]>([]);
+  const unitNameByCode = useMemo<Map<string, string>>(() => {
+    const m = new Map<string, string>();
+    for (const u of unitsCatalog) {
+      if (u.code && u.name) m.set(u.code, u.name);
+    }
+    return m;
+  }, [unitsCatalog]);
+
   // Impuestos del tenant (GET /taxes) — solo se usa para asignar el
   // impuesto por defecto a líneas MANUALES (las de catálogo viajan con
   // su `taxAmount` calculado por el backend).
@@ -2281,27 +2336,13 @@ function InvoiceEditorModal(props: {
   const whLabel   = warehouses.find((w) => w.id === draft.warehouse)?.name ?? (draft.warehouse || "Sin almacén");
   const chLabel   = salesChannels.find((c) => c.id === draft.channelId)?.name ?? "Sin canal";
 
-  // ── Sort dropdown (orden de líneas) ──────────────────────────────────────
-  // Clave SHARED entre todos los comprobantes con líneas — ver LS_KEYS.
-  const SORT_MODE_KEY = LS_KEYS.SORT_MODE;
-  const [sortMode, setSortMode] = useState<LineSortMode>(() => {
-    if (typeof window === "undefined") return "manual";
-    try {
-      const v = window.localStorage.getItem(SORT_MODE_KEY);
-      if (v && SORT_MODE_OPTIONS.some((o) => o.value === v)) return v as LineSortMode;
-    } catch {}
-    return "manual";
-  });
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    try { window.localStorage.setItem(SORT_MODE_KEY, sortMode); } catch {}
-  }, [sortMode]);
-
-  const [sortPopOpen, setSortPopOpen] = useState(false);
-  const sortBtnRef = useRef<HTMLButtonElement>(null);
-  const sortLabel = SORT_MODE_OPTIONS.find((o) => o.value === sortMode)?.label ?? "Manual";
-
-  // ── Generar cabeceras semi-automáticas ──────────────────────────────────
+  // ── Ordenar líneas alfabéticamente (acción directa) ─────────────────────
+  // Decisión UX: el botón de la toolbar ya no abre un menú con criterios —
+  // ahora ejecuta directamente "Ordenar A-Z" por nombre visible. La
+  // agrupación por categoría/marca/metal/etc. vive en "Generar cabeceras"
+  // (otro botón), evitando la redundancia que había antes con dos menús
+  // que ofrecían los mismos criterios.
+// ── Generar cabeceras semi-automáticas ──────────────────────────────────
   const [headersPopOpen, setHeadersPopOpen] = useState(false);
   const headersBtnRef = useRef<HTMLButtonElement>(null);
   function handleGenerateHeadersBy(criterion: HeaderGroupBy) {
@@ -2332,22 +2373,23 @@ function InvoiceEditorModal(props: {
     setHeadersPopOpen(false);
   }
 
-  /** Aplica el modo de orden al draft.lines (excluye placeholder vacío). */
-  function applySortMode(mode: LineSortMode) {
-    setSortMode(mode);
-    if (mode === "manual") return; // solo persiste preferencia
-    const real = draft.lines.filter((l) => !isEmptyLine(l));
-    const sorted = [...real].sort((a, b) => {
-      const ka = getSortKey(a, mode);
-      const kb = getSortKey(b, mode);
-      if (!ka && !kb) return 0;
-      if (!ka) return 1;
-      if (!kb) return -1;
-      return String(ka).localeCompare(String(kb), "es", { sensitivity: "base" });
-    });
-    // Sin trailing empty automático: el usuario controla cuántas líneas hay.
-    const next = sorted;
-    // Fase 6: totales hidratados por salesApi.preview vía applySalePreviewToDraft.
+  /** Ordena `draft.lines` por SKU/código del artículo.
+   *  Decisión UX: el orden por SKU es lo que el operador de joyería usa
+   *  todos los días (familias de productos comparten prefijo ANI-, CAD-,
+   *  PEN-, etc.). El nombre comercial queda como fallback en la cascada
+   *  de `articleSkuSortKey` cuando el SKU no está populado.
+   *  Reglas (delegadas a `sortLinesPreservingHeaders`):
+   *   · Comparador es-AR con `sensitivity:"base"` y `numeric:true`
+   *     ("ANI-002" antes que "ANI-010"; insensible a mayúsculas/acentos).
+   *   · Las cabeceras (`type === "HEADER"`) NO se mueven; el sort se
+   *     aplica por SEGMENTO entre cabeceras consecutivas.
+   *   · Líneas manuales sin SKU se ordenan por `manualDescription`; las
+   *     manuales vacías y los placeholders quedan al final.
+   *  Como cambia el orden de `draft.lines`, `previewSignature` cambia y
+   *  el efecto de preview re-fetcha; los totales no cambian (motor
+   *  idempotente). */
+  function sortLinesBySku() {
+    const next = sortLinesPreservingHeaders(draft.lines, articleSkuSortKey);
     onChange({ ...draft, lines: next });
   }
 
@@ -3179,6 +3221,16 @@ function InvoiceEditorModal(props: {
       })
       .catch(() => { if (!cancelled) setSalesChannels([]); });
 
+    // Catálogo de unidades — para mapear el `code` (UND/KG/etc.) al
+    // `name` legible ("Unidad" / "Kilogramos" / etc.) en el label de
+    // Cantidad. Si falla, el editor cae al code (comportamiento legacy).
+    listUnits({ isActive: true })
+      .then((rows) => {
+        if (cancelled) return;
+        setUnitsCatalog(rows ?? []);
+      })
+      .catch(() => { if (!cancelled) setUnitsCatalog([]); });
+
     // Impuestos del tenant — para defaults de líneas manuales.
     taxesApi.list()
       .then((rows) => {
@@ -3474,6 +3526,27 @@ function InvoiceEditorModal(props: {
     // Fase 6: totales hidratados por salesApi.preview vía applySalePreviewToDraft.
     // El cambio en draft.lines dispara previewSignature → re-pricing automático.
     onChange({ ...restored });
+    // Limpiar entradas obsoletas del cache de items pickeados:
+    // tras el reset, las líneas que NO tienen articleId no deben mostrar
+    // metadata stale (Stock / Almacén / Canal) heredada del último item
+    // que se había seleccionado en esa fila. Conservamos solo las
+    // entradas de líneas que siguen teniendo artículo asignado.
+    setPickedItemsByLineId((prev) => {
+      const validIds = new Set(
+        cleanLines
+          .filter((l) => !!l.articleId)
+          .map((l) => l.id),
+      );
+      let changed = false;
+      const next = new Map(prev);
+      for (const id of next.keys()) {
+        if (!validIds.has(id)) {
+          next.delete(id);
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
     setResetAllConfirmOpen(false);
     toast.success("Comprobante restablecido.");
   }
@@ -3948,6 +4021,18 @@ function InvoiceEditorModal(props: {
     onChange({ ...draft, lines: nextLines });
   }
 
+  /** Elimina TODAS las líneas de tipo HEADER conservando intactos artículos,
+   *  líneas manuales, sus ids y su orden actual. No dispara recálculo del
+   *  pricing: las cabeceras no entran al payload de `sales/preview`
+   *  (`isPreviewableLine` las descarta), así que la firma del preview NO
+   *  cambia y los totales se mantienen idénticos.
+   *  Si no hay cabeceras, no hace nada (no muta `draft`). */
+  function removeAllHeaders() {
+    const nextLines = draft.lines.filter((l) => !isHeaderLine(l));
+    if (nextLines.length === draft.lines.length) return;
+    onChange({ ...draft, lines: nextLines });
+  }
+
   function removeLine(lineId: string) {
     // 0a) Capturar el nombre del artículo ANTES de eliminar — para el
     //     toast informativo. Usamos `article` como nombre primario; si
@@ -4023,7 +4108,23 @@ function InvoiceEditorModal(props: {
     if (idx < 0) return;
     const original = draft.lines[idx];
     if (isEmptyLine(original)) return; // no duplicar placeholders
-    const clone: DocumentLine = { ...original, id: uid() };
+    // Deep-clone defensivo: sin esto, `pricingMeta` (con sub-objetos
+    // `composition`, `taxBreakdown`, `metalHechuraBreakdown`, `taxOverride`,
+    // `manualDiscount`, etc.) y `manualOverrides` quedan COMPARTIDOS por
+    // referencia entre la línea original y la duplicada. Aunque hoy todos
+    // los handlers usan spread inmutable, una mutación accidental futura
+    // (o un sub-componente que muta in-place) afectaría a las dos líneas.
+    // `structuredClone` cubre todos los campos visuales / snapshots / steps.
+    const clone: DocumentLine = {
+      ...original,
+      id: uid(),
+      ...(original.pricingMeta
+        ? { pricingMeta: structuredClone(original.pricingMeta) }
+        : {}),
+      ...(original.manualOverrides
+        ? { manualOverrides: { ...original.manualOverrides } }
+        : {}),
+    };
     const nextLines = [
       ...draft.lines.slice(0, idx + 1),
       clone,
@@ -4053,8 +4154,6 @@ function InvoiceEditorModal(props: {
     // Reorden no afecta cálculos.
     // Fase 6: totales hidratados por salesApi.preview vía applySalePreviewToDraft.
     onChange({ ...draft, lines: next });
-    // Drag manual → modo manual (no se queda con preferencia automática).
-    if (sortMode !== "manual") setSortMode("manual");
   }
 
   /** Agrega una línea pre-cargada con los datos del artículo seleccionado
@@ -4972,43 +5071,33 @@ function InvoiceEditorModal(props: {
                   <ChevronDown size={11} className="text-muted" />
                 </button>
               </div>
-              {/* Acciones estructurales a la derecha: Cabecera · Ordenar · Expandir/Colapsar */}
+              {/* Acciones estructurales a la derecha: Ordenar · Cabeceras · Expandir/Colapsar
+                  El menú "Cabeceras" unifica las dos acciones que antes vivían
+                  en botones separados ("Agregar cabecera" + "Generar cabeceras").
+                  La separación generaba ruido visual sin razón funcional —
+                  ambas son la misma intención: estructurar el listado de líneas. */}
               <div className="ml-auto flex items-center gap-1.5">
                 <button
                   type="button"
                   data-tp-enter="ignore"
-                  onClick={addHeader}
-                  title="Agregar cabecera"
-                  aria-label="Agregar cabecera"
+                  onClick={sortLinesBySku}
+                  title="Ordenar por SKU"
+                  aria-label="Ordenar por SKU"
                   className="inline-flex h-6 w-6 items-center justify-center rounded border border-border bg-card text-muted transition hover:bg-surface2/60 hover:text-text"
-                >
-                  <Heading2 size={12} />
-                </button>
-                <button
-                  ref={sortBtnRef}
-                  type="button"
-                  data-tp-enter="ignore"
-                  onClick={() => setSortPopOpen((o) => !o)}
-                  title={`Ordenar líneas (${sortLabel})`}
-                  aria-label="Ordenar líneas"
-                  className={cn(
-                    "inline-flex h-6 w-6 items-center justify-center rounded border border-border bg-card transition",
-                    "hover:bg-surface2/60",
-                    sortMode !== "manual" && "border-primary/40 text-primary",
-                  )}
                 >
                   <ArrowDownAZ size={12} />
                 </button>
-                {/* Generar cabeceras semi-automáticas: agrupa líneas por
-                    Categoría / Marca / Grupo / Metal / Tipo. Las cabeceras
-                    editadas por el operador se preservan en la regeneración. */}
+                {/* Menú único "Cabeceras": agregar manual + generar
+                    automáticas por criterio. El header (Categoría / Marca /
+                    Grupo / Metal / Tipo / Fabricante) preserva las cabeceras
+                    editadas por el operador en cada regeneración. */}
                 <button
                   ref={headersBtnRef}
                   type="button"
                   data-tp-enter="ignore"
                   onClick={() => setHeadersPopOpen((o) => !o)}
-                  title="Generar cabeceras automáticas"
-                  aria-label="Generar cabeceras"
+                  title="Cabeceras"
+                  aria-label="Cabeceras"
                   className="inline-flex h-6 w-6 items-center justify-center rounded border border-border bg-card text-muted transition hover:bg-surface2/60 hover:text-text"
                 >
                   <Heading2 size={12} />
@@ -5233,35 +5322,61 @@ function InvoiceEditorModal(props: {
               </ul>
             </TPPopover>
 
-            <TPPopover open={sortPopOpen} onClose={() => setSortPopOpen(false)} anchorRef={sortBtnRef} width={210}>
+{/* Popover unificado "Cabeceras":
+                  · sección 1 — agregar una cabecera MANUAL editable al final
+                    del listado (reemplaza el viejo botón independiente).
+                  · sección 2 — generar cabeceras AUTOMÁTICAS agrupando por
+                    criterio. El orden entre grupos se aplica alfabético en
+                    `generateHeadersByCriterion` (ver el helper).
+                Las cabeceras editadas por el operador se preservan en
+                regeneraciones siguientes. Click fuera / Escape cierran el
+                popover (`TPPopover` ya implementa ambos). */}
+            <TPPopover open={headersPopOpen} onClose={() => setHeadersPopOpen(false)} anchorRef={headersBtnRef} width={240}>
               <div className="border-b border-border px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wide text-muted">
-                Ordenar por
+                Cabeceras
               </div>
-              <ul className="py-1">
-                {SORT_MODE_OPTIONS.map((opt) => (
-                  <li key={opt.value}>
-                    <button
-                      type="button"
-                      onClick={() => { applySortMode(opt.value); setSortPopOpen(false); }}
-                      className={cn(
-                        "flex w-full items-center justify-between gap-2 px-3 py-1.5 text-left text-xs hover:bg-surface2/60",
-                        sortMode === opt.value && "bg-primary/10 text-primary font-semibold"
-                      )}
-                    >
-                      <span>{opt.label}</span>
-                      {sortMode === opt.value && <Check size={12} />}
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            </TPPopover>
-
-            {/* Popover "Generar cabeceras por...": agrupa líneas por el
-                criterio elegido e inserta cabeceras automáticas. Las
-                cabeceras editadas se preservan en regeneraciones siguientes. */}
-            <TPPopover open={headersPopOpen} onClose={() => setHeadersPopOpen(false)} anchorRef={headersBtnRef} width={230}>
-              <div className="border-b border-border px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wide text-muted">
-                Generar cabeceras por…
+              {(() => {
+                const hasHeaders = draft.lines.some(isHeaderLine);
+                return (
+                  <ul className="py-1">
+                    <li>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          addHeader();
+                          setHeadersPopOpen(false);
+                        }}
+                        className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs hover:bg-surface2/60"
+                      >
+                        <Plus size={12} className="shrink-0 text-muted" />
+                        <span>Agregar cabecera manual</span>
+                      </button>
+                    </li>
+                    <li>
+                      <button
+                        type="button"
+                        disabled={!hasHeaders}
+                        onClick={() => {
+                          removeAllHeaders();
+                          setHeadersPopOpen(false);
+                        }}
+                        title={hasHeaders ? "Eliminar todas las cabeceras existentes" : "No hay cabeceras para eliminar"}
+                        className={cn(
+                          "flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs",
+                          hasHeaders
+                            ? "hover:bg-surface2/60"
+                            : "cursor-not-allowed opacity-50",
+                        )}
+                      >
+                        <Trash2 size={12} className="shrink-0 text-muted" />
+                        <span>Eliminar cabeceras</span>
+                      </button>
+                    </li>
+                  </ul>
+                );
+              })()}
+              <div className="border-t border-border px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wide text-muted">
+                Generar automáticamente por…
               </div>
               <ul className="py-1">
                 {(["CATEGORY", "BRAND", "GROUP", "MANUFACTURER", "METAL", "ARTICLE_TYPE"] as HeaderGroupBy[]).map((c) => (
@@ -5350,6 +5465,8 @@ function InvoiceEditorModal(props: {
                 isReorderable={(l) => !isEmptyLine(l)}
                 expandedIds={expandedLineIds}
                 onToggleExpand={toggleLineExpand}
+                advancedOpenIds={advancedOpenLineIds}
+                onToggleAdvancedOpen={toggleLineAdvancedOpen}
                 onEditArticle={handleEditArticle}
                 onResetLine={resetLine}
                 viewMode={viewMode}
@@ -5374,68 +5491,8 @@ function InvoiceEditorModal(props: {
                 onSetLineTaxOverride={setLineTaxOverride}
                 onApplyLineOverrides={applyLineOverrides}
                 onClearLineOverrides={clearLineOverrides}
-                renderLineExtraToggle={(l) => (
-                  <TPIconButton
-                    onClick={() => toggleLinePricingDetail(l.id)}
-                    className={cn(
-                      "h-9 w-9",
-                      expandedLineId === l.id && "bg-surface2 text-text",
-                    )}
-                    title={expandedLineId === l.id ? "Ocultar composición" : "Ver composición de precio"}
-                    aria-label="Ver composición de precio"
-                    aria-expanded={expandedLineId === l.id}
-                  >
-                    {expandedLineId === l.id
-                      ? <ChevronsDownUp size={14} />
-                      : <ChevronsUpDown size={14} />}
-                  </TPIconButton>
-                )}
-                renderLineExtras={(l, idx) => {
-                  // Render solo cuando esta línea está expandida (singleton).
-                  if (expandedLineId !== l.id) return null;
-                  // Match por índice: el preview se arma con el mismo orden
-                  // de líneas que el draft (igual patrón que
-                  // `applySalePreviewToDraft`). El normalizado es passthrough
-                  // del backend; CERO matemática local. Si la firma no
-                  // coincide, `normalizedPreview` es null y el wrapper PRE
-                  // muestra "Esperando preview…".
-                  const lineView = normalizedPreview?.lines?.[idx] ?? null;
-                  // Fase 3A — usamos el wrapper "Composición del precio (PRE)"
-                  // que agrega header destacado, disclaimer fijo y aviso
-                  // adicional cuando la línea tiene precio manual. Read-only
-                  // todavía: la edición de gramos / pureza / merma / hechura
-                  // queda para Fase 3B.
-                  const hasManualPrice =
-                    l.manualOverrides?.price === true ||
-                    (l.pricingMeta?.manualPrice != null);
-                  return (
-                    <SaleLineCompositionPre
-                      line={l}
-                      pricingLineView={lineView}
-                      currencySymbol={currencyDisplay}
-                      priceListMode={lineView?.appliedPriceListMode ?? null}
-                      hasManualPrice={hasManualPrice}
-                      // Fase 3B — habilitar edición de composición. Los
-                      // inputs (gramos / merma / hechura) llaman a
-                      // `applyLineOverrides` con un patch parcial; el
-                      // refetch de `sales/preview` se dispara automáticamente
-                      // por el cambio en `pricingMeta`. El motor ya soporta
-                      // estos overrides desde `SalePriceOpts`.
-                      onApplyOverrides={(patch) => applyLineOverrides(l.id, patch)}
-                      // Reset SOLO de composición — no toca precio manual,
-                      // bonificación manual, impuesto manual, lista por
-                      // línea ni almacén por línea. Para reset completo hay
-                      // un botón aparte ("Restablecer línea").
-                      onResetComposition={() => applyLineOverrides(l.id, {
-                        gramsOverride:          null,
-                        mermaPercentOverride:   null,
-                        metalVariantIdOverride: null,
-                        hechuraOverrideAmount:  null,
-                      })}
-                      emptyText="Esperando preview..."
-                    />
-                  );
-                }}
+                compositionView="sale"
+                unitNameByCode={unitNameByCode}
               />
             )}
           </TPCard>
@@ -5600,15 +5657,28 @@ function InvoiceEditorModal(props: {
 
             {/* Hero "Total a facturar" — composición desglosada del precio
                 final. Toma todos los datos del pricing-engine vía
-                `pricingDetail`; el componente NO recalcula nada. */}
-            <TPDocumentTotalsHero
-              composition={pricingDetail}
-              currency={currencyDisplay}
-              displayRate={displayRate}
-              viewMode={viewMode}
-              onViewModeChange={setViewMode}
-              totalLabel="Total a facturar"
-            />
+                `pricingDetail`; el componente NO recalcula nada.
+                Wrapper relativo + indicador discreto: se muestra solo
+                durante el PRIMER fetch (no hay backendPreview todavía y
+                previewStatus="loading"). En recálculos sucesivos los
+                valores se atenúan vía la transición interna del Hero,
+                pero acá evitamos el estado "todo en blanco" que confundía
+                al operador al abrir el comprobante. */}
+            <div className="relative">
+              <TPDocumentTotalsHero
+                composition={pricingDetail}
+                currency={currencyDisplay}
+                displayRate={displayRate}
+                viewMode={viewMode}
+                onViewModeChange={setViewMode}
+                totalLabel="Total a facturar"
+              />
+              {previewStatus === "loading" && !backendPreview && (
+                <div className="pointer-events-none absolute right-3 top-3 z-10">
+                  <TPTechPricingLoader active label="Calculando totales…" />
+                </div>
+              )}
+            </div>
 
             {/* Cobro (colapsable) — múltiples entradas mock con saldo en vivo */}
             <TPCard

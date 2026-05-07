@@ -411,10 +411,48 @@ export function LineAdvancedOverridesPanel({
                         value={fmtMoney(hechura.value, currency)}
                       />
                     )}
-                    <InfoItem
-                      label="Bonif."
-                      value={`${hechuraBonifPct.toFixed(2)}%`}
-                    />
+                    {/* Bonif. con monto absoluto inline cuando el motor
+                        expuso el adjustment de hechura.
+                        · Source: meta.componentSaleBreakdown.hechura.adjustments
+                          → buscar el adjustment con applyOn=HECHURA y
+                          amount > 0 (descuento). El motor consolida
+                          MANUAL_DISCOUNT + ENTITY_RULE + QUANTITY_DISCOUNT
+                          + PROMOTION en este array.
+                        · El monto absoluto NO se calcula en frontend — se
+                          lee directamente del backend (POLICY.md §4 R4.5).
+                        · Si no hay adjustment (ej. backend pre-G3.x sin
+                          componentSaleBreakdown, o bonif=0) → comportamiento
+                          actual intacto (solo el %).
+                        · Tono emerald-500 igual que el de Descuentos en
+                          PRECIO VENTA (consistencia visual de "beneficio").
+                        TODO GAP G3.5 — backend debería exponer también
+                        "valor venta pre-bonif" por componente para mostrar
+                        la cadena cost→margin→pre-bonif→sale. */}
+                    {(() => {
+                      const adjs = meta.componentSaleBreakdown?.hechura?.adjustments;
+                      const bonifAdj = Array.isArray(adjs)
+                        ? adjs.find(a => a?.applyOn === "HECHURA" && Number(a?.amount ?? 0) > 0)
+                        : null;
+                      const bonifAbs = bonifAdj ? Number(bonifAdj.amount) : 0;
+                      const showAbsAmount = bonifAbs > 0;
+                      return (
+                        <InfoItem
+                          label="Bonif."
+                          value={
+                            showAbsAmount ? (
+                              <>
+                                {`${hechuraBonifPct.toFixed(2)}%`}
+                                <span className="ml-1 text-emerald-500">
+                                  (−{fmtMoney(bonifAbs, currency)})
+                                </span>
+                              </>
+                            ) : (
+                              `${hechuraBonifPct.toFixed(2)}%`
+                            )
+                          }
+                        />
+                      );
+                    })()}
                     {meta.hechuraSale != null && (
                       <InfoItem
                         label="Valor venta"
