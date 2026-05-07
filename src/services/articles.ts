@@ -353,6 +353,14 @@ export type PricingPreviewResult = {
     breakdownEstimated?:   boolean;
   };
 
+  // ── FASE 1.1 G3 — totales per-line top-level (qty-aware, en moneda response).
+  /** Total neto (sin impuestos) de la línea = unitPrice × qty con redondeo. */
+  lineTotal?:        number;
+  /** Impuesto de la línea = unitTaxAmount × qty con redondeo. */
+  lineTaxAmount?:    number;
+  /** Total con impuestos de la línea = unitTotalWithTax × qty con redondeo. */
+  lineTotalWithTax?: number;
+
   // ── Fase MM — metadata de moneda del response ──────────────────────────
   /** Moneda en la que vienen los importes (si != base, hubo conversión). */
   responseCurrencyId?:     string;
