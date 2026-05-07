@@ -142,7 +142,9 @@ export function TPQuantityField({
         <div className="flex items-stretch gap-1">
           {numberInput}
           <span
-            className="inline-flex h-[42px] shrink-0 items-center justify-center rounded-md border border-border bg-card px-1.5 text-[11px] font-semibold text-muted/60"
+            // text-muted/50 (un nivel más sutil que Bonif/Impuestos /60)
+            // porque "×" es indicador semántico, no acción principal.
+            className="inline-flex h-[42px] shrink-0 items-center justify-center rounded-md border border-border bg-card px-1.5 text-[11px] font-semibold text-muted/50"
             title="Multiplica por unitario"
             aria-hidden="true"
           >

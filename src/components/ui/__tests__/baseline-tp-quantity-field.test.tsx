@@ -59,7 +59,9 @@ describe("TPQuantityField — sidecar × en compactInline", () => {
     expect(sidecar.className).toMatch(/bg-card/);
     expect(sidecar.className).toMatch(/text-\[11px\]/);
     expect(sidecar.className).toMatch(/font-semibold/);
-    expect(sidecar.className).toMatch(/text-muted\/60/);
+    // text-muted/50 (un poco menos contraste que Bonif/Impuestos /60)
+    // porque × es indicador semántico, no acción principal.
+    expect(sidecar.className).toMatch(/text-muted\/50/);
   });
 
   it("baseline correct: compactInline=false NO renderea sidecar (legacy intacto)", () => {

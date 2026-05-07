@@ -541,8 +541,14 @@ export function LineAdvancedOverridesPanel({
                             Neto (no bajo el primer label de la fila).
                             `items-end` empuja al cross-axis end del flex-col
                             (= right edge), dejando el subtítulo debajo del
-                            valor monetario y no del label. */}
-                        <div className="flex flex-col items-end">
+                            valor monetario y no del label.
+                            `w-fit` evita que el wrapper se expanda más allá
+                            del ancho natural de su contenido — mantiene el
+                            bloque compacto en qty=1 sin descuentos (cuando
+                            el wrapper es el único item de la row). El
+                            subtítulo wrappea naturalmente en viewport
+                            angosto sin whitespace-nowrap. */}
+                        <div className="flex w-fit flex-col items-end">
                           <InfoItem
                             label="Neto"
                             value={fmtMoney(salePrice ?? 0, currency)}

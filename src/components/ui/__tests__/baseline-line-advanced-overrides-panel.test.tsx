@@ -358,6 +358,66 @@ describe("LineAdvancedOverridesPanel — subtítulo Neto bajo el valor", () => {
     const netoLabel = wrapper?.querySelector("span");
     expect(netoLabel?.textContent).toMatch(/^Neto:/);
   });
+
+  it("baseline correct: wrapper de Neto usa w-fit (compacto, no se expande)", () => {
+    render(
+      <LineAdvancedOverridesPanel
+        line={makeLine({
+          subtotal:       1000,
+          quantity:       1,
+          unitPrice:      1000,
+          discountAmount: 0,
+          unitCost:       600,
+        })}
+        currency="ARS"
+        onApply={noopApply}
+        view="sale"
+      />,
+    );
+    const subtitle = screen.getByText("Neto, sin impuestos");
+    const wrapper = subtitle.closest(".flex.flex-col.items-end");
+    expect(wrapper?.className).toMatch(/w-fit/);
+  });
+});
+
+// =============================================================================
+// 6.b. METAL — Gramos total / Total metal sin highlight en label (text-muted)
+// =============================================================================
+
+describe("LineAdvancedOverridesPanel — Gramos total / Total metal estilo label", () => {
+  it("baseline correct: label 'Gramos total:' usa text-muted (no highlight)", () => {
+    render(
+      <LineAdvancedOverridesPanel
+        line={makeLine({ quantity: 2, unitCost: 600 })}
+        currency="ARS"
+        onApply={noopApply}
+        view="sale"
+      />,
+    );
+    const labelEl = screen.getByText(/^Gramos total:?$/);
+    // Label siempre text-muted en InfoItem (sin highlight ni className custom).
+    expect(labelEl.className).toMatch(/text-muted/);
+    // Valor sigue normal (text-text/90), NO highlight (no font-semibold).
+    const valueSpan = labelEl.nextElementSibling;
+    expect(valueSpan?.className).not.toMatch(/font-semibold/);
+  });
+
+  it("baseline correct: 'Total metal:' label muted, valor con highlight font-semibold", () => {
+    render(
+      <LineAdvancedOverridesPanel
+        line={makeLine({ quantity: 2, metalSale: 100, unitCost: 50 })}
+        currency="ARS"
+        onApply={noopApply}
+        view="sale"
+      />,
+    );
+    const labelEl = screen.getByText(/^Total metal:?$/);
+    expect(labelEl.className).toMatch(/text-muted/);
+    // Solo el VALUE lleva highlight — el label se mantiene muted.
+    const valueSpan = labelEl.nextElementSibling;
+    expect(valueSpan?.className).toMatch(/font-semibold/);
+    expect(valueSpan?.className).toMatch(/text-text\b/);
+  });
 });
 
 // =============================================================================
