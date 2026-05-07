@@ -8,10 +8,15 @@ import { GoogleOAuthProvider } from "@react-oauth/google";
 import { AuthProvider } from "./context/AuthContext";
 import { ThemeProvider } from "./context/ThemeContext";
 import { FieldFormatsProvider } from "./context/FieldFormatsContext";
+import { registerFeatureFlagsDevTools } from "./lib/featureFlags";
 
 // ✅ IMPORTANTE: themes primero (define variables), luego index.css (las usa)
 import "./styles/themes.css";
 import "./index.css";
+
+// Fase 1.0 — expone window.__tptechFlags para flippear flags desde DevTools.
+// Default off; persistencia en localStorage. No-op en SSR.
+registerFeatureFlagsDevTools();
 
 const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID as string | undefined;
 
