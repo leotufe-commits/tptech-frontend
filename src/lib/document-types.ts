@@ -291,26 +291,40 @@ export interface DocumentLine {
      * sin riesgo de mezcla cost/sale-side.
      */
     componentSaleBreakdown?: {
-      metal?:   { base?: number; final?: number; adjustments?: Array<{
-        kind:    string;
-        label?:  string;
-        amount:  number;
-        applyOn: string;
-        base?:        number | null;
-        percentage?:  number | null;
-        valueType?:   string | null;
-        source?:      string | null;
-      }> };
-      hechura?: { base?: number; final?: number; adjustments?: Array<{
-        kind:    string;
-        label?:  string;
-        amount:  number;
-        applyOn: string;
-        base?:        number | null;
-        percentage?:  number | null;
-        valueType?:   string | null;
-        source?:      string | null;
-      }> };
+      metal?:   {
+        base?: number;
+        final?: number;
+        /** F1.3 G4.3 — valor pre-bonif. del componente (sale-side). null si
+         *  el snapshot es viejo (v3) o si el motor no lo pudo derivar. La UI
+         *  solo lo muestra cuando `salePreManualDiscount != null && !== final`
+         *  (threshold visual — POLICY R4.5, sin matemática frontend). */
+        salePreManualDiscount?: number | null;
+        adjustments?: Array<{
+          kind:    string;
+          label?:  string;
+          amount:  number;
+          applyOn: string;
+          base?:        number | null;
+          percentage?:  number | null;
+          valueType?:   string | null;
+          source?:      string | null;
+        }>;
+      };
+      hechura?: {
+        base?: number;
+        final?: number;
+        salePreManualDiscount?: number | null;
+        adjustments?: Array<{
+          kind:    string;
+          label?:  string;
+          amount:  number;
+          applyOn: string;
+          base?:        number | null;
+          percentage?:  number | null;
+          valueType?:   string | null;
+          source?:      string | null;
+        }>;
+      };
     } | null;
     /** El motor no pudo resolver completamente (faltan inputs). */
     partial?:               boolean;
@@ -406,6 +420,42 @@ export interface DocumentLine {
         manual:         boolean;
         appliesTo:      string | null;
       } | null;
+      /** F1.3 G4.1 — items de cost lines de tipo PRODUCT (insumos / piedras
+       *  / etc.). El backend emite uno por cost line. Vacío en snapshots
+       *  viejos (v3) o cuando el artículo no tiene PRODUCT lines. La UI hace
+       *  passthrough puro: cero matemática derivada (POLICY R4.5). */
+      products?: Array<{
+        costLineId:       string | null;
+        catalogItemId:    string | null;
+        catalogItemCode:  string | null;
+        catalogItemName:  string | null;
+        quantity:         number;
+        unitValue:        number;
+        totalValue:       number;
+        currencyId:       string | null;
+        lineAdjKind:      "BONUS" | "SURCHARGE" | null;
+        lineAdjType:      "PERCENTAGE" | "FIXED_AMOUNT" | null;
+        lineAdjValue:     number | null;
+        lineAdjAmount:    number | null;
+        affectsStock:     boolean | null;
+      }>;
+      /** F1.3 G4.1 — items de cost lines de tipo SERVICE (engaste, mano
+       *  de obra externa, etc.). Mismo shape y reglas que `products`. */
+      services?: Array<{
+        costLineId:       string | null;
+        catalogItemId:    string | null;
+        catalogItemCode:  string | null;
+        catalogItemName:  string | null;
+        quantity:         number;
+        unitValue:        number;
+        totalValue:       number;
+        currencyId:       string | null;
+        lineAdjKind:      "BONUS" | "SURCHARGE" | null;
+        lineAdjType:      "PERCENTAGE" | "FIXED_AMOUNT" | null;
+        lineAdjValue:     number | null;
+        lineAdjAmount:    number | null;
+        affectsStock:     boolean | null;
+      }>;
       taxes: Array<{
         id:        string;
         name:      string;

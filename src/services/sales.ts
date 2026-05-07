@@ -358,6 +358,42 @@ export type SalePreviewLine = {
       manual:         boolean;
       appliesTo:      string | null;
     } | null;
+    /** F1.3 G4.1 — items PRODUCT del costo (insumos / piedras / etc.).
+     *  El backend (commit G4.1.3 / G4.1.4) los emite per línea desde steps
+     *  COST_LINES_PRODUCT. Vacío en snapshots viejos (v3) o cuando el
+     *  artículo no tiene PRODUCT lines. */
+    products?: Array<{
+      costLineId:       string | null;
+      catalogItemId:    string | null;
+      catalogItemCode:  string | null;
+      catalogItemName:  string | null;
+      quantity:         number;
+      unitValue:        number;
+      totalValue:       number;
+      currencyId:       string | null;
+      lineAdjKind:      "BONUS" | "SURCHARGE" | null;
+      lineAdjType:      "PERCENTAGE" | "FIXED_AMOUNT" | null;
+      lineAdjValue:     number | null;
+      lineAdjAmount:    number | null;
+      affectsStock:     boolean | null;
+    }>;
+    /** F1.3 G4.1 — items SERVICE del costo (engaste, mano de obra externa,
+     *  etc.). Mismo shape y reglas que `products`. */
+    services?: Array<{
+      costLineId:       string | null;
+      catalogItemId:    string | null;
+      catalogItemCode:  string | null;
+      catalogItemName:  string | null;
+      quantity:         number;
+      unitValue:        number;
+      totalValue:       number;
+      currencyId:       string | null;
+      lineAdjKind:      "BONUS" | "SURCHARGE" | null;
+      lineAdjType:      "PERCENTAGE" | "FIXED_AMOUNT" | null;
+      lineAdjValue:     number | null;
+      lineAdjAmount:    number | null;
+      affectsStock:     boolean | null;
+    }>;
     taxes: Array<{
       id:        string;
       name:      string;
@@ -368,6 +404,42 @@ export type SalePreviewLine = {
       manual:    boolean;
     }>;
   };
+  /** F1.3 G4.3 — desglose por componente sale-side con `salePreManualDiscount`.
+   *  El motor backend lo emite siempre que hay base por componente disponible.
+   *  La UI consume `salePreManualDiscount` como threshold visual: si pre ===
+   *  final no muestra fila "Pre-bonif." (POLICY R4.5, sin matemática FE). */
+  componentSaleBreakdown?: {
+    metal: {
+      base:                  number;
+      final:                 number;
+      salePreManualDiscount: number | null;
+      adjustments: Array<{
+        kind:        string;
+        label?:      string;
+        amount:      number;
+        applyOn:     string;
+        base?:       number | null;
+        percentage?: number | null;
+        valueType?:  string | null;
+        source?:     string | null;
+      }>;
+    };
+    hechura: {
+      base:                  number;
+      final:                 number;
+      salePreManualDiscount: number | null;
+      adjustments: Array<{
+        kind:        string;
+        label?:      string;
+        amount:      number;
+        applyOn:     string;
+        base?:       number | null;
+        percentage?: number | null;
+        valueType?:  string | null;
+        source?:     string | null;
+      }>;
+    };
+  } | null;
   /** Merma efectivamente aplicada por el motor. Atajo de
    *  `composition.metal.appliedMermaPct`. */
   appliedMermaPercent?: number | null;
