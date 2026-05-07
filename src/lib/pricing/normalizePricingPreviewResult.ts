@@ -369,13 +369,14 @@ export function normalizeArticlePricingPreview(
   const couponDoc      = r2(couponPerUnit * qty);
 
   // ===========================================================================
-  // FASE 1.2 paso 2 — passthrough con G3 cuando flag está ON.
+  // FASE 1.2 paso 2 (+ G3.1) — passthrough con G3 + G3.1 cuando flag está ON.
   //
   // Política:
   //   · Flag OFF (default): legacy idéntico — `r2(unitX * qty)` per-doc.
-  //   · Flag ON: lee top-level del backend (G3 backend commit 539c437):
-  //       result.lineTotal / result.lineTaxAmount / result.lineTotalWithTax.
-  //     Si el campo no viene (backend legacy desplegado), cae a r2 legacy
+  //   · Flag ON: lee top-level del backend:
+  //       G3   (commit 539c437): lineTotal / lineTaxAmount / lineTotalWithTax
+  //       G3.1 (commit c6c4f0e): lineDiscount
+  //     Si algún campo no viene (backend legacy desplegado), cae a r2 legacy
   //     para preservar funcionalidad ("mantener legacy bajo flag OFF").
   //
   // Justificación POLICY:
@@ -383,14 +384,9 @@ export function normalizeArticlePricingPreview(
   //   · POLICY.md §1 R1.4 — frontend no calcula plata; backend es fuente.
   //
   // Frontend desbloqueado:
-  //   · Priority 1 — el simulador deja de multiplicar unitPrice × qty con r2().
-  //
-  // GAP CONOCIDO (no bloqueante para este paso):
-  //   G3.1 — backend debería emitir `lineDiscount` top-level en
-  //          /api/articles/:id/pricing-preview, similar a lineTotal/etc.
-  //          Hoy se computa como r2((basePrice - unitPrice) * qty) bajo
-  //          AMBOS flags porque no hay backend field. Mostrar 0 perdería
-  //          info crítica para el operador. Cierra en Fase 1.3 backend.
+  //   · Priority 1 — el simulador deja de multiplicar unitPrice × qty con r2()
+  //     y deja de derivar (basePrice - unitPrice) × qty. Los 4 totales
+  //     per-línea son passthrough puro del backend.
   //
   // GAP RELACIONADO (out of scope F1.2 paso 2):
   //   G3.2 — channelDoc / couponDoc siguen escalando con r2. La
@@ -408,10 +404,12 @@ export function normalizeArticlePricingPreview(
   const lineTotalWithTaxRes: number | null = useStrict && result.lineTotalWithTax != null
     ? result.lineTotalWithTax
     : (unitTotalTax != null ? r2(unitTotalTax * qty) : null);
-  // GAP G3.1 — sin backend field. Legacy bajo ambos flags.
-  const lineDiscountRes: number = basePrice != null && unitPrice != null
-    ? r2((basePrice - unitPrice) * qty)
-    : 0;
+  // G3.1 cerrado — backend ahora emite `lineDiscount` top-level.
+  const lineDiscountRes: number = useStrict && result.lineDiscount != null
+    ? result.lineDiscount
+    : (basePrice != null && unitPrice != null
+        ? r2((basePrice - unitPrice) * qty)
+        : 0);
 
   const line: NormalizedPricingLine = {
     articleId,

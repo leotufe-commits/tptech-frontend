@@ -163,17 +163,70 @@ describe("normalizeArticlePricingPreview — flag ON (strict v1, G3 passthrough)
     expect(norm.lines[0].lineTaxAmount).toBe(0); // backend, no 4995
   });
 
-  it("baseline correct: lineDiscount sigue legacy bajo ON (GAP G3.1)", () => {
-    // G3.1 no cerrado todavía → lineDiscount usa r2((basePrice - unitPrice) * qty).
+  it("baseline correct: lineDiscount usa result.lineDiscount del backend (G3.1 cerrado)", () => {
+    // G3.1 cerrado — backend emite lineDiscount top-level.
     const result = makeArticleResult({
-      basePrice: "1000",
-      unitPrice: "900",
-      lineTotal: 1800,  // backend lineTotal presente
+      basePrice:    "1000",
+      unitPrice:    "900",
+      lineTotal:    1800,
+      lineDiscount: 200,  // backend lo emite plano (= (1000-900) × 2)
     });
     const norm = normalizeArticlePricingPreview({
       result: result as any, articleId: "a1", quantity: 2,
     });
-    expect(norm.lines[0].lineDiscount).toBe(200); // (1000-900)*2 — legacy
+    expect(norm.lines[0].lineDiscount).toBe(200); // backend, no derivación local
+  });
+
+  it("baseline correct: backend emite lineDiscount distinto al legacy → gana backend", () => {
+    // Caso edge: el backend computó con redondeo distinto al naive.
+    const result = makeArticleResult({
+      basePrice:    "1000",
+      unitPrice:    "900",
+      lineDiscount: 199.50,  // backend con redondeo de lista (no 200)
+    });
+    const norm = normalizeArticlePricingPreview({
+      result: result as any, articleId: "a1", quantity: 2,
+    });
+    expect(norm.lines[0].lineDiscount).toBe(199.50); // backend, NO 200
+  });
+
+  it("baseline correct: lineDiscount=0 del backend se respeta", () => {
+    const result = makeArticleResult({
+      basePrice:    "1000",
+      unitPrice:    "1000",
+      lineDiscount: 0,
+    });
+    const norm = normalizeArticlePricingPreview({
+      result: result as any, articleId: "a1", quantity: 2,
+    });
+    expect(norm.lines[0].lineDiscount).toBe(0);
+  });
+
+  it("baseline correct: lineDiscount negativo (override sube precio) se respeta", () => {
+    // unitPrice > basePrice por override manual → discount negativo
+    // semánticamente "recargo manual". El backend lo emite sin clamp.
+    const result = makeArticleResult({
+      basePrice:    "1000",
+      unitPrice:    "1100",
+      lineDiscount: -200,
+    });
+    const norm = normalizeArticlePricingPreview({
+      result: result as any, articleId: "a1", quantity: 2,
+    });
+    expect(norm.lines[0].lineDiscount).toBe(-200);
+  });
+
+  it("baseline correct: si backend NO emite lineDiscount (legacy backend), cae a r2 local", () => {
+    const result = makeArticleResult({
+      basePrice: "1000",
+      unitPrice: "900",
+      // lineDiscount AUSENTE — simula backend pre-G3.1
+    });
+    const norm = normalizeArticlePricingPreview({
+      result: result as any, articleId: "a1", quantity: 2,
+    });
+    // Cae a legacy: r2((1000-900) × 2) = 200
+    expect(norm.lines[0].lineDiscount).toBe(200);
   });
 });
 
