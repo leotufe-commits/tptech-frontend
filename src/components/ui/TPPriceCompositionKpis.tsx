@@ -62,9 +62,34 @@ export type TPCompositionTaxItemInput = {
   manual?:    boolean;
 };
 
+/**
+ * F1.3 G4.1 — bloque per-item para PRODUCT y SERVICE.
+ * Espejo de `NormalizedCompositionItemBlock` del lib normalizer.
+ * Passthrough puro: la UI lee y muestra; cero recálculo (POLICY R4.5).
+ */
+export type TPCompositionItemInput = {
+  costLineId?:       string | null;
+  catalogItemId?:    string | null;
+  catalogItemCode?:  string | null;
+  catalogItemName?:  string | null;
+  quantity?:         number;
+  unitValue?:        number;
+  totalValue?:       number;
+  currencyId?:       string | null;
+  lineAdjKind?:      "BONUS" | "SURCHARGE" | null;
+  lineAdjType?:      "PERCENTAGE" | "FIXED_AMOUNT" | null;
+  lineAdjValue?:     number | null;
+  lineAdjAmount?:    number | null;
+  affectsStock?:     boolean | null;
+};
+
 export type TPCompositionInput = {
   metal?:   TPMetalCompositionInput;
   hechura?: TPHechuraCompositionInput;
+  /** F1.3 G4.1 — items PRODUCT del costo. Vacío en snapshots viejos. */
+  products?: TPCompositionItemInput[];
+  /** F1.3 G4.1 — items SERVICE del costo. Vacío en snapshots viejos. */
+  services?: TPCompositionItemInput[];
   taxes?:   TPCompositionTaxItemInput[];
 } | null | undefined;
 
@@ -126,6 +151,11 @@ export type TPComponentSaleBreakdownInput = {
   base:        number;
   adjustments: TPComponentSaleAdjustmentInput[];
   final:       number;
+  /** F1.3 G4.3 — valor del componente ANTES del ajuste manual del operador.
+   *  Threshold visual (regla UI, no backend):
+   *    si `salePreManualDiscount === final` ⇒ NO mostrar fila "Pre-bonif.".
+   *  Snapshots viejos (v3) lo emiten `null` o `undefined`. */
+  salePreManualDiscount?: number | null;
 };
 
 /** Desglose post-descuentos por componente — viene del backend (snapshot). */
@@ -200,6 +230,14 @@ function fmtPct(v: number | null | undefined): string {
   return `${v.toLocaleString("es-AR", { maximumFractionDigits: 2 })}%`;
 }
 
+/** Formato exclusivo para merma: SIEMPRE 3 decimales (regla 0.000), alineado
+ *  con `n3` del Simulador (`PricingSimulator.tsx`). No usar `fmtPct` para
+ *  merma — el resto de porcentajes (impuestos, márgenes) sí van a 2 decimales. */
+function fmtMermaPct(v: number | null | undefined): string {
+  if (v == null || !Number.isFinite(v)) return "—";
+  return `${v.toLocaleString("es-AR", { minimumFractionDigits: 3, maximumFractionDigits: 3 })}%`;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Sub-componentes (estilo Simulador)
 // ─────────────────────────────────────────────────────────────────────────────
@@ -251,6 +289,104 @@ function SimCard({
         </div>
       )}
     </div>
+  );
+}
+
+/**
+ * F1.3 G4.1 #8 — Card compacta para un item PRODUCT o SERVICE de la
+ * composition. Reader-only: cero recálculo (POLICY R4.5).
+ *
+ * Visual (compacto, no hero — un card por item):
+ *   ┌─ PRODUCTO ────────────────────────┐
+ *   │ Zafiro 0.5ct       ARS 100,00     │
+ *   │ ZAF-01                            │
+ *   │ ── divider ──                     │
+ *   │ Cantidad        2                 │
+ *   │ Unitario        ARS 50,00         │
+ *   │ Total           ARS 100,00        │   ← bold (highlight)
+ *   │ Bonif. 10%      − ARS 5,00        │   ← emerald (BONUS) o amber (SURCHARGE)
+ *   │ Stock           Descuenta         │   ← solo si affectsStock=true
+ *   └───────────────────────────────────┘
+ *
+ * Reglas:
+ *   · NO bucketear dentro de HECHURA — card propio.
+ *   · NO re-calcular `totalValue`, `lineAdjAmount`, etc. — passthrough.
+ *   · Sin lineAdjAmount del backend → no mostrar fila bonif./recargo.
+ *   · `Stock` solo si affectsStock === true (otros valores = no mostrar).
+ */
+function CompositionItemCard({
+  kind, item, money,
+}: {
+  kind: "PRODUCT" | "SERVICE";
+  item: TPCompositionItemInput;
+  money: (v: number | null | undefined) => string;
+}) {
+  const heading = kind === "PRODUCT" ? "PRODUCTO" : "SERVICIO";
+  const name    = item.catalogItemName ?? item.catalogItemCode ?? "—";
+  const code    = item.catalogItemCode && item.catalogItemCode !== name
+    ? item.catalogItemCode
+    : null;
+  const total   = item.totalValue ?? null;
+  const qty     = item.quantity   ?? null;
+  const unit    = item.unitValue  ?? null;
+
+  // Bonif/recargo — solo si el backend emitió tipo + monto. Reader-only.
+  const adjKind   = item.lineAdjKind  ?? null;
+  const adjType   = item.lineAdjType  ?? null;
+  const adjValue  = item.lineAdjValue ?? null;
+  const adjAmount = item.lineAdjAmount ?? null;
+  const showAdj   = adjKind != null && adjAmount != null;
+  const adjLabel  = (() => {
+    if (!adjKind) return null;
+    const word = adjKind === "BONUS" ? "Bonif." : "Recargo";
+    if (adjType === "PERCENTAGE" && adjValue != null) {
+      return `${word} ${adjValue}%`;
+    }
+    return word;
+  })();
+  // Color: BONUS reduce → emerald; SURCHARGE aumenta → amber.
+  const adjColorCls = adjKind === "BONUS"
+    ? "text-emerald-600 dark:text-emerald-400"
+    : "text-amber-600 dark:text-amber-400";
+  const adjSign = adjKind === "BONUS" ? "−" : "+";
+
+  return (
+    <SimCard
+      heading={heading}
+      headingSub={code}
+      value={
+        <span className="text-sm font-semibold tabular-nums">
+          {total != null ? money(total) : "—"}
+        </span>
+      }
+      valueSub={total != null ? null : undefined}
+    >
+      <div className="space-y-0.5">
+        <InfoLine label="Producto" value={<span className="text-text">{name}</span>} />
+        {qty != null && (
+          <InfoLine label="Cantidad" value={<span className="tabular-nums">{fmtNum(qty, 4)}</span>} />
+        )}
+        {unit != null && (
+          <InfoLine label="Unitario" value={money(unit)} />
+        )}
+        {total != null && (
+          <InfoLine label="Total" value={money(total)} bold />
+        )}
+        {showAdj && (
+          <InfoLine
+            label={adjLabel ?? ""}
+            value={
+              <span className={adjColorCls}>
+                {adjSign}{money(Math.abs(adjAmount as number))}
+              </span>
+            }
+          />
+        )}
+        {item.affectsStock === true && (
+          <InfoLine label="Stock" value={<span className="text-muted">Descuenta</span>} />
+        )}
+      </div>
+    </SimCard>
   );
 }
 
@@ -509,7 +645,7 @@ export default function TPPriceCompositionKpis(props: TPPriceCompositionKpisProp
                 <div className="text-[11px] text-muted/90 mt-0.5">
                   {fmtNum(composition.metal.appliedGrams)} gr físicos
                   {composition.metal.purity != null && <> · pureza {composition.metal.purity}</>}
-                  {composition.metal.appliedMermaPct != null && <> · merma {fmtPct(composition.metal.appliedMermaPct)}</>}
+                  {composition.metal.appliedMermaPct != null && <> · merma {fmtMermaPct(composition.metal.appliedMermaPct)}</>}
                 </div>
               </div>
             )}
@@ -738,6 +874,33 @@ export default function TPPriceCompositionKpis(props: TPPriceCompositionKpisProp
                     }
                   />
                 ))}
+                {/* F1.3 G4.3 — fila "Pre-bonif." (threshold visual).
+                    Reader-only — POLICY R4.5: cero matemática frontend. Solo
+                    se renderea cuando se cumplen TODAS las condiciones:
+                      1. salePreManualDiscount != null (snapshot v4+)
+                      2. final != null
+                      3. pre !== final  (hay diferencia visual real)
+                      4. hay al menos un adjustment kind=MANUAL_DISCOUNT
+                         (defensa: si el motor emitiera pre !== final por un
+                          edge case sin manual real, no mostramos la fila). */}
+                {(() => {
+                  const pre = componentHechura.salePreManualDiscount ?? null;
+                  const fin = componentHechura.final;
+                  const hasManual = componentHechura.adjustments.some(
+                    a => a.kind === "MANUAL_DISCOUNT",
+                  );
+                  if (pre == null || fin == null) return null;
+                  if (pre === fin) return null;
+                  if (!hasManual) return null;
+                  return (
+                    <div title="Valor antes del ajuste manual del operador.">
+                      <InfoLine
+                        label="Pre-bonif."
+                        value={money(pre)}
+                      />
+                    </div>
+                  );
+                })()}
                 <InfoLine
                   label="Hechura final"
                   value={money(componentHechura.final)}
@@ -770,6 +933,28 @@ export default function TPPriceCompositionKpis(props: TPPriceCompositionKpisProp
             )}
           </SimCard>
         )}
+
+        {/* ── Cards PRODUCTO / SERVICIO (F1.3 G4.1 #8) ──────────────────────
+            Render passthrough puro de composition.products[] / services[].
+            Una card por item. Cero matemática frontend (POLICY R4.5):
+              · totalValue, lineAdjAmount, quantity, unitValue ← backend.
+              · Si products/services están vacíos → no se renderea nada. */}
+        {(composition?.products ?? []).map((item, i) => (
+          <CompositionItemCard
+            key={item.costLineId ?? `prod-${i}`}
+            kind="PRODUCT"
+            item={item}
+            money={money}
+          />
+        ))}
+        {(composition?.services ?? []).map((item, i) => (
+          <CompositionItemCard
+            key={item.costLineId ?? `svc-${i}`}
+            kind="SERVICE"
+            item={item}
+            money={money}
+          />
+        ))}
 
         {/* ── Card TOTAL PRODUCTO ────────────────────────────────────────── */}
         {/* En MARGIN_TOTAL esta es la card PRINCIPAL: absorbe el margen
