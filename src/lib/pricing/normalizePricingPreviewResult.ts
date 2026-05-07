@@ -40,6 +40,8 @@ import type {
   NormalizedPaymentInfo,
   // Fase 2.1
   NormalizedComposition,
+  // F1.3 G4.1
+  NormalizedCompositionItemBlock,
   NormalizedPurchaseTaxItem,
   NormalizedClientCommercialRules,
   // Fase 2.1.b
@@ -124,6 +126,11 @@ function normalizeComposition(
           appliesTo:      raw.hechura.appliesTo      ?? null,
         }
       : null,
+    // F1.3 G4.1 — products/services con default `[]` para retrocompat
+    // snapshots v3 que no traen el campo. Passthrough puro: cero recálculo
+    // monetario y cero heurística sobre `lineAdjAmount`.
+    products: normalizeCompositionItems(raw.products),
+    services: normalizeCompositionItems(raw.services),
     taxes: Array.isArray(raw.taxes)
       ? raw.taxes.map((t: any) => ({
           id:        String(t?.id ?? ""),
@@ -136,6 +143,42 @@ function normalizeComposition(
         }))
       : [],
   };
+}
+
+/**
+ * F1.3 G4.1 — mapea `composition.products[]` o `composition.services[]` raw
+ * al shape normalizado. Defaults seguros: array `[]` cuando el raw no es
+ * iterable; cada campo numérico cae a `0` si el backend no lo emite, y los
+ * opcionales discriminados (`lineAdjKind` / `lineAdjType`) caen a `null`.
+ *
+ * Reglas:
+ *   · Cero matemática derivada. `totalValue` viene del backend tal cual.
+ *   · `lineAdjAmount` ausente → `null` (la UI muestra "—").
+ *   · `affectsStock` desconocido → `null` (no se asume `false`).
+ */
+function normalizeCompositionItems(raw: any): NormalizedCompositionItemBlock[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.map((it: any): NormalizedCompositionItemBlock => {
+    const adjKindRaw = it?.lineAdjKind;
+    const adjTypeRaw = it?.lineAdjType;
+    return {
+      costLineId:      it?.costLineId      ?? null,
+      catalogItemId:   it?.catalogItemId   ?? null,
+      catalogItemCode: it?.catalogItemCode ?? null,
+      catalogItemName: it?.catalogItemName ?? null,
+      quantity:        Number(it?.quantity   ?? 0),
+      unitValue:       Number(it?.unitValue  ?? 0),
+      totalValue:      Number(it?.totalValue ?? 0),
+      currencyId:      it?.currencyId ?? null,
+      lineAdjKind:     adjKindRaw === "BONUS" || adjKindRaw === "SURCHARGE"
+                         ? adjKindRaw : null,
+      lineAdjType:     adjTypeRaw === "PERCENTAGE" || adjTypeRaw === "FIXED_AMOUNT"
+                         ? adjTypeRaw : null,
+      lineAdjValue:    it?.lineAdjValue  != null ? Number(it.lineAdjValue)  : null,
+      lineAdjAmount:   it?.lineAdjAmount != null ? Number(it.lineAdjAmount) : null,
+      affectsStock:    typeof it?.affectsStock === "boolean" ? it.affectsStock : null,
+    };
+  });
 }
 
 /** Mapea el array de `costTaxBreakdown` (impuestos de COMPRA). */
@@ -222,6 +265,14 @@ function normalizeComponentSaleBreakdown(raw: any): NormalizedComponentSaleDetai
   const normComp = (c: any): NormalizedComponentSaleBreakdown => ({
     base:  Number(c.base  ?? 0),
     final: Number(c.final ?? 0),
+    // F1.3 G4.3 — passthrough puro. Snapshots viejos sin el campo → null
+    // (la UI lee `pre != null && pre !== final` para decidir si renderea
+    // la fila "Pre-bonif."). Cero recálculo: el motor backend es la única
+    // fuente. Si llegara un valor no numérico (raw inesperado) cae a null.
+    salePreManualDiscount:
+      c.salePreManualDiscount != null && Number.isFinite(Number(c.salePreManualDiscount))
+        ? Number(c.salePreManualDiscount)
+        : null,
     adjustments: Array.isArray(c.adjustments)
       ? c.adjustments.map((a: any): NormalizedComponentSaleAdjustment => ({
           ...a,

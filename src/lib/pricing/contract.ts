@@ -259,9 +259,43 @@ export type NormalizedCompositionTaxItem = {
   manual:    boolean;
 };
 
+/**
+ * F1.3 G4.1 — bloque per-item para PRODUCT y SERVICE en `composition`.
+ * Espejo de `CompositionItemBlock` del backend (`pricing-composition.ts`).
+ *
+ * El frontend hace passthrough puro (POLICY R4.5):
+ *  - cero matemática derivada,
+ *  - cero heurística sobre `lineAdjAmount` (si el backend no lo emite, queda
+ *    null; la UI lo muestra como "—").
+ *
+ * Retrocompat snapshots viejos:
+ *  - Snapshots v3 (sin composition.products/services) se normalizan a `[]`.
+ *  - Si un campo opcional viene `undefined` en el raw, queda `null`.
+ */
+export type NormalizedCompositionItemBlock = {
+  costLineId:       string | null;
+  catalogItemId:    string | null;
+  catalogItemCode:  string | null;
+  catalogItemName:  string | null;
+  quantity:         number;
+  unitValue:        number;
+  totalValue:       number;
+  currencyId:       string | null;
+  lineAdjKind:      "BONUS" | "SURCHARGE" | null;
+  lineAdjType:      "PERCENTAGE" | "FIXED_AMOUNT" | null;
+  lineAdjValue:     number | null;
+  lineAdjAmount:    number | null;
+  affectsStock:     boolean | null;
+};
+
 export type NormalizedComposition = {
   metal:   NormalizedCompositionMetal   | null;
   hechura: NormalizedCompositionHechura | null;
+  /** F1.3 G4.1 — items PRODUCT del costo (insumos / piedras / etc.). Vacío
+   *  cuando el artículo no tiene PRODUCT lines o el snapshot es v3 (legado). */
+  products: NormalizedCompositionItemBlock[];
+  /** F1.3 G4.1 — items SERVICE del costo (engaste, mano de obra externa). */
+  services: NormalizedCompositionItemBlock[];
   taxes:   NormalizedCompositionTaxItem[];
 };
 
@@ -384,6 +418,21 @@ export type NormalizedComponentSaleBreakdown = {
   base:        number;
   adjustments: NormalizedComponentSaleAdjustment[];
   final:       number;
+  /**
+   * F1.3 G4.3 — valor del componente ANTES del ajuste manual del operador.
+   *
+   * Tooltip recomendado: "Valor antes del ajuste manual del operador.".
+   *
+   * Threshold visual (regla de la UI, no del backend):
+   *   - Si `salePreManualDiscount === final` ⇒ NO mostrar fila "Pre-bonif."
+   *     (cero ruido visual, cero duplicación).
+   *   - Si `salePreManualDiscount === null` ⇒ snapshot v3 / sin breakdown
+   *     manual → tampoco se muestra.
+   *
+   * Passthrough puro: el frontend nunca calcula este campo. Si el backend no
+   * lo emite (snapshot viejo), queda `null` y la UI degrada a sin fila.
+   */
+  salePreManualDiscount: number | null;
 };
 
 /** Desglose Metal/Hechura post-descuentos por componente. Mismo origen que
