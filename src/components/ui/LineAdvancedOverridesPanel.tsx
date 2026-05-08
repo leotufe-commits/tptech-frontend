@@ -279,17 +279,25 @@ export function LineAdvancedOverridesPanel({
   }
 
   // ── Detección de overrides activos (chip / botón Restaurar) ──────────────
+  // F1.4 #11-E.2 — incluye costLineOverrides en la detección. Si hay
+  // ediciones per costLineId activas, el botón Restaurar aparece
+  // y `handleClearAll` los limpia junto con los legacy.
   const hasOverrides = !!(
     grams.manual ||
     merma.manual ||
     hechura.manual ||
-    meta.metalVariantIdOverride
+    meta.metalVariantIdOverride ||
+    activeCostLineOverrides.length > 0
   );
 
   function handleClearAll() {
     grams.setValue(origGrams);
     merma.setValue(origMermaPct);
     hechura.setValue(origHechura);
+    // F1.4 #11-E.2 — limpiar también el array de costLineOverrides.
+    // Pasamos array vacío explícito (cuando es undefined no triggea
+    // refetch). El backend recalculará sin overrides per costLineId.
+    onApply({ costLineOverrides: [] } as any);
     onClear?.();
   }
 
