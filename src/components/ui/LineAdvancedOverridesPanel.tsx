@@ -831,6 +831,55 @@ function TableHeader() {
   );
 }
 
+/**
+ * F1.3 G4.x #10-G — input numérico compacto para celdas de la tabla ERP.
+ * Estilo "naked" sin label (la columna ya es el label), alineado a la
+ * derecha, mismo TPNumberInput que usa el resto del sistema.
+ *
+ * Reader-only respecto al pricing-engine: cero recálculo local. Al
+ * cambiar el valor llama el callback que dispara el override
+ * existente (gramsOverride / hechuraOverrideAmount / etc.) — el
+ * resultado autoritativo viene del preview backend.
+ */
+function CellNumberInput({
+  value, onChange, decimals = 2, step = 0.01, suffix,
+}: {
+  value:    number | null;
+  onChange: (v: number | null) => void;
+  decimals?: number;
+  step?:     number;
+  suffix?:   React.ReactNode;
+}) {
+  return (
+    <div className="inline-flex items-center justify-end">
+      <TPNumberInput
+        value={value}
+        onChange={onChange}
+        decimals={decimals}
+        step={step}
+        suffix={suffix}
+        showArrows={false}
+        className="!h-6 !text-[11px] text-right tabular-nums w-[92px]"
+        wrapClassName="!w-auto"
+      />
+    </div>
+  );
+}
+
+/** Texto con tooltip "Editar desde la ficha del artículo" para celdas
+ *  read-only por GAP de override (PRODUCT/SERVICE always; METAL/HECHURA
+ *  cuando count >= 2). NO se aplica a Val. venta / Total c/imp. (esos
+ *  son resultados del pricing-engine, no GAPs). */
+const READ_ONLY_TOOLTIP = "Editar desde la ficha del artículo";
+
+function ReadOnlyCell({ children }: { children: React.ReactNode }) {
+  return (
+    <span title={READ_ONLY_TOOLTIP} className="cursor-help">
+      {children ?? "—"}
+    </span>
+  );
+}
+
 function TableRow({
   componentType,
   Icon,
@@ -979,10 +1028,15 @@ function CompositionTable({
       <div className="rounded-md border border-border/30 bg-card/30">
         <TableHeader />
         <div className="divide-y divide-border/25">
-          {/* — METALES — una fila por sub-grupo (variante). */}
+          {/* ── METALES — una fila por sub-grupo (variante). ──────────────
+              F1.3 #10-G — edición inline:
+              · count===1 → CANTIDAD editable (gramsOverride). VAL.UNIT
+                y AJUSTE read-only (METAL no soporta lineAdj cost-side).
+              · count>1 → todas las celdas read-only con tooltip.
+              · Sub-row residual: solo Merma input cuando count===1. */}
           {grouped.metals.map((g, idx) => {
             const isFirstMetal = idx === 0;
-            const showEditor = isFirstMetal && metalEditableInline;
+            const editableHere = isFirstMetal && metalEditableInline;
             const mermaText = g.appliedMermaPct === VARIES
               ? "Merma: varias"
               : g.appliedMermaPct != null
@@ -995,12 +1049,27 @@ function CompositionTable({
                 {g.count > 1 && <span className="ml-1 text-muted/55">· {g.count} líneas</span>}
               </span>
             );
-            // Sale value per metal: solo el primer grupo recibe el agregado
-            // del backend (metaMetalSale). Otros grupos: passthrough lineCost
-            // como aprox. (cero recálculo).
             const saleVal = isFirstMetal && metaMetalSale != null
               ? metaMetalSale
               : g.totalLineCost;
+            const unitValueText = fmt(
+              g.totalLineCost != null && g.totalAppliedGrams && g.totalAppliedGrams > 0
+                ? g.totalLineCost / g.totalAppliedGrams
+                : null,
+            );
+            const quantityCell = editableHere ? (
+              <CellNumberInput
+                value={gramsHook.value ?? 0}
+                onChange={(v) => gramsHook.setValue(v ?? 0)}
+                decimals={2}
+                step={0.05}
+                suffix={<span className="text-[10px] text-muted/60">g</span>}
+              />
+            ) : (
+              <ReadOnlyCell>
+                {g.totalAppliedGrams != null ? `${g.totalAppliedGrams.toFixed(2)} g` : null}
+              </ReadOnlyCell>
+            );
             return (
               <React.Fragment key={`row-metal-${g.groupKey}`}>
                 <TableRow
@@ -1008,90 +1077,80 @@ function CompositionTable({
                   Icon={Gem}
                   primary={g.metalName ?? "—"}
                   secondary={secondary}
-                  quantity={g.totalAppliedGrams != null
-                    ? `${g.totalAppliedGrams.toFixed(2)} g`
-                    : null}
-                  unitValue={fmt(g.totalLineCost != null && g.totalAppliedGrams && g.totalAppliedGrams > 0
-                    ? g.totalLineCost / g.totalAppliedGrams
-                    : null)}
+                  quantity={quantityCell}
+                  unitValue={<ReadOnlyCell>{unitValueText}</ReadOnlyCell>}
+                  adjustment={<ReadOnlyCell><span className="text-muted/40">—</span></ReadOnlyCell>}
                   saleValue={fmt(saleVal)}
                   totalWithTax={fmt(saleVal != null && qtyLine > 1 ? saleVal * qtyLine : saleVal)}
                   manual={isFirstMetal && metalManual}
                 />
-                {showEditor && (
+                {/* Sub-row residual: solo Merma editable (no es columna). */}
+                {editableHere && (
                   <div className="px-1 pb-1.5 pl-9">
-                    <div className="grid grid-cols-[max-content_max-content] items-end gap-3">
-                      <InlineNumberField
-                        label="Gramos"
-                        value={gramsHook.value ?? 0}
-                        onChange={(v) => gramsHook.setValue(v ?? 0)}
-                        decimals={2}
-                        suffix="g"
-                        step={0.05}
-                      />
-                      <InlineNumberField
-                        label="Merma"
-                        value={mermaHook.value ?? 0}
-                        onChange={(v) => mermaHook.setValue(v ?? 0)}
-                        decimals={2}
-                        suffix="%"
-                      />
-                    </div>
+                    <InlineNumberField
+                      label="Merma"
+                      value={mermaHook.value ?? 0}
+                      onChange={(v) => mermaHook.setValue(v ?? 0)}
+                      decimals={2}
+                      suffix="%"
+                    />
                   </div>
                 )}
               </React.Fragment>
             );
           })}
 
-          {/* — HECHURAS — una fila por cost line. */}
+          {/* ── HECHURAS — una fila por cost line. ──────────────────────
+              F1.3 #10-G — edición inline:
+              · count===1 → VAL.UNIT (hechuraOverrideAmount) y AJUSTE
+                (BonifValue · manualDiscount appliesTo=HECHURA) editables.
+                CANTIDAD read-only (hechuraOverrideAmount fuerza qty=1).
+              · count>1 → todas las celdas read-only con tooltip. */}
           {grouped.hechuras.map((h, idx) => {
             const isFirst = idx === 0;
-            const showEditor = isFirst && hechuraEditableInline;
+            const editableHere = isFirst && hechuraEditableInline;
             const saleVal = isFirst && metaHechuraSale != null
               ? metaHechuraSale
               : h.lineCost;
+            const unitValueCell = editableHere ? (
+              <CellNumberInput
+                value={hechuraHook.value ?? 0}
+                onChange={(v) => hechuraHook.setValue(v ?? 0)}
+                decimals={2}
+              />
+            ) : (
+              <ReadOnlyCell>{fmt(h.appliedAmount)}</ReadOnlyCell>
+            );
+            const adjustmentCell = editableHere ? (
+              <div className="flex items-center justify-end">
+                <BonifValue line={line} appliesTo="HECHURA" onApply={onApply} compact />
+              </div>
+            ) : (
+              <ReadOnlyCell><span className="text-muted/40">—</span></ReadOnlyCell>
+            );
             return (
-              <React.Fragment key={`row-hechura-${h.costLineId ?? idx}`}>
-                <TableRow
-                  componentType="HECHURA"
-                  Icon={Hammer}
-                  primary={h.lineLabel ?? "Hechura"}
-                  secondary={`Moneda: ${currency || "—"}`}
-                  quantity="1"
-                  unitValue={fmt(h.appliedAmount)}
-                  saleValue={fmt(saleVal)}
-                  totalWithTax={fmt(saleVal != null && qtyLine > 1 ? saleVal * qtyLine : saleVal)}
-                  manual={isFirst && hechuraManual}
-                />
-                {showEditor && (
-                  <div className="px-1 pb-1.5 pl-9">
-                    <div className="grid grid-cols-[max-content_max-content] items-end gap-3">
-                      <InlineNumberField
-                        label="Valor"
-                        value={hechuraHook.value ?? 0}
-                        onChange={(v) => hechuraHook.setValue(v ?? 0)}
-                        decimals={2}
-                      />
-                      <div className="shrink-0">
-                        <div className="text-[9px] font-semibold uppercase tracking-wide text-muted/70">
-                          Bonificación
-                        </div>
-                        <div className="mt-0.5">
-                          <BonifValue line={line} appliesTo="HECHURA" onApply={onApply} compact />
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                )}
-              </React.Fragment>
+              <TableRow
+                key={`row-hechura-${h.costLineId ?? idx}`}
+                componentType="HECHURA"
+                Icon={Hammer}
+                primary={h.lineLabel ?? "Hechura"}
+                secondary={`Moneda: ${currency || "—"}`}
+                quantity={<ReadOnlyCell>1</ReadOnlyCell>}
+                unitValue={unitValueCell}
+                adjustment={adjustmentCell}
+                saleValue={fmt(saleVal)}
+                totalWithTax={fmt(saleVal != null && qtyLine > 1 ? saleVal * qtyLine : saleVal)}
+                manual={isFirst && hechuraManual}
+              />
             );
           })}
 
-          {/* — PRODUCTOS — una fila por item. */}
+          {/* ── PRODUCTOS — una fila por item, TODO read-only (D1).
+              GAP backend: no existe productLineOverride[i]. */}
           {grouped.products.map((p, idx) => {
             const adj = p.lineAdjAmount != null && p.lineAdjKind != null
               ? <AdjustmentChip kind={p.lineAdjKind} type={p.lineAdjType ?? null} value={p.lineAdjValue ?? null} amount={p.lineAdjAmount} currency={currency} />
-              : null;
+              : <ReadOnlyCell><span className="text-muted/40">—</span></ReadOnlyCell>;
             return (
               <TableRow
                 key={`row-product-${p.costLineId ?? idx}`}
@@ -1101,10 +1160,14 @@ function CompositionTable({
                 secondary={p.catalogItemCode && p.catalogItemCode !== p.catalogItemName
                   ? `Código: ${p.catalogItemCode}${p.affectsStock === true ? " · Descuenta stock" : ""}`
                   : (p.affectsStock === true ? "Descuenta stock" : null)}
-                quantity={p.quantity != null
-                  ? p.quantity.toLocaleString("es-AR", { maximumFractionDigits: 4 })
-                  : null}
-                unitValue={fmt(p.unitValue)}
+                quantity={
+                  <ReadOnlyCell>
+                    {p.quantity != null
+                      ? p.quantity.toLocaleString("es-AR", { maximumFractionDigits: 4 })
+                      : null}
+                  </ReadOnlyCell>
+                }
+                unitValue={<ReadOnlyCell>{fmt(p.unitValue)}</ReadOnlyCell>}
                 adjustment={adj}
                 saleValue={fmt(p.totalValue)}
                 totalWithTax={fmt(p.totalValue != null && qtyLine > 1 ? p.totalValue * qtyLine : p.totalValue)}
@@ -1112,11 +1175,11 @@ function CompositionTable({
             );
           })}
 
-          {/* — SERVICIOS — una fila por item. */}
+          {/* ── SERVICIOS — TODO read-only (D1). GAP backend igual a PRODUCT. */}
           {grouped.services.map((s, idx) => {
             const adj = s.lineAdjAmount != null && s.lineAdjKind != null
               ? <AdjustmentChip kind={s.lineAdjKind} type={s.lineAdjType ?? null} value={s.lineAdjValue ?? null} amount={s.lineAdjAmount} currency={currency} />
-              : null;
+              : <ReadOnlyCell><span className="text-muted/40">—</span></ReadOnlyCell>;
             return (
               <TableRow
                 key={`row-service-${s.costLineId ?? idx}`}
@@ -1126,10 +1189,14 @@ function CompositionTable({
                 secondary={s.catalogItemCode && s.catalogItemCode !== s.catalogItemName
                   ? `Código: ${s.catalogItemCode}`
                   : null}
-                quantity={s.quantity != null
-                  ? s.quantity.toLocaleString("es-AR", { maximumFractionDigits: 4 })
-                  : null}
-                unitValue={fmt(s.unitValue)}
+                quantity={
+                  <ReadOnlyCell>
+                    {s.quantity != null
+                      ? s.quantity.toLocaleString("es-AR", { maximumFractionDigits: 4 })
+                      : null}
+                  </ReadOnlyCell>
+                }
+                unitValue={<ReadOnlyCell>{fmt(s.unitValue)}</ReadOnlyCell>}
                 adjustment={adj}
                 saleValue={fmt(s.totalValue)}
                 totalWithTax={fmt(s.totalValue != null && qtyLine > 1 ? s.totalValue * qtyLine : s.totalValue)}

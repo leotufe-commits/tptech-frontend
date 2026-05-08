@@ -215,22 +215,30 @@ describe("F1.3 #10-F — filas por tipo en orden fijo", () => {
 // =============================================================================
 
 describe("F1.3 #10-F — editor inline en sub-row de la tabla", () => {
-  it("baseline correct: 1 metal legacy → fila + sub-row con inputs Gramos/Merma", () => {
+  it("baseline correct: 1 metal legacy → input editable en celda Cantidad + Merma sub-row", () => {
     const line = makeLine();
-    render(<LineAdvancedOverridesPanel line={line} {...baseProps} />);
-    // Labels uppercase de los inputs editables.
-    expect(screen.getByText("Gramos")).toBeInTheDocument();
+    const { container } = render(<LineAdvancedOverridesPanel line={line} {...baseProps} />);
+    // Input numérico editable en la celda Cantidad (METAL count===1).
+    const inputs = container.querySelectorAll('input[type="text"], input[inputmode="decimal"]');
+    expect(inputs.length).toBeGreaterThanOrEqual(1);
+    // Sub-row residual con label "Merma".
     expect(screen.getByText("Merma")).toBeInTheDocument();
+    // El label "Gramos" del sub-row YA NO debe aparecer (movido a celda).
+    expect(screen.queryByText("Gramos")).toBeNull();
   });
 
-  it("baseline correct: 1 hechura legacy → fila + sub-row con input Valor + Bonificación", () => {
+  it("baseline correct: 1 hechura legacy → input editable en celda Val.unit + BonifValue en Ajuste", () => {
     const line = makeLine();
-    render(<LineAdvancedOverridesPanel line={line} {...baseProps} />);
-    expect(screen.getByText("Valor")).toBeInTheDocument();
-    expect(screen.getByText("Bonificación")).toBeInTheDocument();
+    const { container } = render(<LineAdvancedOverridesPanel line={line} {...baseProps} />);
+    // Input editable de hechura — el sub-row ya no existe.
+    const inputs = container.querySelectorAll('input[type="text"], input[inputmode="decimal"]');
+    expect(inputs.length).toBeGreaterThanOrEqual(1);
+    // Sub-row eliminado: labels "Valor" y "Bonificación" del sub-row ya no aparecen.
+    expect(screen.queryByText("Valor")).toBeNull();
+    expect(screen.queryByText("Bonificación")).toBeNull();
   });
 
-  it("baseline correct: 2 metales (count > 1) → NO muestra editor inline", () => {
+  it("baseline correct: 2 metales (count > 1) → NO muestra inputs editables", () => {
     const line = makeLine({
       composition: {
         metal: {
@@ -249,9 +257,10 @@ describe("F1.3 #10-F — editor inline en sub-row de la tabla", () => {
         taxes: [],
       },
     });
-    render(<LineAdvancedOverridesPanel line={line} {...baseProps} />);
-    // No hay label "Gramos" del editor (count=2 → read-only).
-    expect(screen.queryByText("Gramos")).toBeNull();
+    const { container } = render(<LineAdvancedOverridesPanel line={line} {...baseProps} />);
+    // No hay inputs editables (count=2 → read-only).
+    const inputs = container.querySelectorAll('input[type="text"], input[inputmode="decimal"]');
+    expect(inputs.length).toBe(0);
     expect(screen.queryByText("Merma")).toBeNull();
   });
 });
