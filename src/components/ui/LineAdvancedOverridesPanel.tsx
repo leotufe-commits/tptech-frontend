@@ -37,6 +37,13 @@ import {
   safeSumNumbers,
   VARIES,
 } from "../../lib/pricing/grouping";
+// F1.4 G5 #11-D — helper puro para reconstruir el array de overrides
+// al editar una celda. Indexación por costLineId, cero mutación.
+import {
+  patchCostLineOverride,
+  findCostLineOverride,
+} from "../../lib/pricing/cost-line-overrides";
+import type { CostLineOverride } from "../../services/sales";
 // F1.3 G4.x #10-D — colores semánticos importados de fuente única
 // (consistencia visual cross-TPTech, mismo mapping que CostRow del Simulador).
 import {
@@ -243,6 +250,34 @@ export function LineAdvancedOverridesPanel({
     (next) => onApply({ hechuraOverrideAmount: next }),
   );
 
+  // ── F1.4 G5 #11-D — patch helper indexado por costLineId ─────────────────
+  // Reconstruye el array completo de costLineOverrides aplicando un patch
+  // sobre la entry correspondiente al costLineId. Cero mutación, cero
+  // matemática. Dispara onApply con el array nuevo — el caller (parent)
+  // pone el array en pricingMeta y el preview backend recalcula.
+  //
+  // El array activo se lee desde pricingMeta.costLineOverrides (intent
+  // del usuario, mutable) o, si está vacío, costLineOverridesApplied
+  // (eco del backend). Esto evita stale state: cualquier preview
+  // backend devuelve costLineOverridesApplied que el frontend usa como
+  // estado inicial hasta que el usuario edite y emita un nuevo array.
+  const activeCostLineOverrides: CostLineOverride[] = (() => {
+    const intent = (meta as any).costLineOverrides;
+    if (Array.isArray(intent) && intent.length > 0) return intent as CostLineOverride[];
+    const applied = (meta as any).costLineOverridesApplied;
+    if (Array.isArray(applied)) return applied as CostLineOverride[];
+    return [];
+  })();
+  function applyCostLinePatch(
+    costLineId: string,
+    type: CostLineOverride["type"],
+    patch: Partial<Omit<CostLineOverride, "costLineId" | "type">>,
+  ) {
+    const next = patchCostLineOverride(activeCostLineOverrides, costLineId, type, patch);
+    // onApply acepta `costLineOverrides` (extendido en pricingMeta).
+    onApply({ costLineOverrides: next } as any);
+  }
+
   // ── Detección de overrides activos (chip / botón Restaurar) ──────────────
   const hasOverrides = !!(
     grams.manual ||
@@ -427,6 +462,8 @@ export function LineAdvancedOverridesPanel({
               hechuraManual={hechura.manual}
               line={line}
               onApply={onApply}
+              activeCostLineOverrides={activeCostLineOverrides}
+              applyCostLinePatch={applyCostLinePatch}
             />
 
 
@@ -966,6 +1003,8 @@ function CompositionTable({
   gramsHook, mermaHook, hechuraHook,
   metalManual, hechuraManual,
   line, onApply,
+  activeCostLineOverrides,
+  applyCostLinePatch,
 }: {
   grouped:               ReturnType<typeof groupCompositionItems>;
   qtyLine:               number;
@@ -982,6 +1021,15 @@ function CompositionTable({
   hechuraManual:         boolean;
   line:                  DocumentLine;
   onApply:               LineAdvancedOverridesPanelProps["onApply"];
+  /** F1.4 G5 #11-D — overrides activos indexados por costLineId. */
+  activeCostLineOverrides: CostLineOverride[];
+  /** F1.4 G5 #11-D — patch helper que reconstruye el array y dispara
+   *  onApply({ costLineOverrides: ... }). Cero recálculo local. */
+  applyCostLinePatch:     (
+    costLineId: string,
+    type:       CostLineOverride["type"],
+    patch:      Partial<Omit<CostLineOverride, "costLineId" | "type">>,
+  ) => void;
 }) {
   const fmt = (v: number | null | undefined) =>
     v != null && Number.isFinite(v) ? fmtMoney(v, currency) : null;
@@ -1051,9 +1099,19 @@ function CompositionTable({
                 y AJUSTE read-only (METAL no soporta lineAdj cost-side).
               · count>1 → todas las celdas read-only con tooltip.
               · Sub-row residual: solo Merma input cuando count===1. */}
-          {grouped.metals.map((g, idx) => {
-            const isFirstMetal = idx === 0;
-            const editableHere = isFirstMetal && metalEditableInline;
+          {grouped.metals.map((g) => {
+            // F1.4 #11-D — edición indexada por costLineId. Solo editable
+            // cuando el sub-grupo tiene exactamente 1 cost line (count===1)
+            // — count>1 representa múltiples lines de la misma variante,
+            // que no se pueden editar agrupadamente sin distribución
+            // (decisión: tabla read-only en ese caso, mensaje "Editar
+            // desde la ficha del artículo").
+            const item = g.items[0];
+            const costLineId   = item?.costLineId ?? null;
+            const isEditable   = g.count === 1 && costLineId != null;
+            const ov           = costLineId
+              ? findCostLineOverride(activeCostLineOverrides, costLineId)
+              : undefined;
             const mermaText = g.appliedMermaPct === VARIES
               ? "Merma: varias"
               : g.appliedMermaPct != null
@@ -1066,54 +1124,63 @@ function CompositionTable({
                 {g.count > 1 && <span className="ml-1 text-muted/55">· {g.count} líneas</span>}
               </span>
             );
-            const saleVal = isFirstMetal && metaMetalSale != null
-              ? metaMetalSale
-              : g.totalLineCost;
+            const saleVal = g.totalLineCost;
             const unitValueText = fmt(
               g.totalLineCost != null && g.totalAppliedGrams && g.totalAppliedGrams > 0
                 ? g.totalLineCost / g.totalAppliedGrams
                 : null,
             );
-            // F1.3 #10-H — CANTIDAD siempre como CellNumberInput (editable
-            // si count===1 y es el primer grupo; sino read-only con tooltip).
+            // CANTIDAD: editable si isEditable. Valor mostrado prefiere el
+            // override (intent del usuario) sobre el original.
+            const qtyValue = ov?.quantityOverride != null
+              ? Number(ov.quantityOverride)
+              : (g.totalAppliedGrams ?? 0);
             const quantityCell = (
               <CellNumberInput
-                value={editableHere ? (gramsHook.value ?? 0) : (g.totalAppliedGrams ?? 0)}
-                onChange={editableHere ? (v) => gramsHook.setValue(v ?? 0) : () => {}}
+                value={qtyValue}
+                onChange={isEditable && costLineId
+                  ? (v) => applyCostLinePatch(costLineId, "METAL", { quantityOverride: v ?? 0 })
+                  : () => {}}
                 decimals={2}
                 step={0.05}
                 suffix={<span className="text-[10px] text-muted/60">g</span>}
-                readOnly={!editableHere}
-                tooltip={!editableHere ? READ_ONLY_TOOLTIP : undefined}
+                readOnly={!isEditable}
+                tooltip={!isEditable ? READ_ONLY_TOOLTIP : undefined}
+              />
+            );
+            // AJUSTE = MERMA (decisión usuario: METAL no soporta lineAdj).
+            const mermaValue = ov?.mermaPercentOverride != null
+              ? Number(ov.mermaPercentOverride)
+              : (g.appliedMermaPct === VARIES ? 0 : (g.appliedMermaPct ?? 0));
+            const adjustmentCell = g.appliedMermaPct === VARIES ? (
+              <ReadOnlyCell><span className="text-muted/60">varias</span></ReadOnlyCell>
+            ) : (
+              <CellNumberInput
+                value={typeof mermaValue === "number" ? mermaValue : 0}
+                onChange={isEditable && costLineId
+                  ? (v) => applyCostLinePatch(costLineId, "METAL", { mermaPercentOverride: v ?? 0 })
+                  : () => {}}
+                decimals={2}
+                step={0.5}
+                suffix={<span className="text-[10px] text-muted/60">%</span>}
+                readOnly={!isEditable}
+                tooltip={!isEditable ? READ_ONLY_TOOLTIP : undefined}
               />
             );
             return (
-              <React.Fragment key={`row-metal-${g.groupKey}`}>
-                <TableRow
-                  componentType="METAL"
-                  Icon={Gem}
-                  primary={g.metalName ?? "—"}
-                  secondary={secondary}
-                  quantity={quantityCell}
-                  unitValue={<ReadOnlyCell>{unitValueText}</ReadOnlyCell>}
-                  adjustment={<ReadOnlyCell><span className="text-muted/40">—</span></ReadOnlyCell>}
-                  saleValue={fmt(saleVal)}
-                  totalWithTax={fmt(saleVal != null && qtyLine > 1 ? saleVal * qtyLine : saleVal)}
-                  manual={isFirstMetal && metalManual}
-                />
-                {/* Sub-row residual: solo Merma editable (no es columna). */}
-                {editableHere && (
-                  <div className="px-1 pb-1.5 pl-9">
-                    <InlineNumberField
-                      label="Merma"
-                      value={mermaHook.value ?? 0}
-                      onChange={(v) => mermaHook.setValue(v ?? 0)}
-                      decimals={2}
-                      suffix="%"
-                    />
-                  </div>
-                )}
-              </React.Fragment>
+              <TableRow
+                key={`row-metal-${g.groupKey}`}
+                componentType="METAL"
+                Icon={Gem}
+                primary={g.metalName ?? "—"}
+                secondary={secondary}
+                quantity={quantityCell}
+                unitValue={<ReadOnlyCell>{unitValueText}</ReadOnlyCell>}
+                adjustment={adjustmentCell}
+                saleValue={fmt(saleVal)}
+                totalWithTax={fmt(saleVal != null && qtyLine > 1 ? saleVal * qtyLine : saleVal)}
+                manual={!!ov}
+              />
             );
           })}
 
@@ -1124,43 +1191,65 @@ function CompositionTable({
                 CANTIDAD read-only (hechuraOverrideAmount fuerza qty=1).
               · count>1 → todas las celdas read-only con tooltip. */}
           {grouped.hechuras.map((h, idx) => {
-            const isFirst = idx === 0;
-            const editableHere = isFirst && hechuraEditableInline;
-            const saleVal = isFirst && metaHechuraSale != null
-              ? metaHechuraSale
-              : h.lineCost;
-            const unitValueCell = editableHere ? (
+            // F1.4 #11-D — edición indexada por costLineId. Cada `h` es
+            // 1 cost line individual (HECHURA no se agrupa). Editable
+            // siempre que tenga costLineId estable.
+            const costLineId = h.costLineId ?? null;
+            const isEditable = costLineId != null;
+            const ov = costLineId
+              ? findCostLineOverride(activeCostLineOverrides, costLineId)
+              : undefined;
+            const saleVal = h.lineCost;
+            // CANTIDAD: editable via quantityOverride. Default = 1
+            // (HECHURA típica trae qty=1).
+            const qtyValue = ov?.quantityOverride != null
+              ? Number(ov.quantityOverride)
+              : 1;
+            const quantityCell = (
               <CellNumberInput
-                value={hechuraHook.value ?? 0}
-                onChange={(v) => hechuraHook.setValue(v ?? 0)}
+                value={qtyValue}
+                onChange={isEditable && costLineId
+                  ? (v) => applyCostLinePatch(costLineId, "HECHURA", { quantityOverride: v ?? 0 })
+                  : () => {}}
                 decimals={2}
+                step={1}
+                suffix={<span className="text-[10px] text-muted/60">un</span>}
+                readOnly={!isEditable}
+                tooltip={!isEditable ? READ_ONLY_TOOLTIP : undefined}
               />
-            ) : (
-              <ReadOnlyCell>{fmt(h.appliedAmount)}</ReadOnlyCell>
             );
-            const adjustmentCell = editableHere ? (
+            // VAL. UNIT: editable via unitValueOverride.
+            const unitValValue = ov?.unitValueOverride != null
+              ? Number(ov.unitValueOverride)
+              : (h.appliedAmount ?? 0);
+            const unitValueCell = (
+              <CellNumberInput
+                value={unitValValue}
+                onChange={isEditable && costLineId
+                  ? (v) => applyCostLinePatch(costLineId, "HECHURA", { unitValueOverride: v ?? 0 })
+                  : () => {}}
+                decimals={2}
+                readOnly={!isEditable}
+                tooltip={!isEditable ? READ_ONLY_TOOLTIP : undefined}
+              />
+            );
+            // AJUSTE: BonifValue (legacy `manualDiscount.appliesTo=HECHURA`)
+            // se mantiene para no romper UX existente. Migración del
+            // ajuste a costLineOverrides.adjustment* queda para fase
+            // posterior cuando el backend exponga lineAdj per item de
+            // HECHURA en composition (separado del `manualDiscount`
+            // global del componente). Solo el primer item usa el editor
+            // legacy; los demás muestran read-only.
+            const adjustmentCell = idx === 0 && hechuraEditableInline ? (
               <div className="flex items-center justify-end">
                 <BonifValue line={line} appliesTo="HECHURA" onApply={onApply} compact />
               </div>
             ) : (
               <ReadOnlyCell><span className="text-muted/40">—</span></ReadOnlyCell>
             );
-            // F1.3 #10-H — Cantidad con CellNumberInput read-only (no
-            // hay override de qty para HECHURA; el motor fuerza qty=1).
-            const quantityCell = (
-              <CellNumberInput
-                value={1}
-                onChange={() => {}}
-                decimals={2}
-                step={1}
-                suffix={<span className="text-[10px] text-muted/60">un</span>}
-                readOnly
-                tooltip={READ_ONLY_TOOLTIP}
-              />
-            );
             return (
               <TableRow
-                key={`row-hechura-${h.costLineId ?? idx}`}
+                key={`row-hechura-${costLineId ?? idx}`}
                 componentType="HECHURA"
                 Icon={Hammer}
                 primary={h.lineLabel ?? "Hechura"}
@@ -1170,90 +1259,128 @@ function CompositionTable({
                 adjustment={adjustmentCell}
                 saleValue={fmt(saleVal)}
                 totalWithTax={fmt(saleVal != null && qtyLine > 1 ? saleVal * qtyLine : saleVal)}
-                manual={isFirst && hechuraManual}
+                manual={!!ov || (idx === 0 && hechuraManual)}
               />
             );
           })}
 
-          {/* ── PRODUCTOS — una fila por item, TODO read-only (D1).
-              GAP backend: no existe productLineOverride[i]. */}
+          {/* ── PRODUCTOS — F1.4 #11-D edición indexada por costLineId. */}
           {grouped.products.map((p, idx) => {
+            const costLineId = p.costLineId ?? null;
+            const isEditable = costLineId != null;
+            const ov = costLineId
+              ? findCostLineOverride(activeCostLineOverrides, costLineId)
+              : undefined;
+            // CANTIDAD editable.
+            const qtyValue = ov?.quantityOverride != null
+              ? Number(ov.quantityOverride)
+              : (p.quantity ?? 0);
+            const quantityCell = (
+              <CellNumberInput
+                value={qtyValue}
+                onChange={isEditable && costLineId
+                  ? (v) => applyCostLinePatch(costLineId, "PRODUCT", { quantityOverride: v ?? 0 })
+                  : () => {}}
+                decimals={2}
+                suffix={<span className="text-[10px] text-muted/60">un</span>}
+                readOnly={!isEditable}
+                tooltip={!isEditable ? READ_ONLY_TOOLTIP : undefined}
+              />
+            );
+            // VAL.UNIT editable.
+            const unitValValue = ov?.unitValueOverride != null
+              ? Number(ov.unitValueOverride)
+              : (p.unitValue ?? 0);
+            const unitValueCell = (
+              <CellNumberInput
+                value={unitValValue}
+                onChange={isEditable && costLineId
+                  ? (v) => applyCostLinePatch(costLineId, "PRODUCT", { unitValueOverride: v ?? 0 })
+                  : () => {}}
+                decimals={2}
+                readOnly={!isEditable}
+                tooltip={!isEditable ? READ_ONLY_TOOLTIP : undefined}
+              />
+            );
+            // AJUSTE: chip read-only del ajuste de la cost line (de la
+            // ficha del artículo). Edición de adjustment* per costLine
+            // queda para fase posterior.
             const adj = p.lineAdjAmount != null && p.lineAdjKind != null
               ? <AdjustmentChip kind={p.lineAdjKind} type={p.lineAdjType ?? null} value={p.lineAdjValue ?? null} amount={p.lineAdjAmount} currency={currency} />
               : <ReadOnlyCell><span className="text-muted/40">—</span></ReadOnlyCell>;
-            // F1.3 #10-H — Cantidad / Val.unit como CellNumberInput
-            // read-only para mantener jerarquía visual ERP consistente.
             return (
               <TableRow
-                key={`row-product-${p.costLineId ?? idx}`}
+                key={`row-product-${costLineId ?? idx}`}
                 componentType="PRODUCT"
                 Icon={Package}
                 primary={p.catalogItemName ?? p.catalogItemCode ?? "—"}
                 secondary={p.catalogItemCode && p.catalogItemCode !== p.catalogItemName
                   ? `Código: ${p.catalogItemCode}${p.affectsStock === true ? " · Descuenta stock" : ""}`
                   : (p.affectsStock === true ? "Descuenta stock" : null)}
-                quantity={
-                  <CellNumberInput
-                    value={p.quantity ?? 0}
-                    onChange={() => {}}
-                    decimals={2}
-                    suffix={<span className="text-[10px] text-muted/60">un</span>}
-                    readOnly
-                    tooltip={READ_ONLY_TOOLTIP}
-                  />
-                }
-                unitValue={
-                  <CellNumberInput
-                    value={p.unitValue ?? 0}
-                    onChange={() => {}}
-                    decimals={2}
-                    readOnly
-                    tooltip={READ_ONLY_TOOLTIP}
-                  />
-                }
+                quantity={quantityCell}
+                unitValue={unitValueCell}
                 adjustment={adj}
                 saleValue={fmt(p.totalValue)}
                 totalWithTax={fmt(p.totalValue != null && qtyLine > 1 ? p.totalValue * qtyLine : p.totalValue)}
+                manual={!!ov}
               />
             );
           })}
 
-          {/* ── SERVICIOS — TODO read-only (D1). GAP backend igual a PRODUCT. */}
+          {/* ── SERVICIOS — F1.4 #11-D edición indexada por costLineId. */}
           {grouped.services.map((s, idx) => {
+            const costLineId = s.costLineId ?? null;
+            const isEditable = costLineId != null;
+            const ov = costLineId
+              ? findCostLineOverride(activeCostLineOverrides, costLineId)
+              : undefined;
+            const qtyValue = ov?.quantityOverride != null
+              ? Number(ov.quantityOverride)
+              : (s.quantity ?? 0);
+            const quantityCell = (
+              <CellNumberInput
+                value={qtyValue}
+                onChange={isEditable && costLineId
+                  ? (v) => applyCostLinePatch(costLineId, "SERVICE", { quantityOverride: v ?? 0 })
+                  : () => {}}
+                decimals={2}
+                suffix={<span className="text-[10px] text-muted/60">un</span>}
+                readOnly={!isEditable}
+                tooltip={!isEditable ? READ_ONLY_TOOLTIP : undefined}
+              />
+            );
+            const unitValValue = ov?.unitValueOverride != null
+              ? Number(ov.unitValueOverride)
+              : (s.unitValue ?? 0);
+            const unitValueCell = (
+              <CellNumberInput
+                value={unitValValue}
+                onChange={isEditable && costLineId
+                  ? (v) => applyCostLinePatch(costLineId, "SERVICE", { unitValueOverride: v ?? 0 })
+                  : () => {}}
+                decimals={2}
+                readOnly={!isEditable}
+                tooltip={!isEditable ? READ_ONLY_TOOLTIP : undefined}
+              />
+            );
             const adj = s.lineAdjAmount != null && s.lineAdjKind != null
               ? <AdjustmentChip kind={s.lineAdjKind} type={s.lineAdjType ?? null} value={s.lineAdjValue ?? null} amount={s.lineAdjAmount} currency={currency} />
               : <ReadOnlyCell><span className="text-muted/40">—</span></ReadOnlyCell>;
             return (
               <TableRow
-                key={`row-service-${s.costLineId ?? idx}`}
+                key={`row-service-${costLineId ?? idx}`}
                 componentType="SERVICE"
                 Icon={Wrench}
                 primary={s.catalogItemName ?? s.catalogItemCode ?? "—"}
                 secondary={s.catalogItemCode && s.catalogItemCode !== s.catalogItemName
                   ? `Código: ${s.catalogItemCode}`
                   : null}
-                quantity={
-                  <CellNumberInput
-                    value={s.quantity ?? 0}
-                    onChange={() => {}}
-                    decimals={2}
-                    suffix={<span className="text-[10px] text-muted/60">un</span>}
-                    readOnly
-                    tooltip={READ_ONLY_TOOLTIP}
-                  />
-                }
-                unitValue={
-                  <CellNumberInput
-                    value={s.unitValue ?? 0}
-                    onChange={() => {}}
-                    decimals={2}
-                    readOnly
-                    tooltip={READ_ONLY_TOOLTIP}
-                  />
-                }
+                quantity={quantityCell}
+                unitValue={unitValueCell}
                 adjustment={adj}
                 saleValue={fmt(s.totalValue)}
                 totalWithTax={fmt(s.totalValue != null && qtyLine > 1 ? s.totalValue * qtyLine : s.totalValue)}
+                manual={!!ov}
               />
             );
           })}

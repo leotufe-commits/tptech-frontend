@@ -820,7 +820,11 @@ function buildSalePreviewPayload(
           mermaPercentOverride:   meta?.mermaPercentOverride  ?? null,
           metalVariantIdOverride: meta?.metalVariantIdOverride ?? null,
           hechuraOverrideAmount:  meta?.hechuraOverrideAmount ?? null,
-        };
+          // F1.4 G5 #11-D — overrides per costLineId (pisa los legacy
+          // cuando match por id). El motor backend (commit 11-A) los
+          // resuelve y devuelve `costLineOverridesApplied` en el preview.
+          costLineOverrides:      meta?.costLineOverrides     ?? undefined,
+        } as any;
       }),
       clientId:       draft.clientId      ?? null,
       channelId:      draft.channelId     ?? null,
@@ -2774,6 +2778,11 @@ function InvoiceEditorModal(props: {
     mermaPercentOverride?:  number | null;
     metalVariantIdOverride?: string | null;
     hechuraOverrideAmount?: number | null;
+    /** F1.4 G5 #11-D — array completo de overrides per costLineId.
+     *  Cuando viene en el patch, REEMPLAZA el array actual del meta
+     *  (no merge — el caller es responsable de reconstruir el array
+     *  manteniendo entries previas + la edición nueva). */
+    costLineOverrides?: NonNullable<DocumentLine["pricingMeta"]>["costLineOverrides"];
   };
 
   /**
@@ -2810,6 +2819,10 @@ function InvoiceEditorModal(props: {
       mermaPercentOverride:  patch.mermaPercentOverride  !== undefined ? patch.mermaPercentOverride  : (prevMeta.mermaPercentOverride  ?? null),
       metalVariantIdOverride: patch.metalVariantIdOverride !== undefined ? patch.metalVariantIdOverride : (prevMeta.metalVariantIdOverride ?? null),
       hechuraOverrideAmount: patch.hechuraOverrideAmount !== undefined ? patch.hechuraOverrideAmount : (prevMeta.hechuraOverrideAmount ?? null),
+      // F1.4 #11-D — array completo. El caller reconstruye el array (con
+      // todas las entries previas) e incluye la edición nueva. Acá solo
+      // pisamos.
+      costLineOverrides:     patch.costLineOverrides     !== undefined ? patch.costLineOverrides     : prevMeta.costLineOverrides,
     };
     // ── Idempotency: si el override final es igual al actual, no hacer nada.
     if (
@@ -2835,6 +2848,8 @@ function InvoiceEditorModal(props: {
         mermaPercentOverride:   merged.mermaPercentOverride,
         metalVariantIdOverride: merged.metalVariantIdOverride,
         hechuraOverrideAmount:  merged.hechuraOverrideAmount,
+        // F1.4 #11-D — array completo per costLineId.
+        costLineOverrides:      merged.costLineOverrides,
         partial:                true,
         resolvedAt:             Date.now(),
       };

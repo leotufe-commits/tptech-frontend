@@ -395,6 +395,27 @@ export interface DocumentLine {
       hechura?:      { original: number | null; applied: number | null; manual: boolean };
     } | null;
     /**
+     * F1.4 G5 #11-D — overrides per costLineId que el usuario está
+     * aplicando ACTUALMENTE en la línea (estado mutable, edición). El
+     * frontend lo mantiene para reconstruir el array y mandarlo al
+     * backend en el próximo preview. Si está presente, gana sobre
+     * `costLineOverridesApplied` (que es el ECO del backend post-preview).
+     *
+     * Cero matemática frontend (POLICY R4.5): el array solo registra
+     * el INTENT del usuario. El motor backend lo recibe y devuelve los
+     * resultados oficiales (`costLineOverridesApplied`).
+     */
+    costLineOverrides?: Array<{
+      costLineId:        string;
+      type:              "METAL" | "HECHURA" | "PRODUCT" | "SERVICE";
+      quantityOverride?:    number | null;
+      unitValueOverride?:   number | null;
+      mermaPercentOverride?: number | null;
+      adjustmentKind?:   "BONUS" | "SURCHARGE" | null;
+      adjustmentType?:   "PERCENTAGE" | "FIXED_AMOUNT" | null;
+      adjustmentValue?:  number | null;
+    }>;
+    /**
      * F1.4 G5 #11-C — overrides per costLineId persistidos en snapshot v6+.
      * La tabla editable futura (11-D) lee/escribe acá indexado por
      * `costLineId`. Snapshots v5 y anteriores se normalizan a `undefined`.

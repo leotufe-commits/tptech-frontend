@@ -125,7 +125,11 @@ describe("F1.3 #10-G — HECHURA columnas editables", () => {
     expect(allEditable.length).toBeGreaterThan(3);
   });
 
-  it("baseline correct: HECHURA count>1 → read-only con tooltip", () => {
+  it("baseline correct: HECHURA count>1 → cada hechura editable por costLineId (F1.4 #11-D)", () => {
+    // F1.4 #11-D: a diferencia de #10-H, ahora cada hechura es editable
+    // individualmente porque tiene `costLineId` estable. La tabla
+    // expone Cantidad y Val.unit editables; el AJUSTE solo lo es para
+    // el primer item (BonifValue legacy) — los demás read-only.
     const line = makeLine({
       composition: {
         metal: null,
@@ -138,13 +142,14 @@ describe("F1.3 #10-G — HECHURA columnas editables", () => {
       },
     });
     const { container } = render(<LineAdvancedOverridesPanel line={line} {...baseProps} />);
-    // F1.3 #10-H — celdas se ven como inputs pero TODAS read-only.
+    // Hay inputs editables (cantidad + val.unit per cost line).
     const inputs = container.querySelectorAll('input[inputmode="decimal"]');
-    for (const el of Array.from(inputs)) {
-      const i = el as HTMLInputElement;
-      expect(i.readOnly || i.disabled).toBe(true);
-    }
-    expect(container.querySelectorAll(`[title="${TOOLTIP}"]`).length).toBeGreaterThan(0);
+    expect(inputs.length).toBeGreaterThan(0);
+    // Al menos uno NO está read-only ni disabled (es editable).
+    const editableInputs = Array.from(inputs).filter(
+      el => !(el as HTMLInputElement).readOnly && !(el as HTMLInputElement).disabled,
+    );
+    expect(editableInputs.length).toBeGreaterThan(0);
   });
 });
 
@@ -152,8 +157,8 @@ describe("F1.3 #10-G — HECHURA columnas editables", () => {
 // 6-7. PRODUCTO / SERVICIO siempre read-only
 // =============================================================================
 
-describe("F1.3 #10-G — PRODUCTO / SERVICIO read-only", () => {
-  it("baseline correct: producto → cantidad y val.unit como CellNumberInput read-only", () => {
+describe("F1.4 #11-D — PRODUCTO / SERVICIO editables por costLineId", () => {
+  it("baseline correct: producto → cantidad y val.unit editables", () => {
     const line = makeLine({
       composition: {
         metal: null, hechura: null,
@@ -168,19 +173,17 @@ describe("F1.3 #10-G — PRODUCTO / SERVICIO read-only", () => {
       },
     });
     const { container } = render(<LineAdvancedOverridesPanel line={line} {...baseProps} />);
-    // F1.3 #10-H — ahora hay inputs visualmente, pero TODOS son read-only.
+    // F1.4 #11-D — cantidad y val.unit son inputs editables.
     const inputs = container.querySelectorAll('input[inputmode="decimal"]');
-    expect(inputs.length).toBeGreaterThan(0);
-    // Todos los inputs deben tener readonly o disabled.
-    for (const el of Array.from(inputs)) {
-      const input = el as HTMLInputElement;
-      expect(input.readOnly || input.disabled).toBe(true);
-    }
-    // Tooltip presente para celdas read-only.
-    expect(container.querySelectorAll(`[title="${TOOLTIP}"]`).length).toBeGreaterThan(0);
+    expect(inputs.length).toBeGreaterThanOrEqual(2);
+    // Al menos 2 inputs editables (cantidad + val.unit del PRODUCT).
+    const editable = Array.from(inputs).filter(
+      el => !(el as HTMLInputElement).readOnly && !(el as HTMLInputElement).disabled,
+    );
+    expect(editable.length).toBeGreaterThanOrEqual(2);
   });
 
-  it("baseline correct: servicio → cantidad y val.unit como CellNumberInput read-only", () => {
+  it("baseline correct: servicio → cantidad y val.unit editables", () => {
     const line = makeLine({
       composition: {
         metal: null, hechura: null,
@@ -197,12 +200,11 @@ describe("F1.3 #10-G — PRODUCTO / SERVICIO read-only", () => {
     });
     const { container } = render(<LineAdvancedOverridesPanel line={line} {...baseProps} />);
     const inputs = container.querySelectorAll('input[inputmode="decimal"]');
-    expect(inputs.length).toBeGreaterThan(0);
-    for (const el of Array.from(inputs)) {
-      const input = el as HTMLInputElement;
-      expect(input.readOnly || input.disabled).toBe(true);
-    }
-    expect(container.querySelectorAll(`[title="${TOOLTIP}"]`).length).toBeGreaterThan(0);
+    expect(inputs.length).toBeGreaterThanOrEqual(2);
+    const editable = Array.from(inputs).filter(
+      el => !(el as HTMLInputElement).readOnly && !(el as HTMLInputElement).disabled,
+    );
+    expect(editable.length).toBeGreaterThanOrEqual(2);
   });
 });
 

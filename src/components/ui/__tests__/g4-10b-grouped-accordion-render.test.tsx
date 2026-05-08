@@ -215,16 +215,16 @@ describe("F1.3 #10-F — filas por tipo en orden fijo", () => {
 // =============================================================================
 
 describe("F1.3 #10-F — editor inline en sub-row de la tabla", () => {
-  it("baseline correct: 1 metal legacy → input editable en celda Cantidad + Merma sub-row", () => {
+  it("baseline correct: 1 metal legacy → input editable en celda Cantidad + Merma en columna AJUSTE", () => {
+    // F1.4 #11-D — la merma se editó en la columna AJUSTE (no en sub-row).
     const line = makeLine();
     const { container } = render(<LineAdvancedOverridesPanel line={line} {...baseProps} />);
-    // Input numérico editable en la celda Cantidad (METAL count===1).
+    // Inputs editables en celdas (Cantidad METAL + Merma en AJUSTE).
     const inputs = container.querySelectorAll('input[type="text"], input[inputmode="decimal"]');
-    expect(inputs.length).toBeGreaterThanOrEqual(1);
-    // Sub-row residual con label "Merma".
-    expect(screen.getByText("Merma")).toBeInTheDocument();
-    // El label "Gramos" del sub-row YA NO debe aparecer (movido a celda).
+    expect(inputs.length).toBeGreaterThanOrEqual(2);
+    // Labels "Gramos" / "Merma" del sub-row YA NO existen (todo es columna).
     expect(screen.queryByText("Gramos")).toBeNull();
+    expect(screen.queryByText("Merma")).toBeNull();
   });
 
   it("baseline correct: 1 hechura legacy → input editable en celda Val.unit + BonifValue en Ajuste", () => {
