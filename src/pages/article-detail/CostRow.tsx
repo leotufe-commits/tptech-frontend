@@ -16,6 +16,17 @@ import type { CostLine, QuantityUnit, ArticleVariant } from "../../services/arti
 import type { Unit } from "../../services/units";
 import type { MetalVariantRow } from "../../services/valuation";
 
+// F1.3 G4.x #10-D — fuente única de verdad para colores semánticos por
+// tipo de componente (METAL/HECHURA/PRODUCT/SERVICE). Antes los maps
+// vivían acá hardcodeados; ahora se importan desde el helper compartido
+// con el panel de Factura para garantizar consistencia visual cross-TPTech.
+import {
+  COMPONENT_TYPE_CHIP_CLS,
+  COMPONENT_TYPE_ROW_BG,
+  COMPONENT_TYPE_BORDER_LEFT,
+  COMPONENT_TYPE_TEXT,
+} from "../../lib/pricing/component-type-colors";
+
 // ---------------------------------------------------------------------------
 // Grid layout — compartido por el encabezado y cada fila
 // ---------------------------------------------------------------------------
@@ -23,35 +34,18 @@ export const COST_GRID =
   "grid grid-cols-[24px_80px_75px_1fr_150px_180px_131px_188px_120px_32px] items-center gap-x-2";
 
 // ---------------------------------------------------------------------------
-// Constantes visuales
+// Constantes visuales — paleta importada del helper compartido (F1.3 #10-D).
 // ---------------------------------------------------------------------------
 export const COST_TYPE_CHIP: Record<string, { label: string; cls: string }> = {
-  METAL:   { label: "Metal",    cls: "bg-amber-500/15 text-amber-600 dark:text-amber-400" },
-  HECHURA: { label: "Hechura",  cls: "bg-blue-500/15 text-blue-600 dark:text-blue-400"   },
-  PRODUCT: { label: "Producto", cls: "bg-violet-500/15 text-violet-600 dark:text-violet-400" },
-  SERVICE: { label: "Servicio", cls: "bg-green-500/15 text-green-600 dark:text-green-400" },
+  METAL:   { label: "Metal",    cls: COMPONENT_TYPE_CHIP_CLS.METAL   },
+  HECHURA: { label: "Hechura",  cls: COMPONENT_TYPE_CHIP_CLS.HECHURA },
+  PRODUCT: { label: "Producto", cls: COMPONENT_TYPE_CHIP_CLS.PRODUCT },
+  SERVICE: { label: "Servicio", cls: COMPONENT_TYPE_CHIP_CLS.SERVICE },
 };
 
-export const COST_ROW_BG: Record<string, string> = {
-  METAL:   "bg-amber-500/5  hover:bg-amber-500/10",
-  HECHURA: "bg-blue-500/5   hover:bg-blue-500/10",
-  PRODUCT: "bg-violet-500/5 hover:bg-violet-500/10",
-  SERVICE: "bg-green-500/5  hover:bg-green-500/10",
-};
-
-const COST_ROW_BORDER_L: Record<string, string> = {
-  METAL:   "border-l-amber-400/60",
-  HECHURA: "border-l-blue-400/60",
-  PRODUCT: "border-l-violet-400/60",
-  SERVICE: "border-l-green-400/60",
-};
-
-const SUBTOTAL_COLOR: Record<string, string> = {
-  METAL:   "text-amber-600 dark:text-amber-400",
-  HECHURA: "text-blue-600 dark:text-blue-400",
-  PRODUCT: "text-violet-600 dark:text-violet-400",
-  SERVICE: "text-green-600 dark:text-green-400",
-};
+export const COST_ROW_BG: Record<string, string> = COMPONENT_TYPE_ROW_BG;
+const COST_ROW_BORDER_L: Record<string, string> = COMPONENT_TYPE_BORDER_LEFT;
+const SUBTOTAL_COLOR: Record<string, string> = COMPONENT_TYPE_TEXT;
 
 // ---------------------------------------------------------------------------
 // Tipo para ítems de producto / servicio

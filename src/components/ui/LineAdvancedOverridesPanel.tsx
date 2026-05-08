@@ -37,6 +37,12 @@ import {
   safeSumNumbers,
   VARIES,
 } from "../../lib/pricing/grouping";
+// F1.3 G4.x #10-D — colores semánticos importados de fuente única
+// (consistencia visual cross-TPTech, mismo mapping que CostRow del Simulador).
+import {
+  COMPONENT_TYPE_BADGE,
+  type ComponentTypeKey,
+} from "../../lib/pricing/component-type-colors";
 
 export type AppliesTo = "METAL" | "HECHURA" | "PRODUCT" | "SERVICE" | "TOTAL";
 
@@ -999,22 +1005,16 @@ function SaleColumn({
  * Reader-only: cero matemática derivada. Todos los valores agregados son
  * passthrough del helper `groupCompositionItems` (Decimal-safe).
  */
-type GroupAccordionTone = "amber" | "blue" | "green" | "purple";
-
-const TONE_CLS: Record<GroupAccordionTone, { icon: string; ring: string; bg: string }> = {
-  amber:  { icon: "text-amber-600 dark:text-amber-400",   ring: "ring-amber-500/20",   bg: "bg-amber-500/10"   },
-  blue:   { icon: "text-blue-600 dark:text-blue-400",     ring: "ring-blue-500/20",    bg: "bg-blue-500/10"    },
-  green:  { icon: "text-emerald-600 dark:text-emerald-400", ring: "ring-emerald-500/20", bg: "bg-emerald-500/10" },
-  purple: { icon: "text-purple-600 dark:text-purple-400", ring: "ring-purple-500/20",  bg: "bg-purple-500/10"  },
-};
-
 function GroupAccordion({
-  Icon, tone, title, manual,
+  Icon, componentType, title, manual,
   summary, rightValue, rightSub,
   children, defaultExpanded = false,
 }: {
   Icon:            LucideIcon;
-  tone:            GroupAccordionTone;
+  /** Tipo de componente — define el set de colores semánticos (F1.3 #10-D).
+   *  Misma paleta que la Composición de costo del artículo en el Simulador
+   *  (CostRow). Garantiza consistencia visual cross-TPTech. */
+  componentType:   ComponentTypeKey;
   title:           string;
   manual?:         boolean;
   /** Sub-resumen agregado: "Variantes: 4 · Líneas: 4 · Total gramos: 4.50 g" */
@@ -1027,7 +1027,7 @@ function GroupAccordion({
   defaultExpanded?: boolean;
 }) {
   const [expanded, setExpanded] = useState(defaultExpanded);
-  const cls = TONE_CLS[tone];
+  const cls = COMPONENT_TYPE_BADGE[componentType];
   const isCollapsible = !!children;
   return (
     <div className="min-w-0">
@@ -1172,7 +1172,7 @@ function GroupedMetalAccordion({
   return (
     <GroupAccordion
       Icon={Gem}
-      tone="amber"
+      componentType="METAL"
       title="Metal"
       summary={summaryText}
       rightValue={rightValue}
@@ -1246,7 +1246,7 @@ function GroupedHechuraAccordion({
   return (
     <GroupAccordion
       Icon={Hammer}
-      tone="blue"
+      componentType="HECHURA"
       title="Hechura"
       summary={summaryText}
       rightValue={rightValue}
@@ -1298,7 +1298,9 @@ function GroupedProductServiceAccordion({
 }) {
   const title = kind === "PRODUCT" ? "Producto" : "Servicio";
   const Icon  = kind === "PRODUCT" ? Package : Wrench;
-  const tone: GroupAccordionTone = kind === "PRODUCT" ? "green" : "purple";
+  // F1.3 G4.x #10-D — alineado al mapping del Simulador:
+  // PRODUCT=violet, SERVICE=green. Antes estaba invertido en este panel.
+  const componentType: ComponentTypeKey = kind === "PRODUCT" ? "PRODUCT" : "SERVICE";
   const defaultExpanded = aggregate.count === 1;
   const summaryText = (
     <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
@@ -1315,7 +1317,7 @@ function GroupedProductServiceAccordion({
   return (
     <GroupAccordion
       Icon={Icon}
-      tone={tone}
+      componentType={componentType}
       title={title}
       summary={summaryText}
       rightValue={rightValue}
