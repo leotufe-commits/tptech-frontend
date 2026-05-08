@@ -1,21 +1,21 @@
 // src/components/ui/__tests__/g4-10b-grouped-accordion-render.test.tsx
 // =============================================================================
-// FASE F1.3 G4.x #10-B — render con accordion grupal en
-// LineAdvancedOverridesPanel.
+// FASE F1.3 G4.x #10-F — render con TABLA ERP unificada en
+// LineAdvancedOverridesPanel. Reemplaza los antiguos accordions (10-B/E)
+// por una tabla con resumen-chips arriba + filas grupadas por tipo.
 //
-// Cubre TODAS las validaciones del usuario:
-//   1. 1 metal → accordion expandido + editor inline (sin numeración).
-//   2. 2 metales → accordion colapsado por default + header con totales.
-//   3. Merma distinta dentro de un grupo → "Merma: varias".
-//   4. 1 hechura → accordion expandido + editor inline.
-//   5. 2 hechuras → accordion colapsado read-only + texto editar ficha.
-//   6. Producto/servicio dentro de accordions principales.
-//   7. Orden visual fijo METAL → HECHURA → PRODUCTO → SERVICIO.
-//   8. Cero cambio en totales/precio final (passthrough estricto).
+// Cubre todos los casos del usuario:
+//   1. Solo metal (1 cost line) → tabla con 1 fila METAL + editor inline.
+//   2. Solo hechura (1 cost line) → tabla con 1 fila HECHURA + editor inline.
+//   3. Solo producto → tabla con 1 fila PRODUCT.
+//   4. Solo servicio → tabla con 1 fila SERVICE.
+//   5. Múltiples metales → 1 fila por sub-grupo (variante).
+//   6. Mix completo → todas las filas presentes en orden fijo.
+//   7. Snapshot legacy v4 → fallback al alias preserva render.
 // =============================================================================
 
 import { describe, it, expect, vi } from "vitest";
-import { render, screen, within, fireEvent } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
 import { LineAdvancedOverridesPanel } from "../LineAdvancedOverridesPanel";
 import type { DocumentLine } from "../../../lib/document-types";
 
@@ -54,31 +54,63 @@ const baseProps = {
   view: "sale" as const,
 };
 
-// ── Helper: encontrar el botón header del SaleColumn por su título ──────────
-function findHeaderByTitle(title: string): HTMLElement {
-  // Cada SaleColumn renderea un <button> o <div> con un span uppercase del title.
-  // Busco el span con texto exacto y luego subo al contenedor.
-  const headerSpan = screen.getByText(title);
-  return headerSpan.closest("button, [class*='flex']") as HTMLElement;
-}
-
 // =============================================================================
-// 1. METAL — 1 line vs 2+ lines (numeración no aparece)
+// 1. Resumen-chips superiores
 // =============================================================================
 
-describe("F1.3 #10-B — METAL accordion grupal", () => {
-  it("baseline correct: 1 metal (legacy alias) → accordion 'Metal' expandido + editor inline", () => {
-    const line = makeLine();   // composition.metal único, sin metals[]
+describe("F1.3 #10-F — resumen chips arriba de la tabla", () => {
+  it("baseline correct: 1 metal/1 hechura legacy → chips Metales/Hechuras visibles", () => {
+    const line = makeLine();   // legacy alias: 1 metal + 1 hechura.
     render(<LineAdvancedOverridesPanel line={line} {...baseProps} />);
-    expect(screen.getByText("Metal")).toBeInTheDocument();
-    // No hay numeración cuando hay 1 sola line.
-    expect(screen.queryByText(/^Metal 1$/)).toBeNull();
-    expect(screen.queryByText(/^Metal 2$/)).toBeNull();
-    // Editor inline visible (gramos del legacy).
-    expect(screen.getAllByText(/^1\.30 g$/).length).toBeGreaterThanOrEqual(1);
+    // Chips uppercase.
+    expect(screen.getByText("Metales")).toBeInTheDocument();
+    expect(screen.getByText("Hechuras")).toBeInTheDocument();
+    expect(screen.getByText("Productos")).toBeInTheDocument();
+    expect(screen.getByText("Servicios")).toBeInTheDocument();
+    // Total componentes a la derecha.
+    expect(screen.getByText("Total componentes:")).toBeInTheDocument();
   });
 
-  it("baseline correct: 2 metales misma variante → accordion 'Metal' colapsado por default", () => {
+  it("baseline correct: chip METALES muestra total gramos (1.30 g del legacy)", () => {
+    const line = makeLine();
+    render(<LineAdvancedOverridesPanel line={line} {...baseProps} />);
+    // "1.30 g" aparece tanto en el chip como en la fila — al menos 1.
+    expect(screen.getAllByText(/1\.30 g/).length).toBeGreaterThanOrEqual(1);
+  });
+});
+
+// =============================================================================
+// 2. Tabla principal — header de columnas
+// =============================================================================
+
+describe("F1.3 #10-F — header de columnas de la tabla", () => {
+  it("baseline correct: render emite header con las 6 columnas financieras", () => {
+    const line = makeLine();
+    render(<LineAdvancedOverridesPanel line={line} {...baseProps} />);
+    // Headers uppercase de la tabla.
+    expect(screen.getByText("Componente")).toBeInTheDocument();
+    expect(screen.getByText("Cantidad")).toBeInTheDocument();
+    expect(screen.getByText("Val. unit.")).toBeInTheDocument();
+    expect(screen.getByText("Ajuste")).toBeInTheDocument();
+    expect(screen.getByText("Val. venta")).toBeInTheDocument();
+    expect(screen.getByText("Total c/imp.")).toBeInTheDocument();
+  });
+});
+
+// =============================================================================
+// 3. Filas por tipo — orden fijo METAL → HECHURA → PRODUCT → SERVICE
+// =============================================================================
+
+describe("F1.3 #10-F — filas por tipo en orden fijo", () => {
+  it("baseline correct: legacy 1 metal/1 hechura → 1 fila Oro 18k + 1 fila Hechura", () => {
+    const line = makeLine();
+    render(<LineAdvancedOverridesPanel line={line} {...baseProps} />);
+    // Primary text de cada row.
+    expect(screen.getByText("Oro 18k")).toBeInTheDocument();
+    expect(screen.getByText("Hechura")).toBeInTheDocument();
+  });
+
+  it("baseline correct: 2 metales distintos → 2 filas separadas", () => {
     const line = makeLine({
       composition: {
         metal: {
@@ -86,40 +118,10 @@ describe("F1.3 #10-B — METAL accordion grupal", () => {
           gramsManual: false, mermaManual: false, variantManual: false,
         } as any,
         metals: [
-          { costLineId: "cl-m1", metalVariantId: "mv-oro", metalName: "Oro 18k",
+          { costLineId: "cl-m1", metalVariantId: "mv-1", metalName: "Oro 18k",
             purity: 0.75, purityLabel: "18k",
             appliedGrams: 1.30, appliedMermaPct: 5, lineCost: 600 },
-          { costLineId: "cl-m2", metalVariantId: "mv-oro", metalName: "Oro 18k",
-            purity: 0.75, purityLabel: "18k",
-            appliedGrams: 0.80, appliedMermaPct: 5, lineCost: 320 },
-        ],
-        hechura: { appliedAmount: 100, manual: false, appliesTo: null, originalAmount: 100 },
-        taxes: [],
-      },
-    });
-    render(<LineAdvancedOverridesPanel line={line} {...baseProps} />);
-    // 1 solo accordion "Metal" (no se duplica con METAL 1 / METAL 2).
-    expect(screen.getAllByText("Metal")).toHaveLength(1);
-    // Header inline muestra "Líneas: 2" (normalizando whitespace).
-    expect(
-      screen.getByText((_, el) => el?.textContent === "Líneas: 2")
-    ).toBeInTheDocument();
-    // Y "Total gramos: 2.10 g".
-    expect(screen.getByText(/2\.10 g/)).toBeInTheDocument();
-  });
-
-  it("baseline correct: 2 metales DISTINTAS variantes → header 'Variantes: 2' + sub-resumen", () => {
-    const line = makeLine({
-      composition: {
-        metal: {
-          appliedGrams: 1.30, purity: 0.75, metalName: "Oro 18k",
-          gramsManual: false, mermaManual: false, variantManual: false,
-        } as any,
-        metals: [
-          { costLineId: "cl-m1", metalVariantId: "mv-oro", metalName: "Oro 18k",
-            purity: 0.75, purityLabel: "18k",
-            appliedGrams: 1.30, appliedMermaPct: 5, lineCost: 600 },
-          { costLineId: "cl-m2", metalVariantId: "mv-plata", metalName: "Plata 925",
+          { costLineId: "cl-m2", metalVariantId: "mv-2", metalName: "Plata 925",
             purity: 0.925, purityLabel: "22k",
             appliedGrams: 0.50, appliedMermaPct: 0, lineCost: 100 },
         ],
@@ -128,97 +130,11 @@ describe("F1.3 #10-B — METAL accordion grupal", () => {
       },
     });
     render(<LineAdvancedOverridesPanel line={line} {...baseProps} />);
-    expect(screen.getByText("Metal")).toBeInTheDocument();
-    // Header inline "Variantes: 2".
-    expect(
-      screen.getByText((_, el) => el?.textContent === "Variantes: 2")
-    ).toBeInTheDocument();
-    // Sub-resumen "Oro 18k: 1.30 g" y "Plata 925: 0.50 g" en chips inline.
-    expect(screen.getByText(/Oro 18k:/)).toBeInTheDocument();
-    expect(screen.getByText(/Plata 925:/)).toBeInTheDocument();
-    // Total agregado = 1.30 + 0.50 = 1.80 g.
-    expect(screen.getByText(/1\.80 g/)).toBeInTheDocument();
-  });
-});
-
-// =============================================================================
-// 2. METAL — merma distinta dentro del grupo
-// =============================================================================
-
-describe("F1.3 #10-B — merma 'varias' cuando difiere", () => {
-  it("baseline correct: 2 lines misma variante con MERMAS distintas → 'Merma: varias' en detail", () => {
-    const line = makeLine({
-      composition: {
-        metal: {
-          appliedGrams: 1, purity: 0.75, metalName: "Oro",
-          gramsManual: false, mermaManual: false, variantManual: false,
-        } as any,
-        metals: [
-          { costLineId: "cl-m1", metalVariantId: "mv-1", metalName: "Oro",
-            purity: 0.75, purityLabel: "18k",
-            appliedGrams: 1, appliedMermaPct: 5, lineCost: 100 },
-          { costLineId: "cl-m2", metalVariantId: "mv-1", metalName: "Oro",
-            purity: 0.75, purityLabel: "18k",
-            appliedGrams: 2, appliedMermaPct: 3, lineCost: 200 },
-        ],
-        hechura: null, taxes: [],
-      },
-    });
-    render(<LineAdvancedOverridesPanel line={line} {...baseProps} />);
-    // El detail está colapsado por default (count >= 2). Lo expando.
-    const header = findHeaderByTitle("Metal");
-    fireEvent.click(header);
-    expect(screen.getByText("varias")).toBeInTheDocument();
-  });
-});
-
-// =============================================================================
-// 3. HECHURA — 1 vs 2+
-// =============================================================================
-
-describe("F1.3 #10-B — HECHURA accordion grupal", () => {
-  it("baseline correct: 1 hechura legacy → 'Hechura' expandido + editor inline", () => {
-    const line = makeLine();
-    render(<LineAdvancedOverridesPanel line={line} {...baseProps} />);
-    expect(screen.getByText("Hechura")).toBeInTheDocument();
-    expect(screen.queryByText(/^Hechura 1$/)).toBeNull();
+    expect(screen.getByText("Oro 18k")).toBeInTheDocument();
+    expect(screen.getByText("Plata 925")).toBeInTheDocument();
   });
 
-  it("baseline correct: 2 hechuras → accordion colapsado + texto 'Editar desde la ficha del artículo'", () => {
-    const line = makeLine({
-      composition: {
-        metal: null,
-        hechura: { appliedAmount: 200, manual: false, appliesTo: null, originalAmount: 200 },
-        hechuras: [
-          { costLineId: "cl-h1", appliedAmount: 200, lineCost: 200, lineLabel: "Mano de obra" },
-          { costLineId: "cl-h2", appliedAmount: 150, lineCost: 150, lineLabel: "Pulido" },
-        ],
-        taxes: [],
-      },
-    });
-    render(<LineAdvancedOverridesPanel line={line} {...baseProps} />);
-    // 1 solo accordion "Hechura".
-    expect(screen.getAllByText("Hechura")).toHaveLength(1);
-    // Header inline "Conceptos: 2 · Líneas: 2 · Total: AR$ 350,00".
-    expect(
-      screen.getByText((_, el) => el?.textContent === "Conceptos: 2")
-    ).toBeInTheDocument();
-    expect(screen.getByText(/350/)).toBeInTheDocument();
-    // Expandir: aparecen lines individuales + texto sutil.
-    const header = findHeaderByTitle("Hechura");
-    fireEvent.click(header);
-    expect(screen.getByText("Mano de obra")).toBeInTheDocument();
-    expect(screen.getByText("Pulido")).toBeInTheDocument();
-    expect(screen.getByText(/Editar desde la ficha del artículo/i)).toBeInTheDocument();
-  });
-});
-
-// =============================================================================
-// 4. PRODUCTO / SERVICIO en accordions principales
-// =============================================================================
-
-describe("F1.3 #10-B — PRODUCTO / SERVICIO accordions", () => {
-  it("baseline correct: 1 producto → accordion 'Producto' expandido + card interna", () => {
+  it("baseline correct: solo PRODUCT → fila con nombre y código", () => {
     const line = makeLine({
       composition: {
         metal: null, hechura: null,
@@ -233,48 +149,12 @@ describe("F1.3 #10-B — PRODUCTO / SERVICIO accordions", () => {
       },
     });
     render(<LineAdvancedOverridesPanel line={line} {...baseProps} />);
-    // El accordion "Producto" está expandido por count===1 → se ven 2
-    // labels "Producto": el header del accordion + el SaleColumn interno.
-    expect(screen.getAllByText("Producto").length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText("Zafiro 0.5ct")).toBeInTheDocument();
+    // Código aparece en secondary.
+    expect(screen.getByText(/ZAF-01/)).toBeInTheDocument();
   });
 
-  it("baseline correct: 2 productos → accordion colapsado, header 'Items: 2 · Total: AR$ X'", () => {
-    const line = makeLine({
-      composition: {
-        metal: null, hechura: null,
-        products: [
-          { costLineId: "cl-p1", catalogItemId: "art-P1",
-            catalogItemCode: "ZAF-01", catalogItemName: "Zafiro 0.5ct",
-            quantity: 1, unitValue: 100, totalValue: 100, currencyId: null,
-            lineAdjKind: null, lineAdjType: null,
-            lineAdjValue: null, lineAdjAmount: null, affectsStock: null },
-          { costLineId: "cl-p2", catalogItemId: "art-P2",
-            catalogItemCode: "RUB-02", catalogItemName: "Rubí 0.3ct",
-            quantity: 1, unitValue: 80, totalValue: 80, currencyId: null,
-            lineAdjKind: null, lineAdjType: null,
-            lineAdjValue: null, lineAdjAmount: null, affectsStock: null },
-        ],
-        taxes: [],
-      },
-    });
-    render(<LineAdvancedOverridesPanel line={line} {...baseProps} />);
-    expect(screen.getByText("Producto")).toBeInTheDocument();
-    // Header inline "Items: 2 · Total: AR$ 180,00".
-    expect(
-      screen.getAllByText((_, el) => el?.textContent === "Items: 2").length
-    ).toBeGreaterThanOrEqual(1);
-    expect(screen.getByText(/180/)).toBeInTheDocument();
-    // Colapsado: items individuales NO visibles aún.
-    expect(screen.queryByText("Zafiro 0.5ct")).toBeNull();
-    // Expandir → ambos visibles.
-    const header = findHeaderByTitle("Producto");
-    fireEvent.click(header);
-    expect(screen.getByText("Zafiro 0.5ct")).toBeInTheDocument();
-    expect(screen.getByText("Rubí 0.3ct")).toBeInTheDocument();
-  });
-
-  it("baseline correct: 1 servicio → accordion 'Servicio' expandido", () => {
+  it("baseline correct: solo SERVICE → fila con nombre", () => {
     const line = makeLine({
       composition: {
         metal: null, hechura: null,
@@ -290,33 +170,26 @@ describe("F1.3 #10-B — PRODUCTO / SERVICIO accordions", () => {
       },
     });
     render(<LineAdvancedOverridesPanel line={line} {...baseProps} />);
-    expect(screen.getAllByText("Servicio").length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText("Engaste profesional")).toBeInTheDocument();
   });
-});
 
-// =============================================================================
-// 5. Orden visual fijo METAL → HECHURA → PRODUCTO → SERVICIO
-// =============================================================================
-
-describe("F1.3 #10-B — orden visual fijo", () => {
-  it("baseline correct: render emite secciones en el orden METAL → HECHURA → PRODUCTO → SERVICIO", () => {
+  it("baseline correct: orden visual METAL → HECHURA → PRODUCT → SERVICE", () => {
     const line = makeLine({
       composition: {
         metal: {
           appliedGrams: 1, purity: 0.75, metalName: "Oro",
           gramsManual: false, mermaManual: false, variantManual: false,
         } as any,
-        hechura: { appliedAmount: 100, manual: false, appliesTo: null, originalAmount: 100 },
+        hechura: { appliedAmount: 200, manual: false, appliesTo: null, originalAmount: 200 },
         products: [{
-          costLineId: "cl-p1", catalogItemId: "art-P",
+          costLineId: "cl-p", catalogItemId: "art-P",
           catalogItemCode: "X", catalogItemName: "Producto X",
           quantity: 1, unitValue: 50, totalValue: 50, currencyId: null,
           lineAdjKind: null, lineAdjType: null,
           lineAdjValue: null, lineAdjAmount: null, affectsStock: null,
         }],
         services: [{
-          costLineId: "cl-s1", catalogItemId: "art-S",
+          costLineId: "cl-s", catalogItemId: "art-S",
           catalogItemCode: "Y", catalogItemName: "Servicio Y",
           quantity: 1, unitValue: 30, totalValue: 30, currencyId: null,
           lineAdjKind: null, lineAdjType: null,
@@ -325,42 +198,133 @@ describe("F1.3 #10-B — orden visual fijo", () => {
         taxes: [],
       },
     });
-    const { container } = render(<LineAdvancedOverridesPanel line={line} {...baseProps} />);
-    const text = container.textContent ?? "";
-    const idxMetal    = text.indexOf("Metal");
-    const idxHechura  = text.indexOf("Hechura");
-    const idxProducto = text.indexOf("Producto");
-    const idxServicio = text.indexOf("Servicio");
-    // Todos presentes y en orden.
-    expect(idxMetal).toBeGreaterThanOrEqual(0);
-    expect(idxHechura).toBeGreaterThan(idxMetal);
-    expect(idxProducto).toBeGreaterThan(idxHechura);
-    expect(idxServicio).toBeGreaterThan(idxProducto);
+    render(<LineAdvancedOverridesPanel line={line} {...baseProps} />);
+    // Verifica orden por posición de los elementos primary de cada fila.
+    // (Usar `getByText` específico evita ambigüedad con chips/headers.)
+    const oro      = screen.getByText("Oro");
+    const productX = screen.getByText("Producto X");
+    const servicio = screen.getByText("Servicio Y");
+    // compareDocumentPosition: 4 = el segundo follow al primero.
+    expect(oro.compareDocumentPosition(productX) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(productX.compareDocumentPosition(servicio) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 });
 
 // =============================================================================
-// 6. Cero cambio numérico — totales no cambian
+// 4. Editor inline embebido en sub-row
 // =============================================================================
 
-describe("F1.3 #10-B — cero cambio numérico (regression)", () => {
-  it("baseline correct: 1 metal/1 hechura legacy → mismo render que pre-10-B", () => {
+describe("F1.3 #10-F — editor inline en sub-row de la tabla", () => {
+  it("baseline correct: 1 metal legacy → fila + sub-row con inputs Gramos/Merma", () => {
     const line = makeLine();
     render(<LineAdvancedOverridesPanel line={line} {...baseProps} />);
-    // Datos del legacy preservados (variante + gramos del editor inline).
-    expect(screen.getByText("Oro 18k")).toBeInTheDocument();
-    expect(screen.getAllByText(/^1\.30 g$/).length).toBeGreaterThanOrEqual(1);
+    // Labels uppercase de los inputs editables.
+    expect(screen.getByText("Gramos")).toBeInTheDocument();
+    expect(screen.getByText("Merma")).toBeInTheDocument();
   });
 
-  it("baseline correct: snapshot SIN metals/hechuras arrays (v4 legacy) → renderea solo el alias", () => {
+  it("baseline correct: 1 hechura legacy → fila + sub-row con input Valor + Bonificación", () => {
     const line = makeLine();
     render(<LineAdvancedOverridesPanel line={line} {...baseProps} />);
-    // 1 accordion Metal + 1 accordion Hechura (sin chips de variantes/conceptos).
-    expect(screen.getByText("Metal")).toBeInTheDocument();
-    expect(screen.getByText("Hechura")).toBeInTheDocument();
-    // No hay header agregado de "Variantes: N" porque editor inline está activo.
-    expect(
-      screen.queryByText((_, el) => el?.textContent === "Variantes: 1")
-    ).toBeNull();
+    expect(screen.getByText("Valor")).toBeInTheDocument();
+    expect(screen.getByText("Bonificación")).toBeInTheDocument();
+  });
+
+  it("baseline correct: 2 metales (count > 1) → NO muestra editor inline", () => {
+    const line = makeLine({
+      composition: {
+        metal: {
+          appliedGrams: 1, purity: 0.75, metalName: "Oro",
+          gramsManual: false, mermaManual: false, variantManual: false,
+        } as any,
+        metals: [
+          { costLineId: "cl-m1", metalVariantId: "mv-1", metalName: "Oro",
+            purity: 0.75, purityLabel: "18k",
+            appliedGrams: 1, appliedMermaPct: 5, lineCost: 100 },
+          { costLineId: "cl-m2", metalVariantId: "mv-1", metalName: "Oro",
+            purity: 0.75, purityLabel: "18k",
+            appliedGrams: 2, appliedMermaPct: 5, lineCost: 200 },
+        ],
+        hechura: null,
+        taxes: [],
+      },
+    });
+    render(<LineAdvancedOverridesPanel line={line} {...baseProps} />);
+    // No hay label "Gramos" del editor (count=2 → read-only).
+    expect(screen.queryByText("Gramos")).toBeNull();
+    expect(screen.queryByText("Merma")).toBeNull();
+  });
+});
+
+// =============================================================================
+// 5. Ajustes (BONUS / SURCHARGE) en columna AJUSTE
+// =============================================================================
+
+describe("F1.3 #10-F — columna AJUSTE muestra Bonif./Recargo", () => {
+  it("baseline correct: producto con BONUS PERCENTAGE → '+/−' con monto emerald", () => {
+    const line = makeLine({
+      composition: {
+        metal: null, hechura: null,
+        products: [{
+          costLineId: "cl-p1", catalogItemId: "art-P",
+          catalogItemCode: "X", catalogItemName: "Item",
+          quantity: 1, unitValue: 100, totalValue: 95, currencyId: null,
+          lineAdjKind: "BONUS", lineAdjType: "PERCENTAGE",
+          lineAdjValue: 5, lineAdjAmount: 5, affectsStock: null,
+        }],
+        taxes: [],
+      },
+    });
+    render(<LineAdvancedOverridesPanel line={line} {...baseProps} />);
+    // Texto de porcentaje (ej. "5%") + signo "−" emerald.
+    expect(screen.getByText(/^5%$/)).toBeInTheDocument();
+    const minus = screen.getByText(/^−/);
+    expect(minus.closest("span")?.className).toMatch(/emerald/);
+  });
+
+  it("baseline correct: servicio con SURCHARGE → '+' amber", () => {
+    const line = makeLine({
+      composition: {
+        metal: null, hechura: null,
+        products: [],
+        services: [{
+          costLineId: "cl-s1", catalogItemId: "art-S",
+          catalogItemCode: "X", catalogItemName: "Engaste",
+          quantity: 1, unitValue: 80, totalValue: 100, currencyId: null,
+          lineAdjKind: "SURCHARGE", lineAdjType: "PERCENTAGE",
+          lineAdjValue: 25, lineAdjAmount: 20, affectsStock: null,
+        }],
+        taxes: [],
+      },
+    });
+    render(<LineAdvancedOverridesPanel line={line} {...baseProps} />);
+    expect(screen.getByText(/^25%$/)).toBeInTheDocument();
+    const plus = screen.getByText(/^\+/);
+    expect(plus.closest("span")?.className).toMatch(/amber/);
+  });
+});
+
+// =============================================================================
+// 6. Stock visible en secondary del PRODUCT
+// =============================================================================
+
+describe("F1.3 #10-F — affectsStock visible en secondary", () => {
+  it("baseline correct: affectsStock=true → texto 'Descuenta stock' en secondary", () => {
+    const line = makeLine({
+      composition: {
+        metal: null, hechura: null,
+        products: [{
+          costLineId: "cl-p1", catalogItemId: "art-P",
+          catalogItemCode: "X", catalogItemName: "Item",
+          quantity: 1, unitValue: 100, totalValue: 100, currencyId: null,
+          lineAdjKind: null, lineAdjType: null,
+          lineAdjValue: null, lineAdjAmount: null,
+          affectsStock: true,
+        }],
+        taxes: [],
+      },
+    });
+    render(<LineAdvancedOverridesPanel line={line} {...baseProps} />);
+    expect(screen.getByText(/Descuenta stock/i)).toBeInTheDocument();
   });
 });

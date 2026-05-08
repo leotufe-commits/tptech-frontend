@@ -399,108 +399,36 @@ export function LineAdvancedOverridesPanel({
              centrado entre las secciones con espacio simétrico arriba y
              abajo, sin afectar al primer hijo ni al último. */
           <div className="flex flex-col [&>*+*]:mt-2 [&>*+*]:border-t [&>*+*]:border-border/30 [&>*+*]:pt-2">
-            {/* 1. METAL — accordion grupal ERP unificado F1.3 #10-E.
-                Render SIEMPRE consistente: el mismo accordion para 0/1/N
-                líneas. El editor inline (Gramos/Merma) se inyecta como
-                children del detail cuando isEditableInline (count cost-
-                lines === 1). Para count >= 2 el detail es read-only.
-                Cero rama legacy — todos los items de la factura se ven
-                con la misma jerarquía. */}
-            {/* METAL — render unificado (F1.3 #10-E): SIEMPRE el accordion
-                grupal ERP, con o sin items. Cuando count cost-lines === 1
-                el editor inline (Gramos / Merma) se inyecta dentro del
-                detail. Cuando count >= 2 el detail es read-only y muestra
-                el sub-resumen por variante. */}
-            {(metalLineCount > 0 || composition?.metal) && (
-              <GroupedMetalAccordion
-                groups={grouped.metals}
-                totalLineCount={metalLineCount}
-                totalGrams={metalTotalGrams}
-                totalLineCost={metalTotalLineCost}
-                qtyLine={qtyLine}
-                currency={currency}
-                metaMetalSale={meta.metalSale ?? null}
-                manual={grams.manual || merma.manual || !!composition?.metal?.variantManual}
-                editorInline={metalEditableInline ? (
-                  <div className="grid grid-cols-[max-content_max-content] items-end gap-3 pt-1.5">
-                    <InlineNumberField
-                      label="Gramos"
-                      value={grams.value ?? 0}
-                      onChange={(v) => grams.setValue(v ?? 0)}
-                      decimals={2}
-                      suffix="g"
-                      step={0.05}
-                    />
-                    <InlineNumberField
-                      label="Merma"
-                      value={merma.value ?? 0}
-                      onChange={(v) => merma.setValue(v ?? 0)}
-                      decimals={2}
-                      suffix="%"
-                    />
-                  </div>
-                ) : null}
-              />
-            )}
+            {/* F1.3 G4.x #10-F — TABLA ERP UNIFICADA.
+                Reemplaza los 4 accordions independientes por:
+                  · Resumen-chips arriba con totales por tipo + total global.
+                  · Tabla con columnas alineadas:
+                    COMPONENTE / DETALLE / CANT. / VAL.UNIT / AJUSTE /
+                    VAL.VENTA / TOTAL c/IMP.
+                  · Filas agrupadas por tipo (METALES / HECHURAS / PRODUCTOS
+                    / SERVICIOS) con badge color en la primera columna.
+                  · Editor inline (Gramos/Merma · Valor/Bonif) embebido en
+                    sub-row debajo del row correspondiente cuando count===1.
+                Reader-only (POLICY R4.5) — cero matemática, helpers
+                Decimal-safe. */}
+            <CompositionTable
+              grouped={grouped}
+              qtyLine={qtyLine}
+              currency={currency}
+              metalTotalGrams={metalTotalGrams}
+              metaMetalSale={meta.metalSale ?? null}
+              metaHechuraSale={meta.hechuraSale ?? null}
+              metalEditableInline={metalEditableInline}
+              hechuraEditableInline={hechuraEditableInline}
+              gramsHook={grams}
+              mermaHook={merma}
+              hechuraHook={hechura}
+              metalManual={grams.manual || merma.manual || !!composition?.metal?.variantManual}
+              hechuraManual={hechura.manual}
+              line={line}
+              onApply={onApply}
+            />
 
-            {/* HECHURA — render unificado (F1.3 #10-E): SIEMPRE el
-                accordion grupal ERP. Cuando count cost-lines === 1 el
-                editor inline (Valor / Bonificación) se inyecta dentro
-                del detail. Cuando count >= 2 el detail es read-only
-                con lines individuales. */}
-            {(hechuraLineCount > 0 || composition?.hechura) && (
-              <GroupedHechuraAccordion
-                items={grouped.hechuras}
-                aggregate={grouped.hechurasAggregate}
-                qtyLine={qtyLine}
-                currency={currency}
-                metaHechuraSale={meta.hechuraSale ?? null}
-                manual={hechura.manual}
-                editorInline={hechuraEditableInline ? (
-                  <div className="grid grid-cols-[max-content_max-content] items-end gap-3 pt-1.5">
-                    <InlineNumberField
-                      label="Valor"
-                      value={hechura.value ?? 0}
-                      onChange={(v) => hechura.setValue(v ?? 0)}
-                      decimals={2}
-                    />
-                    <div className="shrink-0">
-                      <div className="text-[9px] font-semibold uppercase tracking-wide text-muted/70">
-                        Bonificación
-                      </div>
-                      <div className="mt-0.5">
-                        <BonifValue line={line} appliesTo="HECHURA" onApply={onApply} compact />
-                      </div>
-                    </div>
-                  </div>
-                ) : null}
-              />
-            )}
-
-            {/* 3. PRODUCTO — accordion grupal F1.3 #10-B.
-                Header agregado "PRODUCTO · N items · AR$ X total".
-                · 1 item → expandido por default + card individual.
-                · 2+ items → colapsado por default + lista de cards. */}
-            {productItems.length > 0 && (
-              <GroupedProductServiceAccordion
-                kind="PRODUCT"
-                items={grouped.products}
-                aggregate={grouped.productsAggregate}
-                qtyLine={qtyLine}
-                currency={currency}
-              />
-            )}
-
-            {/* 4. SERVICIO — mismo patrón. */}
-            {serviceItems.length > 0 && (
-              <GroupedProductServiceAccordion
-                kind="SERVICE"
-                items={grouped.services}
-                aggregate={grouped.servicesAggregate}
-                qtyLine={qtyLine}
-                currency={currency}
-              />
-            )}
 
             {/* 5. RENTABILIDAD — costo, ganancia y margen en una sola fila.
                 Ganancia $ agregada como derivación trivial (misma justificación
@@ -866,6 +794,375 @@ function SaleColumn({
         </div>
       )}
     </div>
+  );
+}
+
+// =============================================================================
+// F1.3 G4.x #10-F — CompositionTable: tabla ERP unificada.
+//
+// Reemplaza el stack de 4 accordions independientes (10-B/C/D/E) por una
+// experiencia de TABLA con:
+//   1. Resumen-chips arriba — totales por tipo + total global.
+//   2. Header de columnas con typography uppercase compacta.
+//   3. Filas grupadas por tipo (METAL/HECHURA/PRODUCT/SERVICE), separadas
+//      por divisores sutiles.
+//   4. Editor inline embebido como sub-row debajo del row correspondiente
+//      cuando count cost-lines === 1 (D1).
+//
+// Cero matemática derivada (POLICY R4.5). Helpers existentes:
+//   · `groupCompositionItems` — agrupación.
+//   · `safeSumNumbers` — Decimal-safe sums.
+//   · `COMPONENT_TYPE_BADGE` — paleta semántica unificada.
+// =============================================================================
+
+const TABLE_COLS_CLS = "grid grid-cols-[24px_minmax(0,1.6fr)_minmax(70px,0.7fr)_minmax(90px,0.8fr)_minmax(80px,0.7fr)_minmax(95px,0.85fr)_minmax(105px,0.9fr)] items-baseline gap-x-2";
+
+function TableHeader() {
+  return (
+    <div className={cn(TABLE_COLS_CLS, "px-1 pb-1 border-b border-border/40 text-[9px] font-semibold uppercase tracking-wide text-muted/70")}>
+      <span aria-hidden />
+      <span>Componente</span>
+      <span className="text-right">Cantidad</span>
+      <span className="text-right">Val. unit.</span>
+      <span className="text-right">Ajuste</span>
+      <span className="text-right">Val. venta</span>
+      <span className="text-right">Total c/imp.</span>
+    </div>
+  );
+}
+
+function TableRow({
+  componentType,
+  Icon,
+  primary,
+  secondary,
+  quantity,
+  unitValue,
+  adjustment,
+  saleValue,
+  totalWithTax,
+  manual,
+}: {
+  componentType: ComponentTypeKey;
+  Icon:          LucideIcon;
+  primary:       React.ReactNode;
+  secondary?:    React.ReactNode;
+  quantity?:     React.ReactNode;
+  unitValue?:    React.ReactNode;
+  adjustment?:   React.ReactNode;
+  saleValue?:    React.ReactNode;
+  totalWithTax?: React.ReactNode;
+  manual?:       boolean;
+}) {
+  const cls = COMPONENT_TYPE_BADGE[componentType];
+  return (
+    <div className={cn(TABLE_COLS_CLS, "px-1 py-1.5 text-[11px]")}>
+      {/* Col 1 — badge cuadrado con ícono coloreado por tipo. */}
+      <span
+        className={cn(
+          "inline-flex h-5 w-5 items-center justify-center rounded ring-1",
+          cls.bg, cls.ring,
+        )}
+        aria-hidden
+      >
+        <Icon size={11} className={cls.icon} />
+      </span>
+      {/* Col 2 — primary (nombre/variante) + secondary (código/merma/etc). */}
+      <div className="min-w-0">
+        <div className="flex items-center gap-1.5">
+          <span className="font-medium text-text truncate">{primary}</span>
+          {manual && (
+            <span className="rounded bg-surface2 px-1 text-[8px] uppercase tracking-wide text-muted/80">
+              Manual
+            </span>
+          )}
+        </div>
+        {secondary && (
+          <div className="text-[10px] text-muted/75 leading-tight truncate">{secondary}</div>
+        )}
+      </div>
+      {/* Cols 3-7 — alineadas a la derecha (números). */}
+      <div className="text-right tabular-nums text-text/90">{quantity ?? "—"}</div>
+      <div className="text-right tabular-nums text-text/90">{unitValue ?? "—"}</div>
+      <div className="text-right tabular-nums">{adjustment ?? <span className="text-muted/40">—</span>}</div>
+      <div className="text-right tabular-nums font-medium text-text">{saleValue ?? "—"}</div>
+      <div className="text-right tabular-nums font-semibold text-emerald-600 dark:text-emerald-400">
+        {totalWithTax ?? "—"}
+      </div>
+    </div>
+  );
+}
+
+function CompositionTable({
+  grouped, qtyLine, currency,
+  metalTotalGrams, metaMetalSale, metaHechuraSale,
+  metalEditableInline, hechuraEditableInline,
+  gramsHook, mermaHook, hechuraHook,
+  metalManual, hechuraManual,
+  line, onApply,
+}: {
+  grouped:               ReturnType<typeof groupCompositionItems>;
+  qtyLine:               number;
+  currency:              string;
+  metalTotalGrams:       number | null;
+  metaMetalSale:         number | null;
+  metaHechuraSale:       number | null;
+  metalEditableInline:   boolean;
+  hechuraEditableInline: boolean;
+  gramsHook:             { value: number | null; setValue: (v: number | null) => void };
+  mermaHook:             { value: number | null; setValue: (v: number | null) => void };
+  hechuraHook:           { value: number | null; setValue: (v: number | null) => void };
+  metalManual:           boolean;
+  hechuraManual:         boolean;
+  line:                  DocumentLine;
+  onApply:               LineAdvancedOverridesPanelProps["onApply"];
+}) {
+  const fmt = (v: number | null | undefined) =>
+    v != null && Number.isFinite(v) ? fmtMoney(v, currency) : null;
+
+  // ── Resumen chips superiores. Cada chip = tipo con count + agregado. ─────
+  const totalComponents =
+    grouped.metals.reduce((acc, g) => acc + g.count, 0) +
+    grouped.hechurasAggregate.count +
+    grouped.productsAggregate.count +
+    grouped.servicesAggregate.count;
+
+  const ChipResumen = ({
+    type, label, value,
+  }: {
+    type: ComponentTypeKey;
+    label: string;
+    value: React.ReactNode;
+  }) => {
+    const cls = COMPONENT_TYPE_BADGE[type];
+    return (
+      <span className={cn("inline-flex items-baseline gap-1 rounded px-1.5 py-0.5 ring-1", cls.bg, cls.ring)}>
+        <span className={cn("text-[9px] font-semibold uppercase tracking-wide", cls.icon)}>{label}</span>
+        <span className="text-[10px] tabular-nums text-text/90">{value}</span>
+      </span>
+    );
+  };
+
+  return (
+    <div className="space-y-1.5">
+      {/* ── Resumen chips arriba ──────────────────────────────────────── */}
+      <div className="flex flex-wrap items-baseline gap-1.5">
+        <ChipResumen
+          type="METAL"
+          label="Metales"
+          value={metalTotalGrams != null
+            ? `${metalTotalGrams.toFixed(2)} g`
+            : "—"}
+        />
+        <ChipResumen
+          type="HECHURA"
+          label="Hechuras"
+          value={String(grouped.hechurasAggregate.count)}
+        />
+        <ChipResumen
+          type="PRODUCT"
+          label="Productos"
+          value={String(grouped.productsAggregate.count)}
+        />
+        <ChipResumen
+          type="SERVICE"
+          label="Servicios"
+          value={String(grouped.servicesAggregate.count)}
+        />
+        <span className="ml-auto text-[10px] text-muted/75">
+          Total componentes:{" "}
+          <span className="font-semibold text-text/90 tabular-nums">{totalComponents}</span>
+        </span>
+      </div>
+
+      {/* ── Tabla principal ──────────────────────────────────────────── */}
+      <div className="rounded-md border border-border/30 bg-card/30">
+        <TableHeader />
+        <div className="divide-y divide-border/25">
+          {/* — METALES — una fila por sub-grupo (variante). */}
+          {grouped.metals.map((g, idx) => {
+            const isFirstMetal = idx === 0;
+            const showEditor = isFirstMetal && metalEditableInline;
+            const mermaText = g.appliedMermaPct === VARIES
+              ? "Merma: varias"
+              : g.appliedMermaPct != null
+                ? `Merma: ${(g.appliedMermaPct as number).toFixed(2)}%`
+                : null;
+            const secondary = (
+              <span>
+                {g.purityLabel && <>Pureza: {g.purityLabel}{mermaText && " · "}</>}
+                {mermaText}
+                {g.count > 1 && <span className="ml-1 text-muted/55">· {g.count} líneas</span>}
+              </span>
+            );
+            // Sale value per metal: solo el primer grupo recibe el agregado
+            // del backend (metaMetalSale). Otros grupos: passthrough lineCost
+            // como aprox. (cero recálculo).
+            const saleVal = isFirstMetal && metaMetalSale != null
+              ? metaMetalSale
+              : g.totalLineCost;
+            return (
+              <React.Fragment key={`row-metal-${g.groupKey}`}>
+                <TableRow
+                  componentType="METAL"
+                  Icon={Gem}
+                  primary={g.metalName ?? "—"}
+                  secondary={secondary}
+                  quantity={g.totalAppliedGrams != null
+                    ? `${g.totalAppliedGrams.toFixed(2)} g`
+                    : null}
+                  unitValue={fmt(g.totalLineCost != null && g.totalAppliedGrams && g.totalAppliedGrams > 0
+                    ? g.totalLineCost / g.totalAppliedGrams
+                    : null)}
+                  saleValue={fmt(saleVal)}
+                  totalWithTax={fmt(saleVal != null && qtyLine > 1 ? saleVal * qtyLine : saleVal)}
+                  manual={isFirstMetal && metalManual}
+                />
+                {showEditor && (
+                  <div className="px-1 pb-1.5 pl-9">
+                    <div className="grid grid-cols-[max-content_max-content] items-end gap-3">
+                      <InlineNumberField
+                        label="Gramos"
+                        value={gramsHook.value ?? 0}
+                        onChange={(v) => gramsHook.setValue(v ?? 0)}
+                        decimals={2}
+                        suffix="g"
+                        step={0.05}
+                      />
+                      <InlineNumberField
+                        label="Merma"
+                        value={mermaHook.value ?? 0}
+                        onChange={(v) => mermaHook.setValue(v ?? 0)}
+                        decimals={2}
+                        suffix="%"
+                      />
+                    </div>
+                  </div>
+                )}
+              </React.Fragment>
+            );
+          })}
+
+          {/* — HECHURAS — una fila por cost line. */}
+          {grouped.hechuras.map((h, idx) => {
+            const isFirst = idx === 0;
+            const showEditor = isFirst && hechuraEditableInline;
+            const saleVal = isFirst && metaHechuraSale != null
+              ? metaHechuraSale
+              : h.lineCost;
+            return (
+              <React.Fragment key={`row-hechura-${h.costLineId ?? idx}`}>
+                <TableRow
+                  componentType="HECHURA"
+                  Icon={Hammer}
+                  primary={h.lineLabel ?? "Hechura"}
+                  secondary={`Moneda: ${currency || "—"}`}
+                  quantity="1"
+                  unitValue={fmt(h.appliedAmount)}
+                  saleValue={fmt(saleVal)}
+                  totalWithTax={fmt(saleVal != null && qtyLine > 1 ? saleVal * qtyLine : saleVal)}
+                  manual={isFirst && hechuraManual}
+                />
+                {showEditor && (
+                  <div className="px-1 pb-1.5 pl-9">
+                    <div className="grid grid-cols-[max-content_max-content] items-end gap-3">
+                      <InlineNumberField
+                        label="Valor"
+                        value={hechuraHook.value ?? 0}
+                        onChange={(v) => hechuraHook.setValue(v ?? 0)}
+                        decimals={2}
+                      />
+                      <div className="shrink-0">
+                        <div className="text-[9px] font-semibold uppercase tracking-wide text-muted/70">
+                          Bonificación
+                        </div>
+                        <div className="mt-0.5">
+                          <BonifValue line={line} appliesTo="HECHURA" onApply={onApply} compact />
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </React.Fragment>
+            );
+          })}
+
+          {/* — PRODUCTOS — una fila por item. */}
+          {grouped.products.map((p, idx) => {
+            const adj = p.lineAdjAmount != null && p.lineAdjKind != null
+              ? <AdjustmentChip kind={p.lineAdjKind} type={p.lineAdjType ?? null} value={p.lineAdjValue ?? null} amount={p.lineAdjAmount} currency={currency} />
+              : null;
+            return (
+              <TableRow
+                key={`row-product-${p.costLineId ?? idx}`}
+                componentType="PRODUCT"
+                Icon={Package}
+                primary={p.catalogItemName ?? p.catalogItemCode ?? "—"}
+                secondary={p.catalogItemCode && p.catalogItemCode !== p.catalogItemName
+                  ? `Código: ${p.catalogItemCode}${p.affectsStock === true ? " · Descuenta stock" : ""}`
+                  : (p.affectsStock === true ? "Descuenta stock" : null)}
+                quantity={p.quantity != null
+                  ? p.quantity.toLocaleString("es-AR", { maximumFractionDigits: 4 })
+                  : null}
+                unitValue={fmt(p.unitValue)}
+                adjustment={adj}
+                saleValue={fmt(p.totalValue)}
+                totalWithTax={fmt(p.totalValue != null && qtyLine > 1 ? p.totalValue * qtyLine : p.totalValue)}
+              />
+            );
+          })}
+
+          {/* — SERVICIOS — una fila por item. */}
+          {grouped.services.map((s, idx) => {
+            const adj = s.lineAdjAmount != null && s.lineAdjKind != null
+              ? <AdjustmentChip kind={s.lineAdjKind} type={s.lineAdjType ?? null} value={s.lineAdjValue ?? null} amount={s.lineAdjAmount} currency={currency} />
+              : null;
+            return (
+              <TableRow
+                key={`row-service-${s.costLineId ?? idx}`}
+                componentType="SERVICE"
+                Icon={Wrench}
+                primary={s.catalogItemName ?? s.catalogItemCode ?? "—"}
+                secondary={s.catalogItemCode && s.catalogItemCode !== s.catalogItemName
+                  ? `Código: ${s.catalogItemCode}`
+                  : null}
+                quantity={s.quantity != null
+                  ? s.quantity.toLocaleString("es-AR", { maximumFractionDigits: 4 })
+                  : null}
+                unitValue={fmt(s.unitValue)}
+                adjustment={adj}
+                saleValue={fmt(s.totalValue)}
+                totalWithTax={fmt(s.totalValue != null && qtyLine > 1 ? s.totalValue * qtyLine : s.totalValue)}
+              />
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** Chip compacto para ajustes BONUS/SURCHARGE en la columna AJUSTE. */
+function AdjustmentChip({
+  kind, type, value, amount, currency,
+}: {
+  kind:     "BONUS" | "SURCHARGE";
+  type:     "PERCENTAGE" | "FIXED_AMOUNT" | null;
+  value:    number | null;
+  amount:   number;
+  currency: string;
+}) {
+  const sign = kind === "BONUS" ? "−" : "+";
+  const cls  = kind === "BONUS"
+    ? "text-emerald-600 dark:text-emerald-400"
+    : "text-amber-600 dark:text-amber-400";
+  return (
+    <span className={cls}>
+      {type === "PERCENTAGE" && value != null && (
+        <span className="text-muted/70 mr-0.5">{value}%</span>
+      )}
+      {sign}{fmtMoney(Math.abs(amount), currency)}
+    </span>
   );
 }
 

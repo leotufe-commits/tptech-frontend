@@ -46,12 +46,25 @@ export type GroupingHechuraInput = {
   lineLabel:         string | null;
 };
 
-/** Mínimo común de PRODUCT/SERVICE para grouping (solo campos usados en
- *  agregación). El call site puede pasar items con más campos — TS los
- *  ignora estructuralmente. */
+/** Mínimo común de PRODUCT/SERVICE para grouping. Incluye campos que la
+ *  UI lee en sus filas (passthrough estructural — el helper no los usa
+ *  internamente, pero al exportarlos en el output evitamos que TS los
+ *  borre con generics). El call site puede pasar items con más campos —
+ *  todos esos extras también pasan al output sin filtrar. */
 export type GroupingProductServiceInput = {
   costLineId:       string | null;
   totalValue:       number;
+  catalogItemId?:   string | null;
+  catalogItemCode?: string | null;
+  catalogItemName?: string | null;
+  quantity?:        number;
+  unitValue?:       number;
+  currencyId?:      string | null;
+  lineAdjKind?:     "BONUS" | "SURCHARGE" | null;
+  lineAdjType?:     "PERCENTAGE" | "FIXED_AMOUNT" | null;
+  lineAdjValue?:    number | null;
+  lineAdjAmount?:   number | null;
+  affectsStock?:    boolean | null;
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
