@@ -952,6 +952,12 @@ function applySalePreviewToDraft(
         // y otros consumidores. El backend ya lo emite per-line desde
         // Fase 2A.7; antes lo descartábamos.
         composition:             (pl as any).composition ?? null,
+        // F1.4 G5 #11-C — overrides per costLineId aplicados al preview
+        // y warnings internos. Passthrough puro: la tabla editable
+        // (11-D) los consumirá indexado por `costLineId` para
+        // `onChange(costLineId, patch)`. Sin UI nueva en 11-C.
+        costLineOverridesApplied: (pl as any).costLineOverridesApplied ?? undefined,
+        debugWarnings:            (pl as any).debugWarnings            ?? undefined,
         partial:                 false,
         taxBreakdown:            (pl.taxBreakdown ?? []).map((tb: any) => ({
           name:      tb?.name      ?? "",

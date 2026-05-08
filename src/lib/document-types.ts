@@ -395,6 +395,30 @@ export interface DocumentLine {
       hechura?:      { original: number | null; applied: number | null; manual: boolean };
     } | null;
     /**
+     * F1.4 G5 #11-C — overrides per costLineId persistidos en snapshot v6+.
+     * La tabla editable futura (11-D) lee/escribe acá indexado por
+     * `costLineId`. Snapshots v5 y anteriores se normalizan a `undefined`.
+     */
+    costLineOverridesApplied?: Array<{
+      costLineId:        string;
+      type:              "METAL" | "HECHURA" | "PRODUCT" | "SERVICE";
+      quantityOverride?:    number | null;
+      unitValueOverride?:   number | null;
+      mermaPercentOverride?: number | null;
+      adjustmentKind?:   "BONUS" | "SURCHARGE" | null;
+      adjustmentType?:   "PERCENTAGE" | "FIXED_AMOUNT" | null;
+      adjustmentValue?:  number | null;
+    }>;
+    /** F1.4 G5 #11-C — warnings internos (debug only, NO UI). */
+    debugWarnings?: Array<{
+      code:        "COST_LINE_OVERRIDE_NOT_FOUND"
+                 | "COST_LINE_OVERRIDE_TYPE_MISMATCH"
+                 | "COST_LINE_OVERRIDE_INVALID_FIELD";
+      message:     string;
+      costLineId?: string | null;
+      context?:    Record<string, unknown>;
+    }>;
+    /**
      * Estructura plana de composición (METAL / HECHURA / IMPUESTOS). Lo
      * arma el backend en `composition`. La UI lo consume directo para los
      * 3 bloques del panel, sin recombinar.

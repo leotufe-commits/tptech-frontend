@@ -55,6 +55,9 @@ import type {
   NormalizedComponentSaleAdjustment,
   NormalizedComponentSaleDetail,
   NormalizedCostOverrideContext,
+  // F1.4 G5 #11-C
+  NormalizedCostLineOverride,
+  NormalizedDebugWarning,
   NormalizedStackingMode,
   // Paso 6
   NormalizedCostComponent,
@@ -381,6 +384,84 @@ function normalizeComponentSaleBreakdown(raw: any): NormalizedComponentSaleDetai
   return { metal: normComp(raw.metal), hechura: normComp(raw.hechura) };
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// F1.4 G5 #11-C — normalizadores de costLineOverrides + debugWarnings
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Set cerrado de tipos válidos para CostLineOverride.type. */
+const VALID_OV_TYPES = new Set(["METAL", "HECHURA", "PRODUCT", "SERVICE"]);
+/** Set cerrado de codes válidos para DebugWarning.code. */
+const VALID_WARN_CODES = new Set([
+  "COST_LINE_OVERRIDE_NOT_FOUND",
+  "COST_LINE_OVERRIDE_TYPE_MISMATCH",
+  "COST_LINE_OVERRIDE_INVALID_FIELD",
+]);
+
+/**
+ * F1.4 G5 #11-C — normaliza el array `costLineOverridesApplied` raw del
+ * backend. SIEMPRE devuelve array (vacío si raw no es iterable).
+ *
+ * Defaults seguros (snapshot v5/anteriores → []):
+ *   · raw no array → []
+ *   · entry sin costLineId válido → ignorado (silencioso)
+ *   · entry con type fuera del set → ignorado
+ *   · campos numéricos no finitos → null
+ *   · adjustmentKind/Type fuera del set → null
+ *
+ * Cero matemática derivada (POLICY R4.5): passthrough estructural.
+ */
+function normalizeCostLineOverrides(raw: any): NormalizedCostLineOverride[] {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .map((it: any): NormalizedCostLineOverride | null => {
+      if (!it || typeof it.costLineId !== "string" || it.costLineId.length === 0) return null;
+      if (!VALID_OV_TYPES.has(it.type)) return null;
+      const adjKind  = it.adjustmentKind === "BONUS" || it.adjustmentKind === "SURCHARGE"
+        ? it.adjustmentKind
+        : (it.adjustmentKind === null ? null : null);
+      const adjType  = it.adjustmentType === "PERCENTAGE" || it.adjustmentType === "FIXED_AMOUNT"
+        ? it.adjustmentType
+        : (it.adjustmentType === null ? null : null);
+      const num = (v: unknown): number | null =>
+        v != null && Number.isFinite(Number(v)) ? Number(v) : null;
+      return {
+        costLineId:           it.costLineId,
+        type:                 it.type as NormalizedCostLineOverride["type"],
+        quantityOverride:     num(it.quantityOverride),
+        unitValueOverride:    num(it.unitValueOverride),
+        mermaPercentOverride: num(it.mermaPercentOverride),
+        adjustmentKind:       adjKind,
+        adjustmentType:       adjType,
+        adjustmentValue:      num(it.adjustmentValue),
+      };
+    })
+    .filter((x): x is NormalizedCostLineOverride => x !== null);
+}
+
+/**
+ * F1.4 G5 #11-C — normaliza `debugWarnings`. SIEMPRE array (vacío default).
+ * Defensivo: codes fuera del set se mapean a INVALID_FIELD para no perder
+ * la entrada, pero esto no debería ocurrir si backend respeta el contrato.
+ */
+function normalizeDebugWarnings(raw: any): NormalizedDebugWarning[] {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .map((w: any): NormalizedDebugWarning | null => {
+      if (!w || typeof w.message !== "string") return null;
+      const code = VALID_WARN_CODES.has(w.code)
+        ? (w.code as NormalizedDebugWarning["code"])
+        : null;
+      if (!code) return null;
+      return {
+        code,
+        message:    w.message,
+        costLineId: typeof w.costLineId === "string" ? w.costLineId : null,
+        context:    w.context && typeof w.context === "object" ? w.context : undefined,
+      };
+    })
+    .filter((x): x is NormalizedDebugWarning => x !== null);
+}
+
 function normalizeCostOverrideContext(raw: any): NormalizedCostOverrideContext | null {
   if (!raw) return null;
   const pickEntry = (e: any) => e
@@ -622,6 +703,11 @@ export function normalizeArticlePricingPreview(
     metalHechuraBreakdown:  normalizeMetalHechuraBreakdown(result.metalHechuraBreakdown),
     componentSaleBreakdown: normalizeComponentSaleBreakdown((result as any).componentSaleBreakdown),
     costOverrideContext:    normalizeCostOverrideContext(result.costOverrideContext),
+
+    // F1.4 G5 #11-C — overrides per costLineId aplicados + warnings.
+    // Snapshots v5/v3/v4 sin estos campos → arrays vacíos.
+    costLineOverridesApplied: normalizeCostLineOverrides((result as any).costLineOverridesApplied),
+    debugWarnings:            normalizeDebugWarnings((result as any).debugWarnings),
 
     // Paso 6 — componentes PRODUCT/SERVICE desde steps[] raw del motor.
     // articles/pricing-preview expone `result.steps` a nivel raíz (1 línea).
@@ -937,6 +1023,12 @@ function normalizeSalesLine(l: SalePreviewLine): NormalizedPricingLine {
     // `steps` al SalePreviewLine) para popular este campo.
     products: extractCostComponents((l as any).steps, "PRODUCT"),
     services: extractCostComponents((l as any).steps, "SERVICE"),
+
+    // F1.4 G5 #11-C — overrides per costLineId aplicados + warnings.
+    // Backend sales/preview los expone a nivel línea (mismo patrón que
+    // articles). Snapshots v5/anteriores → arrays vacíos.
+    costLineOverridesApplied: normalizeCostLineOverrides((l as any).costLineOverridesApplied),
+    debugWarnings:            normalizeDebugWarnings((l as any).debugWarnings),
   };
 }
 

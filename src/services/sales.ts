@@ -477,6 +477,49 @@ export type SalePreviewLine = {
   }>;
   /** Eco del override de lista efectivamente aplicado a esta línea. */
   priceListIdOverride?: string | null;
+  /**
+   * F1.4 G5 #11-C — overrides per costLineId aplicados efectivamente al
+   * preview (post-validación, post-merge legacy/explicit). Espejo de
+   * `SalePriceResult.costLineOverridesApplied` del backend.
+   *
+   * Passthrough puro (POLICY R4.5): la UI lee y muestra; cero recálculo.
+   * En 11-C es solo plumbing — la tabla editable (11-D) consumirá este
+   * array para indexar inputs por `costLineId` (NO por row index).
+   */
+  costLineOverridesApplied?: CostLineOverride[];
+  /**
+   * F1.4 G5 #11-C — warnings internos del motor sobre overrides inválidos.
+   * NO se mezclan con `policy.blockingAlerts` (negocio) ni `taxBreakdown`.
+   * Diagnóstico interno — la UI normal los ignora; un debug panel
+   * futuro podría mostrarlos.
+   */
+  debugWarnings?: DebugWarning[];
+};
+
+/**
+ * F1.4 G5 #11-C — espejo frontend del CostLineOverride backend.
+ * Misma estructura — tipos discriminados explícitos para que el TS
+ * compiler garantice el shape del payload que va al backend.
+ */
+export type CostLineOverride = {
+  costLineId:        string;
+  type:              "METAL" | "HECHURA" | "PRODUCT" | "SERVICE";
+  quantityOverride?:    number | null;
+  unitValueOverride?:   number | null;
+  mermaPercentOverride?: number | null;
+  adjustmentKind?:   "BONUS" | "SURCHARGE" | null;
+  adjustmentType?:   "PERCENTAGE" | "FIXED_AMOUNT" | null;
+  adjustmentValue?:  number | null;
+};
+
+/** F1.4 G5 #11-C — espejo frontend de DebugWarning backend. */
+export type DebugWarning = {
+  code:        "COST_LINE_OVERRIDE_NOT_FOUND"
+             | "COST_LINE_OVERRIDE_TYPE_MISMATCH"
+             | "COST_LINE_OVERRIDE_INVALID_FIELD";
+  message:     string;
+  costLineId?: string | null;
+  context?:    Record<string, unknown>;
 };
 
 /** Totales del documento — fuente única de verdad calculada por

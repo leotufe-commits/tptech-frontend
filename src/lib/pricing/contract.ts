@@ -499,6 +499,32 @@ export type NormalizedCostOverrideContext = {
   hechura?:      { original: number | null; applied: number | null; manual: boolean };
 };
 
+/**
+ * F1.4 G5 #11-C — espejo normalizado del CostLineOverride backend.
+ * Override per costLineId. La tabla editable (11-D) consume este array
+ * indexado por `costLineId` (NUNCA por row index).
+ */
+export type NormalizedCostLineOverride = {
+  costLineId:        string;
+  type:              "METAL" | "HECHURA" | "PRODUCT" | "SERVICE";
+  quantityOverride:    number | null;
+  unitValueOverride:   number | null;
+  mermaPercentOverride: number | null;
+  adjustmentKind:    "BONUS" | "SURCHARGE" | null;
+  adjustmentType:    "PERCENTAGE" | "FIXED_AMOUNT" | null;
+  adjustmentValue:   number | null;
+};
+
+/** F1.4 G5 #11-C — warning interno del motor sobre overrides inválidos. */
+export type NormalizedDebugWarning = {
+  code:        "COST_LINE_OVERRIDE_NOT_FOUND"
+             | "COST_LINE_OVERRIDE_TYPE_MISMATCH"
+             | "COST_LINE_OVERRIDE_INVALID_FIELD";
+  message:     string;
+  costLineId:  string | null;
+  context?:    Record<string, unknown>;
+};
+
 /** Modo de stacking cuando coexisten descuento por cantidad y promoción. */
 export type NormalizedStackingMode = "CHAINED" | "BEST_OF_QD" | "BEST_OF_PROMO" | "NONE";
 
@@ -594,6 +620,17 @@ export type NormalizedPricingLine = {
   products: NormalizedCostComponent[];
   /** Líneas de costo tipo SERVICE (servicios referenciados como insumo). */
   services: NormalizedCostComponent[];
+
+  // ── F1.4 G5 #11-C — overrides per costLineId (plumbing puro) ────────────
+  /** Overrides aplicados al preview, indexados por costLineId. SIEMPRE
+   *  array (vacío cuando no hay overrides). La tabla editable (11-D)
+   *  los consume indexado por `costLineId` para `onChange(costLineId, patch)`.
+   *
+   *  Snapshot v6+: viene poblado del backend.
+   *  Snapshot v5 y anteriores: array vacío (retrocompat). */
+  costLineOverridesApplied: NormalizedCostLineOverride[];
+  /** Warnings internos del motor (debug only — la UI normal los ignora). */
+  debugWarnings: NormalizedDebugWarning[];
 };
 
 /** Línea individual de la composición de costo (PRODUCT o SERVICE). */
