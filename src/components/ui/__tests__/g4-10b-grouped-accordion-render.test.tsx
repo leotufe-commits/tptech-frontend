@@ -100,8 +100,11 @@ describe("F1.3 #10-B — METAL accordion grupal", () => {
     render(<LineAdvancedOverridesPanel line={line} {...baseProps} />);
     // 1 solo accordion "Metal" (no se duplica con METAL 1 / METAL 2).
     expect(screen.getAllByText("Metal")).toHaveLength(1);
-    // Header muestra 1 variante + total gramos (1.30 + 0.80 = 2.10 g).
-    expect(screen.getByText(/^Líneas:?$/)).toBeInTheDocument();
+    // Header inline muestra "Líneas: 2" (normalizando whitespace).
+    expect(
+      screen.getByText((_, el) => el?.textContent === "Líneas: 2")
+    ).toBeInTheDocument();
+    // Y "Total gramos: 2.10 g".
     expect(screen.getByText(/2\.10 g/)).toBeInTheDocument();
   });
 
@@ -126,12 +129,13 @@ describe("F1.3 #10-B — METAL accordion grupal", () => {
     });
     render(<LineAdvancedOverridesPanel line={line} {...baseProps} />);
     expect(screen.getByText("Metal")).toBeInTheDocument();
-    // Header "Variantes: 2"
-    expect(screen.getByText(/^Variantes:?$/)).toBeInTheDocument();
-    expect(screen.getByText("2")).toBeInTheDocument();
-    // Sub-resumen aparece como InfoItems "Oro 18k: 1.30 g" y "Plata 925: 0.50 g".
-    expect(screen.getByText(/^Oro 18k:?$/)).toBeInTheDocument();
-    expect(screen.getByText(/^Plata 925:?$/)).toBeInTheDocument();
+    // Header inline "Variantes: 2".
+    expect(
+      screen.getByText((_, el) => el?.textContent === "Variantes: 2")
+    ).toBeInTheDocument();
+    // Sub-resumen "Oro 18k: 1.30 g" y "Plata 925: 0.50 g" en chips inline.
+    expect(screen.getByText(/Oro 18k:/)).toBeInTheDocument();
+    expect(screen.getByText(/Plata 925:/)).toBeInTheDocument();
     // Total agregado = 1.30 + 0.50 = 1.80 g.
     expect(screen.getByText(/1\.80 g/)).toBeInTheDocument();
   });
@@ -195,8 +199,10 @@ describe("F1.3 #10-B — HECHURA accordion grupal", () => {
     render(<LineAdvancedOverridesPanel line={line} {...baseProps} />);
     // 1 solo accordion "Hechura".
     expect(screen.getAllByText("Hechura")).toHaveLength(1);
-    // Header muestra 2 líneas + total (200 + 150 = 350).
-    expect(screen.getByText(/^Líneas:?$/)).toBeInTheDocument();
+    // Header inline "Conceptos: 2 · Líneas: 2 · Total: AR$ 350,00".
+    expect(
+      screen.getByText((_, el) => el?.textContent === "Conceptos: 2")
+    ).toBeInTheDocument();
     expect(screen.getByText(/350/)).toBeInTheDocument();
     // Expandir: aparecen lines individuales + texto sutil.
     const header = findHeaderByTitle("Hechura");
@@ -254,9 +260,10 @@ describe("F1.3 #10-B — PRODUCTO / SERVICIO accordions", () => {
     });
     render(<LineAdvancedOverridesPanel line={line} {...baseProps} />);
     expect(screen.getByText("Producto")).toBeInTheDocument();
-    expect(screen.getByText(/^Items:?$/)).toBeInTheDocument();
-    // 2 items en header, total 100 + 80 = 180.
-    expect(screen.getByText("2")).toBeInTheDocument();
+    // Header inline "Items: 2 · Total: AR$ 180,00".
+    expect(
+      screen.getAllByText((_, el) => el?.textContent === "Items: 2").length
+    ).toBeGreaterThanOrEqual(1);
     expect(screen.getByText(/180/)).toBeInTheDocument();
     // Colapsado: items individuales NO visibles aún.
     expect(screen.queryByText("Zafiro 0.5ct")).toBeNull();
@@ -348,9 +355,12 @@ describe("F1.3 #10-B — cero cambio numérico (regression)", () => {
   it("baseline correct: snapshot SIN metals/hechuras arrays (v4 legacy) → renderea solo el alias", () => {
     const line = makeLine();
     render(<LineAdvancedOverridesPanel line={line} {...baseProps} />);
-    // 1 accordion Metal + 1 accordion Hechura (sin numeración / sin agregados extra).
+    // 1 accordion Metal + 1 accordion Hechura (sin chips de variantes/conceptos).
     expect(screen.getByText("Metal")).toBeInTheDocument();
     expect(screen.getByText("Hechura")).toBeInTheDocument();
-    expect(screen.queryByText(/^Variantes:?$/)).toBeNull();
+    // No hay header agregado de "Variantes: N" porque editor inline está activo.
+    expect(
+      screen.queryByText((_, el) => el?.textContent === "Variantes: 1")
+    ).toBeNull();
   });
 });

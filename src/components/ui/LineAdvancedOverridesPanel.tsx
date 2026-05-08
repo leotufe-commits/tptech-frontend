@@ -21,7 +21,12 @@
 // ============================================================================
 
 import React, { useState, useEffect, useRef } from "react";
-import { RotateCcw, X as XIcon, ChevronDown, ChevronRight } from "lucide-react";
+import {
+  RotateCcw, X as XIcon, ChevronDown, ChevronRight,
+  // F1.3 G4.x #10-C — iconos por grupo (mockup ERP financiero).
+  Gem, Hammer, Package, Wrench,
+} from "lucide-react";
+import type { LucideIcon } from "lucide-react";
 
 import TPNumberInput from "./TPNumberInput";
 import { cn } from "./tp";
@@ -588,6 +593,7 @@ export function LineAdvancedOverridesPanel({
                 aggregate={grouped.hechurasAggregate}
                 qtyLine={qtyLine}
                 currency={currency}
+                metaHechuraSale={meta.hechuraSale ?? null}
               />
             )}
 
@@ -984,6 +990,121 @@ function SaleColumn({
 }
 
 /**
+ * F1.3 G4.x #10-C — header de grupo estilo ERP financiero.
+ *
+ * Render compacto: ícono coloreado + título + sub-resumen + total venta a
+ * la derecha + chevron. Animación suave en expand/collapse via
+ * `grid-template-rows` (sin layout jumps).
+ *
+ * Reader-only: cero matemática derivada. Todos los valores agregados son
+ * passthrough del helper `groupCompositionItems` (Decimal-safe).
+ */
+type GroupAccordionTone = "amber" | "blue" | "green" | "purple";
+
+const TONE_CLS: Record<GroupAccordionTone, { icon: string; ring: string; bg: string }> = {
+  amber:  { icon: "text-amber-600 dark:text-amber-400",   ring: "ring-amber-500/20",   bg: "bg-amber-500/10"   },
+  blue:   { icon: "text-blue-600 dark:text-blue-400",     ring: "ring-blue-500/20",    bg: "bg-blue-500/10"    },
+  green:  { icon: "text-emerald-600 dark:text-emerald-400", ring: "ring-emerald-500/20", bg: "bg-emerald-500/10" },
+  purple: { icon: "text-purple-600 dark:text-purple-400", ring: "ring-purple-500/20",  bg: "bg-purple-500/10"  },
+};
+
+function GroupAccordion({
+  Icon, tone, title, manual,
+  summary, rightValue, rightSub,
+  children, defaultExpanded = false,
+}: {
+  Icon:            LucideIcon;
+  tone:            GroupAccordionTone;
+  title:           string;
+  manual?:         boolean;
+  /** Sub-resumen agregado: "Variantes: 4 · Líneas: 4 · Total gramos: 4.50 g" */
+  summary:         React.ReactNode;
+  /** Valor monetario destacado a la derecha (ej. "Valor venta: AR$ X"). */
+  rightValue?:     React.ReactNode;
+  /** Sub-info debajo del rightValue (opcional). */
+  rightSub?:       React.ReactNode;
+  children?:       React.ReactNode;
+  defaultExpanded?: boolean;
+}) {
+  const [expanded, setExpanded] = useState(defaultExpanded);
+  const cls = TONE_CLS[tone];
+  const isCollapsible = !!children;
+  return (
+    <div className="min-w-0">
+      <button
+        type="button"
+        disabled={!isCollapsible}
+        onClick={() => isCollapsible && setExpanded(v => !v)}
+        aria-expanded={expanded}
+        aria-label={expanded ? `Colapsar ${title}` : `Expandir ${title}`}
+        className={cn(
+          "group flex w-full items-center gap-2 rounded text-left",
+          "py-1 pr-1 pl-0.5",
+          isCollapsible && "hover:bg-surface2/40",
+        )}
+      >
+        {/* Chevron — afuera del badge para que el badge se vea limpio. */}
+        {isCollapsible ? (
+          expanded
+            ? <ChevronDown size={11} className="shrink-0 text-muted/60" />
+            : <ChevronRight size={11} className="shrink-0 text-muted/60" />
+        ) : (
+          <span className="w-[11px] shrink-0" aria-hidden />
+        )}
+        {/* Badge del ícono (color por grupo). */}
+        <span
+          className={cn(
+            "inline-flex h-6 w-6 shrink-0 items-center justify-center rounded ring-1",
+            cls.bg, cls.ring,
+          )}
+          aria-hidden
+        >
+          <Icon size={13} className={cls.icon} />
+        </span>
+        {/* Título + manual badge + sub-resumen. */}
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-1.5">
+            <span className="text-[10px] font-semibold uppercase tracking-wide text-muted/80">
+              {title}
+            </span>
+            {manual && (
+              <span className="rounded bg-surface2 px-1 text-[8px] uppercase tracking-wide text-muted/80">
+                Manual
+              </span>
+            )}
+          </div>
+          {summary && (
+            <div className="mt-0.5 text-[10.5px] text-muted/85 leading-tight">
+              {summary}
+            </div>
+          )}
+        </div>
+        {/* Valor monetario a la derecha. */}
+        {rightValue != null && (
+          <div className="text-right shrink-0 pl-2">
+            <div className="text-[11px] font-semibold tabular-nums text-text">
+              {rightValue}
+            </div>
+            {rightSub && (
+              <div className="text-[9px] text-muted/65 tabular-nums">{rightSub}</div>
+            )}
+          </div>
+        )}
+      </button>
+      {/* Detail expandible — conditional render para que el detail no
+          aparezca en DOM cuando el accordion está colapsado (mejor para
+          accesibilidad + tests). Sin animación de altura para evitar
+          layout jumps en panels densos.  */}
+      {isCollapsible && expanded && (
+        <div className="pl-9 pr-1 pt-1 pb-1">
+          {children}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
  * F1.3 G4.x #10-B — accordion grupal de METAL.
  *
  * Header (siempre visible):
@@ -1001,7 +1122,7 @@ function SaleColumn({
  *     (regla del usuario — no mostrar ruido innecesario).
  */
 function GroupedMetalAccordion({
-  groups, totalLineCount, totalGrams, totalLineCost,
+  groups, totalLineCount, totalGrams, totalLineCost: _totalLineCost,
   qtyLine, currency, metaMetalSale,
 }: {
   groups:         ReturnType<typeof groupCompositionItems>["metals"];
@@ -1014,137 +1135,79 @@ function GroupedMetalAccordion({
 }) {
   const variantCount = groups.length;
   const isMultiVariant = variantCount >= 2;
-  // Default collapsed cuando count cost-lines >= 2.
   const defaultExpanded = totalLineCount === 1;
+  // Sub-resumen del header (string compacto financiero).
+  const summaryText = (
+    <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+      <span>
+        {isMultiVariant
+          ? `Variantes: ${variantCount}`
+          : `Líneas: ${totalLineCount}`}
+      </span>
+      {totalGrams != null && (
+        <>
+          <span className="text-muted/40">·</span>
+          <span>Total gramos: <span className="font-medium text-text/90 tabular-nums">{totalGrams.toFixed(2)} g</span></span>
+        </>
+      )}
+      {/* Chips de subgrupos cuando hay múltiples variantes. */}
+      {isMultiVariant && groups.map(g => (
+        <span key={`m-chip-${g.groupKey}`} className="text-muted/85">
+          <span className="text-muted/40 mr-2">·</span>
+          {g.metalName ?? g.purityLabel ?? "—"}:{" "}
+          <span className="tabular-nums text-text/90">
+            {g.totalAppliedGrams != null ? `${g.totalAppliedGrams.toFixed(2)} g` : "—"}
+          </span>
+        </span>
+      ))}
+    </div>
+  );
+  const rightValue = metaMetalSale != null
+    ? <>Valor venta: <span className="text-text">{fmtMoney(metaMetalSale, currency)}</span></>
+    : null;
+  const rightSub = metaMetalSale != null && qtyLine > 1
+    ? <>Total: {fmtMoney(metaMetalSale * qtyLine, currency)}</>
+    : null;
+
   return (
-    <SaleColumn
+    <GroupAccordion
+      Icon={Gem}
+      tone="amber"
       title="Metal"
+      summary={summaryText}
+      rightValue={rightValue}
+      rightSub={rightSub}
       defaultExpanded={defaultExpanded}
-      summary={
-        <InfoLineRow>
-          <InfoItem
-            label={isMultiVariant ? "Variantes" : "Líneas"}
-            value={String(isMultiVariant ? variantCount : totalLineCount)}
-          />
-          {totalGrams != null && (
-            <InfoItem
-              label="Total gramos"
-              value={`${totalGrams.toFixed(2)} g`}
-            />
-          )}
-          {totalGrams != null && qtyLine > 1 && (
-            <InfoItem
-              label="Gramos doc."
-              value={`${(totalGrams * qtyLine).toFixed(2)} g`}
-            />
-          )}
-          {/* Sub-resumen "Oro 18k: 2.30 g · Plata 925: 0.50 g" cuando
-              hay múltiples variantes. Cada chip = 1 sub-grupo. */}
-          {isMultiVariant && groups.map(g => (
-            <InfoItem
-              key={`m-summary-${g.groupKey}`}
-              label={g.metalName ?? g.purityLabel ?? "—"}
-              value={g.totalAppliedGrams != null
-                ? `${g.totalAppliedGrams.toFixed(2)} g`
-                : "—"}
-            />
-          ))}
-          {/* Total venta agregado solo cuando viene del backend. */}
-          {metaMetalSale != null && (
-            <InfoItem
-              label="Valor venta"
-              value={fmtMoney(metaMetalSale, currency)}
-              highlight
-            />
-          )}
-          {metaMetalSale != null && qtyLine > 1 && (
-            <InfoItem
-              label="Total metal"
-              value={fmtMoney(metaMetalSale * qtyLine, currency)}
-              highlight
-            />
-          )}
-        </InfoLineRow>
-      }
-      detail={
-        <div className="flex flex-col gap-1.5 text-[11px]">
-          {groups.map(g => (
-            <div key={`m-detail-${g.groupKey}`} className="space-y-0.5">
-              {/* Header de sub-grupo: variante + count + total. */}
-              <InfoLineRow>
-                <InfoItem
-                  label="Variante"
-                  value={
-                    <span className="font-semibold text-text">
-                      {g.metalName ?? "—"}
-                      {g.purityLabel && (
-                        <span className="ml-1 text-muted">{g.purityLabel}</span>
-                      )}
-                    </span>
-                  }
-                />
-                <InfoItem label="Líneas" value={String(g.count)} />
-                {g.totalAppliedGrams != null && (
-                  <InfoItem
-                    label="Gramos"
-                    value={`${g.totalAppliedGrams.toFixed(2)} g`}
-                  />
-                )}
-                {g.appliedMermaPct === VARIES ? (
-                  <InfoItem label="Merma" value="varias" />
-                ) : g.appliedMermaPct != null ? (
-                  <InfoItem
-                    label="Merma"
-                    value={`${(g.appliedMermaPct as number).toFixed(2)}%`}
-                  />
-                ) : null}
-                {g.totalLineCost != null && (
-                  <InfoItem
-                    label="Costo"
-                    value={fmtMoney(g.totalLineCost, currency)}
-                    highlight
-                  />
-                )}
-              </InfoLineRow>
-              {/* Lines individuales del sub-grupo (cuando >1). */}
-              {g.count > 1 && (
-                <div className="ml-3 space-y-0.5">
-                  {g.items.map((it, j) => (
-                    <InfoLineRow key={`m-line-${g.groupKey}-${it.costLineId ?? j}`}>
-                      {it.appliedGrams != null && (
-                        <InfoItem
-                          label="Gramos"
-                          value={`${it.appliedGrams.toFixed(2)} g`}
-                        />
-                      )}
-                      {it.appliedMermaPct != null && (
-                        <InfoItem
-                          label="Merma"
-                          value={`${it.appliedMermaPct.toFixed(2)}%`}
-                        />
-                      )}
-                      {it.lineCost != null && (
-                        <InfoItem
-                          label="Costo"
-                          value={fmtMoney(it.lineCost, currency)}
-                        />
-                      )}
-                    </InfoLineRow>
-                  ))}
-                </div>
-              )}
-            </div>
-          ))}
-          {/* Texto sutil — solo cuando el grupo total tiene >1 line
-              (regla del usuario: no mostrar innecesariamente). */}
-          {totalLineCount > 1 && (
-            <div className="text-[10px] italic text-muted/60">
-              Editar desde la ficha del artículo
-            </div>
-          )}
-        </div>
-      }
-    />
+    >
+      {/* Tabla compacta de sub-grupos. */}
+      <div className="space-y-1.5 text-[11px]">
+        {groups.map(g => (
+          <div key={`m-detail-${g.groupKey}`} className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5">
+            <span className="font-semibold text-text">
+              {g.metalName ?? "—"}
+              {g.purityLabel && <span className="ml-1 font-normal text-muted">{g.purityLabel}</span>}
+            </span>
+            <span className="text-muted">Líneas: <span className="tabular-nums text-text/90">{g.count}</span></span>
+            {g.totalAppliedGrams != null && (
+              <span className="text-muted">Gramos: <span className="tabular-nums text-text/90">{g.totalAppliedGrams.toFixed(2)} g</span></span>
+            )}
+            {g.appliedMermaPct === VARIES ? (
+              <span className="text-muted">Merma: <span className="text-text/90">varias</span></span>
+            ) : g.appliedMermaPct != null ? (
+              <span className="text-muted">Merma: <span className="tabular-nums text-text/90">{(g.appliedMermaPct as number).toFixed(2)}%</span></span>
+            ) : null}
+            {g.totalLineCost != null && (
+              <span className="text-muted">Costo: <span className="tabular-nums font-medium text-text">{fmtMoney(g.totalLineCost, currency)}</span></span>
+            )}
+          </div>
+        ))}
+        {totalLineCount > 1 && (
+          <div className="pt-0.5 text-[10px] italic text-muted/60">
+            Editar desde la ficha del artículo
+          </div>
+        )}
+      </div>
+    </GroupAccordion>
   );
 }
 
@@ -1155,65 +1218,66 @@ function GroupedMetalAccordion({
  * plana de items + agregado simple en header.
  */
 function GroupedHechuraAccordion({
-  items, aggregate, qtyLine, currency,
+  items, aggregate, qtyLine, currency, metaHechuraSale,
 }: {
-  items:     ReturnType<typeof groupCompositionItems>["hechuras"];
-  aggregate: ReturnType<typeof groupCompositionItems>["hechurasAggregate"];
-  qtyLine:   number;
-  currency:  string;
+  items:           ReturnType<typeof groupCompositionItems>["hechuras"];
+  aggregate:       ReturnType<typeof groupCompositionItems>["hechurasAggregate"];
+  qtyLine:         number;
+  currency:        string;
+  metaHechuraSale: number | null;
 }) {
   const defaultExpanded = aggregate.count === 1;
+  const summaryText = (
+    <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+      <span>Conceptos: <span className="font-medium text-text/90 tabular-nums">{aggregate.count}</span></span>
+      <span className="text-muted/40">·</span>
+      <span>Líneas: <span className="font-medium text-text/90 tabular-nums">{aggregate.count}</span></span>
+    </div>
+  );
+  const rightValue = metaHechuraSale != null
+    ? <>Valor venta: <span className="text-text">{fmtMoney(metaHechuraSale, currency)}</span></>
+    : (aggregate.totalLineCost != null
+        ? <>Costo: <span className="text-text">{fmtMoney(aggregate.totalLineCost, currency)}</span></>
+        : null);
+  const rightSub = metaHechuraSale != null && qtyLine > 1
+    ? <>Total: {fmtMoney(metaHechuraSale * qtyLine, currency)}</>
+    : null;
+
   return (
-    <SaleColumn
+    <GroupAccordion
+      Icon={Hammer}
+      tone="blue"
       title="Hechura"
+      summary={summaryText}
+      rightValue={rightValue}
+      rightSub={rightSub}
       defaultExpanded={defaultExpanded}
-      summary={
-        <InfoLineRow>
-          <InfoItem label="Líneas" value={String(aggregate.count)} />
-          {aggregate.totalLineCost != null && (
-            <InfoItem
-              label="Total"
-              value={fmtMoney(aggregate.totalLineCost, currency)}
-              highlight
-            />
-          )}
-          {aggregate.totalLineCost != null && qtyLine > 1 && (
-            <InfoItem
-              label="Total doc."
-              value={fmtMoney(aggregate.totalLineCost * qtyLine, currency)}
-              highlight
-            />
-          )}
-        </InfoLineRow>
-      }
-      detail={
-        <div className="flex flex-col gap-1 text-[11px]">
-          {items.map((h, i) => (
-            <InfoLineRow key={`h-line-${h.costLineId ?? i}`}>
-              {h.lineLabel && (
-                <InfoItem label="Concepto" value={h.lineLabel} />
-              )}
-              <InfoItem label="Moneda" value={currency || "—"} />
-              {h.appliedAmount != null && (
-                <InfoItem label="Valor" value={fmtMoney(h.appliedAmount, currency)} />
-              )}
-              {h.lineCost != null && (
-                <InfoItem
-                  label="Costo"
-                  value={fmtMoney(h.lineCost, currency)}
-                  highlight
-                />
-              )}
-            </InfoLineRow>
-          ))}
-          {aggregate.count > 1 && (
-            <div className="text-[10px] italic text-muted/60">
-              Editar desde la ficha del artículo
-            </div>
-          )}
-        </div>
-      }
-    />
+    >
+      <div className="space-y-1 text-[11px]">
+        {items.map((h, i) => (
+          <div
+            key={`h-line-${h.costLineId ?? i}`}
+            className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5"
+          >
+            {h.lineLabel && (
+              <span className="font-medium text-text">{h.lineLabel}</span>
+            )}
+            <span className="text-muted">Moneda: <span className="text-text/90">{currency || "—"}</span></span>
+            {h.appliedAmount != null && (
+              <span className="text-muted">Valor: <span className="tabular-nums text-text/90">{fmtMoney(h.appliedAmount, currency)}</span></span>
+            )}
+            {h.lineCost != null && (
+              <span className="text-muted">Costo: <span className="tabular-nums font-medium text-text">{fmtMoney(h.lineCost, currency)}</span></span>
+            )}
+          </div>
+        ))}
+        {aggregate.count > 1 && (
+          <div className="pt-0.5 text-[10px] italic text-muted/60">
+            Editar desde la ficha del artículo
+          </div>
+        )}
+      </div>
+    </GroupAccordion>
   );
 }
 
@@ -1233,131 +1297,89 @@ function GroupedProductServiceAccordion({
   currency:  string;
 }) {
   const title = kind === "PRODUCT" ? "Producto" : "Servicio";
+  const Icon  = kind === "PRODUCT" ? Package : Wrench;
+  const tone: GroupAccordionTone = kind === "PRODUCT" ? "green" : "purple";
   const defaultExpanded = aggregate.count === 1;
+  const summaryText = (
+    <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+      <span>Items: <span className="font-medium text-text/90 tabular-nums">{aggregate.count}</span></span>
+    </div>
+  );
+  const rightValue = aggregate.totalValue != null
+    ? <>Total: <span className="text-text">{fmtMoney(aggregate.totalValue, currency)}</span></>
+    : null;
+  const rightSub = aggregate.totalValue != null && qtyLine > 1
+    ? <>Doc.: {fmtMoney(aggregate.totalValue * qtyLine, currency)}</>
+    : null;
+
   return (
-    <SaleColumn
+    <GroupAccordion
+      Icon={Icon}
+      tone={tone}
       title={title}
+      summary={summaryText}
+      rightValue={rightValue}
+      rightSub={rightSub}
       defaultExpanded={defaultExpanded}
-      summary={
-        <InfoLineRow>
-          <InfoItem label="Items" value={String(aggregate.count)} />
-          {aggregate.totalValue != null && (
-            <InfoItem
-              label="Total"
-              value={fmtMoney(aggregate.totalValue, currency)}
-              highlight
-            />
-          )}
-          {aggregate.totalValue != null && qtyLine > 1 && (
-            <InfoItem
-              label="Total doc."
-              value={fmtMoney(aggregate.totalValue * qtyLine, currency)}
-              highlight
-            />
-          )}
-        </InfoLineRow>
-      }
-      detail={
-        <div className="flex flex-col gap-2">
-          {items.map((it, i) => (
-            <CompositionItemSaleColumn
+    >
+      {/* Tabla compacta — un row por item con campos del mockup. */}
+      <div className="space-y-1 text-[11px]">
+        {items.map((it, i) => {
+          const name = it.catalogItemName ?? it.catalogItemCode ?? "—";
+          const code = it.catalogItemCode && it.catalogItemCode !== name
+            ? it.catalogItemCode : null;
+          // Bonif/Recargo display (passthrough de lineAdjAmount).
+          const adjKind   = it.lineAdjKind   ?? null;
+          const adjType   = it.lineAdjType   ?? null;
+          const adjValue  = it.lineAdjValue  ?? null;
+          const adjAmount = it.lineAdjAmount ?? null;
+          const showAdj   = adjKind != null && adjAmount != null;
+          const adjWord   = adjKind === "BONUS" ? "Bonif." : "Recargo";
+          const adjPct    = adjType === "PERCENTAGE" && adjValue != null
+            ? ` ${adjValue}%` : "";
+          const adjSign   = adjKind === "BONUS" ? "−" : "+";
+          const adjCls    = adjKind === "BONUS" ? "text-emerald-500" : "text-amber-500";
+          return (
+            <div
               key={it.costLineId ?? `${kind.toLowerCase()}-${i}`}
-              kind={kind}
-              item={it}
-              qtyLine={qtyLine}
-              currency={currency}
-            />
-          ))}
-        </div>
-      }
-    />
-  );
-}
-
-/**
- * F1.3 G4.1 #8b — `SaleColumn` especializada para items de
- * composition.products[] / services[]. Mismo patrón visual que las
- * secciones Metal / Hechura: header chico + InfoLineRow read-only.
- *
- * Reader-only (POLICY R4.5):
- *   · totalValue, lineAdjAmount, quantity, unitValue ← backend (passthrough).
- *   · Sin lineAdjAmount → no se muestra fila Bonif./Recargo.
- *   · `Stock: Descuenta` solo si affectsStock === true.
- *   · `Total × qty` solo cuando qtyLine > 1 (paridad con Metal/Hechura).
- *
- * Sin `detail` editable: el motor backend es la única autoridad sobre
- * cantidad/valor/total per cost line.
- */
-function CompositionItemSaleColumn({
-  kind, item, qtyLine, currency,
-}: {
-  kind: "PRODUCT" | "SERVICE";
-  item: NonNullable<NonNullable<DocumentLine["pricingMeta"]>["composition"]>["products"] extends (infer T)[] | undefined ? T : never;
-  qtyLine: number;
-  currency: string;
-}) {
-  const title = kind === "PRODUCT" ? "Producto" : "Servicio";
-  const name  = item.catalogItemName ?? item.catalogItemCode ?? "—";
-  const code  = item.catalogItemCode && item.catalogItemCode !== name
-    ? item.catalogItemCode : null;
-  const qty       = item.quantity   ?? null;
-  const unit      = item.unitValue  ?? null;
-  const total     = item.totalValue ?? null;
-  const adjKind   = item.lineAdjKind   ?? null;
-  const adjType   = item.lineAdjType   ?? null;
-  const adjValue  = item.lineAdjValue  ?? null;
-  const adjAmount = item.lineAdjAmount ?? null;
-  const showAdj   = adjKind != null && adjAmount != null;
-  const adjWord   = adjKind === "BONUS" ? "Bonif." : "Recargo";
-  const adjPct    = adjType === "PERCENTAGE" && adjValue != null
-    ? ` ${adjValue}%` : "";
-  const adjSign   = adjKind === "BONUS" ? "−" : "+";
-  const adjCls    = adjKind === "BONUS" ? "text-emerald-500" : "text-amber-500";
-
-  return (
-    <SaleColumn
-      title={title}
-      summary={
-        <InfoLineRow>
-          <InfoItem label={kind === "PRODUCT" ? "Producto" : "Servicio"} value={name} />
-          {code && <InfoItem label="Código" value={code} />}
-          {qty != null && (
-            <InfoItem label="Cantidad" value={qty.toLocaleString("es-AR", { maximumFractionDigits: 4 })} />
-          )}
-          {unit != null && (
-            <InfoItem label="Unitario" value={fmtMoney(unit, currency)} />
-          )}
-          {total != null && (
-            <InfoItem label="Total" value={fmtMoney(total, currency)} highlight />
-          )}
-          {/* Total × qty — paridad con Metal/Hechura. Display derivation
-              trivial sobre `totalValue × qty`, mismo nivel que
-              `metalSale × qty` ya aceptado. */}
-          {total != null && qtyLine > 1 && (
-            <InfoItem
-              label={`Total ${kind === "PRODUCT" ? "producto" : "servicio"}`}
-              value={fmtMoney(total * qtyLine, currency)}
-              highlight
-            />
-          )}
-          {showAdj && (
-            <InfoItem
-              label={`${adjWord}${adjPct}`}
-              value={
-                <span className={adjCls}>
-                  {adjSign}{fmtMoney(Math.abs(adjAmount as number), currency)}
+              className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5"
+            >
+              <span className="font-medium text-text">{name}</span>
+              {code && (
+                <span className="text-muted">Código: <span className="text-text/90">{code}</span></span>
+              )}
+              {it.quantity != null && (
+                <span className="text-muted">Cantidad: <span className="tabular-nums text-text/90">{it.quantity.toLocaleString("es-AR", { maximumFractionDigits: 4 })}</span></span>
+              )}
+              {it.unitValue != null && (
+                <span className="text-muted">Unitario: <span className="tabular-nums text-text/90">{fmtMoney(it.unitValue, currency)}</span></span>
+              )}
+              {it.totalValue != null && (
+                <span className="text-muted">Total: <span className="tabular-nums font-medium text-text">{fmtMoney(it.totalValue, currency)}</span></span>
+              )}
+              {showAdj && (
+                <span className="text-muted">
+                  {adjWord}{adjPct}:{" "}
+                  <span className={cn("tabular-nums", adjCls)}>
+                    {adjSign}{fmtMoney(Math.abs(adjAmount as number), currency)}
+                  </span>
                 </span>
-              }
-            />
-          )}
-          {item.affectsStock === true && (
-            <InfoItem label="Stock" value="Descuenta" />
-          )}
-        </InfoLineRow>
-      }
-    />
+              )}
+              {it.affectsStock === true && (
+                <span className="text-muted">Stock: <span className="text-text/90">Descuenta</span></span>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </GroupAccordion>
   );
 }
+
+// CompositionItemSaleColumn fue eliminado en F1.3 G4.x #10-C: el render
+// agrupado de PRODUCTO/SERVICIO consume directamente los items dentro de
+// GroupedProductServiceAccordion como filas inline compactas (formato
+// ERP financiero). El componente individual ya no se usaba.
 
 /** Fila horizontal de "label: value" inline. Usada dentro de `SaleColumn`
  *  para mostrar 2-3 datos read-only en una sola línea, separados por gap.
