@@ -466,6 +466,20 @@ export function LineAdvancedOverridesPanel({
               applyCostLinePatch={applyCostLinePatch}
             />
 
+            {/* 4.b AJUSTES GLOBALES — F1.4 #11-E.1.
+                Bloque debajo de la tabla y arriba de RENTABILIDAD.
+                Muestra impacto global REAL: bonificación/recargo de
+                línea (TOTAL appliesTo), canal del documento, cupón.
+                Cero matemática frontend — passthrough de
+                pricingMeta.documentAdjustments (que VentasFacturas
+                arma desde el preview response). NO se distribuye por
+                fila. NO se renderea si todos los campos están null. */}
+            {meta.documentAdjustments && (
+              <DocumentAdjustmentsBlock
+                adjustments={meta.documentAdjustments}
+                currency={currency}
+              />
+            )}
 
             {/* 5. RENTABILIDAD — costo, ganancia y margen en una sola fila.
                 Ganancia $ agregada como derivación trivial (misma justificación
@@ -887,19 +901,17 @@ function CellNumberInput({
   decimals?: number;
   step?:     number;
   suffix?:   React.ReactNode;
-  /** F1.3 #10-H — celda visualmente input pero NO editable. Se aplica
-   *  cuando el override correspondiente NO existe en backend (ej. HECHURA
-   *  cantidad, PRODUCT/SERVICE qty/unitValue). El usuario percibe el mismo
-   *  patrón visual que las celdas editables, con tono atenuado. */
   readOnly?: boolean;
   disabled?: boolean;
-  /** Tooltip para celdas read-only — explica por qué no es editable. */
   tooltip?:  string;
 }) {
+  // F1.4 #11-E.1 — arrows visibles en inputs editables (estándar TPTech).
+  // Read-only: arrows ocultas + opacity-70 + cursor-help + tooltip.
+  const isInteractive = !readOnly && !disabled;
   return (
     <div
       className="inline-flex items-center justify-end"
-      title={readOnly || disabled ? tooltip : undefined}
+      title={!isInteractive ? tooltip : undefined}
     >
       <TPNumberInput
         value={value}
@@ -907,12 +919,13 @@ function CellNumberInput({
         decimals={decimals}
         step={step}
         suffix={suffix}
-        showArrows={false}
+        showArrows={isInteractive}
         readOnly={readOnly}
         disabled={disabled}
         className={cn(
-          "!h-6 !text-[11px] text-right tabular-nums w-[92px]",
-          (readOnly || disabled) && "cursor-help opacity-70",
+          "!h-6 !text-[11px] text-right tabular-nums",
+          isInteractive ? "w-[100px]" : "w-[92px]",
+          !isInteractive && "cursor-help opacity-70",
         )}
         wrapClassName="!w-auto"
       />
@@ -1386,6 +1399,80 @@ function CompositionTable({
           })}
         </div>
       </div>
+    </div>
+  );
+}
+
+/**
+ * F1.4 #11-E.1 — bloque "AJUSTES GLOBALES" debajo de la tabla ERP.
+ *
+ * Reglas:
+ *   · Cero matemática frontend — solo passthrough de los amounts del
+ *     preview backend (`documentAdjustments`).
+ *   · NEGATIVOS (bonif/cupón) → emerald + prefijo "−".
+ *   · POSITIVOS (recargo de canal) → amber + prefijo "+".
+ *   · Si no hay ningún campo con valor, el bloque NO se renderea
+ *     (regla del usuario — sin ruido visual).
+ *   · Compacto: typography 11px, sin cards pesadas, sin backgrounds.
+ */
+function DocumentAdjustmentsBlock({
+  adjustments, currency,
+}: {
+  adjustments: NonNullable<NonNullable<DocumentLine["pricingMeta"]>["documentAdjustments"]>;
+  currency:    string;
+}) {
+  const lineMd = adjustments.lineManualDiscount ?? null;
+  const ch     = adjustments.channel ?? null;
+  const cp     = adjustments.coupon  ?? null;
+  // Si NO hay nada con valor, ocultar el bloque entero.
+  const hasAny = (lineMd && lineMd.amount !== 0) || (ch && ch.amount !== 0) || (cp && cp.amount !== 0);
+  if (!hasAny) return null;
+
+  // Helpers visuales — convención: BONUS/cupón reducen → emerald, signo "−".
+  // Recargo de canal aumenta → amber, signo "+".
+  const fmtAmount = (amount: number, isReducing: boolean) => {
+    const sign = isReducing ? "−" : "+";
+    const cls  = isReducing
+      ? "text-emerald-600 dark:text-emerald-400"
+      : "text-amber-600 dark:text-amber-400";
+    return (
+      <span className={cn("tabular-nums font-semibold", cls)}>
+        {sign}{fmtMoney(Math.abs(amount), currency)}
+      </span>
+    );
+  };
+
+  return (
+    <div className="space-y-0.5 text-[11px]">
+      <div className="text-[9px] font-semibold uppercase tracking-wide text-muted/80">
+        Ajustes globales
+      </div>
+      {lineMd && lineMd.amount !== 0 && (
+        <div className="flex items-baseline justify-between gap-2">
+          <span className="text-muted">
+            Bonificación global{lineMd.valuePct != null && (
+              <span className="ml-1 text-text/90">{lineMd.valuePct.toFixed(2)}%</span>
+            )}
+          </span>
+          {fmtAmount(lineMd.amount, lineMd.kind === "BONUS")}
+        </div>
+      )}
+      {ch && ch.amount !== 0 && (
+        <div className="flex items-baseline justify-between gap-2">
+          <span className="text-muted">
+            Canal <span className="text-text/90">{ch.name}</span>
+          </span>
+          {fmtAmount(ch.amount, ch.amount < 0)}
+        </div>
+      )}
+      {cp && cp.amount !== 0 && (
+        <div className="flex items-baseline justify-between gap-2">
+          <span className="text-muted">
+            Cupón <span className="text-text/90">{cp.name ?? cp.code}</span>
+          </span>
+          {fmtAmount(cp.amount, true)}
+        </div>
+      )}
     </div>
   );
 }

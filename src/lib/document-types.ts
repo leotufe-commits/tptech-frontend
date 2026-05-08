@@ -430,6 +430,39 @@ export interface DocumentLine {
       adjustmentType?:   "PERCENTAGE" | "FIXED_AMOUNT" | null;
       adjustmentValue?:  number | null;
     }>;
+    /**
+     * F1.4 G5 #11-E.1 — ajustes globales del documento que se muestran
+     * debajo de la tabla ERP (bloque "AJUSTES GLOBALES"). Mismo valor
+     * en todas las líneas del draft — viene del preview response.
+     *
+     * Cero matemática frontend: solo passthrough de los amounts del
+     * backend (`documentTotals.channelAdjustmentAmount`,
+     * `documentTotals.couponDiscountAmount`, `manualDiscount` per
+     * línea con appliesTo=TOTAL).
+     *
+     * Si todos los campos son null/0, el bloque NO se renderea.
+     */
+    documentAdjustments?: {
+      /** `meta.manualDiscount` con appliesTo=TOTAL (per línea). Bonif/Recargo
+       *  global de la línea — NO del documento. */
+      lineManualDiscount?: {
+        kind:    "BONUS" | "SURCHARGE";  // BONUS = reduce; SURCHARGE = aumenta
+        valuePct: number | null;          // si mode=PERCENT
+        amount:  number;                  // monto absoluto post-aplicar
+      } | null;
+      /** Canal del documento (mismo en todas las líneas). amount > 0 = recargo,
+       *  amount < 0 = bonif. Convención del backend: amount post-aplicar. */
+      channel?: {
+        name:   string;
+        amount: number;
+      } | null;
+      /** Cupón del documento. amount = monto descontado (positivo). */
+      coupon?: {
+        code:   string;
+        name?:  string;
+        amount: number;
+      } | null;
+    };
     /** F1.4 G5 #11-C — warnings internos (debug only, NO UI). */
     debugWarnings?: Array<{
       code:        "COST_LINE_OVERRIDE_NOT_FOUND"

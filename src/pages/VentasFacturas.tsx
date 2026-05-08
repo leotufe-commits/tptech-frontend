@@ -877,6 +877,26 @@ function applySalePreviewToDraft(
   draft: SalesInvoice,
   preview: SalePreviewResult,
 ): SalesInvoice {
+  // F1.4 #11-E.1 — Ajustes globales del documento. Mismo valor en
+  // todas las líneas (passthrough del preview response). El bloque
+  // "AJUSTES GLOBALES" del panel los muestra con tipografía financiera
+  // emerald/amber. Cero matemática frontend.
+  const docChannel: NonNullable<NonNullable<DocumentLine["pricingMeta"]>["documentAdjustments"]>["channel"] | null =
+    preview.channelResult && Number.isFinite(preview.channelResult.channelAmount)
+      && preview.channelResult.channelAmount !== 0
+      ? { name: preview.channelResult.channelName, amount: preview.channelResult.channelAmount }
+      : null;
+  const docCoupon: NonNullable<NonNullable<DocumentLine["pricingMeta"]>["documentAdjustments"]>["coupon"] | null =
+    preview.couponResult && preview.couponResult.applied
+      && Number.isFinite(preview.couponResult.discountAmount)
+      && preview.couponResult.discountAmount > 0
+      ? {
+          code:   preview.couponResult.couponCode,
+          name:   preview.couponResult.couponName,
+          amount: preview.couponResult.discountAmount,
+        }
+      : null;
+
   let realIdx = 0;
   const previewLines = preview.lines;
   const updatedLines: DocumentLine[] = draft.lines.map((line) => {
@@ -962,6 +982,24 @@ function applySalePreviewToDraft(
         // `onChange(costLineId, patch)`. Sin UI nueva en 11-C.
         costLineOverridesApplied: (pl as any).costLineOverridesApplied ?? undefined,
         debugWarnings:            (pl as any).debugWarnings            ?? undefined,
+        // F1.4 #11-E.1 — ajustes globales del documento (passthrough).
+        documentAdjustments:     {
+          // lineManualDiscount: per línea. Si la línea tiene manualDiscount
+          // con appliesTo=TOTAL, lo exponemos para mostrar en el bloque.
+          lineManualDiscount: (() => {
+            const md = line.pricingMeta?.manualDiscount;
+            if (!md || (md.appliesTo ?? "TOTAL") !== "TOTAL") return null;
+            const lineDisc = Number.isFinite(pl.lineDiscount) ? pl.lineDiscount : 0;
+            if (lineDisc <= 0) return null;
+            return {
+              kind:     "BONUS" as const,   // manualDiscount = reduce precio
+              valuePct: md.mode === "PERCENT" ? md.value : null,
+              amount:   lineDisc,
+            };
+          })(),
+          channel: docChannel,
+          coupon:  docCoupon,
+        },
         partial:                 false,
         taxBreakdown:            (pl.taxBreakdown ?? []).map((tb: any) => ({
           name:      tb?.name      ?? "",
