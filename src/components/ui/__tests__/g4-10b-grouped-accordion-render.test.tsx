@@ -258,9 +258,12 @@ describe("F1.3 #10-F — editor inline en sub-row de la tabla", () => {
       },
     });
     const { container } = render(<LineAdvancedOverridesPanel line={line} {...baseProps} />);
-    // No hay inputs editables (count=2 → read-only).
+    // F1.3 #10-H — celdas se ven como inputs pero TODOS read-only (count=2).
     const inputs = container.querySelectorAll('input[type="text"], input[inputmode="decimal"]');
-    expect(inputs.length).toBe(0);
+    for (const el of Array.from(inputs)) {
+      const i = el as HTMLInputElement;
+      expect(i.readOnly || i.disabled).toBe(true);
+    }
     expect(screen.queryByText("Merma")).toBeNull();
   });
 });

@@ -90,7 +90,12 @@ describe("F1.3 #10-G — METAL columna Cantidad", () => {
       },
     });
     const { container } = render(<LineAdvancedOverridesPanel line={line} {...baseProps} />);
-    expect(container.querySelectorAll('input[inputmode="decimal"]').length).toBe(0);
+    // F1.3 #10-H — celdas se ven como inputs pero TODAS read-only.
+    const inputs = container.querySelectorAll('input[inputmode="decimal"]');
+    for (const el of Array.from(inputs)) {
+      const i = el as HTMLInputElement;
+      expect(i.readOnly || i.disabled).toBe(true);
+    }
     expect(container.querySelectorAll(`[title="${TOOLTIP}"]`).length).toBeGreaterThan(0);
   });
 });
@@ -133,7 +138,12 @@ describe("F1.3 #10-G — HECHURA columnas editables", () => {
       },
     });
     const { container } = render(<LineAdvancedOverridesPanel line={line} {...baseProps} />);
-    expect(container.querySelectorAll('input[inputmode="decimal"]').length).toBe(0);
+    // F1.3 #10-H — celdas se ven como inputs pero TODAS read-only.
+    const inputs = container.querySelectorAll('input[inputmode="decimal"]');
+    for (const el of Array.from(inputs)) {
+      const i = el as HTMLInputElement;
+      expect(i.readOnly || i.disabled).toBe(true);
+    }
     expect(container.querySelectorAll(`[title="${TOOLTIP}"]`).length).toBeGreaterThan(0);
   });
 });
@@ -143,7 +153,7 @@ describe("F1.3 #10-G — HECHURA columnas editables", () => {
 // =============================================================================
 
 describe("F1.3 #10-G — PRODUCTO / SERVICIO read-only", () => {
-  it("baseline correct: producto → cantidad y val.unit con tooltip read-only, sin inputs", () => {
+  it("baseline correct: producto → cantidad y val.unit como CellNumberInput read-only", () => {
     const line = makeLine({
       composition: {
         metal: null, hechura: null,
@@ -158,11 +168,19 @@ describe("F1.3 #10-G — PRODUCTO / SERVICIO read-only", () => {
       },
     });
     const { container } = render(<LineAdvancedOverridesPanel line={line} {...baseProps} />);
-    expect(container.querySelectorAll('input[inputmode="decimal"]').length).toBe(0);
+    // F1.3 #10-H — ahora hay inputs visualmente, pero TODOS son read-only.
+    const inputs = container.querySelectorAll('input[inputmode="decimal"]');
+    expect(inputs.length).toBeGreaterThan(0);
+    // Todos los inputs deben tener readonly o disabled.
+    for (const el of Array.from(inputs)) {
+      const input = el as HTMLInputElement;
+      expect(input.readOnly || input.disabled).toBe(true);
+    }
+    // Tooltip presente para celdas read-only.
     expect(container.querySelectorAll(`[title="${TOOLTIP}"]`).length).toBeGreaterThan(0);
   });
 
-  it("baseline correct: servicio → mismo comportamiento read-only", () => {
+  it("baseline correct: servicio → cantidad y val.unit como CellNumberInput read-only", () => {
     const line = makeLine({
       composition: {
         metal: null, hechura: null,
@@ -178,7 +196,12 @@ describe("F1.3 #10-G — PRODUCTO / SERVICIO read-only", () => {
       },
     });
     const { container } = render(<LineAdvancedOverridesPanel line={line} {...baseProps} />);
-    expect(container.querySelectorAll('input[inputmode="decimal"]').length).toBe(0);
+    const inputs = container.querySelectorAll('input[inputmode="decimal"]');
+    expect(inputs.length).toBeGreaterThan(0);
+    for (const el of Array.from(inputs)) {
+      const input = el as HTMLInputElement;
+      expect(input.readOnly || input.disabled).toBe(true);
+    }
     expect(container.querySelectorAll(`[title="${TOOLTIP}"]`).length).toBeGreaterThan(0);
   });
 });
@@ -237,8 +260,11 @@ describe("F1.3 #10-G — inputs cableados a hooks (contrato observable)", () => 
     });
     const { container } = render(<LineAdvancedOverridesPanel line={line} {...baseProps} />);
     const inputs = container.querySelectorAll('input[inputmode="decimal"]');
-    const hechuraInput = inputs[0] as HTMLInputElement;
-    expect(hechuraInput.value).toMatch(/387[.,]50/);
+    const values = Array.from(inputs).map(el => (el as HTMLInputElement).value);
+    // El input editable de HECHURA Val.unit. debe contener el monto.
+    // (idx puede variar — la celda Cantidad de HECHURA es read-only "1.00 un"
+    // y aparece antes que Val.unit en el orden visual.)
+    expect(values.some(v => /387[.,]50/.test(v))).toBe(true);
   });
 });
 

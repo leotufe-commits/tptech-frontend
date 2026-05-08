@@ -843,15 +843,27 @@ function TableHeader() {
  */
 function CellNumberInput({
   value, onChange, decimals = 2, step = 0.01, suffix,
+  readOnly = false, disabled = false, tooltip,
 }: {
   value:    number | null;
   onChange: (v: number | null) => void;
   decimals?: number;
   step?:     number;
   suffix?:   React.ReactNode;
+  /** F1.3 #10-H — celda visualmente input pero NO editable. Se aplica
+   *  cuando el override correspondiente NO existe en backend (ej. HECHURA
+   *  cantidad, PRODUCT/SERVICE qty/unitValue). El usuario percibe el mismo
+   *  patrón visual que las celdas editables, con tono atenuado. */
+  readOnly?: boolean;
+  disabled?: boolean;
+  /** Tooltip para celdas read-only — explica por qué no es editable. */
+  tooltip?:  string;
 }) {
   return (
-    <div className="inline-flex items-center justify-end">
+    <div
+      className="inline-flex items-center justify-end"
+      title={readOnly || disabled ? tooltip : undefined}
+    >
       <TPNumberInput
         value={value}
         onChange={onChange}
@@ -859,7 +871,12 @@ function CellNumberInput({
         step={step}
         suffix={suffix}
         showArrows={false}
-        className="!h-6 !text-[11px] text-right tabular-nums w-[92px]"
+        readOnly={readOnly}
+        disabled={disabled}
+        className={cn(
+          "!h-6 !text-[11px] text-right tabular-nums w-[92px]",
+          (readOnly || disabled) && "cursor-help opacity-70",
+        )}
         wrapClassName="!w-auto"
       />
     </div>
@@ -1057,18 +1074,18 @@ function CompositionTable({
                 ? g.totalLineCost / g.totalAppliedGrams
                 : null,
             );
-            const quantityCell = editableHere ? (
+            // F1.3 #10-H — CANTIDAD siempre como CellNumberInput (editable
+            // si count===1 y es el primer grupo; sino read-only con tooltip).
+            const quantityCell = (
               <CellNumberInput
-                value={gramsHook.value ?? 0}
-                onChange={(v) => gramsHook.setValue(v ?? 0)}
+                value={editableHere ? (gramsHook.value ?? 0) : (g.totalAppliedGrams ?? 0)}
+                onChange={editableHere ? (v) => gramsHook.setValue(v ?? 0) : () => {}}
                 decimals={2}
                 step={0.05}
                 suffix={<span className="text-[10px] text-muted/60">g</span>}
+                readOnly={!editableHere}
+                tooltip={!editableHere ? READ_ONLY_TOOLTIP : undefined}
               />
-            ) : (
-              <ReadOnlyCell>
-                {g.totalAppliedGrams != null ? `${g.totalAppliedGrams.toFixed(2)} g` : null}
-              </ReadOnlyCell>
             );
             return (
               <React.Fragment key={`row-metal-${g.groupKey}`}>
@@ -1128,6 +1145,19 @@ function CompositionTable({
             ) : (
               <ReadOnlyCell><span className="text-muted/40">—</span></ReadOnlyCell>
             );
+            // F1.3 #10-H — Cantidad con CellNumberInput read-only (no
+            // hay override de qty para HECHURA; el motor fuerza qty=1).
+            const quantityCell = (
+              <CellNumberInput
+                value={1}
+                onChange={() => {}}
+                decimals={2}
+                step={1}
+                suffix={<span className="text-[10px] text-muted/60">un</span>}
+                readOnly
+                tooltip={READ_ONLY_TOOLTIP}
+              />
+            );
             return (
               <TableRow
                 key={`row-hechura-${h.costLineId ?? idx}`}
@@ -1135,7 +1165,7 @@ function CompositionTable({
                 Icon={Hammer}
                 primary={h.lineLabel ?? "Hechura"}
                 secondary={`Moneda: ${currency || "—"}`}
-                quantity={<ReadOnlyCell>1</ReadOnlyCell>}
+                quantity={quantityCell}
                 unitValue={unitValueCell}
                 adjustment={adjustmentCell}
                 saleValue={fmt(saleVal)}
@@ -1151,6 +1181,8 @@ function CompositionTable({
             const adj = p.lineAdjAmount != null && p.lineAdjKind != null
               ? <AdjustmentChip kind={p.lineAdjKind} type={p.lineAdjType ?? null} value={p.lineAdjValue ?? null} amount={p.lineAdjAmount} currency={currency} />
               : <ReadOnlyCell><span className="text-muted/40">—</span></ReadOnlyCell>;
+            // F1.3 #10-H — Cantidad / Val.unit como CellNumberInput
+            // read-only para mantener jerarquía visual ERP consistente.
             return (
               <TableRow
                 key={`row-product-${p.costLineId ?? idx}`}
@@ -1161,13 +1193,24 @@ function CompositionTable({
                   ? `Código: ${p.catalogItemCode}${p.affectsStock === true ? " · Descuenta stock" : ""}`
                   : (p.affectsStock === true ? "Descuenta stock" : null)}
                 quantity={
-                  <ReadOnlyCell>
-                    {p.quantity != null
-                      ? p.quantity.toLocaleString("es-AR", { maximumFractionDigits: 4 })
-                      : null}
-                  </ReadOnlyCell>
+                  <CellNumberInput
+                    value={p.quantity ?? 0}
+                    onChange={() => {}}
+                    decimals={2}
+                    suffix={<span className="text-[10px] text-muted/60">un</span>}
+                    readOnly
+                    tooltip={READ_ONLY_TOOLTIP}
+                  />
                 }
-                unitValue={<ReadOnlyCell>{fmt(p.unitValue)}</ReadOnlyCell>}
+                unitValue={
+                  <CellNumberInput
+                    value={p.unitValue ?? 0}
+                    onChange={() => {}}
+                    decimals={2}
+                    readOnly
+                    tooltip={READ_ONLY_TOOLTIP}
+                  />
+                }
                 adjustment={adj}
                 saleValue={fmt(p.totalValue)}
                 totalWithTax={fmt(p.totalValue != null && qtyLine > 1 ? p.totalValue * qtyLine : p.totalValue)}
@@ -1190,13 +1233,24 @@ function CompositionTable({
                   ? `Código: ${s.catalogItemCode}`
                   : null}
                 quantity={
-                  <ReadOnlyCell>
-                    {s.quantity != null
-                      ? s.quantity.toLocaleString("es-AR", { maximumFractionDigits: 4 })
-                      : null}
-                  </ReadOnlyCell>
+                  <CellNumberInput
+                    value={s.quantity ?? 0}
+                    onChange={() => {}}
+                    decimals={2}
+                    suffix={<span className="text-[10px] text-muted/60">un</span>}
+                    readOnly
+                    tooltip={READ_ONLY_TOOLTIP}
+                  />
                 }
-                unitValue={<ReadOnlyCell>{fmt(s.unitValue)}</ReadOnlyCell>}
+                unitValue={
+                  <CellNumberInput
+                    value={s.unitValue ?? 0}
+                    onChange={() => {}}
+                    decimals={2}
+                    readOnly
+                    tooltip={READ_ONLY_TOOLTIP}
+                  />
+                }
                 adjustment={adj}
                 saleValue={fmt(s.totalValue)}
                 totalWithTax={fmt(s.totalValue != null && qtyLine > 1 ? s.totalValue * qtyLine : s.totalValue)}
