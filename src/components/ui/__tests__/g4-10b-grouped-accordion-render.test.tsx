@@ -75,7 +75,7 @@ describe("F1.3 #10-B — METAL accordion grupal", () => {
     expect(screen.queryByText(/^Metal 1$/)).toBeNull();
     expect(screen.queryByText(/^Metal 2$/)).toBeNull();
     // Editor inline visible (gramos del legacy).
-    expect(screen.getByText(/^1\.30 g$/)).toBeInTheDocument();
+    expect(screen.getAllByText(/^1\.30 g$/).length).toBeGreaterThanOrEqual(1);
   });
 
   it("baseline correct: 2 metales misma variante → accordion 'Metal' colapsado por default", () => {
@@ -349,7 +349,7 @@ describe("F1.3 #10-B — cero cambio numérico (regression)", () => {
     render(<LineAdvancedOverridesPanel line={line} {...baseProps} />);
     // Datos del legacy preservados (variante + gramos del editor inline).
     expect(screen.getByText("Oro 18k")).toBeInTheDocument();
-    expect(screen.getByText(/^1\.30 g$/)).toBeInTheDocument();
+    expect(screen.getAllByText(/^1\.30 g$/).length).toBeGreaterThanOrEqual(1);
   });
 
   it("baseline correct: snapshot SIN metals/hechuras arrays (v4 legacy) → renderea solo el alias", () => {

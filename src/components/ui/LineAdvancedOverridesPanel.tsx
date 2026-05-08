@@ -169,8 +169,34 @@ export function LineAdvancedOverridesPanel({
   //   · HECHURA / PRODUCT / SERVICE quedan en lista plana + agregado.
   // Header de cada grupo muestra count + total agregado (Decimal-safe).
   // Default expandido cuando count cost-lines === 1; colapsado si 2+.
-  const metalItems   = composition?.metals   ?? [];
-  const hechuraItems = composition?.hechuras ?? [];
+  //
+  // F1.3 G4.x #10-E — fallback legacy: si el snapshot es v4 (sin
+  // metals[]/hechuras[]) pero tiene los alias `metal`/`hechura`,
+  // sintetizamos un item virtual desde el alias para que el accordion
+  // muestre count: 1 (no count: 0). Cero matemática nueva — solo mapeo
+  // estructural del alias al shape del item.
+  const rawMetals   = composition?.metals   ?? [];
+  const rawHechuras = composition?.hechuras ?? [];
+  const metalItems = rawMetals.length > 0
+    ? rawMetals
+    : (composition?.metal ? [{
+        costLineId:      null,
+        metalVariantId:  composition.metal.appliedVariantId ?? composition.metal.originalVariantId ?? null,
+        metalName:       composition.metal.metalName  ?? null,
+        purity:          composition.metal.purity     ?? null,
+        purityLabel:     composition.metal.purityLabel ?? null,
+        appliedGrams:    composition.metal.appliedGrams    ?? null,
+        appliedMermaPct: composition.metal.appliedMermaPct ?? null,
+        lineCost:        null,   // legacy alias no expone lineCost
+      }] : []);
+  const hechuraItems = rawHechuras.length > 0
+    ? rawHechuras
+    : (composition?.hechura ? [{
+        costLineId:    null,
+        appliedAmount: composition.hechura.appliedAmount ?? null,
+        lineCost:      null,
+        lineLabel:     null,
+      }] : []);
   const productItems = composition?.products ?? [];
   const serviceItems = composition?.services ?? [];
   const grouped = groupCompositionItems({
@@ -180,15 +206,10 @@ export function LineAdvancedOverridesPanel({
     services: serviceItems,
   });
   // Cantidad TOTAL de cost lines de metal (suma de count de todos los grupos).
-  // Fallback legacy: cuando metals[] está vacío pero composition.metal existe
-  // (snapshot v4 sin arrays), tratamos como 1 línea para mantener edit inline.
-  const metalLineCountFromGroups = grouped.metals.reduce((acc, g) => acc + g.count, 0);
-  const metalLineCount = metalLineCountFromGroups > 0
-    ? metalLineCountFromGroups
-    : (composition?.metal ? 1 : 0);
-  const hechuraLineCount = hechuraItems.length > 0
-    ? hechuraItems.length
-    : (composition?.hechura ? 1 : 0);
+  // Con el fallback legacy de `metalItems`, este conteo ya incluye al item
+  // virtual sintetizado del alias.
+  const metalLineCount   = grouped.metals.reduce((acc, g) => acc + g.count, 0);
+  const hechuraLineCount = hechuraItems.length;
   // Total de gramos físicos (Σ totalAppliedGrams de todos los grupos).
   const metalTotalGrams = safeSumNumbers(grouped.metals.map(g => g.totalAppliedGrams));
   // Total de costo monetario por sumatoria.
@@ -378,78 +399,30 @@ export function LineAdvancedOverridesPanel({
              centrado entre las secciones con espacio simétrico arriba y
              abajo, sin afectar al primer hijo ni al último. */
           <div className="flex flex-col [&>*+*]:mt-2 [&>*+*]:border-t [&>*+*]:border-border/30 [&>*+*]:pt-2">
-            {/* 1. METAL — accordion grupal F1.3 #10-B.
-                · 1 cost line total → expandido + editor inline (Gramos/
-                  Merma). Mismo bloque actual.
-                · 2+ cost lines (sea misma o distintas variantes) →
-                  colapsado por default. Header con count + total g.
-                  Detail muestra sub-grupos por variante (read-only). */}
-            {metalEditableInline && composition?.metal && (
-              <SaleColumn
-                title="Metal"
-                manual={grams.manual || merma.manual || composition.metal.variantManual}
-                summary={
-                  <InfoLineRow>
-                    {metalVariantLabel && (
-                      <InfoItem label="Variante" value={metalVariantLabel} />
-                    )}
-                    {purityValue != null && (
-                      <InfoItem label="Pureza" value={purityValue.toFixed(3)} />
-                    )}
-                    {grams.value != null && (
-                      <InfoItem
-                        label="Gramos"
-                        // Sale view: 2 decimales para densidad financiera
-                        // (1.30 g en lugar de 1.300 g). El input editable
-                        // mantiene decimals=3 para precisión interna.
-                        value={`${grams.value.toFixed(2)} g`}
-                      />
-                    )}
-                    {/* Gramos total × qty — solo cuando qty>1 (con qty=1
-                        sería redundante con "Gramos"). Display derivation
-                        trivial sobre `appliedGrams × qty`. Mismo patrón
-                        que Total metal/hechura. */}
-                    {grams.value != null && qtyLine > 1 && (
-                      <InfoItem
-                        label="Gramos total"
-                        value={`${(grams.value * qtyLine).toFixed(2)} g`}
-                      />
-                    )}
-                    {merma.value != null && (
-                      <InfoItem
-                        label="Merma"
-                        value={`${merma.value.toFixed(2)}%`}
-                      />
-                    )}
-                    {meta.metalSale != null && (
-                      <InfoItem
-                        label="Valor venta"
-                        value={fmtMoney(meta.metalSale, currency)}
-                        highlight
-                      />
-                    )}
-                    {/* Total metal × qty — solo cuando qty>1 (con qty=1
-                        sería redundante con "Valor venta"). Display
-                        derivation trivial, mismo nivel que costTotal=
-                        unitCost×qty (línea 202-207 ya aceptado).
-                        TODO GAP G3.3: backend debería emitir
-                        `lineMetalSaleTotal` per-línea en sales/preview
-                        (paridad con G3 family). Cierra esta derivación. */}
-                    {meta.metalSale != null && qtyLine > 1 && (
-                      <InfoItem
-                        label="Total metal"
-                        value={fmtMoney(meta.metalSale * qtyLine, currency)}
-                        highlight
-                      />
-                    )}
-                  </InfoLineRow>
-                }
-                detail={
-                  <div className="grid grid-cols-[max-content_max-content] items-end gap-3">
-                    {/* F1.3 #8b — gramos visuales a 2 decimales (1.30 g)
-                        para densidad financiera consistente con el summary
-                        read-only. Step 0.05 se mantiene; los cálculos
-                        internos (motor backend) siguen en alta precisión. */}
+            {/* 1. METAL — accordion grupal ERP unificado F1.3 #10-E.
+                Render SIEMPRE consistente: el mismo accordion para 0/1/N
+                líneas. El editor inline (Gramos/Merma) se inyecta como
+                children del detail cuando isEditableInline (count cost-
+                lines === 1). Para count >= 2 el detail es read-only.
+                Cero rama legacy — todos los items de la factura se ven
+                con la misma jerarquía. */}
+            {/* METAL — render unificado (F1.3 #10-E): SIEMPRE el accordion
+                grupal ERP, con o sin items. Cuando count cost-lines === 1
+                el editor inline (Gramos / Merma) se inyecta dentro del
+                detail. Cuando count >= 2 el detail es read-only y muestra
+                el sub-resumen por variante. */}
+            {(metalLineCount > 0 || composition?.metal) && (
+              <GroupedMetalAccordion
+                groups={grouped.metals}
+                totalLineCount={metalLineCount}
+                totalGrams={metalTotalGrams}
+                totalLineCost={metalTotalLineCost}
+                qtyLine={qtyLine}
+                currency={currency}
+                metaMetalSale={meta.metalSale ?? null}
+                manual={grams.manual || merma.manual || !!composition?.metal?.variantManual}
+                editorInline={metalEditableInline ? (
+                  <div className="grid grid-cols-[max-content_max-content] items-end gap-3 pt-1.5">
                     <InlineNumberField
                       label="Gramos"
                       value={grams.value ?? 0}
@@ -466,109 +439,25 @@ export function LineAdvancedOverridesPanel({
                       suffix="%"
                     />
                   </div>
-                }
+                ) : null}
               />
             )}
 
-            {/* 1.b METAL grupal read-only — F1.3 #10-B.
-                Caso !metalEditableInline (2+ cost lines o sin alias legacy).
-                Render agregado: header "METAL · N líneas/variantes · X.XX g
-                total" + detalle expandible con sub-grupos por variante.
-                Cero recálculo (POLICY R4.5): totales vienen del helper
-                Decimal-safe. */}
-            {!metalEditableInline && metalLineCount > 0 && (
-              <GroupedMetalAccordion
-                groups={grouped.metals}
-                totalLineCount={metalLineCount}
-                totalGrams={metalTotalGrams}
-                totalLineCost={metalTotalLineCost}
+            {/* HECHURA — render unificado (F1.3 #10-E): SIEMPRE el
+                accordion grupal ERP. Cuando count cost-lines === 1 el
+                editor inline (Valor / Bonificación) se inyecta dentro
+                del detail. Cuando count >= 2 el detail es read-only
+                con lines individuales. */}
+            {(hechuraLineCount > 0 || composition?.hechura) && (
+              <GroupedHechuraAccordion
+                items={grouped.hechuras}
+                aggregate={grouped.hechurasAggregate}
                 qtyLine={qtyLine}
                 currency={currency}
-                metaMetalSale={meta.metalSale ?? null}
-              />
-            )}
-
-            {/* 2. HECHURA — summary read-only (Moneda + Valor venta) +
-                detail editable (Valor / Bonificación). Productos /
-                Servicios — cuando el motor los exponga via
-                `composition.product` / `composition.service` — caen acá
-                según regla TPTech (todo lo no-metal viaja en Hechura). */}
-            {hechuraEditableInline && composition?.hechura && (
-              <SaleColumn
-                title="Hechura"
+                metaHechuraSale={meta.hechuraSale ?? null}
                 manual={hechura.manual}
-                summary={
-                  <InfoLineRow>
-                    <InfoItem label="Moneda" value={currency || "—"} />
-                    {hechura.value != null && (
-                      <InfoItem
-                        label="Valor"
-                        value={fmtMoney(hechura.value, currency)}
-                      />
-                    )}
-                    {/* Bonif. con monto absoluto inline cuando el motor
-                        expuso el adjustment de hechura.
-                        · Source: meta.componentSaleBreakdown.hechura.adjustments
-                          → buscar el adjustment con applyOn=HECHURA y
-                          amount > 0 (descuento). El motor consolida
-                          MANUAL_DISCOUNT + ENTITY_RULE + QUANTITY_DISCOUNT
-                          + PROMOTION en este array.
-                        · El monto absoluto NO se calcula en frontend — se
-                          lee directamente del backend (POLICY.md §4 R4.5).
-                        · Si no hay adjustment (ej. backend pre-G3.x sin
-                          componentSaleBreakdown, o bonif=0) → comportamiento
-                          actual intacto (solo el %).
-                        · Tono emerald-500 igual que el de Descuentos en
-                          PRECIO VENTA (consistencia visual de "beneficio").
-                        TODO GAP G3.5 — backend debería exponer también
-                        "valor venta pre-bonif" por componente para mostrar
-                        la cadena cost→margin→pre-bonif→sale. */}
-                    {(() => {
-                      const adjs = meta.componentSaleBreakdown?.hechura?.adjustments;
-                      const bonifAdj = Array.isArray(adjs)
-                        ? adjs.find(a => a?.applyOn === "HECHURA" && Number(a?.amount ?? 0) > 0)
-                        : null;
-                      const bonifAbs = bonifAdj ? Number(bonifAdj.amount) : 0;
-                      const showAbsAmount = bonifAbs > 0;
-                      return (
-                        <InfoItem
-                          label="Bonif."
-                          value={
-                            showAbsAmount ? (
-                              <>
-                                {`${hechuraBonifPct.toFixed(2)}%`}
-                                <span className="ml-1 text-emerald-500">
-                                  (−{fmtMoney(bonifAbs, currency)})
-                                </span>
-                              </>
-                            ) : (
-                              `${hechuraBonifPct.toFixed(2)}%`
-                            )
-                          }
-                        />
-                      );
-                    })()}
-                    {meta.hechuraSale != null && (
-                      <InfoItem
-                        label="Valor venta"
-                        value={fmtMoney(meta.hechuraSale, currency)}
-                        highlight
-                      />
-                    )}
-                    {/* Total hechura × qty — solo cuando qty>1. Mismo
-                        criterio que Total metal: display derivation
-                        trivial. TODO GAP G3.3 (per-línea backend). */}
-                    {meta.hechuraSale != null && qtyLine > 1 && (
-                      <InfoItem
-                        label="Total hechura"
-                        value={fmtMoney(meta.hechuraSale * qtyLine, currency)}
-                        highlight
-                      />
-                    )}
-                  </InfoLineRow>
-                }
-                detail={
-                  <div className="grid grid-cols-[max-content_max-content] items-end gap-3">
+                editorInline={hechuraEditableInline ? (
+                  <div className="grid grid-cols-[max-content_max-content] items-end gap-3 pt-1.5">
                     <InlineNumberField
                       label="Valor"
                       value={hechura.value ?? 0}
@@ -584,22 +473,7 @@ export function LineAdvancedOverridesPanel({
                       </div>
                     </div>
                   </div>
-                }
-              />
-            )}
-
-            {/* 2.b HECHURA grupal read-only — F1.3 #10-B.
-                Caso !hechuraEditableInline (2+ cost lines). Header
-                agregado + detalle expandible con lines individuales.
-                NO se agrupa por lineLabel (auditoría confirmó: heurístico
-                inseguro). Cada line se muestra separada al expandir. */}
-            {!hechuraEditableInline && hechuraItems.length > 0 && (
-              <GroupedHechuraAccordion
-                items={grouped.hechuras}
-                aggregate={grouped.hechurasAggregate}
-                qtyLine={qtyLine}
-                currency={currency}
-                metaHechuraSale={meta.hechuraSale ?? null}
+                ) : null}
               />
             )}
 
@@ -1123,7 +997,7 @@ function GroupAccordion({
  */
 function GroupedMetalAccordion({
   groups, totalLineCount, totalGrams, totalLineCost: _totalLineCost,
-  qtyLine, currency, metaMetalSale,
+  qtyLine, currency, metaMetalSale, manual, editorInline,
 }: {
   groups:         ReturnType<typeof groupCompositionItems>["metals"];
   totalLineCount: number;
@@ -1132,6 +1006,12 @@ function GroupedMetalAccordion({
   qtyLine:        number;
   currency:       string;
   metaMetalSale:  number | null;
+  /** Badge "Manual" en el header cuando hay overrides activos en el [0]. */
+  manual?:        boolean;
+  /** F1.3 #10-E — editor inline (inputs Gramos/Merma) inyectado por el
+   *  caller cuando count cost-lines === 1. Cuando es null, el detail es
+   *  read-only (count >= 2 o sin items). */
+  editorInline?:  React.ReactNode;
 }) {
   const variantCount = groups.length;
   const isMultiVariant = variantCount >= 2;
@@ -1174,6 +1054,7 @@ function GroupedMetalAccordion({
       Icon={Gem}
       componentType="METAL"
       title="Metal"
+      manual={manual}
       summary={summaryText}
       rightValue={rightValue}
       rightSub={rightSub}
@@ -1206,6 +1087,8 @@ function GroupedMetalAccordion({
             Editar desde la ficha del artículo
           </div>
         )}
+        {/* F1.3 #10-E — editor inline (Gramos / Merma) cuando hay 1 line. */}
+        {editorInline}
       </div>
     </GroupAccordion>
   );
@@ -1218,13 +1101,15 @@ function GroupedMetalAccordion({
  * plana de items + agregado simple en header.
  */
 function GroupedHechuraAccordion({
-  items, aggregate, qtyLine, currency, metaHechuraSale,
+  items, aggregate, qtyLine, currency, metaHechuraSale, manual, editorInline,
 }: {
   items:           ReturnType<typeof groupCompositionItems>["hechuras"];
   aggregate:       ReturnType<typeof groupCompositionItems>["hechurasAggregate"];
   qtyLine:         number;
   currency:        string;
   metaHechuraSale: number | null;
+  manual?:         boolean;
+  editorInline?:   React.ReactNode;
 }) {
   const defaultExpanded = aggregate.count === 1;
   const summaryText = (
@@ -1248,6 +1133,7 @@ function GroupedHechuraAccordion({
       Icon={Hammer}
       componentType="HECHURA"
       title="Hechura"
+      manual={manual}
       summary={summaryText}
       rightValue={rightValue}
       rightSub={rightSub}
@@ -1276,6 +1162,8 @@ function GroupedHechuraAccordion({
             Editar desde la ficha del artículo
           </div>
         )}
+        {/* F1.3 #10-E — editor inline (Valor / Bonificación) cuando hay 1 line. */}
+        {editorInline}
       </div>
     </GroupAccordion>
   );
