@@ -154,6 +154,28 @@ function isGeneratedHeader(l: DocumentLine): boolean {
   return l.type === "HEADER" && !!l.headerGroupBy;
 }
 
+/**
+ * Comparador alfabético español (`es`) usado para ordenar las cabeceras
+ * generadas. Acentos no diferencian (`sensitivity: "base"`) y "Oro 9K" se
+ * ordena antes que "Oro 18K" gracias a `numeric: true`.
+ *
+ * Las etiquetas de fallback ("Sin metal", "Sin marca", etc.) — que
+ * agrupan líneas sin dato del criterio — siempre quedan al FINAL del
+ * listado para que no se mezclen con grupos con dato real.
+ */
+function compareHeaderLabels(
+  criterion: HeaderGroupBy,
+  a: string,
+  b: string,
+): number {
+  const fallback = FALLBACK_BY_MODE[criterion];
+  const aIsFallback = a === fallback;
+  const bIsFallback = b === fallback;
+  if (aIsFallback && !bIsFallback) return 1;
+  if (!aIsFallback && bIsFallback) return -1;
+  return a.localeCompare(b, "es", { sensitivity: "base", numeric: true });
+}
+
 /** Determina si una línea es "vacía" (sin artículo, sin manual con texto). */
 function isEmptyLineLike(l: DocumentLine): boolean {
   if (l.type === "HEADER") return false;
@@ -177,10 +199,14 @@ export type GenerateHeadersOptions = {
  *      con `headerEditedByUser=true`, se preserva su título al regenerar
  *      el grupo correspondiente.
  *   2. Filtra líneas no-vacías y no-headers; las agrupa por
- *      `getGroupValue(line, criterion)` preservando orden de aparición.
- *   3. Para cada grupo, inserta header (preservando edited si existe) +
- *      las líneas del grupo en su orden original.
- *   4. Líneas vacías / headers manuales (sin `headerGroupBy`) van al
+ *      `getGroupValue(line, criterion)`.
+ *   3. ORDEN: los grupos se reordenan ALFABÉTICAMENTE por label visible
+ *      con `localeCompare("es", { sensitivity: "base", numeric: true })`.
+ *      Las etiquetas de fallback ("Sin X") siempre van al final.
+ *   4. Para cada grupo, inserta header (preservando edited si existe) +
+ *      las líneas del grupo en su orden original. Dentro de un grupo el
+ *      orden de aparición se respeta — el sort solo se aplica entre grupos.
+ *   5. Líneas vacías / headers manuales (sin `headerGroupBy`) van al
  *      final, en el orden original.
  */
 export function generateHeadersByCriterion(
@@ -214,9 +240,10 @@ export function generateHeadersByCriterion(
     }
   }
 
-  // 3) Filtrar líneas reales y agruparlas por sourceValue.
+  // 3) Filtrar líneas reales y agruparlas por sourceValue. Conservamos el
+  //    orden de inserción DENTRO de cada grupo (las líneas del mismo grupo
+  //    mantienen su secuencia original); solo se reordena ENTRE grupos.
   const groups = new Map<string, DocumentLine[]>();
-  const orderOfFirstAppearance: string[] = [];
   const trailingEmpty: DocumentLine[] = [];
 
   for (const l of lines) {
@@ -228,14 +255,18 @@ export function generateHeadersByCriterion(
     const value = getHeaderLabelForLine(l, criterion);
     if (!groups.has(value)) {
       groups.set(value, []);
-      orderOfFirstAppearance.push(value);
     }
     groups.get(value)!.push(l);
   }
 
+  // 3.5) Orden alfabético entre grupos (label visible). "Sin X" al final.
+  const sortedGroupKeys = Array.from(groups.keys()).sort((a, b) =>
+    compareHeaderLabels(criterion, a, b),
+  );
+
   // 4) Reconstrucción: por cada grupo, header (preservando edited) + líneas.
   const result: DocumentLine[] = [];
-  for (const value of orderOfFirstAppearance) {
+  for (const value of sortedGroupKeys) {
     const groupLines = groups.get(value)!;
     const editedHeader = editedHeadersBySourceValue.get(value);
     if (editedHeader) {

@@ -38,6 +38,17 @@ import {
 } from "../services/articles";
 import ArticleSearchSelect from "../components/ui/ArticleSearchSelect";
 import EntitySearchSelect from "../components/ui/EntitySearchSelect";
+// Fase 2 — helper visual unificado del breakdown del factor (bruto / ajuste / efectivo).
+// POLICY R4.1: cero matemática nueva; solo decide qué texto mostrar.
+import {
+  buildFactorBreakdown,
+  extractCostAdjustmentFromSteps,
+} from "../lib/pricing-factor-display";
+// Fase 4.2 — componente reutilizable para el JSX del hint del factor efectivo
+// (antes duplicado 6× en este archivo). Render puramente visual.
+import FactorBreakdownHint from "../components/ui/FactorBreakdownHint";
+// Fase 5 — telemetría DEV-only para tracking de fallbacks pre-v7. No-op en prod.
+import { trackLegacyPricingPath } from "../lib/pricing-legacy-telemetry";
 import type {
   ArticleRow,
   ArticleDetail,
@@ -934,33 +945,62 @@ function PricingBreakdown({
               const baseSumRnd = Math.round((mhb.metalSale + mhb.hechuraSale) * 100) / 100;
               return (
                 <React.Fragment key={i}>
-                  {mhb.metalSale > 0 && (
+                  {mhb.metalSale > 0 && (() => {
+                    // Fase 2 — breakdown visual unificado del factor de metal.
+                    const effFactorM = mhb.metalCost > 0.0001 ? mhb.metalSale / mhb.metalCost : null;
+                    const fbM = buildFactorBreakdown({
+                      grossMarginPct: mhb.metalMarginPct,
+                      effectiveFactor: effFactorM,
+                      costAdjustment: extractCostAdjustmentFromSteps(data.steps),
+                    });
+                    return (
                     <div className="grid grid-cols-[16px_1fr_auto] gap-x-2 px-4 py-2.5 text-xs border-t border-border/20">
                       <ChevronRight size={11} className="text-muted shrink-0 mt-0.5" />
                       <div className="min-w-0">
                         <span className="font-medium text-text">Metal</span>
                         <div className="text-[10px] text-muted/60 font-mono mt-0.5">
                           {mhb.metalGramsBase != null
-                            ? <>{(mhb.metalGramsSale ?? 0).toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} gr × {fm(mhb.metalPricePerGram ?? 0)}/gr (+{mhb.metalMarginPct}%)</>
-                            : <>costo {fm(mhb.metalCost)} × {(1 + mhb.metalMarginPct / 100).toFixed(2)} (+{mhb.metalMarginPct}%)</>
+                            ? <>{(mhb.metalGramsSale ?? 0).toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} gr × {fm(mhb.metalPricePerGram ?? 0)}/gr (lista {fbM.grossText ?? `+${mhb.metalMarginPct}%`})</>
+                            : <>costo {fm(mhb.metalCost)} × {(1 + mhb.metalMarginPct / 100).toFixed(2)} (lista {fbM.grossText ?? `+${mhb.metalMarginPct}%`})</>
                           }
                         </div>
+                        <FactorBreakdownHint
+                          hasDivergence={fbM.hasDivergence}
+                          compactLine={fbM.compactLine}
+                          className="mt-0.5"
+                        />
                       </div>
                       <span className="tabular-nums font-bold text-right text-text self-start">{fm(mhb.metalSale)}</span>
                     </div>
-                  )}
-                  {mhb.hechuraSale > 0 && (
+                    );
+                  })()}
+                  {mhb.hechuraSale > 0 && (() => {
+                    // Fase 2 — breakdown visual unificado del factor de hechura.
+                    // Cuando hay ajuste global de costo, separa: lista bruta · ajuste · efectivo.
+                    const effFactor = mhb.hechuraCost > 0.0001 ? mhb.hechuraSale / mhb.hechuraCost : null;
+                    const fb = buildFactorBreakdown({
+                      grossMarginPct: mhb.hechuraMarginPct,
+                      effectiveFactor: effFactor,
+                      costAdjustment: extractCostAdjustmentFromSteps(data.steps),
+                    });
+                    return (
                     <div className="grid grid-cols-[16px_1fr_auto] gap-x-2 px-4 py-2.5 text-xs border-t border-border/20">
                       <ChevronRight size={11} className="text-muted shrink-0 mt-0.5" />
                       <div className="min-w-0">
                         <span className="font-medium text-text">Hechura / Mano de obra</span>
                         <div className="text-[10px] text-muted/60 font-mono mt-0.5">
-                          costo {fm(mhb.hechuraCost)} × {(1 + mhb.hechuraMarginPct / 100).toFixed(2)} (+{mhb.hechuraMarginPct}%)
+                          costo {fm(mhb.hechuraCost)} × {(1 + mhb.hechuraMarginPct / 100).toFixed(2)} (lista {fb.grossText ?? `+${mhb.hechuraMarginPct}%`})
                         </div>
+                        <FactorBreakdownHint
+                          hasDivergence={fb.hasDivergence}
+                          compactLine={fb.compactLine}
+                          className="mt-0.5"
+                        />
                       </div>
                       <span className="tabular-nums font-bold text-right text-text self-start">{fm(mhb.hechuraSale)}</span>
                     </div>
-                  )}
+                    );
+                  })()}
                   {/* Subtotal — solo cuando hay ambos componentes (si solo hay uno, repite el mismo valor) */}
                   {mhb.metalSale > 0 && mhb.hechuraSale > 0 && (
                     <div className="grid grid-cols-[1fr_auto] items-center gap-x-4 px-4 py-2 border-t border-border/40">
@@ -1978,7 +2018,15 @@ function SummaryGrid({
             return (
               <>
                 {/* ─ 1. METAL ─────────────────────────────────────────── */}
-                {mhb.metalSale > 0 && (
+                {mhb.metalSale > 0 && (() => {
+                  // Fase 2 — breakdown visual unificado del factor de metal.
+                  const effFactorDM = mhb.metalCost > 0.0001 ? mhb.metalSale / mhb.metalCost : null;
+                  const fbDM = buildFactorBreakdown({
+                    grossMarginPct: mhb.metalMarginPct,
+                    effectiveFactor: effFactorDM,
+                    costAdjustment: extractCostAdjustmentFromSteps(data.steps),
+                  });
+                  return (
                   <div className="px-3 py-2.5">
                     <div className="flex justify-between tabular-nums">
                       <span className="text-xs font-semibold text-text">Metal</span>
@@ -1986,10 +2034,15 @@ function SummaryGrid({
                     </div>
                     <div className="text-[10px] text-muted/60 font-mono mt-0.5">
                       {mhb.metalGramsBase != null
-                        ? <>{(mhb.metalGramsSale ?? 0).toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} gr × {fm(mhb.metalPricePerGram ?? 0)}/gr (+{mhb.metalMarginPct}%)</>
-                        : <>costo {fm(mhb.metalCost)} × {(1 + mhb.metalMarginPct / 100).toFixed(2)} (+{mhb.metalMarginPct}%)</>
+                        ? <>{(mhb.metalGramsSale ?? 0).toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} gr × {fm(mhb.metalPricePerGram ?? 0)}/gr (lista {fbDM.grossText ?? `+${mhb.metalMarginPct}%`})</>
+                        : <>costo {fm(mhb.metalCost)} × {(1 + mhb.metalMarginPct / 100).toFixed(2)} (lista {fbDM.grossText ?? `+${mhb.metalMarginPct}%`})</>
                       }
                     </div>
+                    <FactorBreakdownHint
+                      hasDivergence={fbDM.hasDivergence}
+                      compactLine={fbDM.compactLine}
+                      className="mt-0.5"
+                    />
                     {/* Ajustes post-margen imputados al METAL — render directo del snapshot. */}
                     {csbMetal && csbMetal.adjustments.length > 0 && (
                       <div className="mt-1.5 space-y-0.5 border-t border-border/30 pt-1">
@@ -2015,18 +2068,32 @@ function SummaryGrid({
                       </div>
                     )}
                   </div>
-                )}
+                  );
+                })()}
 
                 {/* ─ 2. HECHURA ───────────────────────────────────────── */}
-                {mhb.hechuraSale > 0 && (
+                {mhb.hechuraSale > 0 && (() => {
+                  // Fase 2 — breakdown visual unificado del factor de hechura.
+                  const effFactorDH = mhb.hechuraCost > 0.0001 ? mhb.hechuraSale / mhb.hechuraCost : null;
+                  const fbDH = buildFactorBreakdown({
+                    grossMarginPct: mhb.hechuraMarginPct,
+                    effectiveFactor: effFactorDH,
+                    costAdjustment: extractCostAdjustmentFromSteps(data.steps),
+                  });
+                  return (
                   <div className="px-3 py-2.5">
                     <div className="flex justify-between tabular-nums">
                       <span className="text-xs font-semibold text-text">Hechura / Mano de obra</span>
                       <span className="text-xs font-bold text-text">{fm(hechuraShown)}</span>
                     </div>
                     <div className="text-[10px] text-muted/60 font-mono mt-0.5">
-                      costo {fm(mhb.hechuraCost)} × {(1 + mhb.hechuraMarginPct / 100).toFixed(2)} (+{mhb.hechuraMarginPct}%)
+                      costo {fm(mhb.hechuraCost)} × {(1 + mhb.hechuraMarginPct / 100).toFixed(2)} (lista {fbDH.grossText ?? `+${mhb.hechuraMarginPct}%`})
                     </div>
+                    <FactorBreakdownHint
+                      hasDivergence={fbDH.hasDivergence}
+                      compactLine={fbDH.compactLine}
+                      className="mt-0.5"
+                    />
                     {/* Ajustes post-margen imputados a HECHURA — render directo del
                         snapshot del backend (componentSaleBreakdown). Cada ajuste
                         fue aplicado por el motor con applyOn=HECHURA. */}
@@ -2054,7 +2121,8 @@ function SummaryGrid({
                       </div>
                     )}
                   </div>
-                )}
+                  );
+                })()}
 
                 {/* ─ 3. SUBTOTAL ────────────────────────────────── */}
                 <div className="flex justify-between items-center px-3 py-2 bg-muted/5 text-xs border-t-2 border-border/40">
@@ -5405,7 +5473,12 @@ export default function PricingSimulator() {
                               ? (metalCostRaw && metalCostRaw > 0.001 ? mhb.metalSale / metalCostRaw : 1)
                               : (unitCostVal && unitCostVal > 0.001 && basePriceVal && basePriceVal > 0.001
                                   ? basePriceVal / unitCostVal : null);
-                            // Factor específico para hechura (puede diferir en METAL_HECHURA)
+                            // @deprecated Fase 2 — `gHechuraSaleFactor` duplica la lógica del bloque
+                            //  IIFE @~6245 (`gHSF`). Mantenido por ahora como fallback retrocompat
+                            //  para snapshots pre v7 (sin `composition.{type}[i].lineSale`). Cuando
+                            //  toda la flota esté en v7, este cálculo y sus 4 usos abajo pueden
+                            //  remplazarse por lectura directa de `composition.hechuras[i].lineSale`.
+                            //  Factor específico para hechura (puede diferir en METAL_HECHURA).
                             const gHechuraSaleFactor: number | null = mhb && mhb.hechuraCost > 0.001
                               ? mhb.hechuraSale / mhb.hechuraCost
                               : gSaleFactor;
@@ -5435,6 +5508,25 @@ export default function PricingSimulator() {
                             const hasHechura = priceHechSteps.length > 0 || hasSingleHechura;
                             const hasBothSections = hasMetals && hasHechura;
                             const hasDiscPromo = discStep?.value != null || promoStep?.value != null;
+                            // F1.5 #A+/#A++ — mapa canónico `costLineId → lineSale` desde
+                            // `composition.{metals,hechuras,products,services}[]`. Es la
+                            // fuente de verdad del pricing-engine (cierre POLICY R4.1).
+                            // Cada step con `meta.costLineId` mapeado lee su sale-side
+                            // desde acá; si no está, fallback al multiplicador global legacy.
+                            const lineSaleByCostLineId = new Map<string, number>();
+                            const compNormP: any = normLine?.composition ?? null;
+                            for (const arr of [
+                              compNormP?.metals, compNormP?.hechuras,
+                              compNormP?.products, compNormP?.services,
+                            ]) {
+                              if (!Array.isArray(arr)) continue;
+                              for (const it of arr) {
+                                if (it?.costLineId && it?.lineSale != null
+                                    && Number.isFinite(Number(it.lineSale))) {
+                                  lineSaleByCostLineId.set(String(it.costLineId), Number(it.lineSale));
+                                }
+                              }
+                            }
 
                             // Formato simple: precio manual/variante o sin composición metal/hechura.
                             // Para combos: pasa por aquí cuando tiene precio resuelto (lista o manual).
@@ -5504,7 +5596,20 @@ export default function PricingSimulator() {
                                       const entityMerma = saleEntityMermaMap.get(variantId);
                                       const mer      = entityMerma != null ? entityMerma
                                         : (m.merma != null ? parseFloat(String(m.merma)) : 0);
-                                      const saleLine        = qCost * (gSaleFactor ?? 1);
+                                      // F1.5 #A++ — fuente primaria del sale-side por línea METAL:
+                                      // `composition.metals[i].lineSale` emitido por el pricing-engine.
+                                      // Fallback retrocompat al multiplicador global legacy
+                                      // `qCost × gSaleFactor` para snapshots pre v7 sin lineSale.
+                                      const cliMS = m.costLineId != null ? String(m.costLineId) : null;
+                                      const canonicalSaleMS = cliMS ? lineSaleByCostLineId.get(cliMS) : undefined;
+                                      if (canonicalSaleMS == null) {
+                                        trackLegacyPricingPath("PRE_V7_LINE_SALE_FALLBACK_METAL", {
+                                          context: "PricingSimulator: Cálculo del precio → Metales",
+                                        });
+                                      }
+                                      const saleLine = canonicalSaleMS != null
+                                        ? canonicalSaleMS
+                                        : qCost * (gSaleFactor ?? 1);
                                       const metalParentNm   = (m.metalName    as string | null) ?? null;
                                       const variantFullNm   = (m.variantName  as string | null) ?? null;
                                       const variantSkuSale  = (m.variantSku   as string | null) ?? null;
@@ -5562,11 +5667,35 @@ export default function PricingSimulator() {
                                       priceHechSteps.map((step: any, hi: number) => {
                                         const m         = step.meta ?? {};
                                         const lineCost  = parseFloat(String(step.value));
-                                        const factor    = gHechuraSaleFactor ?? 1;
-                                        const lineSale  = lineCost * factor;
+                                        // F1.5 #A+ — fuente primaria: `composition.{hechuras,products,services}[i].lineSale`
+                                        // (passthrough motor). Fallback retrocompat al multiplicador global
+                                        // `gHechuraSaleFactor` para snapshots pre v7.
+                                        const cliHS = m.costLineId != null ? String(m.costLineId) : null;
+                                        const canonicalSaleHS = cliHS ? lineSaleByCostLineId.get(cliHS) : undefined;
+                                        if (canonicalSaleHS == null) {
+                                          trackLegacyPricingPath("PRE_V7_LINE_SALE_FALLBACK_HECHURA", {
+                                            context: "PricingSimulator: Cálculo del precio → Hechura/Otros",
+                                          });
+                                        }
+                                        const lineSale = canonicalSaleHS != null
+                                          ? canonicalSaleHS
+                                          : lineCost * (gHechuraSaleFactor ?? 1);
+                                        // Factor visible en la fórmula: ratio exacto cuando hay canonical,
+                                        // sino el factor global. Mantiene "lineCost × factor = lineSale" cierto.
+                                        const factor = canonicalSaleHS != null && lineCost > 0.0001
+                                          ? canonicalSaleHS / lineCost
+                                          : (gHechuraSaleFactor ?? 1);
                                         const rawLabel  = String(m.lineLabel ?? m.lineCode ?? "");
                                         const customLabel = rawLabel && !PRICE_GENERIC_LABELS.has(rawLabel) ? rawLabel : null;
                                         const showTransform = Math.abs(factor - 1) > 0.005;
+                                        // Fase 2 — breakdown visual unificado (lista bruta · ajuste · efectivo).
+                                        // Reemplaza la lógica de hint manual previa; misma UX, lógica
+                                        // centralizada en `buildFactorBreakdown`. POLICY R4.1: cero matemática.
+                                        const fbH = buildFactorBreakdown({
+                                          grossMarginPct: hechuraMarginPct,
+                                          effectiveFactor: factor,
+                                          costAdjustment: extractCostAdjustmentFromSteps(stepsNorm),
+                                        });
                                         return (
                                           <div key={`sale-h-${hi}`}>
                                             {customLabel && (
@@ -5574,21 +5703,33 @@ export default function PricingSimulator() {
                                             )}
                                             <div className="flex items-baseline justify-between gap-2">
                                               {showTransform ? (
-                                                <span className="text-[11px] tabular-nums text-muted/60 leading-snug flex flex-wrap items-baseline gap-x-0.5">
+                                                <span className="text-[11px] tabular-nums text-muted/60 leading-snug flex flex-wrap items-baseline gap-x-0.5"
+                                                  title={fbH.hasDivergence && fbH.compactLine
+                                                    ? `Factor efectivo: ${fbH.compactLine}`
+                                                    : undefined}>
                                                   <span>{fm2(lineCost)}</span>
                                                   <span className="text-muted/35"> ×</span>
-                                                  <span>{factor.toFixed(2)}</span>
+                                                  <span>{fbH.hasDivergence ? "factor efectivo " : "× "}{factor.toFixed(2)}</span>
                                                   <span className="text-muted/35"> =</span>
                                                 </span>
                                               ) : <span />}
                                               <span className="text-[11px] tabular-nums font-bold text-foreground/80 shrink-0">{fm2(lineSale)}</span>
                                             </div>
+                                            <FactorBreakdownHint
+                                              hasDivergence={fbH.hasDivergence}
+                                              compactLine={fbH.compactLine}
+                                              className="leading-tight mt-0.5"
+                                            />
                                           </div>
                                         );
                                       })
                                       )}
                                       {/* Resumen de hechura (METAL_MERMA_HECHURA mode: un solo total) */}
-                                      {hasSingleHechura && (
+                                      {hasSingleHechura && (() => {
+                                        // Fase 4.1 quick win — extraer cálculo repetido (`hechuraCostRaw × gHechuraSaleFactor`)
+                                        // que aparecía 2 veces (cierre del card + fórmula visible debajo).
+                                        const hechSaleVal = (hechuraCostRaw ?? 0) * (gHechuraSaleFactor ?? 1);
+                                        return (
                                         <div className="space-y-0.5">
                                           <div className="flex justify-between items-baseline">
                                             <span className="font-medium text-text/80">
@@ -5600,7 +5741,7 @@ export default function PricingSimulator() {
                                               )}
                                             </span>
                                             <span className="font-bold tabular-nums">
-                                              {fm2((hechuraCostRaw ?? 0) * (gHechuraSaleFactor ?? 1))}
+                                              {fm2(hechSaleVal)}
                                             </span>
                                           </div>
                                           {gHechuraSaleFactor != null && Math.abs(gHechuraSaleFactor - 1) > 0.005 && (
@@ -5609,7 +5750,8 @@ export default function PricingSimulator() {
                                             </p>
                                           )}
                                         </div>
-                                      )}
+                                        );
+                                      })()}
                                     </div>
                                   </div>
                                 )}
@@ -6114,17 +6256,41 @@ export default function PricingSimulator() {
                           {simViewMode === "DESGLOSADO" && basePriceVal != null && (() => {
                             const mhbC = metalHechuraBreakdownNorm;
                             // Factor metal: ratio exacto backend metalSale/metalCost.
+                            // F1.5 #A++ — el factor sigue acá como FALLBACK retrocompat;
+                            // la fuente primaria de sale-side per línea es `composition.metals[i].lineSale`
+                            // (emitido por el motor backend). Snapshots viejos pre v7 caen al factor.
                             const gSF: number | null = mhbC
                               && mhbC.metalCost != null && mhbC.metalCost > 0.001
                               && mhbC.metalSale != null
                               ? mhbC.metalSale / mhbC.metalCost
                               : null;
                             // Factor hechura: ratio exacto backend hechuraSale/hechuraCost.
+                            // F1.5 #A+ — idem: fuente primaria es `composition.hechuras[i].lineSale`
+                            // (+ products[].lineSale + services[].lineSale). Factor como fallback.
                             const gHSF: number | null = mhbC
                               && mhbC.hechuraCost != null && mhbC.hechuraCost > 0.001
                               && mhbC.hechuraSale != null
                               ? mhbC.hechuraSale / mhbC.hechuraCost
                               : null;
+                            // F1.5 #A+/#A++ — mapa canónico `costLineId → lineSale` desde
+                            // `composition.{metals,hechuras,products,services}[]`. Es la
+                            // fuente de verdad emitida por el pricing-engine (cierre POLICY R4.1).
+                            // Cuando un step tiene `meta.costLineId`, buscamos su lineSale acá
+                            // antes de caer al cálculo `qCost × factor`.
+                            const lineSaleByCostLineId = new Map<string, number>();
+                            const compNorm: any = normLine?.composition ?? null;
+                            for (const arr of [
+                              compNorm?.metals, compNorm?.hechuras,
+                              compNorm?.products, compNorm?.services,
+                            ]) {
+                              if (!Array.isArray(arr)) continue;
+                              for (const it of arr) {
+                                if (it?.costLineId && it?.lineSale != null
+                                    && Number.isFinite(Number(it.lineSale))) {
+                                  lineSaleByCostLineId.set(String(it.costLineId), Number(it.lineSale));
+                                }
+                              }
+                            }
                             const mMarginPct = mhbC
                               ? parseFloat(String(mhbC.metalMarginPct ?? 0))
                               : 0;
@@ -6164,7 +6330,21 @@ export default function PricingSimulator() {
                               const sfValP = isMMHP && m.saleFactor != null ? parseFloat(String(m.saleFactor)) : 1;
                               const equivGr = pur != null ? qty * pur * sfValP * mermaMulP : qty * sfValP * mermaMulP;
                               const factor = qty > 0.0001 ? equivGr / qty : (pur != null ? pur * sfValP * mermaMulP : sfValP * mermaMulP);
-                              const saleLine = qCost * (gSF ?? 1);
+                              // F1.5 #A++ — fuente primaria: `composition.metals[i].lineSale`
+                              // (passthrough exacto del motor: lineCost × metalSale/metalCost).
+                              // Fallback retrocompat: `qCost × gSF` (cálculo legacy para
+                              // snapshots pre v7). Numéricamente equivalentes mientras
+                              // el factor sea uniforme — el motor lo garantiza hoy.
+                              const cliId = m.costLineId != null ? String(m.costLineId) : null;
+                              const canonicalSale = cliId ? lineSaleByCostLineId.get(cliId) : undefined;
+                              if (canonicalSale == null) {
+                                trackLegacyPricingPath("PRE_V7_LINE_SALE_FALLBACK_METAL", {
+                                  context: "PricingSimulator: Composición del precio (desglosado) → Metales",
+                                });
+                              }
+                              const saleLine = canonicalSale != null
+                                ? canonicalSale
+                                : qCost * (gSF ?? 1);
                               const gKey = (m.metalId as string | null) ?? (m.metalName as string | null) ?? "Metal";
                               const prev = ppMap.get(gKey) ?? {
                                 displayName: String(m.metalName ?? "Metal"),
@@ -6180,8 +6360,16 @@ export default function PricingSimulator() {
                               ppMap.set(gKey, prev);
                             }
                             const ppEntries = Array.from(ppMap.values());
+                            // F1.5 #A+ — preferimos `lineSale` per step (canónico del motor)
+                            // sobre el prorrateo `step.value × gHSF`. Cae al fallback solo
+                            // cuando el step no tiene `costLineId` mapeado (snapshot legacy).
                             const hechSaleTotal = pHechSteps.length > 0
-                              ? pHechSteps.reduce((s: number, step: any) => s + parseFloat(String(step.value)) * (gHSF ?? 1), 0)
+                              ? pHechSteps.reduce((s: number, step: any) => {
+                                  const cli = step?.meta?.costLineId != null ? String(step.meta.costLineId) : null;
+                                  const ls = cli ? lineSaleByCostLineId.get(cli) : undefined;
+                                  const stepVal = parseFloat(String(step.value));
+                                  return s + (ls != null ? ls : stepVal * (gHSF ?? 1));
+                                }, 0)
                               : hasSingleH ? (hechuraCostRaw ?? 0) * (gHSF ?? 1) : null;
                             if (ppEntries.length === 0 && hechSaleTotal == null) return null;
 
@@ -6553,8 +6741,26 @@ export default function PricingSimulator() {
                                               {pHechSteps.map((step: any, hi: number) => {
                                                 const m = step.meta ?? {};
                                                 const lineCost = parseFloat(String(step.value));
-                                                const factor = gHSF ?? 1;
-                                                const lineSale = lineCost * factor;
+                                                // F1.5 #A+ — fuente primaria: `composition.{hechuras,products,services}[i].lineSale`
+                                                // (passthrough motor). Fallback retrocompat al multiplicador global
+                                                // `gHSF` cuando el step no tiene `costLineId` mapeado (snapshot pre v7).
+                                                // El "factor visible" en la fórmula se deriva del lineSale canónico
+                                                // (`lineSale/lineCost`) cuando éste está disponible — esto refleja el
+                                                // ratio exacto que aplicó el motor a la línea, no el promedio
+                                                // agregado del bucket.
+                                                const cli = m.costLineId != null ? String(m.costLineId) : null;
+                                                const canonicalSale = cli ? lineSaleByCostLineId.get(cli) : undefined;
+                                                if (canonicalSale == null) {
+                                                  trackLegacyPricingPath("PRE_V7_LINE_SALE_FALLBACK_HECHURA", {
+                                                    context: "PricingSimulator: Card Hechura expandido → Origen",
+                                                  });
+                                                }
+                                                const lineSale = canonicalSale != null
+                                                  ? canonicalSale
+                                                  : lineCost * (gHSF ?? 1);
+                                                const factor = canonicalSale != null && lineCost > 0.0001
+                                                  ? canonicalSale / lineCost
+                                                  : (gHSF ?? 1);
                                                 const rawLabel = String(m.lineLabel ?? m.lineCode ?? "");
                                                 const customLabel = rawLabel && !PGENLABELS.has(rawLabel) ? rawLabel : null;
                                                 // Fallback al tipo del step → nunca dejar el origen vacío
@@ -6568,6 +6774,12 @@ export default function PricingSimulator() {
                                                 const originLabel = customLabel ?? STEP_TYPE_LABEL[String(step.key)] ?? "Componente";
                                                 // Cálculo del precio: costo × factor margen = venta
                                                 const showFactorCalc = Math.abs(factor - 1) > 0.005 && lineCost > 0.0001;
+                                                // Fase 2 — breakdown visual unificado (lista bruta · ajuste · efectivo).
+                                                const fbH2 = buildFactorBreakdown({
+                                                  grossMarginPct: hMarginPct,
+                                                  effectiveFactor: factor,
+                                                  costAdjustment: extractCostAdjustmentFromSteps(stepsNorm),
+                                                });
                                                 return (
                                                   <div key={`hcard-d-${hi}`} className="leading-snug">
                                                     {/* Origen + resultado venta — mismas clases que COSTO renderOtherRow */}
@@ -6575,12 +6787,20 @@ export default function PricingSimulator() {
                                                       <span className="text-xs text-muted font-medium min-w-0 truncate">{originLabel}</span>
                                                       <span className="text-[11px] tabular-nums font-bold text-foreground/80 shrink-0">{fm2(lineSale)}</span>
                                                     </div>
-                                                    {/* Cálculo: costo × factor = venta (cuando hay margen) */}
+                                                    {/* Cálculo: costo × factor efectivo = venta (cuando hay margen) */}
                                                     {showFactorCalc && (
-                                                      <p className="text-[11px] text-muted tabular-nums font-mono leading-tight mt-0.5">
-                                                        {fm2(lineCost)} × {factor.toFixed(2)} = {fm2(lineSale)}
+                                                      <p className="text-[11px] text-muted tabular-nums font-mono leading-tight mt-0.5"
+                                                        title={fbH2.hasDivergence && fbH2.compactLine
+                                                          ? `Factor efectivo: ${fbH2.compactLine}`
+                                                          : undefined}>
+                                                        {fm2(lineCost)} × {fbH2.hasDivergence ? "factor efectivo " : ""}{factor.toFixed(2)} = {fm2(lineSale)}
                                                       </p>
                                                     )}
+                                                    <FactorBreakdownHint
+                                                      hasDivergence={fbH2.hasDivergence}
+                                                      compactLine={fbH2.compactLine}
+                                                      className="leading-tight mt-0.5"
+                                                    />
                                                   </div>
                                                 );
                                               })}

@@ -119,6 +119,8 @@ describe("F1.3 G4.1 — composition.products/services normalize", () => {
       lineAdjValue:    10,
       lineAdjAmount:   5,
       affectsStock:    true,
+      // F1.5 #A+ — `lineSale` ausente en el raw → null (snapshot legacy).
+      lineSale:        null,
     });
     expect(r.lines[0].composition!.services[0]).toEqual({
       costLineId:      "cl-s1",
@@ -134,6 +136,7 @@ describe("F1.3 G4.1 — composition.products/services normalize", () => {
       lineAdjValue:    20,
       lineAdjAmount:   20,
       affectsStock:    false,
+      lineSale:        null,
     });
   });
 

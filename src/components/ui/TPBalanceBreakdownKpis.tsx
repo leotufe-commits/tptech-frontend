@@ -117,6 +117,12 @@ function fmtPct(v: number | null | undefined): string {
   return `${v.toLocaleString("es-AR", { maximumFractionDigits: 2 })}%`;
 }
 
+/** Merma siempre 3 decimales (regla 0.000), alineado con el Simulador. */
+function fmtMermaPct(v: number | null | undefined): string {
+  if (v == null || !Number.isFinite(v)) return "—";
+  return `${v.toLocaleString("es-AR", { minimumFractionDigits: 3, maximumFractionDigits: 3 })}%`;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Sub-componentes (no exportados)
 // ─────────────────────────────────────────────────────────────────────────────
@@ -297,10 +303,10 @@ export default function TPBalanceBreakdownKpis(props: TPBalanceBreakdownKpisProp
                     {metalComposition.appliedMermaPct != null && (
                       <KpiRow
                         label="Merma aplicada"
-                        value={fmtPct(metalComposition.appliedMermaPct)}
+                        value={fmtMermaPct(metalComposition.appliedMermaPct)}
                         sub={metalComposition.originalMermaPct != null
                           && metalComposition.originalMermaPct !== metalComposition.appliedMermaPct
-                          ? `orig ${fmtPct(metalComposition.originalMermaPct)}`
+                          ? `orig ${fmtMermaPct(metalComposition.originalMermaPct)}`
                           : undefined}
                       />
                     )}

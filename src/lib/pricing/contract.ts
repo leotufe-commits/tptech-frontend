@@ -78,6 +78,29 @@ export type PricingOverridesPayload = {
 };
 
 /**
+ * F1.4 G5 #11-A — override per costLineId que viaja en el payload del preview.
+ *
+ * Espejo del `CostLineOverride` backend (pricing-engine.types.ts). Todos los
+ * campos son opcionales menos `costLineId` y `type` — el motor valida y
+ * sanitiza antes de aplicar (ver `validateCostLineOverride`).
+ *
+ * Semántica null/undefined:
+ *   · `undefined` → no override (mantener original).
+ *   · `null` en `adjustmentKind` → LIMPIAR el ajuste (sin bonif/recargo).
+ *   · `null` en quantity/unitValue/mermaPercent → tratado como undefined.
+ */
+export type CostLineOverridePayload = {
+  costLineId:           string;
+  type:                 "METAL" | "HECHURA" | "PRODUCT" | "SERVICE";
+  quantityOverride?:    number | null;
+  unitValueOverride?:   number | null;
+  mermaPercentOverride?: number | null;
+  adjustmentKind?:      "BONUS" | "SURCHARGE" | null;
+  adjustmentType?:      "PERCENTAGE" | "FIXED_AMOUNT" | null;
+  adjustmentValue?:     number | null;
+};
+
+/**
  * Una línea de preview unificada. El Simulador y el Comparador trabajan con
  * exactamente UNA línea; la Factura puede tener N. Los overrides por línea
  * viven dentro de cada `PricingPreviewLinePayload`.
@@ -94,6 +117,16 @@ export type PricingPreviewLinePayload = {
    *  sobre el `priceListId` doc-level del payload. Si ambos vienen vacíos,
    *  el motor resuelve por jerarquía cliente → categoría → favorita. */
   priceListIdOverride?: string | null;
+
+  /**
+   * F1.4 G5 #11-A — overrides per costLineId.
+   *
+   * Pisa los legacy (`overrides.cost.gramsOverride`, etc.) cuando hay match
+   * por `costLineId`. Hoy solo lo consume el endpoint `sales/preview`; el
+   * adapter de `articles/pricing-preview` aún no lo forwardea (Fase A2 del
+   * plan). Cero matemática frontend — el motor valida y aplica.
+   */
+  costLineOverrides?: CostLineOverridePayload[];
 };
 
 /**
@@ -286,6 +319,14 @@ export type NormalizedCompositionItemBlock = {
   lineAdjValue:     number | null;
   lineAdjAmount:    number | null;
   affectsStock:     boolean | null;
+  /**
+   * F1.5 #A+ — sale-side per fila (passthrough del motor backend). `null`
+   * para snapshots viejos sin este campo o cuando el motor no pudo derivarlo
+   * (sin breakdown metal/hechura, lista MARGIN_TOTAL sin desglose, etc.).
+   * Garantía: Σ products.lineSale + Σ services.lineSale + Σ hechuras.lineSale
+   * === hechuraSale del breakdown.
+   */
+  lineSale:         number | null;
 };
 
 /**
@@ -307,6 +348,13 @@ export type NormalizedCompositionMetalItem = {
   /** Costo individual de la cost line en moneda BASE/display. La suma de
    *  `lineCost` de todos los items === metalCost agregado del motor. */
   lineCost:          number | null;
+  /**
+   * F1.5 #A++ — sale-side per cost-line METAL (passthrough motor). Cuando
+   * el backend lo emite (post-fix), garantiza Σ metals[i].lineSale ===
+   * metalHechuraBreakdown.metalSale. `null` para snapshots legacy o cuando
+   * el motor no pudo derivar (lista MARGIN_TOTAL sin desglose, etc.).
+   */
+  lineSale:          number | null;
 };
 
 /**
@@ -317,6 +365,8 @@ export type NormalizedCompositionHechuraItem = {
   costLineId:        string | null;
   appliedAmount:     number | null;
   lineCost:          number | null;
+  /** F1.5 #A+ — sale-side per fila (passthrough). Ver `NormalizedCompositionItemBlock.lineSale`. */
+  lineSale:          number | null;
   lineLabel:         string | null;
 };
 

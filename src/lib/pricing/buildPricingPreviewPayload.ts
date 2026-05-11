@@ -24,6 +24,7 @@ import type {
   PricingPreviewPayload,
   PricingPreviewLinePayload,
   PricingShippingPayload,
+  CostLineOverridePayload,
 } from "./contract";
 import { isPricingStrictV1Enabled } from "../featureFlags";
 
@@ -154,6 +155,10 @@ export type SalesPreviewArgs = {
     /** Fase 2A.7 — override de lista por línea. Tiene precedencia sobre
      *  `priceListId` doc-level. */
     priceListIdOverride?: string | null;
+    /** F1.4 G5 #11-A — overrides per costLineId. Pisa los legacy cuando
+     *  hay match por id. El backend (`SalePreviewLineInput`) acepta el array
+     *  desde Fase 1 del refactor de "Composición editable". */
+    costLineOverrides?: CostLineOverridePayload[];
   }>;
   clientId?:             string | null;
   paymentMethodId?:      string | null;
@@ -300,6 +305,11 @@ function toSalesPreviewLine(line: PricingPreviewLinePayload): SalesPreviewArgs["
     // `priceListId` doc-level cuando ambos vienen).
     ...(line.priceListIdOverride
       ? { priceListIdOverride: line.priceListIdOverride }
+      : {}),
+    // F1.4 G5 #11-A — overrides per costLineId. Solo se manda cuando hay
+    // entries; arrays vacíos no se transmiten (mantiene payloads livianos).
+    ...(line.costLineOverrides && line.costLineOverrides.length > 0
+      ? { costLineOverrides: line.costLineOverrides }
       : {}),
   };
 }

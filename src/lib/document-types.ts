@@ -276,6 +276,11 @@ export interface DocumentLine {
     metalSale?:             number | null;
     hechuraCost?:           number | null;
     hechuraSale?:           number | null;
+    // Fase 2.7.b — márgenes agregados por tipo, emitidos por el motor en
+    // `metalHechuraBreakdown`. Frontend los usa para el bloque "Impacto
+    // en precio de venta". Passthrough puro, cero matemática derivada.
+    metalMarginPct?:        number | null;
+    hechuraMarginPct?:      number | null;
     /**
      * Desglose post-descuentos por componente (sale-side). El motor expone
      * `base + adjustments[] + final` por cada componente (metal / hechura).

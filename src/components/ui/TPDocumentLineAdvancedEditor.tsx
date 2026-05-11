@@ -54,6 +54,13 @@ import {
   type TPArticleStockByWarehouse,
 } from "./TPArticleVariantSearchSelect";
 import { LineAdvancedOverridesPanel } from "./LineAdvancedOverridesPanel";
+// Fase 2 — grilla editable específica de Factura. Reemplaza al panel
+// legacy SOLO cuando `compositionView === "sale"`. Compras/Presupuestos/
+// Órdenes (`view="cost"`) siguen usando el panel original.
+import {
+  SaleCompositionEditableGrid,
+  type SaleGlobalAdjustments,
+} from "../sales/SaleCompositionEditableGrid";
 import { TPImageLightbox } from "./TPImageLightbox";
 import { TPActionsMenu } from "./TPActionsMenu";
 import { TPPopover } from "./TPPopover";
@@ -285,6 +292,52 @@ export type TPDocumentLineAdvancedEditorProps = {
    * espera ver el total con impuestos alineado con el total del documento.
    */
   showLineTotalWithTax?: boolean;
+  /**
+   * Orientación del panel de composición avanzada que se abre debajo de
+   * cada línea (`LineAdvancedOverridesPanel`). `"sale"` lo deja con foco
+   * en precio de venta (Factura). Default sin definir → `"cost"` en el
+   * panel, preservando el comportamiento legacy de Presupuestos / Órdenes
+   * / Compras.
+   */
+  compositionView?: "sale" | "cost";
+  /**
+   * Mapa `unitCode → unitName` para resolver el código técnico de la
+   * unidad de medida (ej. "UND") a su nombre legible/comercial
+   * ("Unidad", "Gramos", etc.) en el label de Cantidad y en los hints
+   * (Mín. venta, Máx. venta, Stock).
+   *
+   * Cuando NO se pasa, el editor cae al code crudo (`picked.unitOfMeasure`),
+   * preservando el comportamiento de pantallas legacy
+   * (Presupuestos / Órdenes / Compras).
+   */
+  unitNameByCode?: Map<string, string>;
+  /**
+   * Modo controlado del panel avanzado por línea (`LineAdvancedOverridesPanel`).
+   * Cuando el padre pasa este Set, el editor LEE de ahí para decidir si el
+   * panel está abierto. Si además se pasa `onToggleAdvancedOpen`, el botón
+   * de chevron interno delega el toggle al padre en lugar de mutar el state
+   * interno. Pensado para Factura, donde "Expandir/Colapsar todo" debe
+   * sincronizar tanto la fila principal como su panel avanzado.
+   *
+   * Sin estas props (default), el editor usa su state interno y otras
+   * pantallas (Presupuestos / Órdenes / Compras) mantienen su comportamiento.
+   */
+  advancedOpenIds?: Set<string>;
+  onToggleAdvancedOpen?: (lineId: string) => void;
+  /**
+   * Fase 2 — ajustes globales del documento (canal/cupón/pago/envío/desc.
+   * global) que muestra `SaleCompositionEditableGrid` debajo de la tabla
+   * cuando `compositionView === "sale"`. Passthrough puro del preview
+   * backend. Cuando `compositionView !== "sale"` o no se pasa, se ignora.
+   */
+  saleGlobalAdjustments?: SaleGlobalAdjustments;
+  /**
+   * Fase 4.3 — true cuando hay un preview en vuelo. Se propaga al
+   * `SaleCompositionEditableGrid` para mostrar un mini-spinner inline
+   * en el header de la composición. Solo aplica cuando
+   * `compositionView === "sale"`.
+   */
+  saleCompositionLoading?: boolean;
 };
 
 // ── Sub-componente: link compacto para elegir almacén con popover ─────────
@@ -901,7 +954,13 @@ export function TPDocumentLineAdvancedEditor({
   renderLineExtras,
   renderLineExtraToggle,
   showLineTotalWithTax = false,
+  compositionView,
+  advancedOpenIds: advancedOpenIdsProp,
+  onToggleAdvancedOpen,
+  unitNameByCode,
   onChangeLinePriceList,
+  saleGlobalAdjustments,
+  saleCompositionLoading,
 }: TPDocumentLineAdvancedEditorProps) {
   /** fmtMoney con conversión visual aplicada.
    *  `displayRate` = unidades de moneda base por 1 unidad de la moneda
@@ -915,9 +974,20 @@ export function TPDocumentLineAdvancedEditor({
 
   // Panel "Ajustes avanzados" abierto por línea. Estado local — no
   // persiste. Se cierra automáticamente cuando se limpian los overrides.
-  const [advancedOpenIds, setAdvancedOpenIds] = useState<Set<string>>(() => new Set());
+  // Modo controlado opcional: si el padre pasa `advancedOpenIds` +
+  // `onToggleAdvancedOpen`, el editor LEE de ese Set y delega el toggle
+  // al callback. Sin esas props, fallback al state interno (otras pantallas).
+  const [internalAdvancedOpenIds, setInternalAdvancedOpenIds] = useState<Set<string>>(() => new Set());
+  const advancedOpenIds = advancedOpenIdsProp ?? internalAdvancedOpenIds;
+  // Setter "interno" — solo se usa cuando el padre NO controla. Cuando el
+  // padre controla, el toggle se delega vía `onToggleAdvancedOpen`.
+  const setAdvancedOpenIds = setInternalAdvancedOpenIds;
   function toggleAdvancedOpen(id: string) {
-    setAdvancedOpenIds((prev) => {
+    if (onToggleAdvancedOpen) {
+      onToggleAdvancedOpen(id);
+      return;
+    }
+    setInternalAdvancedOpenIds((prev) => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id); else next.add(id);
       return next;
@@ -1410,7 +1480,11 @@ export function TPDocumentLineAdvancedEditor({
         ref={dnd?.setNodeRef}
         style={dnd?.style}
         className={cn(
-          "rounded-lg border border-border p-3 transition-colors duration-150",
+          // Fase 4.4 — densidad ERP: padding interno 12px → 8px (px/py).
+          // Gana ~4 líneas visibles por viewport en docs largos sin
+          // sacrificar legibilidad (los inputs internos siguen con su
+          // padding propio).
+          "rounded-lg border border-border px-2 py-1.5 transition-colors duration-150",
           // Alternance sutil + tenue para placeholders vacíos.
           isEmptyRow
             ? "bg-card/30 opacity-75"
@@ -1496,7 +1570,19 @@ export function TPDocumentLineAdvancedEditor({
                       // cuentan (con artículo o manual con descripción).
                       const num = itemNumberById.get(l.id);
                       if (num == null) return null;
-                      return (
+                      // Factura (showLineTotalWithTax=true) → label plano
+                      // sin borde ni fondo. "Ítem 3" se lee como una etiqueta
+                      // textual igual al "Artículo" que viene a su derecha,
+                      // sin competir como badge. Pantallas legacy mantienen
+                      // el chip custom legacy con borde y bg.
+                      return showLineTotalWithTax ? (
+                        <span
+                          className="text-[10px] font-semibold uppercase tracking-wide tabular-nums text-muted/80"
+                          title="Orden de línea en el comprobante"
+                        >
+                          Ítem {num}
+                        </span>
+                      ) : (
                         <span
                           className="inline-flex h-4 min-w-[1.6rem] items-center justify-center rounded border border-border bg-surface2/60 px-1 text-[10px] font-semibold tabular-nums text-muted/90"
                           title="Orden de línea en el comprobante"
@@ -1507,20 +1593,32 @@ export function TPDocumentLineAdvancedEditor({
                     })()}
                     <span>{l.isManual ? "Descripción" : "Artículo"}</span>
                     {l.isManual && (
-                      <span
-                        className="inline-flex items-center rounded-full border border-amber-500/30 bg-amber-500/10 px-1.5 py-0 text-[9px] font-semibold tracking-wide text-amber-600 dark:text-amber-400"
-                        title="Línea manual: texto libre, sin pricing-engine."
-                      >
-                        Manual
-                      </span>
+                      showLineTotalWithTax ? (
+                        <TPBadge tone="warning" size="sm" title="Línea manual: texto libre, sin pricing-engine.">
+                          Manual
+                        </TPBadge>
+                      ) : (
+                        <span
+                          className="inline-flex items-center rounded-full border border-amber-500/30 bg-amber-500/10 px-1.5 py-0 text-[9px] font-semibold tracking-wide text-amber-600 dark:text-amber-400"
+                          title="Línea manual: texto libre, sin pricing-engine."
+                        >
+                          Manual
+                        </span>
+                      )
                     )}
                     {l.isManual && (displayRate ?? 1) !== 1 && (
-                      <span
-                        className="inline-flex items-center rounded-full border border-border bg-surface2/60 px-1.5 py-0 text-[9px] font-medium normal-case tracking-normal text-muted"
-                        title="Los valores se ingresan en moneda base y se muestran convertidos."
-                      >
-                        Valores convertidos desde moneda base
-                      </span>
+                      showLineTotalWithTax ? (
+                        <TPBadge tone="neutral" size="sm" title="Los valores se ingresan en moneda base y se muestran convertidos.">
+                          Valores convertidos desde moneda base
+                        </TPBadge>
+                      ) : (
+                        <span
+                          className="inline-flex items-center rounded-full border border-border bg-surface2/60 px-1.5 py-0 text-[9px] font-medium normal-case tracking-normal text-muted"
+                          title="Los valores se ingresan en moneda base y se muestran convertidos."
+                        >
+                          Valores convertidos desde moneda base
+                        </span>
+                      )
                     )}
                   </div>
                   {l.isManual ? (
@@ -1720,9 +1818,29 @@ export function TPDocumentLineAdvancedEditor({
                   picked?.stockByWarehouse && picked.stockByWarehouse.length > 0
                     ? picked.stockByWarehouse.reduce((s, w) => s + (w.qty || 0), 0)
                     : (typeof picked?.stock === "number" ? picked.stock : null);
+                // Resolver el `code` técnico de la unidad (ej. "UND") al
+                // `name` legible ("Unidad") usando el catálogo provisto por
+                // el caller. Si la prop no viene o el code no está en el
+                // map, cae al code crudo. Se usa tanto en el label como en
+                // la prop `unit` que se pasa a `TPQuantityField`.
+                const unitCode    = picked?.unitOfMeasure ?? null;
+                const unitDisplay = unitCode
+                  ? (unitNameByCode?.get(unitCode) ?? unitCode)
+                  : null;
                 return (
               <div>
-                <div className="text-[9px] font-semibold uppercase tracking-wide text-muted">Cantidad</div>
+                <div className="text-[9px] font-semibold uppercase tracking-wide text-muted">
+                  Cantidad
+                  {/* Factura: la unidad viaja inline en el label
+                      ("CANTIDAD · Unidad") en lugar de aparecer como badge
+                      separado debajo del input. Usa el nombre legible del
+                      catálogo (`unitNameByCode`) y cae al code crudo si
+                      la prop no se pasó. Pantallas legacy mantienen la
+                      unidad como hint debajo del input. */}
+                  {showLineTotalWithTax && unitDisplay && (
+                    <span className="ml-1 normal-case text-muted/70">· {unitDisplay}</span>
+                  )}
+                </div>
                 <TPQuantityField
                   value={l.quantity}
                   onChange={(v) => {
@@ -1741,24 +1859,30 @@ export function TPDocumentLineAdvancedEditor({
                     updateLine(l.id, { quantity: safeQty });
                   }}
                   constraints={{ ...qtyConstraints, min: enforcedMin, default: enforcedMin }}
-                  unit={picked?.unitOfMeasure ?? null}
+                  unit={unitDisplay}
                   totalStock={lineManagesStock ? totalStock : null}
                   hasPromotion={!!l.pricingMeta?.appliedPromotionId}
                   hasQuantityDiscount={(l.pricingMeta?.quantityDiscountAmount ?? 0) > 0}
                   partial={!!l.pricingMeta?.partial}
                   size="sm"
+                  compactInline={showLineTotalWithTax}
                 />
               </div>
                 );
               })()}
 
-              {/* Cell PRECIO LISTA — `pricingMeta.basePrice` (unitario, antes
+              {/* Cell PRECIO — `pricingMeta.basePrice` (unitario, antes
                   de descuentos por cantidad/promo). Mismo dato que muestra el
                   Simulador en su línea "Precio lista". Si no hay meta cae al
                   unitPrice como fallback. Si el usuario edita: trata el valor
-                  como precio manual final → seteo unitPrice (override). */}
+                  como precio manual final → seteo unitPrice (override).
+                  Label: "Precio" en Factura (showLineTotalWithTax=true);
+                  "Precio lista" en pantallas legacy (Presupuestos / Órdenes /
+                  Compras) que no exhiben el total con impuestos. */}
               <div>
-                <div className="text-[9px] font-semibold uppercase tracking-wide text-muted">Precio lista</div>
+                <div className="text-[9px] font-semibold uppercase tracking-wide text-muted">
+                  {showLineTotalWithTax ? "Precio" : "Precio lista"}
+                </div>
                 <div className="relative">
                   <TPNumberInput
                     // Mostrar el override manual cuando exista. Si no, el
@@ -1797,6 +1921,7 @@ export function TPDocumentLineAdvancedEditor({
                     }}
                     decimals={2}
                     min={0}
+                    {...(showLineTotalWithTax ? { step: 0.05 } : {})}
                     compact
                     className={cn(isCalculating && "opacity-60")}
                   />
@@ -2002,7 +2127,17 @@ export function TPDocumentLineAdvancedEditor({
 
                 return (
                   <div>
-                    <div className="text-[9px] font-semibold uppercase tracking-wide text-muted">Bonificación</div>
+                    <div className="text-[9px] font-semibold uppercase tracking-wide text-muted">
+                      Bonificación
+                      {/* Factura: sufijo "(por unidad)" para clarificar que
+                          el TPNumber edita el % o monto unitario; el impacto
+                          monetario total de la línea se ve debajo del input
+                          (línea verde con signo "−"). Pantallas legacy
+                          mantienen el label sin sufijo. */}
+                      {showLineTotalWithTax && (
+                        <span className="ml-1 normal-case text-muted/70">(por unidad)</span>
+                      )}
+                    </div>
 
                     {lockedByBackend ? (
                       // ── Modo bloqueado: input read-only con el valor efectivo
@@ -2249,6 +2384,24 @@ export function TPDocumentLineAdvancedEditor({
                   if (cached && cached.articleId === l.articleId && cached.rate > 0) {
                     taxRateStable = cached.rate;
                   }
+                  // Fallback final — fix de inconsistencia visual:
+                  // si tras agotar override / breakdown.rate / cache aún queda
+                  // 0 PERO el motor calculó `l.taxAmount > 0` (ej. tributos
+                  // FIXED_AMOUNT o PERCENTAGE_PLUS_FIXED sin `rate` explícito),
+                  // derivamos la tasa efectiva del propio importe del backend.
+                  // Sin esto, el input quedaba en 0,00% mientras el label
+                  // "Impuestos: ARS X" mostraba un monto > 0 — dos fuentes
+                  // distintas. Con esto, ambos consumen `l.taxAmount` y
+                  // convergen al mismo valor.
+                  if (
+                    taxRateStable === 0 &&
+                    typeof l.taxAmount === "number" &&
+                    l.taxAmount > 0 &&
+                    qty > 0 &&
+                    taxBaseUnit > 0
+                  ) {
+                    taxRateStable = (l.taxAmount / qty / taxBaseUnit) * 100;
+                  }
                 } else {
                   // Cacheamos el rate confiable + articleId actual.
                   lastTaxRateByLine.current.set(l.id, { articleId: l.articleId, rate: taxRateStable });
@@ -2283,7 +2436,17 @@ export function TPDocumentLineAdvancedEditor({
 
                 return (
                   <div>
-                    <div className="text-[9px] font-semibold uppercase tracking-wide text-muted">Impuestos</div>
+                    <div className="text-[9px] font-semibold uppercase tracking-wide text-muted">
+                      Impuestos
+                      {/* Factura: sufijo "(por unidad)" para clarificar
+                          que el TPNumber edita el % (o monto) unitario; el
+                          importe monetario total de la línea se muestra
+                          debajo del input (línea ámbar con signo "+").
+                          Pantallas legacy mantienen el label sin sufijo. */}
+                      {showLineTotalWithTax && (
+                        <span className="ml-1 normal-case text-muted/70">(por unidad)</span>
+                      )}
+                    </div>
                     {/* TPNumber + selector %/$ — siempre editables si la
                         línea no es exenta. */}
                     <div className="flex items-stretch gap-1">
@@ -2738,13 +2901,31 @@ export function TPDocumentLineAdvancedEditor({
               "px-3 lg:pl-[22px] lg:pr-3",
             )}
           >
-            <LineAdvancedOverridesPanel
-              line={l}
-              currency={currency}
-              onApply={(patch) => onApplyLineOverrides(l.id, patch)}
-              onClear={onClearLineOverrides ? () => onClearLineOverrides(l.id) : undefined}
-              onClose={() => toggleAdvancedOpen(l.id)}
-            />
+            {/* Fase 2 — switch del panel de composición:
+                 · `view === "sale"` (Factura) → grilla editable nueva.
+                 · resto (Compras/Presupuestos/Órdenes) → panel legacy
+                   read-mostly. Sin tocar el comportamiento existente. */}
+            {compositionView === "sale" ? (
+              <SaleCompositionEditableGrid
+                line={l}
+                currency={currency}
+                onApply={(patch) => onApplyLineOverrides(l.id, patch)}
+                onClear={onClearLineOverrides ? () => onClearLineOverrides(l.id) : undefined}
+                onClose={() => toggleAdvancedOpen(l.id)}
+                unitNameByCode={unitNameByCode}
+                globalAdjustments={saleGlobalAdjustments}
+                previewLoading={saleCompositionLoading}
+              />
+            ) : (
+              <LineAdvancedOverridesPanel
+                line={l}
+                currency={currency}
+                onApply={(patch) => onApplyLineOverrides(l.id, patch)}
+                onClear={onClearLineOverrides ? () => onClearLineOverrides(l.id) : undefined}
+                onClose={() => toggleAdvancedOpen(l.id)}
+                view={compositionView}
+              />
+            )}
           </div>
         )}
         {/* Slot abierto al caller. El editor lo invoca para cada fila con

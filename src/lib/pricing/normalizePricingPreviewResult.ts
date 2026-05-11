@@ -63,6 +63,8 @@ import type {
   NormalizedCostComponent,
 } from "./contract";
 import { isPricingStrictV1Enabled } from "../featureFlags";
+// Fase 5 — telemetría DEV-only para fallbacks legacy. No-op en producción.
+import { trackLegacyPricingPath } from "../pricing-legacy-telemetry";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Utils
@@ -195,12 +197,18 @@ function normalizeCompositionMetals(
                          ? Number(it.appliedMermaPct) : null,
       lineCost:        it?.lineCost        != null && Number.isFinite(Number(it.lineCost))
                          ? Number(it.lineCost) : null,
+      lineSale:        it?.lineSale        != null && Number.isFinite(Number(it.lineSale))
+                         ? Number(it.lineSale) : null,
     }));
   }
   // Fallback legacy — backend pre-v5 sin metals, pero con `metal` único.
   // Construir array de 1 item desde el legacy para que la UI tenga shape
   // unificado.
   if (legacyMetal) {
+    // Fase 5 — telemetría DEV-only de snapshots v3/v4. Tree-shakeable en prod.
+    trackLegacyPricingPath("LEGACY_METAL_NORMALIZATION", {
+      context: "normalizer: alias legacy composition.metal → array",
+    });
     return [{
       costLineId:      null,                                  // no disponible en legacy
       metalVariantId:  legacyMetal.appliedVariantId ?? legacyMetal.originalVariantId ?? null,
@@ -210,6 +218,7 @@ function normalizeCompositionMetals(
       appliedGrams:    legacyMetal.appliedGrams     ?? null,
       appliedMermaPct: legacyMetal.appliedMermaPct  ?? null,
       lineCost:        null,                                  // no expuesto en legacy
+      lineSale:        null,                                  // no expuesto en legacy
     }];
   }
   return [];
@@ -230,14 +239,21 @@ function normalizeCompositionHechuras(
                        ? Number(it.appliedAmount) : null,
       lineCost:      it?.lineCost      != null && Number.isFinite(Number(it.lineCost))
                        ? Number(it.lineCost) : null,
+      lineSale:      it?.lineSale      != null && Number.isFinite(Number(it.lineSale))
+                       ? Number(it.lineSale) : null,
       lineLabel:     it?.lineLabel     ?? null,
     }));
   }
   if (legacyHechura) {
+    // Fase 5 — telemetría DEV-only de snapshots v3/v4.
+    trackLegacyPricingPath("LEGACY_HECHURA_NORMALIZATION", {
+      context: "normalizer: alias legacy composition.hechura → array",
+    });
     return [{
       costLineId:    null,
       appliedAmount: legacyHechura.appliedAmount ?? null,
       lineCost:      null,
+      lineSale:      null,
       lineLabel:     null,
     }];
   }
@@ -276,6 +292,8 @@ function normalizeCompositionItems(raw: any): NormalizedCompositionItemBlock[] {
       lineAdjValue:    it?.lineAdjValue  != null ? Number(it.lineAdjValue)  : null,
       lineAdjAmount:   it?.lineAdjAmount != null ? Number(it.lineAdjAmount) : null,
       affectsStock:    typeof it?.affectsStock === "boolean" ? it.affectsStock : null,
+      lineSale:        it?.lineSale      != null && Number.isFinite(Number(it.lineSale))
+                         ? Number(it.lineSale) : null,
     };
   });
 }

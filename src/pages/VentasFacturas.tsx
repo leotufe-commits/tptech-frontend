@@ -70,6 +70,8 @@ import SalePricingPanel from "../components/sales/SalePricingPanel";
 import { normalizeSalesPreview } from "../lib/pricing/normalizePricingPreviewResult";
 import { logParity } from "../lib/pricing";
 import { selectInvoiceLineView } from "../lib/sales/selectInvoiceLineView";
+// Fase 4.5 — Enter = next field para uso intensivo ERP.
+import { useEnterTabNavigation } from "../lib/sales/useEnterTabNavigation";
 import { isPreviewableLine, matchPreviewLines } from "../lib/sales/matchPreviewLines";
 import { sortLinesPreservingHeaders, articleSkuSortKey } from "../lib/sales/sortLines";
 import {
@@ -823,8 +825,10 @@ function buildSalePreviewPayload(
           // F1.4 G5 #11-D — overrides per costLineId (pisa los legacy
           // cuando match por id). El motor backend (commit 11-A) los
           // resuelve y devuelve `costLineOverridesApplied` en el preview.
+          // Fase 1 plumbing: el campo ya está en `SalePreviewLineInput`
+          // — sin `as any`. TypeScript valida el shape contra el contrato.
           costLineOverrides:      meta?.costLineOverrides     ?? undefined,
-        } as any;
+        };
       }),
       clientId:       draft.clientId      ?? null,
       channelId:      draft.channelId     ?? null,
@@ -966,6 +970,9 @@ function applySalePreviewToDraft(
         metalSale:               pl.metalHechuraBreakdown?.metalSale   ?? null,
         hechuraCost:             pl.metalHechuraBreakdown?.hechuraCost ?? null,
         hechuraSale:             pl.metalHechuraBreakdown?.hechuraSale ?? null,
+        // Fase 2.7.b — márgenes agregados por tipo (passthrough).
+        metalMarginPct:          pl.metalHechuraBreakdown?.metalMarginPct   ?? null,
+        hechuraMarginPct:        pl.metalHechuraBreakdown?.hechuraMarginPct ?? null,
         // Desglose por componente con adjustments (MANUAL_DISCOUNT / ENTITY_RULE
         // / QUANTITY_DISCOUNT / PROMOTION). Permite que la UI muestre el monto
         // absoluto de la bonificación junto al porcentaje configurado, leyendo
@@ -1758,7 +1765,7 @@ function InvoiceEditorModal(props: {
         // eslint-disable-next-line no-console
         console.warn("[VentasFacturas] salesApi.preview falló:", e);
       }
-    }, 350);
+    }, 200);   // Fase 4.3 — debounce 350→200ms (sensación de fluidez ERP).
     return () => clearTimeout(handle);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [previewSignature, open]);
@@ -1889,6 +1896,51 @@ function InvoiceEditorModal(props: {
     );
   }, [draft.lines, matchedNormalized, backendPreview, previewSignature]);
 
+  /**
+   * Fase 2 — ajustes globales del documento que la grilla editable
+   * (`SaleCompositionEditableGrid`) muestra debajo de la tabla de
+   * componentes. Passthrough puro del preview backend + estado del draft.
+   * Cero matemática frontend.
+   *
+   * Solo se computa cuando la firma del backend matchea la del draft actual
+   * (sino los amounts no son confiables). En ese caso devuelve `undefined`
+   * y el bloque queda oculto.
+   */
+  const saleGlobalAdjustments = useMemo(() => {
+    if (!backendPreview || backendPreview.signature !== previewSignature) return undefined;
+    const r  = backendPreview.result;
+    const dt = r?.documentTotals;
+    if (!dt) return undefined;
+
+    const channel = r.channelResult && Number.isFinite(r.channelResult.channelAmount) && r.channelResult.channelAmount !== 0
+      ? { name: r.channelResult.channelName, amount: r.channelResult.channelAmount }
+      : null;
+    const coupon = r.couponResult && r.couponResult.applied
+      && Number.isFinite(r.couponResult.discountAmount) && r.couponResult.discountAmount > 0
+      ? { code: r.couponResult.couponCode, name: r.couponResult.couponName, amount: r.couponResult.discountAmount }
+      : null;
+    // Forma de pago: VentasFacturas todavía no manda `paymentMethodId` al
+    // preview (Fase 7 lo conectará). Mientras tanto, queda en null.
+    const payment = null;
+    // Envío: usamos el monto resuelto por el backend (`dt.shippingAmount`)
+    // y el modo del draft como label.
+    // `DocumentShipping` (legacy local) no expone `mode`; el modo solo
+    // existe en el payload backend (`shipping.mode`). Mientras esa info no
+    // se rehidrate al draft, mostramos un label neutro "Envío".
+    const shipping = Number.isFinite(dt.shippingAmount) && dt.shippingAmount !== 0
+      ? { mode: "FIXED", amount: dt.shippingAmount, label: "Envío" }
+      : null;
+    const globalDiscount = Number.isFinite(dt.globalDiscountAmount) && dt.globalDiscountAmount > 0 && draft.discountGlobal
+      ? {
+          type:   draft.discountGlobal.type,
+          value:  draft.discountGlobal.value,
+          amount: dt.globalDiscountAmount,
+        }
+      : null;
+
+    return { channel, coupon, payment, shipping, globalDiscount };
+  }, [backendPreview, previewSignature, draft.shipping, draft.discountGlobal]);
+
   useEffect(() => {
     if (typeof window === "undefined") return;
     try { window.localStorage.setItem(DISCOUNT_CARD_KEY, String(discountOpen)); } catch {}
@@ -1997,6 +2049,15 @@ function InvoiceEditorModal(props: {
   // (sticky). Cualquier toggle individual sale del modo sticky para no
   // pisar la decisión del usuario sobre líneas específicas.
   const stickyAllExpandedRef = useRef(false);
+
+  // Fase 4.5 — Enter = next field. El hook se aplica al wrapper del
+  // editor de líneas (`editorScopeRef`) para acotar el comportamiento
+  // a la zona editable de la factura. Feature flag local: si emerge
+  // alguna interacción rota, podemos desactivarlo de inmediato sin
+  // remover código.
+  const editorScopeRef = useRef<HTMLDivElement | null>(null);
+  const enableEnterNavigation = true;
+  useEnterTabNavigation(editorScopeRef, enableEnterNavigation);
 
   function toggleLineExpand(lineId: string) {
     // Toggle individual → salimos del modo sticky.
@@ -2870,7 +2931,13 @@ function InvoiceEditorModal(props: {
       (merged.gramsOverride         ?? null) === (prevMeta.gramsOverride         ?? null) &&
       (merged.mermaPercentOverride  ?? null) === (prevMeta.mermaPercentOverride  ?? null) &&
       (merged.metalVariantIdOverride ?? null) === (prevMeta.metalVariantIdOverride ?? null) &&
-      (merged.hechuraOverrideAmount ?? null) === (prevMeta.hechuraOverrideAmount ?? null)
+      (merged.hechuraOverrideAmount ?? null) === (prevMeta.hechuraOverrideAmount ?? null) &&
+      // Fase 2 fix — sin esta comparación, los edits de la nueva grilla
+      // (que solo modifican `costLineOverrides[]` y dejan los 7 legacy
+      // iguales) caían en este return temprano y el state nunca se
+      // actualizaba: la UI parecía "no editable" en runtime.
+      JSON.stringify(merged.costLineOverrides ?? null) ===
+        JSON.stringify(prevMeta.costLineOverrides ?? null)
     ) {
       return;
     }
@@ -5455,6 +5522,9 @@ function InvoiceEditorModal(props: {
               </div>
             </TPPopover>
 
+            {/* Fase 4.5 — wrapper ref-eable que acota el scope del hook
+                Enter=next field a la zona del editor de líneas. */}
+            <div ref={editorScopeRef}>
             {draft.lines.length === 0 ? (
               <div
                 role="button"
@@ -5552,8 +5622,13 @@ function InvoiceEditorModal(props: {
                 onClearLineOverrides={clearLineOverrides}
                 compositionView="sale"
                 unitNameByCode={unitNameByCode}
+                saleGlobalAdjustments={saleGlobalAdjustments}
+                // Fase 4.3 — feedback de "Recalculando" en el header de
+                // la grilla de composición durante un preview en vuelo.
+                saleCompositionLoading={previewStatus === "loading"}
               />
             )}
+            </div>
           </TPCard>
 
         {/* ── Zona inferior — grid 2 columnas:

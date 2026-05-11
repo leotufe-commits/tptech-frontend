@@ -186,6 +186,18 @@ export type SalePreviewLineInput = {
   metalVariantIdOverride?: string | null;
   /** Pisa el monto unitario de la línea HECHURA. */
   hechuraOverrideAmount?:  number | null;
+  /**
+   * F1.4 G5 #11-A — overrides per costLineId.
+   *
+   * Pisa los overrides legacy (gramsOverride / mermaPercentOverride /
+   * hechuraOverrideAmount) cuando hay match por `costLineId`. Permite
+   * editar quantity / unitValue / mermaPercent / adjustment de cost
+   * lines individuales sin tocar la ficha del artículo.
+   *
+   * El backend valida y devuelve `costLineOverridesApplied` (sanitizados)
+   * + `debugWarnings` por línea.
+   */
+  costLineOverrides?: CostLineOverride[];
 };
 
 export type SalePreviewInput = {
@@ -370,13 +382,37 @@ export type SalePreviewLine = {
       appliedGrams:      number | null;
       appliedMermaPct:   number | null;
       lineCost:          number | null;
+      // Fase 2.3 — precio por gramo BASE (pre-merma). Frontend lo usa
+      // como columna "Val. unit." en METAL. lineCost === appliedGrams ×
+      // quotePrice × (1 + appliedMermaPct/100).
+      quotePrice?:       number | null;
+      // Fase 2.4 — nombre comercial completo de la variante (= MetalVariant.name).
+      // Frontend lo prefiere como primary del row METAL; fallback a
+      // `metalName + purityLabel` cuando falta (snapshot viejo).
+      variantName?:      string | null;
     }>;
     /** F1.3 G4.x #9-B — TODAS las cost lines de tipo HECHURA. Mismo patrón. */
     hechuras?: Array<{
       costLineId:        string | null;
+      /** Valor unitario aplicado POST-ajuste (= step.value del motor).
+       *  ⚠ NO usar como base — está adjusted. Para base usar `unitValue`. */
       appliedAmount:     number | null;
       lineCost:          number | null;
       lineLabel:         string | null;
+      // Fase 2.2 — paridad con products/services. Cuando la HECHURA del
+      // artículo trae `lineAdjKind` configurado, el motor lo aplica al
+      // costo Y emite el monto absoluto en `lineAdjAmount`. Frontend lo
+      // muestra como ajuste original en la columna AJUSTE.
+      lineAdjKind?:      "BONUS" | "SURCHARGE" | null;
+      lineAdjType?:      "PERCENTAGE" | "FIXED_AMOUNT" | null;
+      lineAdjValue?:     number | null;
+      lineAdjAmount?:    number | null;
+      // Fase 2.3.1 — valor unitario BASE pre-ajuste (= meta.unitValue del
+      // motor). Frontend lo usa como columna "Val. unit." en HECHURA — antes
+      // la columna mostraba `appliedAmount` (post-ajuste) por falta de este
+      // campo, así que con HECHURA con bonificación se veía el descuento ya
+      // aplicado en VAL. UNIT.
+      unitValue?:        number | null;
     }>;
     /** F1.3 G4.1 — items PRODUCT del costo (insumos / piedras / etc.).
      *  El backend (commit G4.1.3 / G4.1.4) los emite per línea desde steps
@@ -386,6 +422,9 @@ export type SalePreviewLine = {
       costLineId:       string | null;
       catalogItemId:    string | null;
       catalogItemCode:  string | null;
+      // Fase 2.4 — SKU del Article catálogo (= Article.sku). Frontend lo
+      // prefiere sobre catalogItemCode en el secondary del row.
+      catalogItemSku?:  string | null;
       catalogItemName:  string | null;
       quantity:         number;
       unitValue:        number;
@@ -403,6 +442,8 @@ export type SalePreviewLine = {
       costLineId:       string | null;
       catalogItemId:    string | null;
       catalogItemCode:  string | null;
+      // Fase 2.4 — SKU (idem products).
+      catalogItemSku?:  string | null;
       catalogItemName:  string | null;
       quantity:         number;
       unitValue:        number;
@@ -423,6 +464,16 @@ export type SalePreviewLine = {
       taxAmount: number;
       manual:    boolean;
     }>;
+    // Fase 2.5 — ajuste global de costo del artículo (Bonif/Recargo del
+    // modal de artículos). null/undefined cuando el artículo no tiene
+    // `manualAdjustmentKind` configurado. El frontend lo muestra debajo
+    // de la tabla en SaleCompositionEditableGrid.
+    costAdjustment?: {
+      kind:   "BONUS" | "SURCHARGE" | null;
+      type:   "PERCENTAGE" | "FIXED_AMOUNT" | null;
+      value:  number | null;
+      amount: number | null;
+    } | null;
   };
   /** F1.3 G4.3 — desglose por componente sale-side con `salePreManualDiscount`.
    *  El motor backend lo emite siempre que hay base por componente disponible.
@@ -664,6 +715,18 @@ export type SaleLineInput = {
   appliedPriceListId?: string | null;
   appliedPromotionId?: string | null;
   appliedDiscountId?: string | null;
+
+  // ── Fase 1.5 — overrides de composición persistibles en DRAFT ────────────
+  // Mismas reglas y semántica que `SalePreviewLineInput`. Cuando viajan en
+  // `salesApi.create()` o `salesApi.update()`, el backend los aplica al
+  // resolver el snapshot y los guarda en `pricingSnapshot.costLineOverridesApplied`.
+  // Hoy no hay caller que los envíe (VentasFacturas usa preview-only); el
+  // tipo está disponible para cuando se conecte la grilla editable.
+  gramsOverride?:          number | null;
+  mermaPercentOverride?:   number | null;
+  metalVariantIdOverride?: string | null;
+  hechuraOverrideAmount?:  number | null;
+  costLineOverrides?:      CostLineOverride[];
 };
 
 export type CreateSalePayload = {

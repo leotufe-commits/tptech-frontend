@@ -22,6 +22,12 @@
 
 import React from "react";
 import { cn } from "./tp";
+// Fase 3 — helper visual unificado para mostrar el factor con desglose
+// (bruto / ajuste / efectivo). Mismo helper que usa el simulador (Fase 2).
+import { buildFactorBreakdown } from "../../lib/pricing-factor-display";
+// Fase 4.2 — componente reutilizable para el hint del factor efectivo
+// (mismo JSX que se usa en PricingSimulator).
+import FactorBreakdownHint from "./FactorBreakdownHint";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Tipos públicos
@@ -171,6 +177,18 @@ export type TPPriceCompositionKpisProps = {
    *  cards de Metal y Hechura renderizan `base + adjustments + final` en
    *  lugar del cálculo `cost × factor margen`. */
   componentSaleBreakdown?: TPComponentSaleDetailInput;
+  /**
+   * Fase 3 — Ajuste global de costo del artículo (passthrough motor backend).
+   * Cuando está disponible, las fórmulas "cost × factor" muestran el desglose
+   * `lista +X% · ajuste ∓Y% · efectivo Z` (mismo formato que el simulador).
+   * Sin esta prop, el componente cae al render simple "cost × bruto = sale"
+   * (comportamiento pre-Fase 3, retrocompat byte-a-byte).
+   */
+  costAdjustment?: {
+    kind:  "BONUS" | "SURCHARGE" | null;
+    type:  "PERCENTAGE" | "FIXED_AMOUNT" | null;
+    value: number | null;
+  } | null;
   total?:     number | null;
   subtotal?:  number | null;
   taxAmount?: number | null;
@@ -449,6 +467,7 @@ export default function TPPriceCompositionKpis(props: TPPriceCompositionKpisProp
     composition,
     metalHechuraBreakdown,
     componentSaleBreakdown,
+    costAdjustment,
     total,
     subtotal,
     taxAmount,
@@ -697,17 +716,30 @@ export default function TPPriceCompositionKpis(props: TPPriceCompositionKpisProp
                     <span className="tabular-nums font-semibold text-text">{money(metalHechuraBreakdown.metalCost)}</span>
                   </FlowLine>
                 )}
-                {/* L4 — valor metal venta. Solo en vista venta. */}
+                {/* L4 — valor metal venta. Solo en vista venta.
+                    Fase 3 — render unificado con simulador via buildFactorBreakdown.
+                    Cuando hay ajuste global de costo, se muestra el desglose
+                    `lista +X% · ajuste ∓Y% · efectivo Z` debajo de la fórmula. */}
                 {view === "sale" && metalHechuraBreakdown?.metalCost != null
                   && metalSale != null
-                  && Math.abs(metalSale - metalHechuraBreakdown.metalCost) > 0.005 && (
+                  && Math.abs(metalSale - metalHechuraBreakdown.metalCost) > 0.005 && (() => {
+                  const effFactorM = metalHechuraBreakdown.metalCost > 0.0001
+                    ? metalSale / metalHechuraBreakdown.metalCost
+                    : null;
+                  const fbM = buildFactorBreakdown({
+                    grossMarginPct: metalMarginPct,
+                    effectiveFactor: effFactorM,
+                    costAdjustment: costAdjustment ?? null,
+                  });
+                  return (
+                  <>
                   <FlowLine>
                     {metalMarginPct > 0.01 ? (
                       <>
                         <span className="tabular-nums">{money(metalHechuraBreakdown.metalCost)} × {fmtFactor(metalMarginPct)}</span>
                         <span> = </span>
                         <span className="tabular-nums font-semibold text-text">{money(metalSale)}</span>
-                        <span className="ml-1 text-muted/50">(+{metalMarginPct.toFixed(2)}%)</span>
+                        <span className="ml-1 text-muted/50">(lista {fbM.grossText ?? `+${metalMarginPct.toFixed(2)}%`})</span>
                       </>
                     ) : (
                       <>
@@ -717,7 +749,14 @@ export default function TPPriceCompositionKpis(props: TPPriceCompositionKpisProp
                       </>
                     )}
                   </FlowLine>
-                )}
+                  <FactorBreakdownHint
+                    hasDivergence={fbM.hasDivergence}
+                    compactLine={fbM.compactLine}
+                    className="leading-tight ml-1"
+                  />
+                  </>
+                  );
+                })()}
               </div>
             )}
 
@@ -827,14 +866,25 @@ export default function TPPriceCompositionKpis(props: TPPriceCompositionKpisProp
             {view === "sale"
               && metalHechuraBreakdown?.hechuraCost != null
               && hechuraSale != null
-              && Math.abs(hechuraSale - metalHechuraBreakdown.hechuraCost) > 0.005 && (
+              && Math.abs(hechuraSale - metalHechuraBreakdown.hechuraCost) > 0.005 && (() => {
+              // Fase 3 — render unificado con simulador via buildFactorBreakdown.
+              const effFactorH = metalHechuraBreakdown.hechuraCost > 0.0001
+                ? hechuraSale / metalHechuraBreakdown.hechuraCost
+                : null;
+              const fbH = buildFactorBreakdown({
+                grossMarginPct: hechuraMarginPct,
+                effectiveFactor: effFactorH,
+                costAdjustment: costAdjustment ?? null,
+              });
+              return (
+              <>
               <FlowLine>
                 {hechuraMarginPct > 0.01 ? (
                   <>
                     <span className="font-mono tabular-nums">{money(metalHechuraBreakdown.hechuraCost)} × {fmtFactor(hechuraMarginPct)}</span>
                     <span className="font-mono"> = </span>
                     <span className="font-mono tabular-nums font-semibold text-text">{money(hechuraSale)}</span>
-                    <span className="ml-1 text-[10px] text-muted/50">(+{hechuraMarginPct.toFixed(2)}%)</span>
+                    <span className="ml-1 text-[10px] text-muted/50">(lista {fbH.grossText ?? `+${hechuraMarginPct.toFixed(2)}%`})</span>
                   </>
                 ) : (
                   <>
@@ -844,7 +894,14 @@ export default function TPPriceCompositionKpis(props: TPPriceCompositionKpisProp
                   </>
                 )}
               </FlowLine>
-            )}
+              <FactorBreakdownHint
+                hasDivergence={fbH.hasDivergence}
+                compactLine={fbH.compactLine}
+                className="leading-tight ml-1"
+              />
+              </>
+              );
+            })()}
 
             {/* ── Ajustes post-margen del componente HECHURA ──────────────
                 Render directo del snapshot del backend (componentSaleBreakdown).
