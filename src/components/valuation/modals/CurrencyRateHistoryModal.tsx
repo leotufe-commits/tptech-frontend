@@ -6,7 +6,7 @@ import { ModalShell, cn } from "../valuation.ui";
 import * as valuation from "../../../services/valuation";
 
 // ✅ formateadores unificados
-import { fmtRateSmart } from "../../../lib/format";
+import { fmtRateSmart } from "../../../lib/pricing/format";
 
 import {
   TPTableWrap,

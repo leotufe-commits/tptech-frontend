@@ -40,7 +40,10 @@ import { TPInfoCard } from "../../components/ui/TPInfoCard";
 import ArticleSearchSelect from "../../components/ui/ArticleSearchSelect";
 import EntitySearchSelect from "../../components/ui/EntitySearchSelect";
 import { cn } from "../../components/ui/tp";
-import { fmtMoney, round2 } from "../../lib/document-helpers";
+import { round2 } from "../../lib/document-helpers";
+// Comparador: el dinero respeta la región del tenant (helper central
+// config-aware con MISMA semántica que el fmtMoney de document-helpers).
+import { formatMoneyDoc as fmtMoney, formatDecimalUpTo } from "../../lib/pricing/format";
 
 import {
   articlesApi,
@@ -824,7 +827,8 @@ function makeRow(
  */
 function taxKey(name: string | null | undefined, rate: number | null | undefined): string {
   const n = (name ?? "").trim().toLowerCase();
-  const r = rate != null && Number.isFinite(rate) ? Number(rate).toFixed(4) : "";
+  // Clave de Map, NO display: locale-independiente (siempre ".").
+  const r = rate != null && Number.isFinite(rate) ? Number(rate).toFixed(4) : ""; // number-format:ignore
   return `${n}|${r}`;
 }
 
@@ -1439,7 +1443,7 @@ export default function PricingCompare() {
             return (
               <div className="rounded-md border border-emerald-500/40 bg-emerald-500/10 px-3 py-2 text-[11px] text-emerald-500">
                 Conversión aplicada por backend a <strong>{respCode}</strong>.
-                Tasa: <strong>1 {respCode} = {Number(rate).toLocaleString("es-AR", { maximumFractionDigits: 4 })} {baseCode}</strong>.
+                Tasa: <strong>1 {respCode} = {formatDecimalUpTo(Number(rate), 4)} {baseCode}</strong>.
                 Todos los importes mostrados están en {respCode}.
               </div>
             );
@@ -1763,7 +1767,7 @@ export default function PricingCompare() {
           >
             {(() => {
           const fmtNum = (v: number | null | undefined) =>
-            v == null ? "—" : v.toLocaleString("es-AR", { maximumFractionDigits: 4 });
+            v == null ? "—" : formatDecimalUpTo(v, 4);
           const simAppliedPlId  = simNorm?.lines?.[0]?.appliedPriceListId   ?? null;
           const saleAppliedPlId = saleNorm?.lines?.[0]?.appliedPriceListId  ?? null;
           const simChannelDoc   = simNorm?.documentTotals?.channelAdjustmentAmount  ?? null;

@@ -64,9 +64,9 @@ import {
   todayISO,
   round2,
   fmtDate,
-  fmtMoney,
   nextDocNumber,
 } from "../lib/document-helpers";
+import { formatMoneyDoc as fmtMoney } from "../lib/pricing/format";
 import {
   type PaymentComponent,
   type PaymentAllocation,

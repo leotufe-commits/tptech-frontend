@@ -20,6 +20,7 @@
 // ============================================================================
 
 import React from "react";
+import { formatMoneyDoc, formatByType } from "../../lib/pricing/format";
 import type { SalePreviewResult } from "../../services/sales";
 import { normalizeSalesPreview } from "../../lib/pricing/normalizePricingPreviewResult";
 import type { NormalizedPricingResult, NormalizedPricingLine } from "../../lib/pricing/contract";
@@ -45,18 +46,16 @@ export type SalePricingPanelProps = {
 // Formato puro
 // ─────────────────────────────────────────────────────────────────────────────
 
+// Region-aware vía motor central (Configuración → Formato numérico).
 function fmtMoney(v: number | null | undefined, sym?: string): string {
   if (v == null || !Number.isFinite(v)) return "—";
-  const formatted = v.toLocaleString("es-AR", {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  });
+  const formatted = formatMoneyDoc(v);
   return sym ? `${sym} ${formatted}` : formatted;
 }
 
 function fmtPct(v: number | null | undefined): string {
   if (v == null || !Number.isFinite(v)) return "—";
-  return `${v.toLocaleString("es-AR", { maximumFractionDigits: 2 })}%`;
+  return `${formatByType(v, "PERCENT", { bare: true })}%`;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

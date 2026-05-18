@@ -3,6 +3,7 @@
 // Preview: usa LabelSheet + LabelRenderer (React, mm→px exacto).
 // Impresión: genera HTML con SVGs de barcode serializados inline (sin CDN externo).
 import React, { useState, useEffect, useRef } from "react";
+import { formatDecimal } from "../../lib/pricing/format";
 import JsBarcode from "jsbarcode";
 import QRCode from "qrcode";
 import { Printer, Plus, Minus, Tag, LayoutTemplate } from "lucide-react";
@@ -151,9 +152,8 @@ function formatMoney(v: string | null | undefined): string {
   if (!v) return "—";
   const n = parseFloat(v);
   if (!isFinite(n)) return "—";
-  return new Intl.NumberFormat("es-AR", {
-    style: "currency", currency: "ARS", maximumFractionDigits: 0,
-  }).format(n);
+  // Etiqueta impresa: respeta la región del tenant, 0 decimales, símbolo $.
+  return "$ " + formatDecimal(n, 0);
 }
 
 // ─── Resolución de valor para HTML de impresión ───────────────────────────────

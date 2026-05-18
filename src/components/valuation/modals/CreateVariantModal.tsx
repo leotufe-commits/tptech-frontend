@@ -1,7 +1,7 @@
 // src/components/valuation/modals/CreateVariantModal.tsx
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Save, SlidersHorizontal, X } from "lucide-react";
-import { fmtNumber2 } from "../../../lib/format";
+import { fmtNumber2 } from "../../../lib/pricing/format";
 
 import Modal from "../../ui/Modal";
 
@@ -423,6 +423,7 @@ export default function CreateVariantModal({
 
               <div className="mt-2">
                 <TPNumberInput
+                  formatType="PURITY"
                   label={undefined}
                   hint={undefined}
                   value={purity}
@@ -496,6 +497,7 @@ export default function CreateVariantModal({
 
             <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
               <TPNumberInput
+                formatType="PERCENT"
                 label="Merma (%)"
                 value={Number.isFinite(saleFactor) ? Math.round((saleFactor - 1) * 10000) / 100 : null}
                 onChange={(v) => {
@@ -514,6 +516,7 @@ export default function CreateVariantModal({
               />
 
               <TPNumberInput
+                formatType="MONEY"
                 label="Precio final"
                 value={Number.isFinite(calcSaleAuto) ? calcSaleAuto : null}
                 onChange={() => {}}

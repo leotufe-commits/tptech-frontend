@@ -16,7 +16,7 @@ import { TPCard } from "../components/ui/TPCard";
 import TPAlert from "../components/ui/TPAlert";
 import { cn } from "../components/ui/tp";
 import { apiFetch } from "../lib/api";
-import { fmtNumber2, fmtMoney2 } from "../lib/format";
+import { fmtNumber2, fmtMoney2, formatDecimal, formatDecimalUpTo, formatGrams } from "../lib/pricing/format";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Tipos
@@ -117,14 +117,14 @@ function fmtDateShort(v: string): string {
 }
 
 function fmtYAxis(v: number): string {
-  if (v >= 1_000_000) return `${(v / 1_000_000).toLocaleString("es-AR", { maximumFractionDigits: 1 })}M`;
-  if (v >= 1_000) return `${(v / 1_000).toLocaleString("es-AR", { maximumFractionDigits: 0 })}k`;
-  return v.toLocaleString("es-AR", { maximumFractionDigits: 0 });
+  if (v >= 1_000_000) return `${formatDecimalUpTo(v / 1_000_000, 1)}M`;
+  if (v >= 1_000) return `${formatDecimalUpTo(v / 1_000, 0)}k`;
+  return formatDecimalUpTo(v, 0);
 }
 
 function fmtPct(n: number | null): string {
   if (n == null) return "—";
-  return n.toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + "%";
+  return formatDecimal(n, 2) + "%";
 }
 
 const RANGE_LABEL: Record<RangeKey, string> = {
@@ -631,14 +631,14 @@ export default function Dashboard() {
                           axisLine={false}
                           width={44}
                           tickFormatter={(v) =>
-                            Number(v).toLocaleString("es-AR", { maximumFractionDigits: 4 })
+                            formatDecimalUpTo(Number(v), 4)
                           }
                         />
                         <Tooltip
                           content={
                             <NiceTooltip
                               valueFormatter={(_k: string, v: number) =>
-                                v.toLocaleString("es-AR", { maximumFractionDigits: 6 })
+                                formatDecimalUpTo(v, 6)
                               }
                             />
                           }
@@ -702,14 +702,14 @@ export default function Dashboard() {
                           axisLine={false}
                           width={44}
                           tickFormatter={(v) =>
-                            Number(v).toLocaleString("es-AR", { maximumFractionDigits: 4 })
+                            formatDecimalUpTo(Number(v), 4)
                           }
                         />
                         <Tooltip
                           content={
                             <NiceTooltip
                               valueFormatter={(_k: string, v: number) =>
-                                v.toLocaleString("es-AR", { maximumFractionDigits: 6 })
+                                formatDecimalUpTo(v, 6)
                               }
                             />
                           }
@@ -825,7 +825,7 @@ export default function Dashboard() {
                                     <div className="min-w-0">
                                       <div className="truncate text-xs font-medium text-text">{v.name}</div>
                                       <div className="text-[11px] text-muted">
-                                        Ley {v.purity.toLocaleString("es-AR", { minimumFractionDigits: 3, maximumFractionDigits: 3 })}
+                                        Ley {formatGrams(v.purity, 3)}
                                         {" · "}SKU {v.sku}
                                       </div>
                                     </div>

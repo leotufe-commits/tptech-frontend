@@ -18,7 +18,9 @@
 
 import React from "react";
 import { cn } from "./tp";
-import { fmtMoney } from "../../lib/document-helpers";
+// Celda de saldo compartida (Finanzas, estado de cuenta, etc.): dinero
+// config-aware (región/decimales del tenant), misma firma (amount, currency?).
+import { formatMoneyDoc as fmtMoney } from "../../lib/pricing/format";
 
 export type TPBalanceTone = "neutral" | "primary" | "success" | "warning" | "danger" | "muted";
 

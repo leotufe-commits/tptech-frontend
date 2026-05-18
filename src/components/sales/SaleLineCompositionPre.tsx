@@ -31,6 +31,7 @@ import type { DocumentLine } from "../../lib/document-types";
 import SaleLineCompositionDetail from "./SaleLineCompositionDetail";
 import TPNumberInput from "../ui/TPNumberInput";
 import { TPBadge } from "../ui/TPBadges";
+import { formatGrams, formatDecimal } from "../../lib/pricing/format";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers
@@ -268,13 +269,14 @@ export default function SaleLineCompositionPre(props: SaleLineCompositionPreProp
                 <TPNumberInput
                   value={grams.value}
                   onChange={(v) => grams.setValue(v)}
+                  formatType="METAL_GRAMS"
                   decimals={3}
                   min={0}
                   compact
                 />
                 {origGrams != null && (
                   <div className="mt-0.5 text-[9px] italic text-muted/60">
-                    Original: {origGrams.toFixed(3)} gr
+                    Original: {formatGrams(origGrams, 3)} gr
                   </div>
                 )}
               </div>
@@ -286,13 +288,14 @@ export default function SaleLineCompositionPre(props: SaleLineCompositionPreProp
                 <TPNumberInput
                   value={merma.value}
                   onChange={(v) => merma.setValue(v)}
+                  formatType="MERMA_PERCENT"
                   decimals={2}
                   min={0}
                   compact
                 />
                 {origMermaPct != null && (
                   <div className="mt-0.5 text-[9px] italic text-muted/60">
-                    Original: {origMermaPct.toFixed(2)}%
+                    Original: {formatDecimal(origMermaPct, 2)}%
                   </div>
                 )}
               </div>
@@ -322,13 +325,14 @@ export default function SaleLineCompositionPre(props: SaleLineCompositionPreProp
                 <TPNumberInput
                   value={hechura.value}
                   onChange={(v) => hechura.setValue(v)}
+                  formatType="MONEY"
                   decimals={2}
                   min={0}
                   compact
                 />
                 {origHechura != null && (
                   <div className="mt-0.5 text-[9px] italic text-muted/60">
-                    Original: {currencySymbol} {origHechura.toFixed(2)}
+                    Original: {currencySymbol} {formatDecimal(origHechura, 2)}
                   </div>
                 )}
               </div>

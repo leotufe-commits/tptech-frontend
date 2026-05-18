@@ -4,6 +4,7 @@ import { Loader2, User2, Tag, X } from "lucide-react";
 
 import { ModalShell, cn } from "../valuation.ui";
 import TPDateRangeInline, { type TPDateRangeValue } from "../../ui/TPDateRangeInline";
+import { formatDecimalUpTo } from "../../../lib/pricing/format";
 
 function fmtDateTime(v?: string) {
   if (!v) return "—";
@@ -15,7 +16,8 @@ function fmtDateTime(v?: string) {
 function fmtNum(v: any, digits = 6) {
   const n = Number(v);
   if (!Number.isFinite(n)) return "—";
-  return n.toLocaleString("es-AR", { maximumFractionDigits: digits });
+  // region-aware (config del tenant), hasta `digits` decimales sin rellenar.
+  return formatDecimalUpTo(n, digits);
 }
 
 function money(sym: string, v: any, digits = 6) {

@@ -15,6 +15,7 @@
 // ============================================================================
 
 import React, { useEffect, useMemo, useState } from "react";
+import { formatQty } from "../lib/pricing/format";
 import { useNavigate } from "react-router-dom";
 import {
   Package,
@@ -85,7 +86,7 @@ function toNum(v: string | number | null | undefined): number {
 }
 
 function fmtQty(n: number): string {
-  return n.toLocaleString("es-AR", { minimumFractionDigits: 0, maximumFractionDigits: 3 });
+  return formatQty(n);
 }
 
 function statusBadge(s: ReposStatus) {

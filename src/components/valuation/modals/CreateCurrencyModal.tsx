@@ -302,6 +302,7 @@ export default function CreateCurrencyModal({
             {/* ✅ SOLO CREAR y NO primera moneda: rate inicial */}
             {showInitialRate ? (
               <TPNumberInput
+                formatType="FX_RATE"
                 label="Tipo de cambio inicial (opcional)"
                 hint="Solo para monedas NO base. Ej: USD = 1000,00 (en moneda base)."
                 value={initialRate}

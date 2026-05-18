@@ -2,6 +2,7 @@
 // Vista de solo lectura de una variante específica.
 // Se abre desde la tabla de artículos al hacer "Ver variante".
 import React, { useMemo } from "react";
+import { formatDecimal } from "../../lib/pricing/format";
 import { ExternalLink, Layers, Package, Pencil, X } from "lucide-react";
 import { Modal } from "../../components/ui/Modal";
 import { TPButton } from "../../components/ui/TPButton";
@@ -279,7 +280,7 @@ export default function ViewVariantModal({
                   )}
                 >
                   {margin >= 0 ? "+" : ""}
-                  {margin.toFixed(1)}%
+                  {formatDecimal(margin, 1)}%
                 </div>
               ) : (
                 <div className="text-base font-bold text-muted leading-tight">—</div>

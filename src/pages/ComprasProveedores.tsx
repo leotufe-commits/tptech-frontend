@@ -40,7 +40,7 @@ import {
   type PaymentComponentInput,
 } from "../services/purchases";
 import { getCurrencies, type CurrencyRow } from "../services/valuation";
-import { fmtNumber2 } from "../lib/format";
+import { fmtNumber2, formatGrams, formatDecimalUpTo } from "../lib/pricing/format";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -671,7 +671,7 @@ export default function ComprasProveedores() {
                     <tr key={line.id} className="border-b border-border/40">
                       <td className="py-1.5">{line.articleName || "—"}</td>
                       <td className="text-right py-1.5 tabular-nums">
-                        {parseFloat(line.quantity).toLocaleString("es-AR")}
+                        {formatDecimalUpTo(parseFloat(line.quantity), 3)}
                       </td>
                       <td className="text-right py-1.5 tabular-nums">
                         ${fmtMoney(line.unitCost)}
@@ -717,7 +717,7 @@ export default function ComprasProveedores() {
                               <>
                                 <Coins size={12} className="text-amber-500" />
                                 <span>
-                                  Metal: {parseFloat(c.gramsPure ?? "0").toFixed(4)} g puros
+                                  Metal: {formatGrams(parseFloat(c.gramsPure ?? "0"), 4)} g puros
                                 </span>
                               </>
                             )}
@@ -955,7 +955,7 @@ export default function ComprasProveedores() {
                           const gOrig = v ?? 0;
                           updateMetalComp(comp.key, {
                             gramsOriginal: gOrig,
-                            gramsPure: parseFloat((gOrig * comp.purity).toFixed(6)),
+                            gramsPure: parseFloat((gOrig * comp.purity).toFixed(6)), // number-format:ignore — cálculo/payload, no display
                           });
                         }}
                         min={0}
@@ -969,7 +969,7 @@ export default function ComprasProveedores() {
                           const pur = v ?? 0;
                           updateMetalComp(comp.key, {
                             purity: pur,
-                            gramsPure: parseFloat((comp.gramsOriginal * pur).toFixed(6)),
+                            gramsPure: parseFloat((comp.gramsOriginal * pur).toFixed(6)), // number-format:ignore — cálculo/payload, no display
                           });
                         }}
                         min={0}
@@ -978,7 +978,7 @@ export default function ComprasProveedores() {
                       />
                     </TPField>
                     <TPField label="Gramos puros (calc.)">
-                      <TPInput value={comp.gramsPure.toFixed(6)} onChange={() => {}} readOnly />
+                      <TPInput value={formatGrams(comp.gramsPure, 6)} onChange={() => {}} readOnly />
                     </TPField>
                     <TPField label="ID de metal">
                       <TPInput
@@ -1007,7 +1007,7 @@ export default function ComprasProveedores() {
                   .filter((c) => c.componentType === "METAL" && (c as DraftMetalComp).gramsPure > 0)
                   .map((c) => (
                     <p key={c.key}>
-                      🔶 Metal: {(c as DraftMetalComp).gramsPure.toFixed(4)} g puros
+                      🔶 Metal: {formatGrams((c as DraftMetalComp).gramsPure, 4)} g puros
                     </p>
                   ))}
               </div>

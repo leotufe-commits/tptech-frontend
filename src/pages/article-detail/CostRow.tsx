@@ -1,5 +1,6 @@
 // src/pages/article-detail/CostRow.tsx
 import React, { useEffect, useState } from "react";
+import { formatDecimal } from "../../lib/pricing/format";
 import ReactDOM from "react-dom";
 import { GripVertical, Star, X } from "lucide-react";
 import { useSortable } from "@dnd-kit/sortable";
@@ -166,7 +167,7 @@ export function SortableCostRow({
   const [stockFavorite, setStockFavorite] = useState("true");
 
   function fmtN(n: number) {
-    return n.toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    return formatDecimal(n, 2);
   }
 
   const isMetal = line.type === "METAL";

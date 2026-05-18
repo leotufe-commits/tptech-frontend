@@ -440,13 +440,14 @@ describe("Fase 2.2/2.4 — secondary del componente (FASE 12.7: tipo retirado de
 // ────────────────────────────────────────────────────────────────────────────
 
 describe("Fase 2.3 — formato y semántica de columnas", () => {
-  it("Cantidad METAL se muestra con 2 decimales (no 3)", () => {
+  it("Cantidad METAL respeta el preset METAL_GRAMS del tenant (default 3 decimales)", () => {
     render(<SaleCompositionEditableGrid line={makeLine()} onApply={vi.fn()} {...baseProps} />);
-    // El input tiene decimals=2 → "2,50" (no "2,500").
+    // formatType="METAL_GRAMS": decimales SIEMPRE desde el preset del tenant
+    // (default 3 → "2,500"), no hardcodeados por call-site.
     const inputs = screen.getAllByRole("textbox");
     const metalQty = inputs.find((el) => {
       const v = (el as HTMLInputElement).value;
-      return v === "2,50" || v === "2.50";
+      return v === "2,500" || v === "2.500";
     });
     expect(metalQty).toBeDefined();
   });
@@ -531,14 +532,14 @@ describe("Fase 2.3.1 — HECHURA con bonificación: separa BASE de POST", () => 
         line={makeLineWithHechuraBonus()} onApply={vi.fn()} {...baseProps}
       />,
     );
-    // TPNumberInput formatea con `n.toFixed(2)` → "1000.00" (sin separador
-    // de miles, punto decimal). Input value === "1000.00".
+    // TPNumberInput con formatType="MONEY" formatea region-aware (AR por
+    // defecto): "1.000,00" (miles punto, decimal coma).
     const inputs = screen.getAllByRole("textbox") as HTMLInputElement[];
-    const valUnitInput = inputs.find((el) => el.value === "1000.00");
+    const valUnitInput = inputs.find((el) => el.value === "1.000,00");
     expect(valUnitInput).toBeDefined();
-    // Y NO debe haber un input editable con valor "900.00" (sería el bug
+    // Y NO debe haber un input editable con valor "900,00" (sería el bug
     // Fase 2.3.1 — VAL. UNIT. mostrando post-ajuste).
-    const post = inputs.find((el) => el.value === "900.00");
+    const post = inputs.find((el) => el.value === "900,00");
     expect(post).toBeUndefined();
   });
 
@@ -583,9 +584,9 @@ describe("Fase 2.3.1 — HECHURA con bonificación: separa BASE de POST", () => 
     delete meta.composition.hechuras[0].unitValue;
     render(<SaleCompositionEditableGrid line={line} onApply={vi.fn()} {...baseProps} />);
     // VAL. UNIT. cae a appliedAmount (legacy) — no inventa el base.
-    // Format de TPNumberInput: n.toFixed(2) → "200.00".
+    // Format region-aware (AR por defecto): "200,00".
     const inputs = screen.getAllByRole("textbox") as HTMLInputElement[];
-    expect(inputs.some((el) => el.value === "200.00")).toBe(true);
+    expect(inputs.some((el) => el.value === "200,00")).toBe(true);
   });
 });
 
@@ -1029,7 +1030,7 @@ describe("FASE 12.11 — merma label editable + totales grupo + ajuste global", 
     render(<SaleCompositionEditableGrid line={line} onApply={vi.fn()} {...baseProps} />);
     // Cada fila renderea "Aj. global −5,0%" como sub-línea bajo margen.
     // 4 fixtures (METAL/HECHURA/PRODUCT/SERVICE) → al menos 4 ocurrencias.
-    expect(screen.getAllByText(/Aj\.\s+global\s+−5,0%/).length).toBeGreaterThanOrEqual(4);
+    expect(screen.getAllByText(/Aj\.\s+global\s+−5,00%/).length).toBeGreaterThanOrEqual(4);
   });
 
   it("Si NO hay ajuste global, no aparece sub-línea 'Aj. global'", () => {
@@ -1046,7 +1047,7 @@ describe("FASE 12.11 — merma label editable + totales grupo + ajuste global", 
       coupon: null,
     };
     render(<SaleCompositionEditableGrid line={line} onApply={vi.fn()} {...baseProps} />);
-    expect(screen.getAllByText(/Aj\.\s+global\s+\+15,0%/).length).toBeGreaterThanOrEqual(4);
+    expect(screen.getAllByText(/Aj\.\s+global\s+\+15,00%/).length).toBeGreaterThanOrEqual(4);
   });
 });
 
@@ -1426,7 +1427,7 @@ describe("FASE 12.4 — vista única (sin switch Vista costo/Vista comercial)", 
     line.quantity = 1;
     render(<SaleCompositionEditableGrid line={line} onApply={vi.fn()} {...baseProps} />);
     // FASE 12.4 — el margen se prefija con "Margen " en la sub-línea.
-    expect(screen.getByText(/^\+200,0%$/)).toBeTruthy();
+    expect(screen.getByText(/^\+200,00%$/)).toBeTruthy();
   });
 
   it("METAL no canónico (count>1) → margen no derivable, sub-línea muestra '—'", () => {
@@ -1442,14 +1443,14 @@ describe("FASE 12.4 — vista única (sin switch Vista costo/Vista comercial)", 
     ];
     render(<SaleCompositionEditableGrid line={line} onApply={vi.fn()} {...baseProps} />);
     // No debe aparecer "Margen 200,0%" como sub-línea cuando count>1.
-    expect(screen.queryByText(/^\+200,0%$/)).toBeNull();
+    expect(screen.queryByText(/^\+200,00%$/)).toBeNull();
   });
 
   it("HECHURA canónica (count===1): margen 100% sub-línea visible", () => {
     const line = makeLine({ hechuraSale: 400 } as any);
     line.quantity = 1;
     render(<SaleCompositionEditableGrid line={line} onApply={vi.fn()} {...baseProps} />);
-    expect(screen.getByText(/^\+100,0%$/)).toBeTruthy();
+    expect(screen.getByText(/^\+100,00%$/)).toBeTruthy();
   });
 });
 
@@ -1472,7 +1473,7 @@ describe("F1.5 #A+ — lineSale passthrough per fila", () => {
 
     // FASE 12.2 — solo Margen es visible en commercial view; P. unit. venta y
     // Venta línea ya no se renderean. Margen 100% del PRODUCT debe estar.
-    expect(screen.getByText(/^\+100,0%$/)).toBeTruthy();
+    expect(screen.getByText(/^\+100,00%$/)).toBeTruthy();
   });
 
   it("SERVICE con lineSale=200 → margen=150% (cost=80)", () => {
@@ -1482,7 +1483,7 @@ describe("F1.5 #A+ — lineSale passthrough per fila", () => {
     render(<SaleCompositionEditableGrid line={line} onApply={vi.fn()} {...baseProps} />);
     // FASE 12.4 — vista única (sin switch); el click al toggle es no-op.
 
-    expect(screen.getByText(/^\+150,0%$/)).toBeTruthy();
+    expect(screen.getByText(/^\+150,00%$/)).toBeTruthy();
   });
 
   it("HECHURA con lineSale en TODAS las filas (count>1) → todas muestran sale-side", () => {
@@ -1496,7 +1497,7 @@ describe("F1.5 #A+ — lineSale passthrough per fila", () => {
     // FASE 12.4 — vista única (sin switch); el click al toggle es no-op.
 
     // Ambas filas tienen margen 100% (cost×2). El '100,0%' debe aparecer al menos 2 veces.
-    expect(screen.getAllByText(/^\+100,0%$/).length).toBeGreaterThanOrEqual(2);
+    expect(screen.getAllByText(/^\+100,00%$/).length).toBeGreaterThanOrEqual(2);
   });
 
   it("Snapshot legacy: PRODUCT sin lineSale (undefined) → '—' en sale-side", () => {
@@ -1520,7 +1521,7 @@ describe("F1.5 #A+ — lineSale passthrough per fila", () => {
     // FASE 12.4 — vista única (sin switch); el click al toggle es no-op.
 
     // Margen 50% común a las 3 filas → debe aparecer al menos 3 veces.
-    expect(screen.getAllByText(/^\+50,0%$/).length).toBeGreaterThanOrEqual(3);
+    expect(screen.getAllByText(/^\+50,00%$/).length).toBeGreaterThanOrEqual(3);
   });
 
   it("PRODUCT con lineSale null explícito → '—' (no usa fallback inventado)", () => {
@@ -1552,7 +1553,7 @@ describe("F1.5 #A++ — METAL lineSale passthrough", () => {
     render(<SaleCompositionEditableGrid line={line} onApply={vi.fn()} {...baseProps} />);
     // FASE 12.4 — vista única (sin switch); el click al toggle es no-op.
 
-    expect(screen.getByText(/^\+200,0%$/)).toBeTruthy();
+    expect(screen.getByText(/^\+200,00%$/)).toBeTruthy();
   });
 
   it("4 metales (caso real Oro 18k/22k/24k/Chafalonia): TODAS las filas muestran margen", () => {
@@ -1573,7 +1574,7 @@ describe("F1.5 #A++ — METAL lineSale passthrough", () => {
     // FASE 12.4 — vista única (sin switch); el click al toggle es no-op.
 
     // Margen uniforme 50% → debe aparecer ≥ 4 veces (1 por fila METAL).
-    expect(screen.getAllByText(/^\+50,0%$/).length).toBeGreaterThanOrEqual(4);
+    expect(screen.getAllByText(/^\+50,00%$/).length).toBeGreaterThanOrEqual(4);
   });
 
   it("Σ metals.lineSale === metalSale del breakdown (paridad agregada)", () => {
@@ -1591,7 +1592,7 @@ describe("F1.5 #A++ — METAL lineSale passthrough", () => {
     // FASE 12.4 — vista única (sin switch); el click al toggle es no-op.
 
     // Ambos METAL deben tener margen 50% (450/300 = 750/500 = 1.5).
-    expect(screen.getAllByText(/^\+50,0%$/).length).toBeGreaterThanOrEqual(2);
+    expect(screen.getAllByText(/^\+50,00%$/).length).toBeGreaterThanOrEqual(2);
   });
 
   it("Snapshot legacy: METAL count>1 sin lineSale → '—' (no inventa prorrateo)", () => {
@@ -1608,7 +1609,7 @@ describe("F1.5 #A++ — METAL lineSale passthrough", () => {
     // FASE 12.4 — vista única (sin switch); el click al toggle es no-op.
 
     // Sin lineSale en metales y count>1, las filas METAL muestran "—".
-    expect(screen.queryByText(/^\+50,0%$/)).toBeNull();
+    expect(screen.queryByText(/^\+50,00%$/)).toBeNull();
     expect(screen.getAllByText("—").length).toBeGreaterThanOrEqual(6);
   });
 
@@ -1621,7 +1622,7 @@ describe("F1.5 #A++ — METAL lineSale passthrough", () => {
     // FASE 12.4 — vista única (sin switch); el click al toggle es no-op.
 
     // margen = (1500-500)/500 = 200%.
-    expect(screen.getByText(/^\+200,0%$/)).toBeTruthy();
+    expect(screen.getByText(/^\+200,00%$/)).toBeTruthy();
   });
 });
 
@@ -1782,7 +1783,7 @@ describe("FASE 12.17 — Feedback theme + labels sentence-case", () => {
     render(<SaleCompositionEditableGrid line={makeLine()} onApply={vi.fn()} {...baseProps} />);
     const unidadEl = screen.getByText("Gramos");
     const inputs = screen.getAllByRole("textbox") as HTMLInputElement[];
-    const qtyInput = inputs.find((el) => el.value === "2,50" || el.value === "2.50")!;
+    const qtyInput = inputs.find((el) => el.value === "2,500" || el.value === "2.500")!;
     expect(qtyInput).toBeDefined();
     // El input está ANTES de "Gramos" en el orden DOM (Cantidad → Unidad).
     const pos = qtyInput.compareDocumentPosition(unidadEl);
@@ -1792,7 +1793,7 @@ describe("FASE 12.17 — Feedback theme + labels sentence-case", () => {
   it("FASE F21 — input de Cantidad mantiene su feedback hover/focus interno", () => {
     render(<SaleCompositionEditableGrid line={makeLine()} onApply={vi.fn()} {...baseProps} />);
     const inputs = screen.getAllByRole("textbox") as HTMLInputElement[];
-    const qtyInput = inputs.find((el) => el.value === "2,50" || el.value === "2.50")!;
+    const qtyInput = inputs.find((el) => el.value === "2,500" || el.value === "2.500")!;
     expect(qtyInput).toBeDefined();
     expect(qtyInput.className).toMatch(/hover:!bg-primary\//);
     expect(qtyInput.className).toMatch(/focus:!bg-primary\//);
@@ -1813,7 +1814,7 @@ describe("FASE 12.17 — Feedback theme + labels sentence-case", () => {
     const onApply = vi.fn();
     render(<SaleCompositionEditableGrid line={makeLine()} onApply={onApply} {...baseProps} />);
     const inputs = screen.getAllByRole("textbox") as HTMLInputElement[];
-    const qtyInput = inputs.find((el) => el.value === "2,50" || el.value === "2.50")!;
+    const qtyInput = inputs.find((el) => el.value === "2,500" || el.value === "2.500")!;
     expect(qtyInput).toBeDefined();
     expect(qtyInput.readOnly).toBe(false);
     fireEvent.focus(qtyInput);
@@ -1898,7 +1899,7 @@ describe("FASE 12.17 — Feedback theme + labels sentence-case", () => {
   it("FASE F21 — al editar el input de Cantidad, document.activeElement sigue siendo el input", () => {
     render(<SaleCompositionEditableGrid line={makeLine()} onApply={vi.fn()} {...baseProps} />);
     const inputs = screen.getAllByRole("textbox") as HTMLInputElement[];
-    const qtyInput = inputs.find((el) => el.value === "2,50" || el.value === "2.50")!;
+    const qtyInput = inputs.find((el) => el.value === "2,500" || el.value === "2.500")!;
     expect(qtyInput).toBeDefined();
     qtyInput.focus();
     fireEvent.change(qtyInput, { target: { value: "3,5" } });
@@ -3021,7 +3022,7 @@ describe("FASE F23 — Columna 'Margen' independiente", () => {
     const cells = document.querySelectorAll("[data-margin-cell]");
     expect(cells.length).toBeGreaterThanOrEqual(1);
     // Alguna celda Margen contiene "+50,0%" o "+ARS 100,00".
-    const found = Array.from(cells).some((c) => /\+50,0%/.test(c.textContent ?? ""));
+    const found = Array.from(cells).some((c) => /\+50,00%/.test(c.textContent ?? ""));
     expect(found).toBe(true);
   });
 
@@ -3240,7 +3241,7 @@ describe("FASE F21 — Columna 'Unidad' separada de 'Cantidad'", () => {
   it("La celda Cantidad contiene SOLO el input (sin la unidad inline)", () => {
     render(<SaleCompositionEditableGrid line={makeLine()} onApply={vi.fn()} {...baseProps} />);
     const inputs = screen.getAllByRole("textbox") as HTMLInputElement[];
-    const qtyInput = inputs.find((el) => el.value === "2,50" || el.value === "2.50")!;
+    const qtyInput = inputs.find((el) => el.value === "2,500" || el.value === "2.500")!;
     expect(qtyInput).toBeDefined();
     // El padre directo del input es la celda Cantidad y no contiene texto "Gramos".
     const qtyCell = qtyInput.closest('div.flex.items-baseline')!;
@@ -3253,7 +3254,7 @@ describe("FASE F21 — Columna 'Unidad' separada de 'Cantidad'", () => {
     expect(unidadEl.getAttribute("aria-hidden")).toBe("true");
     // Está fuera del wrap del input (separada).
     const inputs = screen.getAllByRole("textbox") as HTMLInputElement[];
-    const qtyInput = inputs.find((el) => el.value === "2,50" || el.value === "2.50")!;
+    const qtyInput = inputs.find((el) => el.value === "2,500" || el.value === "2.500")!;
     expect(qtyInput.closest('div')?.contains(unidadEl)).toBe(false);
   });
 });
@@ -3339,7 +3340,7 @@ describe("FASE F19 — Costo Total: impacto monetario debajo del %", () => {
     (line.pricingMeta as any).composition.hechuras[0].lineSale = 300;
     render(<SaleCompositionEditableGrid line={line} onApply={vi.fn()} {...baseProps} />);
     // El "+50,0%" sigue presente.
-    expect(screen.getAllByText(/\+50,0%/).length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText(/\+50,00%/).length).toBeGreaterThanOrEqual(1);
     // Y el "+ARS 100,00" también.
     const impacts = document.querySelectorAll("[data-margin-amount-impact]");
     const found = Array.from(impacts).some((el) => /\+ARS\s*100,00/.test(el.textContent ?? ""));
@@ -3490,7 +3491,7 @@ describe("FASE F20 — Sección 'AJUSTE GLOBAL' al final del card", () => {
     expect(section).not.toBeNull();
     expect(section!.textContent).toMatch(/Ajuste global/i);
     expect(section!.textContent).toMatch(/Costo antes del ajuste:/);
-    expect(section!.textContent).toMatch(/Bonificación 5%/);
+    expect(section!.textContent).toMatch(/Bonificación 5,00%/);
     // Monto signado − (BONUS reduce).
     expect(section!.textContent).toMatch(/−ARS\s*100,00/);
     expect(section!.textContent).toMatch(/Costo total:/);
@@ -3508,7 +3509,7 @@ describe("FASE F20 — Sección 'AJUSTE GLOBAL' al final del card", () => {
     };
     render(<SaleCompositionEditableGrid line={line} onApply={vi.fn()} {...baseProps} />);
     const section = document.querySelector("[data-cost-adjustment-detail]")!;
-    expect(section.textContent).toMatch(/Recargo 5%/);
+    expect(section.textContent).toMatch(/Recargo 5,00%/);
     expect(section.textContent).toMatch(/\+ARS\s*100,00/);
     expect(section.innerHTML).toMatch(/amber-600|amber-400/);
   });
@@ -3666,10 +3667,10 @@ describe("Margen no atribuible por línea (MARGIN_TOTAL)", () => {
     const cells = Array.from(document.querySelectorAll("[data-margin-cell]"));
     expect(cells.length).toBeGreaterThanOrEqual(1);
     // unifiedFactor = 1000/400 = 2.5 → margen visual = +150,0%.
-    const hasUnified = cells.some((c) => /\+150,0%/.test(c.textContent ?? ""));
+    const hasUnified = cells.some((c) => /\+150,00%/.test(c.textContent ?? ""));
     expect(hasUnified).toBe(true);
     // No debe mostrar +0,0% ni "—" en la fila de hechura.
-    const has00 = cells.some((c) => /\+0,0%/.test(c.textContent ?? ""));
+    const has00 = cells.some((c) => /\+0,00%/.test(c.textContent ?? ""));
     expect(has00).toBe(false);
   });
 
@@ -3690,7 +3691,7 @@ describe("Margen no atribuible por línea (MARGIN_TOTAL)", () => {
     render(<SaleCompositionEditableGrid line={line} onApply={vi.fn()} {...baseProps} />);
     const cells = Array.from(document.querySelectorAll("[data-margin-cell]"));
     // No hay margen unificado posible → "—" en la fila hechura.
-    const has00 = cells.some((c) => /\+0,0%/.test(c.textContent ?? ""));
+    const has00 = cells.some((c) => /\+0,00%/.test(c.textContent ?? ""));
     expect(has00).toBe(false);
     const hasDash = cells.some((c) => (c.textContent ?? "").includes("—"));
     expect(hasDash).toBe(true);
@@ -3706,7 +3707,7 @@ describe("Margen no atribuible por línea (MARGIN_TOTAL)", () => {
     meta.composition.hechuras[0].lineSale = 300;
     render(<SaleCompositionEditableGrid line={line} onApply={vi.fn()} {...baseProps} />);
     const cells = document.querySelectorAll("[data-margin-cell]");
-    const has50 = Array.from(cells).some((c) => /\+50,0%/.test(c.textContent ?? ""));
+    const has50 = Array.from(cells).some((c) => /\+50,00%/.test(c.textContent ?? ""));
     expect(has50).toBe(true);
     // El margen real por línea NO debe llevar tooltip de unificado.
     const unified = document.querySelector('[data-margin-source="unified"]');
@@ -3726,7 +3727,7 @@ describe("Margen no atribuible por línea (MARGIN_TOTAL)", () => {
     meta.composition.hechuras[0].lineSale = 200;
     render(<SaleCompositionEditableGrid line={line} onApply={vi.fn()} {...baseProps} />);
     const cells = document.querySelectorAll("[data-margin-cell]");
-    const has00 = Array.from(cells).some((c) => /\+0,0%/.test(c.textContent ?? ""));
+    const has00 = Array.from(cells).some((c) => /\+0,00%/.test(c.textContent ?? ""));
     expect(has00).toBe(true);
   });
 
@@ -3748,8 +3749,8 @@ describe("Margen no atribuible por línea (MARGIN_TOTAL)", () => {
     const cells = Array.from(document.querySelectorAll("[data-margin-cell]"));
     expect(cells.length).toBeGreaterThanOrEqual(2);
     // Metal: muestra unifiedFactor = 1000/400 = 2.5 → +150,0%. Hechura: +50,0%.
-    const has150 = cells.some((c) => /\+150,0%/.test(c.textContent ?? ""));
-    const has50  = cells.some((c) => /\+50,0%/.test(c.textContent ?? ""));
+    const has150 = cells.some((c) => /\+150,00%/.test(c.textContent ?? ""));
+    const has50  = cells.some((c) => /\+50,00%/.test(c.textContent ?? ""));
     expect(has150).toBe(true);
     expect(has50).toBe(true);
   });
@@ -3763,9 +3764,9 @@ describe("Margen no atribuible por línea (MARGIN_TOTAL)", () => {
     render(<SaleCompositionEditableGrid line={line} onApply={vi.fn()} {...baseProps} />);
     // unifiedFactor = 2.5 → todas las filas en modo derivado muestran +150,0%.
     const cells = Array.from(document.querySelectorAll("[data-margin-cell]"));
-    const has00 = cells.some((c) => /\+0,0%/.test(c.textContent ?? ""));
+    const has00 = cells.some((c) => /\+0,00%/.test(c.textContent ?? ""));
     expect(has00).toBe(false);
-    const has150 = cells.some((c) => /\+150,0%/.test(c.textContent ?? ""));
+    const has150 = cells.some((c) => /\+150,00%/.test(c.textContent ?? ""));
     expect(has150).toBe(true);
   });
 

@@ -66,7 +66,7 @@ import { TPActionsMenu } from "./TPActionsMenu";
 import { TPPopover } from "./TPPopover";
 
 import { type DocumentLine } from "../../lib/document-types";
-import { fmtMoney, fmtQty } from "../../lib/document-helpers";
+import { formatMoneyDoc as fmtMoney, formatQty as fmtQty, formatByType } from "../../lib/pricing/format";
 import {
   resolveQuantityConstraints,
   applyQuantityChange,
@@ -2090,10 +2090,8 @@ export function TPDocumentLineAdvancedEditor({
                       ? meta.basePrice
                       : (l.unitPrice ?? 0);
                 const isPct = getDiscountType(l.id) === "percent";
-                const fmtPct = (n: number) => {
-                  const r = Math.round(n * 100) / 100;
-                  return Number.isInteger(r) ? `${r}%` : `${r.toFixed(2).replace(/\.?0+$/, "")}%`;
-                };
+                const fmtPct = (n: number) =>
+                  `${formatByType(n, "PERCENT", { bare: true })}%`;
                 const discAppliesTo = getDiscountAppliesTo(l.id);
 
                 // ── Helper: resuelve qué valor mostrar ──────────────
@@ -2545,10 +2543,8 @@ export function TPDocumentLineAdvancedEditor({
                   ? override.value
                   : (taxBaseUnit * taxRateStable) / 100;
 
-                const fmtPct = (n: number) => {
-                  const r = Math.round(n * 100) / 100;
-                  return Number.isInteger(r) ? `${r}%` : `${r.toFixed(2).replace(/\.?0+$/, "")}%`;
-                };
+                const fmtPct = (n: number) =>
+                  `${formatByType(n, "TAX_PERCENT", { bare: true })}%`;
                 const hasMany = items.length > 1;
                 // Modo del selector %/$ — toggle persistido localmente igual
                 // que en Bonificación (`getTaxType`).
@@ -2842,7 +2838,7 @@ export function TPDocumentLineAdvancedEditor({
                       .filter((r): r is number => r != null);
                     if (taxItems.length === 1 && ratesArr.length === 1) {
                       const r = ratesArr[0];
-                      taxRateLabel = ` (${Number.isInteger(r) ? r : r.toFixed(2).replace(/\.?0+$/, "")}%)`;
+                      taxRateLabel = ` (${formatByType(r, "TAX_PERCENT", { bare: true })}%)`;
                     } else if (ratesArr.length > 0) {
                       taxRateLabel = " (varios)";
                     }

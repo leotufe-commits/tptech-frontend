@@ -28,7 +28,8 @@ describe("<DiscountCard />", () => {
       <DiscountCard value={{ type: "PERCENT", value: 10 }} onPatch={() => {}}
         open={true} onOpenChange={() => {}} fmtCurrency={fmtCurrency} />
     );
-    expect(screen.getByText("10%")).toBeTruthy();
+    // PERCENT respeta el preset del tenant (default 2 decimales) → "10,00%".
+    expect(screen.getByText("10,00%")).toBeTruthy();
   });
 
   it("muestra valor en monto cuando type=AMOUNT", () => {

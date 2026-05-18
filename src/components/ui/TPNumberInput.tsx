@@ -3,7 +3,7 @@ import { ChevronDown, ChevronUp, X as XIcon } from "lucide-react";
 import { cn } from "./tp";
 import { useNumberFormat } from "../../context/NumberFormatContext";
 import {
-  formatNumber,
+  formatFixedLocale,
   getNumberFormatConfig,
   parseNumberInput,
   type NumberFormatType,
@@ -173,11 +173,12 @@ export default function TPNumberInput({
   // Config del tenant. Sin provider devuelve el default (AR) — seguro en tests.
   const { config } = useNumberFormat();
 
-  // Decimales efectivos: prop explícito gana; si no y hay formatType, el del
-  // preset; si no, undefined (comportamiento histórico = libre).
+  // Decimales efectivos: si hay `formatType`, MANDA el preset del tenant
+  // (Configuración → Formato numérico) — los decimales NO se hardcodean por
+  // call-site. Sin `formatType`: comportamiento histórico (prop `decimals`).
   const effectiveDecimals = useMemo<number | undefined>(() => {
-    if (typeof decimals === "number") return decimals;
     if (formatType) return getNumberFormatConfig(formatType, config).decimals;
+    if (typeof decimals === "number") return decimals;
     return undefined;
   }, [decimals, formatType, config]);
 
@@ -189,7 +190,13 @@ export default function TPNumberInput({
   function formatDraft(n: number): string {
     if (!Number.isFinite(n)) return "";
     if (formatType) {
-      return formatNumber(n, formatType, config, { bare: true, blank: "" });
+      // Decimales SIEMPRE desde el preset del tenant (no hardcode por
+      // call-site). Separadores = región configurada.
+      const dec = getNumberFormatConfig(formatType, config).decimals;
+      // En un input editable el negativo se muestra con guion ASCII "-"
+      // (tecleable), NO con el menos tipográfico "−" (U+2212) que usa el
+      // motor para labels. El parseo acepta ambos.
+      return formatFixedLocale(n, dec, config).replace("−", "-");
     }
     return formatFixed(n, effectiveDecimals);
   }

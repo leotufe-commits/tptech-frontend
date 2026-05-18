@@ -175,7 +175,7 @@ describe("SalePricingPanel — splitLineDiscounts (legacy)", () => {
     );
     // El split se muestra cuando qty+promo+customer > 0 OR total === 0.
     // Acá qty=100 > 0, entonces vemos las 3 filas separadas.
-    expect(getRowValue("Descuento por cantidad")).toMatch(/-100,00/);
+    expect(getRowValue("Descuento por cantidad")).toMatch(/−100,00/);
     expect(getRowValue("Promoción")).toMatch(/-0,00|0,00/);
     expect(getRowValue("Descuento de cliente")).toBe("—");
   });
@@ -198,7 +198,7 @@ describe("SalePricingPanel — splitLineDiscounts (legacy)", () => {
       />,
     );
     // qty=2, promo=30 → 60
-    expect(getRowValue("Promoción")).toMatch(/-60,00/);
+    expect(getRowValue("Promoción")).toMatch(/−60,00/);
   });
 
   it("baseline correct: cuando split da 0 y total > 0, muestra solo 'Descuentos de línea'", () => {
@@ -225,7 +225,7 @@ describe("SalePricingPanel — splitLineDiscounts (legacy)", () => {
       />,
     );
     // Cuando qty=0 && promo=0 && customer=null && total > 0 → fallback
-    expect(getRowValue("Descuentos de línea")).toMatch(/-200,00/);
+    expect(getRowValue("Descuentos de línea")).toMatch(/−200,00/);
     // No debería aparecer la fila splittadas
     expect(screen.queryByText("Descuento por cantidad")).toBeNull();
   });
@@ -281,7 +281,7 @@ describe("SalePricingPanel — adjustments passthrough", () => {
     render(
       <SalePricingPanel result={result as any} currencySymbol="ARS" hideComposition />,
     );
-    expect(getRowValue("Descuento por cupón")).toMatch(/-100,00/);
+    expect(getRowValue("Descuento por cupón")).toMatch(/−100,00/);
   });
 
   it("baseline correct: muestra Envío cuando shippingAmount > 0", () => {
@@ -307,7 +307,7 @@ describe("SalePricingPanel — adjustments passthrough", () => {
     render(
       <SalePricingPanel result={result as any} currencySymbol="ARS" hideComposition />,
     );
-    expect(getRowValue("Recargo / descuento de pago")).toMatch(/-25,00/);
+    expect(getRowValue("Recargo / descuento de pago")).toMatch(/−25,00/);
   });
 });
 

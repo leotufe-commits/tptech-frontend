@@ -25,7 +25,7 @@ import {
 
 import { TPCard } from "../components/ui/TPCard";
 import { dashboardProfitApi, type ProfitGroupBy, type ProfitSummary } from "../services/dashboard-profit";
-import { fmtNumber2 } from "../lib/format";
+import { fmtNumber2, formatDecimal, formatDecimalUpTo } from "../lib/pricing/format";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -51,13 +51,13 @@ function formatDateLabel(dateStr: string, groupBy: ProfitGroupBy): string {
 }
 
 function fmtPct(n: number) {
-  return n.toLocaleString("es-AR", { minimumFractionDigits: 1, maximumFractionDigits: 1 }) + "%";
+  return formatDecimal(n, 1) + "%";
 }
 
 function fmtShort(n: number): string {
   const abs = Math.abs(n);
-  if (abs >= 1_000_000) return (n / 1_000_000).toFixed(1) + "M";
-  if (abs >= 1_000) return (n / 1_000).toFixed(0) + "k";
+  if (abs >= 1_000_000) return formatDecimalUpTo(n / 1_000_000, 1) + "M";
+  if (abs >= 1_000) return formatDecimalUpTo(n / 1_000, 0) + "k";
   return fmtNumber2(n);
 }
 
@@ -504,7 +504,7 @@ export default function DashboardRentabilidad() {
                         </div>
                       </td>
                       <td className="px-3 py-2.5 text-right text-muted">
-                        {Number(art.quantity).toLocaleString("es-AR", { maximumFractionDigits: 2 })}
+                        {formatDecimalUpTo(Number(art.quantity), 2)}
                       </td>
                       <td className="px-3 py-2.5 text-right text-text">
                         ${fmtNumber2(art.revenue)}

@@ -15,6 +15,10 @@
 // POLICY R6 / POLICY R4.5 — frontend read-only en pricing.
 // ============================================================================
 
+// Formato region-aware (config del tenant). Único helper de formato — fuente
+// compartida por Factura ↔ Simulador (paridad). NO formatear inline acá.
+import { formatByType } from "../format";
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Tipos compartidos
 // ─────────────────────────────────────────────────────────────────────────────
@@ -336,13 +340,13 @@ export function resolveMarginForRowDisplay(
           && Number.isFinite(unifiedFactor)
           && Math.abs(unifiedFactor - 1) > 0.0005) {
         margenPct     = (unifiedFactor - 1) * 100;
-        margenPctText = `${margenPct.toLocaleString("es-AR", { minimumFractionDigits: 1, maximumFractionDigits: 1 })}%`;
+        margenPctText = `${formatByType(margenPct, "MARGIN_PERCENT", { bare: true })}%`;
         margenTooltip = "Margen unificado aplicado al total del artículo";
       }
       // else: margenPct queda null → "—"
     } else {
       margenPct     = raw;
-      margenPctText = `${raw.toLocaleString("es-AR", { minimumFractionDigits: 1, maximumFractionDigits: 1 })}%`;
+      margenPctText = `${formatByType(raw, "MARGIN_PERCENT", { bare: true })}%`;
     }
   }
 
@@ -439,7 +443,7 @@ export type CostLineTriView = {
 };
 
 function fmtPct(n: number): string {
-  return n.toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  return formatByType(n, "PERCENT", { bare: true });
 }
 
 export function buildCostLineTriView(i: CostLineTriInput): CostLineTriView {

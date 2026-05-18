@@ -26,7 +26,7 @@ import { TPCard } from "../components/ui/TPCard";
 
 import { apiFetch } from "../lib/api";
 import { toast } from "../lib/toast";
-import { fmtNumberSmart, fmtMoney2, fmtPurity3 } from "../lib/format";
+import { fmtNumberSmart, fmtMoney2, fmtPurity3, formatGrams } from "../lib/pricing/format";
 import { printMovement } from "../lib/movementPrint";
 import { documentTemplatesApi } from "../services/document-templates";
 import { useAuth } from "../context/AuthContext";
@@ -164,7 +164,7 @@ function warehouseLabel(m: MetalMovementRow): string {
 }
 
 function fmtGrams(n: number): string {
-  return Math.abs(n).toLocaleString("es-AR", { minimumFractionDigits: 3, maximumFractionDigits: 3 });
+  return formatGrams(Math.abs(n), 3);
 }
 
 function getGramsDisplay(m: MetalMovementRow): { label: string; textClass: string } {

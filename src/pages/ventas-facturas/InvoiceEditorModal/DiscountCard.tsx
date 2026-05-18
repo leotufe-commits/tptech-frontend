@@ -8,6 +8,7 @@
 // ============================================================================
 
 import React from "react";
+import { formatByType } from "../../../lib/pricing/format";
 import { TPCard } from "../../../components/ui/TPCard";
 import { TPField } from "../../../components/ui/TPField";
 import TPInput from "../../../components/ui/TPInput";
@@ -43,7 +44,7 @@ export function DiscountCard(props: DiscountCardProps): React.ReactElement {
           const isPct = (value?.type ?? "PERCENT") === "PERCENT";
           return (
             <span className="text-[11px] font-semibold tabular-nums text-amber-500">
-              {isPct ? `${v}%` : fmtCurrency(v)}
+              {isPct ? `${formatByType(v, "PERCENT", { bare: true })}%` : fmtCurrency(v)}
             </span>
           );
         })()
@@ -64,6 +65,7 @@ export function DiscountCard(props: DiscountCardProps): React.ReactElement {
           <TPNumberInput
             value={value?.value ?? 0}
             onChange={(v) => onPatch({ value: v ?? 0 })}
+            formatType={(value?.type ?? "PERCENT") === "PERCENT" ? "PERCENT" : "MONEY"}
             decimals={2}
             min={0}
             max={value?.type === "PERCENT" ? 100 : undefined}

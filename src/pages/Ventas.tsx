@@ -20,6 +20,7 @@ import {
   ShieldAlert,
   Calculator,
 } from "lucide-react";
+import { formatDecimal } from "../lib/pricing/format";
 
 import { articlesApi, variantLabel } from "../services/articles";
 import type {
@@ -89,9 +90,7 @@ type WarehouseOption = {
 function fmtAmt(v: string | null): string {
   if (v == null) return "—";
   const n = parseFloat(v);
-  return Number.isFinite(n)
-    ? n.toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-    : "—";
+  return Number.isFinite(n) ? formatDecimal(n, 2) : "—";
 }
 
 function PriceBreakdownPanel({ data }: { data: PricingPreviewResult }) {
@@ -184,7 +183,7 @@ function PriceBreakdownPanel({ data }: { data: PricingPreviewResult }) {
           <span className="text-gray-400">Margen</span>
           <div className="flex items-center gap-1.5">
             <span className={`tabular-nums font-semibold ${marginNum < 0 ? "text-red-500" : marginNum < 10 ? "text-amber-600" : "text-green-600"}`}>
-              {marginNum.toFixed(1)}%
+              {formatDecimal(marginNum, 1)}%
             </span>
             <span className="text-gray-400 text-[10px]">
               · ${fmtAmt(data.unitMargin)} ud.
@@ -228,7 +227,7 @@ function cartSubtotal(lines: CartLine[]) {
 }
 
 function fmt(n: number) {
-  return n.toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  return formatDecimal(n, 2);
 }
 
 /** Label legible de variante: muestra ejes de variante (Rojo · M) o SKU si hay */
@@ -1116,9 +1115,9 @@ export default function Ventas() {
                                 : isLow ? "text-amber-600"
                                         : "text-green-600"
                         }`}
-                        title={`Costo: $${(line.unitCost * line.quantity).toLocaleString("es-AR", { minimumFractionDigits: 2 })}`}
+                        title={`Costo: $${formatDecimal(line.unitCost * line.quantity, 2)}`}
                       >
-                        {mPct.toFixed(1)}%
+                        {formatDecimal(mPct, 1)}%
                         {line.costPartial && <span className="ml-0.5 opacity-60">~</span>}
                       </span>
                     );
@@ -1174,7 +1173,7 @@ export default function Ventas() {
                   )}
                 </span>
                 <span className={`text-xs font-semibold ${color}`}>
-                  ${fmt(cartMargin.margin)} · {cartMargin.marginPct.toFixed(1)}%
+                  ${fmt(cartMargin.margin)} · {formatDecimal(cartMargin.marginPct, 1)}%
                 </span>
               </div>
             );

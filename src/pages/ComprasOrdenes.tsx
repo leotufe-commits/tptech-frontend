@@ -61,9 +61,11 @@ import {
   uid,
   todayISO,
   fmtDate,
-  fmtMoney,
   nextDocNumber,
 } from "../lib/document-helpers";
+// Dinero config-aware (región del tenant), misma semántica que el fmtMoney
+// de document-helpers. Solo cambia el import; cero churn de call-sites.
+import { formatMoneyDoc as fmtMoney } from "../lib/pricing/format";
 import {
   type DocumentShipping,
   type DocumentDiscountGlobal,

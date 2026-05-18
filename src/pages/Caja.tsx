@@ -7,6 +7,7 @@ import TPInput from "../components/ui/TPInput";
 import { TPButton } from "../components/ui/TPButton";
 import { TPTableKit, type TPColDef } from "../components/ui/TPTableKit";
 import { TPTd, TPTr } from "../components/ui/TPTable";
+import { formatDecimal } from "../lib/pricing/format";
 
 import { salesApi, type CajaDaySummary, type CajaPaymentRow, SALE_STATUS_LABELS } from "../services/sales";
 import { toast } from "../lib/toast";
@@ -19,7 +20,7 @@ function todayStr() {
 }
 
 function fmt(n: number) {
-  return n.toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  return formatDecimal(n, 2);
 }
 
 function fmtTime(iso: string) {

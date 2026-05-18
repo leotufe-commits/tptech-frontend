@@ -18,7 +18,8 @@ import { TPTr, TPTd } from "../components/ui/TPTable";
 import { TPCard } from "../components/ui/TPCard";
 import { TPField } from "../components/ui/TPField";
 
-import { todayISO, fmtMoney, fmtQty } from "../lib/document-helpers";
+import { todayISO } from "../lib/document-helpers";
+import { formatMoneyDoc as fmtMoney, formatQty as fmtQty } from "../lib/pricing/format";
 
 type MetalBalanceRow = {
   id: string;

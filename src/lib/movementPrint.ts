@@ -6,6 +6,8 @@ import {
   type DocumentTemplateConfig,
   buildLocalDefaultConfig,
 } from "../services/document-templates";
+// Print (HTML) respeta el formato regional del tenant — config-aware.
+import { formatGrams, formatDecimalUpTo } from "./pricing/format";
 
 // ─── Tipos ────────────────────────────────────────────────────────────────────
 
@@ -63,12 +65,12 @@ function fmtDateTime(d: string): string {
 
 function fmtGrams(n: number | null): string {
   if (n == null) return "—";
-  return Number(n).toLocaleString("es-AR", { minimumFractionDigits: 3, maximumFractionDigits: 3 }) + " g";
+  return formatGrams(Number(n), 3) + " g";
 }
 
 function fmtQty(n: number | null): string {
   if (n == null) return "—";
-  return Number(n).toLocaleString("es-AR");
+  return formatDecimalUpTo(Number(n), 3);
 }
 
 // ─── Generador principal ──────────────────────────────────────────────────────
@@ -140,12 +142,17 @@ export function buildMovementHtmlFromTemplate(
 
   // ── Tabla de líneas ────────────────────────────────────────────────────────
 
-  const theadCells = visibleCols.map(col =>
-    `<th style="padding:6px 8px;text-align:${col.align};font-weight:700;font-size:0.82em;` +
-    `color:${accent};text-transform:uppercase;letter-spacing:.04em;` +
-    `width:${((col.width / totalWidth) * 100).toFixed(1)}%;` +
-    `border-bottom:2px solid ${accent}">${esc(col.label)}</th>`
-  ).join("");
+  const theadCells = visibleCols.map(col => {
+    // Ancho de columna en %: valor CSS, NO dato visible → debe ser
+    // locale-neutral (punto). NO usar el motor de formato acá.
+    const widthPct = ((col.width / totalWidth) * 100).toFixed(1); // number-format:ignore
+    return (
+      `<th style="padding:6px 8px;text-align:${col.align};font-weight:700;font-size:0.82em;` +
+      `color:${accent};text-transform:uppercase;letter-spacing:.04em;` +
+      `width:${widthPct}%;` +
+      `border-bottom:2px solid ${accent}">${esc(col.label)}</th>`
+    );
+  }).join("");
 
   const tbodyRows = data.lines.map((l, i) => {
     const bg = config.tableStyle === "striped" && i % 2 === 1 ? "#f9fafb" : "transparent";

@@ -16,7 +16,7 @@ import React from "react";
 import { Info } from "lucide-react";
 
 import { cn } from "./tp";
-import { fmtMoney } from "../../lib/document-helpers";
+import { formatMoneyDoc as fmtMoney, formatByType } from "../../lib/pricing/format";
 import type { PricingComposition } from "../../lib/pricing-display-helpers";
 
 export type TPDocumentTotalsHeroViewMode = "unified" | "detailed";
@@ -419,7 +419,7 @@ export function TPDocumentTotalsHero({
               displayRate={displayRate}
               label={
                 c.customerDiscountPercent != null
-                  ? `Descuento de cliente (${c.customerDiscountPercent}%)`
+                  ? `Descuento de cliente (${formatByType(c.customerDiscountPercent, "PERCENT", { bare: true })}%)`
                   : "Descuento de cliente"
               }
               amount={c.customerDiscount}
@@ -553,7 +553,7 @@ export function TPDocumentTotalsHero({
                       <span className="truncate text-muted">
                         <span className="text-text">{t.name || "Impuesto"}</span>
                         {t.rate != null && (
-                          <span className="ml-1 text-muted">{t.rate}%</span>
+                          <span className="ml-1 text-muted">{formatByType(t.rate, "TAX_PERCENT", { bare: true })}%</span>
                         )}
                       </span>
                       <span className="tabular-nums font-semibold text-amber-500 shrink-0">

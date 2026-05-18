@@ -16,6 +16,7 @@
 // ============================================================================
 
 import React, { useEffect, useMemo, useState } from "react";
+import { formatQty } from "../lib/pricing/format";
 import { useNavigate } from "react-router-dom";
 import {
   Package,
@@ -96,7 +97,7 @@ function statusBadge(s: StockStatus) {
 }
 
 function fmtQty(n: number): string {
-  return n.toLocaleString("es-AR", { minimumFractionDigits: 0, maximumFractionDigits: 3 });
+  return formatQty(n);
 }
 
 function mapArticleStockRow(row: ArticleStockRow, warehouse: WarehouseRow): StockRow {

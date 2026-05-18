@@ -1,5 +1,6 @@
 // src/pages/article-detail/ArticleModal.tsx
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { formatDecimal } from "../../lib/pricing/format";
 import ReactDOM from "react-dom";
 import { useNavigate } from "react-router-dom";
 import {
@@ -4280,7 +4281,7 @@ export default function ArticleModal({
 
         {(() => {
           function fmtN(n: number) {
-            return n.toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+            return formatDecimal(n, 2);
           }
           const patchLine = (i: number, patch: Partial<CostLine>) => {
             setCostLines(prev => prev.map((l, idx) => idx === i ? { ...l, ...patch } : l));

@@ -21,7 +21,7 @@ import { cn } from "../../components/ui/tp";
 import { TPCard } from "../../components/ui/TPCard";
 import { TPBadge } from "../../components/ui/TPBadges";
 import { fmtMoney, COST_MODE_LABELS, articlesApi } from "../../services/articles";
-import { fmtNumber2 } from "../../lib/format";
+import { fmtNumber2, formatDecimal } from "../../lib/pricing/format";
 import type { PricingPreviewResult, PricingStepResult, PricingAlert } from "../../services/articles";
 import type { TaxRow } from "../../services/taxes";
 
@@ -104,7 +104,7 @@ const fmtN = fmtNumber2;
 function fmtPct(v: number) {
   const abs = Math.abs(v);
   const sign = v > 0 ? "+" : v < 0 ? "−" : "";
-  return `${sign}${abs.toLocaleString("es-AR", { minimumFractionDigits: 1, maximumFractionDigits: 1 })}%`;
+  return `${sign}${formatDecimal(abs, 1)}%`;
 }
 
 /** Subtotal registrado de una línea (usa unitValue almacenado, incluye ajuste de línea) */
@@ -285,8 +285,8 @@ function stepFormula(step: PricingStepResult): string | null {
       if (m.qty && m.quotePrice) {
         const mermaVal = m.merma != null ? Number(m.merma) : 0;
         const priceWithMerma = Number(m.quotePrice) * (1 + mermaVal / 100);
-        const fmt2 = (v: number) => v.toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-        const fmt3 = (v: number) => v.toLocaleString("es-AR", { minimumFractionDigits: 3, maximumFractionDigits: 3 });
+        const fmt2 = (v: number) => formatDecimal(v, 2);
+        const fmt3 = (v: number) => formatDecimal(v, 3);
         const vSku  = m.variantSku  ? String(m.variantSku)  : "";
         const vName = m.variantName ? String(m.variantName) : "";
         const vId   = vSku && vName ? `${vSku} · ${vName}` : vSku || vName;
@@ -300,8 +300,8 @@ function stepFormula(step: PricingStepResult): string | null {
       if (m.grams && m.price) {
         const mermaVal = m.merma != null ? Number(m.merma) : 0;
         const priceWithMerma = Number(m.price) * (1 + mermaVal / 100);
-        const fmt2 = (v: number) => v.toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-        const fmt3 = (v: number) => v.toLocaleString("es-AR", { minimumFractionDigits: 3, maximumFractionDigits: 3 });
+        const fmt2 = (v: number) => formatDecimal(v, 2);
+        const fmt3 = (v: number) => formatDecimal(v, 3);
         const vSku  = m.variantSku  ? String(m.variantSku)  : "";
         const vName = m.variantName ? String(m.variantName) : "";
         const vId   = vSku && vName ? `${vSku} · ${vName}` : vSku || vName;
@@ -391,7 +391,7 @@ function StepRow({ step, sym }: { step: PricingStepResult; sym: string }) {
       )}>
         {valueOk
           ? step.key === "MARGIN"
-            ? `${parseFloat(step.value!).toFixed(1)}%`
+            ? `${formatDecimal(parseFloat(step.value!), 1)}%`
             : fmtMoney(parseFloat(step.value!), sym)
           : "—"
         }
@@ -488,7 +488,7 @@ function MetalHechuraBreakdown({
                 {(item.gramsOriginal != null || item.purity != null) && (
                   <div className="text-[10px] text-muted font-mono mt-0.5">
                     {item.gramsOriginal != null && `${item.gramsOriginal}g`}
-                    {item.purity != null && ` × ${(item.purity * 100).toFixed(1)}%`}
+                    {item.purity != null && ` × ${formatDecimal(item.purity * 100, 1)}%`}
                     {item.gramsPure != null && ` = ${item.gramsPure}g puros`}
                     {item.unitValue != null && ` × ${fmtMoney(item.unitValue, sym)}/g`}
                   </div>
@@ -639,7 +639,7 @@ function PricingBreakdown({ data, sym }: { data: PricingPreviewResult; sym: stri
               : "bg-red-500/15 text-red-600 dark:text-red-400";
             return (
               <span className={`tabular-nums text-right font-semibold px-1.5 py-0.5 rounded-full ${badgeCls}`}>
-                {mVal.toFixed(1)}%
+                {formatDecimal(mVal, 1)}%
               </span>
             );
           })()}

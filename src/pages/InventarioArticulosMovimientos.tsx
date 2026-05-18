@@ -28,7 +28,7 @@ import TPImageLightbox from "../components/ui/TPImageLightbox";
 
 import { apiFetch } from "../lib/api";
 import { toast } from "../lib/toast";
-import { fmtNumberSmart, fmtMoney2 } from "../lib/format";
+import { fmtNumberSmart, fmtMoney2, formatDecimal, formatDecimalUpTo, formatGrams } from "../lib/pricing/format";
 import { printMovement } from "../lib/movementPrint";
 import { documentTemplatesApi } from "../services/document-templates";
 import { useAuth } from "../context/AuthContext";
@@ -153,7 +153,7 @@ type ImpactInfo = { label: string; textClass: string; bgClass: string };
 function getImpact(m: ArticleMovementRow): ImpactInfo {
   const lines = m.lines ?? [];
   const total = lines.reduce((sum, l) => sum + Number(l.quantity), 0);
-  const fmt   = (n: number) => Math.abs(n).toLocaleString("es-AR");
+  const fmt   = (n: number) => formatDecimalUpTo(Math.abs(n), 3);
   switch (m.kind) {
     case "IN":
       return { label: `+${fmt(total)}`,  textClass: "text-green-700",  bgClass: "bg-green-500/10 border-green-400/30" };
@@ -1576,8 +1576,7 @@ export default function InventarioArticulosMovimientos() {
               const isCustomWeight  = effectiveWeight != null && refWeight != null
                 && Math.abs(effectiveWeight - refWeight) > 0.0001;
 
-              const fmtG = (g: number) =>
-                g.toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+              const fmtG = (g: number) => formatGrams(g, 2);
 
               const stockGrams          = effectiveWeight != null && currentStock !== null
                 ? currentStock * effectiveWeight : null;
@@ -1864,7 +1863,7 @@ export default function InventarioArticulosMovimientos() {
                                 "text-xs font-semibold",
                                 realMargin >= 0 ? "text-green-600" : "text-red-500"
                               )}>
-                                {realMargin >= 0 ? "+" : ""}{realMargin.toFixed(1)}%
+                                {realMargin >= 0 ? "+" : ""}{formatDecimal(realMargin, 1)}%
                               </p>
                             </div>
                           )}

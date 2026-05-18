@@ -1,4 +1,5 @@
 import React, { useState } from "react";
+import { formatGrams, formatDecimal } from "../../lib/pricing/format";
 import { useFieldFormats } from "../../context/FieldFormatsContext";
 import { useParams, useNavigate, useLocation } from "react-router-dom";
 import { ArrowLeft, Printer, Mail, Loader2, AlertCircle } from "lucide-react";
@@ -48,12 +49,12 @@ function fmtDateTime(iso: string): string {
 }
 
 function fmtGrams(v: number): string {
-  const abs = Math.abs(v).toLocaleString("es-AR", { minimumFractionDigits: 3, maximumFractionDigits: 3 });
+  const abs = formatGrams(Math.abs(v), 3);
   return (v >= 0 ? "+" : "−") + abs + " g";
 }
 
 function fmtMoney(v: number, currency: string): string {
-  const abs = Math.abs(v).toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const abs = formatDecimal(Math.abs(v), 2);
   const sign = v >= 0 ? "+" : "−";
   return `${sign}${currency} ${abs}`;
 }

@@ -13,7 +13,7 @@ import { TPTableWrap, TPTable, TPThead, TPTbody, TPTr, TPTh, TPTd, TPEmptyRow } 
 import CurrencyRateHistoryModal from "./CurrencyRateHistoryModal";
 import ConfirmDeleteDialog from "../../ui/ConfirmDeleteDialog";
 
-import { fmtRateSmart } from "../../../lib/format";
+import { fmtRateSmart } from "../../../lib/pricing/format";
 import TPCard from "../../ui/TPCard";
 
 type SortKey = "code" | "name" | "price" | "status";

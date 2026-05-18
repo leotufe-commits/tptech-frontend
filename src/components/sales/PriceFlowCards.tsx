@@ -31,7 +31,7 @@
 
 import React from "react";
 import { cn } from "../ui/tp";
-import { fmtMoney } from "../../lib/document-helpers";
+import { formatMoneyDoc as fmtMoney, formatDecimal } from "../../lib/pricing/format";
 import { Coins, ArrowLeftRight, TrendingUp, BarChart3 } from "lucide-react";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -75,7 +75,7 @@ function fmt(v: number | null | undefined, currency: string): string {
 
 function fmtPct(v: number | null | undefined): string {
   if (v == null || !Number.isFinite(v)) return "—";
-  return Math.abs(v - Math.round(v)) < 0.05 ? `${v.toFixed(0)}%` : `${v.toFixed(1).replace(".", ",")}%`;
+  return Math.abs(v - Math.round(v)) < 0.05 ? `${formatDecimal(v, 0)}%` : `${formatDecimal(v, 1)}%`;
 }
 
 /** Tono semántico para porcentajes de margen (mismo criterio que el KPI). */

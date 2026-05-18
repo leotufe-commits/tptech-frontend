@@ -168,10 +168,13 @@ import {
   todayISO,
   round2,
   fmtDate,
-  fmtMoney,
   nextDocNumber,
   calcLineTotalsFromSnapshot,
 } from "../lib/document-helpers";
+// Dinero config-aware (región/decimales del tenant), misma semántica que el
+// fmtMoney de document-helpers. Esto hace que mFmt → DiscountCard /
+// ShippingCard / PaymentCard / totales respeten Configuración → Formato.
+import { formatMoneyDoc as fmtMoney } from "../lib/pricing/format";
 import {
   type DocumentLine,
   type DocumentShipping,

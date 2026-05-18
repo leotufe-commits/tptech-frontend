@@ -3,12 +3,11 @@
 export type SortKey = "sku" | "stock" | "precio";
 export type SortDir = "asc" | "desc";
 
+import { formatDecimal } from "../lib/pricing/format";
+
 export function moneyARS(n: number) {
-  return new Intl.NumberFormat("es-AR", {
-    style: "currency",
-    currency: "ARS",
-    maximumFractionDigits: 0,
-  }).format(n);
+  // Config-aware (región del tenant), 0 decimales, símbolo $.
+  return "$ " + formatDecimal(n, 0);
 }
 
 export function onlyDigits(v: string) {

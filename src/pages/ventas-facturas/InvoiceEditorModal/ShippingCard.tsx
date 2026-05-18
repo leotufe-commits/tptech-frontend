@@ -70,6 +70,7 @@ export function ShippingCard(props: ShippingCardProps): React.ReactElement {
           <TPNumberInput
             value={value?.cost ?? 0}
             onChange={(v) => onPatch({ cost: v ?? 0 })}
+            formatType="MONEY"
             decimals={2}
             min={0}
           />

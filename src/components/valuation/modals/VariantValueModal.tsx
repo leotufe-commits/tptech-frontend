@@ -19,7 +19,7 @@ import {
   TPEmptyRow,
 } from "../../ui/TPTable";
 
-import { fmtMoneySmart, fmtNumber2, fmtPurity3 } from "../../../lib/format";
+import { fmtMoneySmart, fmtNumber2, fmtPurity3 } from "../../../lib/pricing/format";
 
 function fmtDateTime(v?: string) {
   if (!v) return "—";

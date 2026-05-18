@@ -41,8 +41,8 @@ import { toast } from "../lib/toast";
 import {
   round2,
   fmtDate,
-  fmtMoney,
 } from "../lib/document-helpers";
+import { formatMoneyDoc as fmtMoney } from "../lib/pricing/format";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Tipos

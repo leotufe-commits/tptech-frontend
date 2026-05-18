@@ -35,7 +35,7 @@ import type { LucideIcon } from "lucide-react";
 
 import TPNumberInput from "../ui/TPNumberInput";
 import { cn } from "../ui/tp";
-import { fmtMoney } from "../../lib/document-helpers";
+import { formatMoneyDoc as fmtMoney, formatDecimal, formatByType, formatGrams } from "../../lib/pricing/format";
 import type { DocumentLine } from "../../lib/document-types";
 import {
   patchCostLineOverride,
@@ -399,6 +399,7 @@ function MermaLabelEditor({
         <CellNumberInput
           value={mermaLocal}
           onChange={setMermaLocal}
+          formatType="MERMA_PERCENT"
           decimals={2}
           // Step 1,00 (antes 0,5): saltos enteros estables, sin oscilar.
           step={1}
@@ -488,10 +489,7 @@ function TypeGroupHeader({
             >
               · {g.name}:{" "}
               <span className="tabular-nums">
-                {g.grams.toLocaleString("es-AR", {
-                  minimumFractionDigits: 2,
-                  maximumFractionDigits: 2,
-                })} gr
+                {formatGrams(g.grams, 2)} gr
               </span>
             </span>
           ))}
@@ -620,10 +618,7 @@ function TypeGroupFooter({
   quantityTotal?: number | null;
 }) {
   const gridTpl = React.useContext(TableLayoutContext);
-  const fmt = (v: number) => `${currency} ${v.toLocaleString("es-AR", {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  })}`;
+  const fmt = (v: number) => `${currency} ${formatDecimal(v, 2)}`;
   return (
     <div
       data-group-footer={type}
@@ -645,10 +640,7 @@ function TypeGroupFooter({
           Centrado para alinear con la celda Cantidad de cada fila. */}
       <span className="text-center text-[11px] tabular-nums font-semibold text-text/85">
         {quantityTotal != null && Number.isFinite(quantityTotal)
-          ? quantityTotal.toLocaleString("es-AR", {
-              minimumFractionDigits: 2,
-              maximumFractionDigits: 2,
-            })
+          ? formatByType(quantityTotal, "QUANTITY", { bare: true })
           : "—"}
       </span>
       {/* Col 4 — Unidad (FASE F21) */}
@@ -799,11 +791,13 @@ function CellNumberInput({
   value, onChange, decimals = 2, step = 0.01, suffix,
   readOnly = false, disabled = false, tooltip, widthClass,
   original, decimalsOriginal, formatOriginal,
-  noInputBg = false,
+  noInputBg = false, formatType,
 }: {
   value:    number | null;
   onChange: (v: number | null) => void;
   decimals?: number;
+  /** Tipo del motor central — el input respeta región/decimales del tenant. */
+  formatType?: import("../../lib/number-format").NumberFormatType;
   step?:     number;
   suffix?:   React.ReactNode;
   readOnly?: boolean;
@@ -849,6 +843,7 @@ function CellNumberInput({
       <TPNumberInput
         value={value}
         onChange={onChange}
+        formatType={formatType}
         decimals={decimals}
         step={step}
         suffix={suffix}
@@ -1062,9 +1057,7 @@ function AdjustmentLabelEditor({
   void currentAmount;
   const showAmount = originalAmount != null ? originalAmount : null;
   const amountText = showAmount != null && Math.abs(Number(showAmount)) > 0
-    ? `${isBonus ? "−" : "+"}${currency} ${Math.abs(Number(showAmount)).toLocaleString("es-AR", {
-        minimumFractionDigits: 2, maximumFractionDigits: 2,
-      })}`
+    ? `${isBonus ? "−" : "+"}${currency} ${fmtMoney(Math.abs(Number(showAmount)))}`
     : null;
 
   // FASE F11 — signo y unidad como prefix/suffix INTERACTIVOS del wrap.
@@ -1125,6 +1118,7 @@ function AdjustmentLabelEditor({
         <CellNumberInput
           value={adjLocal}
           onChange={setAdjLocal}
+          formatType="PERCENT"
           decimals={2}
           // Step 1,00 para % y $ (antes 0,5 en %): saltos enteros estables.
           step={1}
@@ -1408,10 +1402,7 @@ function RowImpl({
           if (!Number.isFinite(utilidad) || Math.abs(utilidad) < 0.005) return null;
           const isNeg = utilidad < 0;
           const sign  = isNeg ? "−" : "+";
-          const text  = `${sign}${currencyLabel ?? ""} ${Math.abs(utilidad).toLocaleString("es-AR", {
-            minimumFractionDigits: 2,
-            maximumFractionDigits: 2,
-          })}`.trim();
+          const text  = `${sign}${currencyLabel ?? ""} ${fmtMoney(Math.abs(utilidad))}`.trim();
           return (
             <div
               data-margin-amount-impact
@@ -1602,7 +1593,7 @@ function SaleImpactBlock({
       </span>
       <span className="text-muted/50">·</span>
       <span className={cn("text-right tabular-nums font-semibold", marginToneClass(marginPct))}>
-        {marginPct != null && Number.isFinite(marginPct) ? `${marginPct.toFixed(1)}%` : "—"}
+        {marginPct != null && Number.isFinite(marginPct) ? `${formatByType(marginPct, "MARGIN_PERCENT", { bare: true })}%` : "—"}
       </span>
     </div>
   );
@@ -1742,32 +1733,20 @@ function CostAdjustmentDetailSection({
   // Texto del label del ajuste: "Bonificación 5%" / "Recargo $1.000".
   const adjLabel = (() => {
     if (isPercent && data.value != null && Number.isFinite(data.value)) {
-      const pct = Number(data.value).toLocaleString("es-AR", {
-        minimumFractionDigits: 0,
-        maximumFractionDigits: 2,
-      });
+      const pct = formatByType(Number(data.value), "PERCENT", { bare: true });
       return `${kindWord} ${pct}%`;
     }
     if (data.value != null && Number.isFinite(data.value)) {
-      return `${kindWord} ${currency} ${Math.abs(Number(data.value)).toLocaleString("es-AR", {
-        minimumFractionDigits: 2,
-        maximumFractionDigits: 2,
-      })}`;
+      return `${kindWord} ${currency} ${fmtMoney(Math.abs(Number(data.value)))}`;
     }
     return kindWord;
   })();
 
   const amountText = amount != null
-    ? `${sign}${currency} ${amount.toLocaleString("es-AR", {
-        minimumFractionDigits: 2,
-        maximumFractionDigits: 2,
-      })}`
+    ? `${sign}${currency} ${fmtMoney(amount)}`
     : null;
 
-  const fmt = (v: number) => `${currency} ${v.toLocaleString("es-AR", {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  })}`;
+  const fmt = (v: number) => `${currency} ${formatDecimal(v, 2)}`;
 
   return (
     <div
@@ -1830,7 +1809,7 @@ function GlobalAdjustmentsBlock({
         <span className="text-muted">
           {labelKind} de línea
           {lineMd.valuePct != null && (
-            <span className="ml-1 text-text/90">{lineMd.valuePct.toFixed(2)}%</span>
+            <span className="ml-1 text-text/90">{formatByType(lineMd.valuePct, "PERCENT", { bare: true })}%</span>
           )}
         </span>
         {fmtSignedAmount(lineMd.amount, isBonus, currency)}
@@ -2023,15 +2002,11 @@ export function SaleCompositionEditableGrid({
     if (!md || md.amount == null || md.amount === 0) return null;
     const sign = md.kind === "SURCHARGE" ? "+" : "−";
     if (md.valuePct != null && Number.isFinite(Number(md.valuePct))) {
-      const pct = Number(md.valuePct).toLocaleString("es-AR", {
-        minimumFractionDigits: 1, maximumFractionDigits: 2,
-      });
+      const pct = formatByType(Number(md.valuePct), "PERCENT", { bare: true });
       return { text: `Aj. global ${sign}${pct}%`, kind: md.kind as "BONUS" | "SURCHARGE" };
     }
     // Sin pct (modo AMOUNT) → mostrar solo signo + monto bruto del ajuste.
-    const amt = Math.abs(Number(md.amount)).toLocaleString("es-AR", {
-      minimumFractionDigits: 2, maximumFractionDigits: 2,
-    });
+    const amt = fmtMoney(Math.abs(Number(md.amount)));
     return { text: `Aj. global ${sign}${currency} ${amt}`, kind: md.kind as "BONUS" | "SURCHARGE" };
   })();
 
@@ -2131,7 +2106,7 @@ export function SaleCompositionEditableGrid({
     if (lineCost != null && Number.isFinite(lineCost)
         && totalCostForParticipation > 0) {
       const part = (lineCost / totalCostForParticipation) * 100;
-      participacionText = `${part.toFixed(1).replace(".", ",")}%`;
+      participacionText = `${formatByType(part, "PERCENT", { bare: true })}%`;
     }
     return { precioUnitVentaText, margenPctText, margenTone, margenTooltip, ventaLineaText, participacionText };
   }
@@ -2406,10 +2381,7 @@ export function SaleCompositionEditableGrid({
               // duplicarlo en el secondary era ruido visual.
               const leyText = (() => {
                 const value = m?.purity != null && Number.isFinite(Number(m.purity))
-                  ? Number(m.purity).toLocaleString("es-AR", {
-                      minimumFractionDigits: 3,
-                      maximumFractionDigits: 3,
-                    })
+                  ? formatByType(Number(m.purity), "PURITY", { bare: true })
                   : null;
                 if (value) return `Ley ${value}`;
                 const label = m?.purityLabel ?? null;
@@ -2476,6 +2448,7 @@ export function SaleCompositionEditableGrid({
                       onChange={isEditable && costLineId
                         ? (v) => applyCostLinePatch(costLineId, "METAL", { quantityOverride: v ?? 0 })
                         : () => {}}
+                      formatType="METAL_GRAMS"
                       // Fase 2.3 — gramos con 2 decimales (era 3 → "1,000").
                       decimals={2}
                       step={0.05}
@@ -2508,6 +2481,7 @@ export function SaleCompositionEditableGrid({
                         ? lineCost / Number(qtyValue)
                         : null}
                       onChange={() => {}}
+                      formatType="MONEY"
                       decimals={2}
                       readOnly
                       tooltip={baseQuotePriceText
@@ -2709,6 +2683,7 @@ export function SaleCompositionEditableGrid({
                       onChange={isEditable && costLineId
                         ? (v) => applyCostLinePatch(costLineId, "HECHURA", { quantityOverride: v ?? 0 })
                         : () => {}}
+                      formatType="QUANTITY"
                       decimals={2}
                       step={1}
                       readOnly={!isEditable}
@@ -2725,6 +2700,7 @@ export function SaleCompositionEditableGrid({
                       onChange={isEditable && costLineId
                         ? (v) => applyCostLinePatch(costLineId, "HECHURA", { unitValueOverride: v ?? 0 })
                         : () => {}}
+                      formatType="MONEY"
                       decimals={2}
                       step={1}
                       readOnly={!isEditable}
@@ -2943,6 +2919,7 @@ export function SaleCompositionEditableGrid({
                       onChange={isEditable && costLineId
                         ? (v) => applyCostLinePatch(costLineId, "PRODUCT", { quantityOverride: v ?? 0 })
                         : () => {}}
+                      formatType="QUANTITY"
                       decimals={2}
                       // Cantidad PRODUCT: step entero (1,00) — paridad con
                       // HECHURA. METAL conserva su step (gramos).
@@ -2958,6 +2935,7 @@ export function SaleCompositionEditableGrid({
                       onChange={isEditable && costLineId
                         ? (v) => applyCostLinePatch(costLineId, "PRODUCT", { unitValueOverride: v ?? 0 })
                         : () => {}}
+                      formatType="MONEY"
                       decimals={2}
                       step={1}
                       readOnly={!isEditable}
@@ -3152,6 +3130,7 @@ export function SaleCompositionEditableGrid({
                       onChange={isEditable && costLineId
                         ? (v) => applyCostLinePatch(costLineId, "SERVICE", { quantityOverride: v ?? 0 })
                         : () => {}}
+                      formatType="QUANTITY"
                       decimals={2}
                       // Cantidad SERVICE: step entero (1,00) — paridad con
                       // HECHURA. METAL conserva su step (gramos).
@@ -3167,6 +3146,7 @@ export function SaleCompositionEditableGrid({
                       onChange={isEditable && costLineId
                         ? (v) => applyCostLinePatch(costLineId, "SERVICE", { unitValueOverride: v ?? 0 })
                         : () => {}}
+                      formatType="MONEY"
                       decimals={2}
                       step={1}
                       readOnly={!isEditable}
@@ -3332,7 +3312,7 @@ function RentabilidadBlock({
       />
       <Stat
         label="Margen"
-        value={marginPercent != null ? `${marginPercent.toFixed(1)}%` : "—"}
+        value={marginPercent != null ? `${formatByType(marginPercent, "MARGIN_PERCENT", { bare: true })}%` : "—"}
         valueClass={cn(marginToneClass, "font-semibold")}
         flashClass={flashMargin}
       />

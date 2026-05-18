@@ -393,6 +393,7 @@ export default function CurrencyRatesModal({
 
                 <div className="relative">
                   <TPNumberInput
+                    formatType="FX_RATE"
                     inputRef={rateRef as any}
                     leftIcon={<span className="text-sm font-semibold text-muted">{baseSym}</span>}
                     value={rate}

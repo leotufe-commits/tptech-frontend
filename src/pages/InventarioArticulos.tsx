@@ -1,5 +1,6 @@
 // src/pages/InventarioArticulos.tsx
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { formatDecimal, formatDecimalUpTo, formatGrams } from "../lib/pricing/format";
 import { useNavigate } from "react-router-dom";
 import ArticleModal from "./article-detail/ArticleModal";
 import ArticleImportModal from "./article-detail/ArticleImportModal";
@@ -332,7 +333,7 @@ function fmtNum(v: string | number | null | undefined): string {
   if (v == null || v === "") return "—";
   const n = typeof v === "string" ? parseFloat(v) : v;
   if (!isFinite(n)) return "—";
-  return new Intl.NumberFormat("es-AR", { maximumFractionDigits: 2 }).format(n);
+  return formatDecimalUpTo(n, 2);
 }
 
 /* =========================================================
@@ -472,7 +473,7 @@ function CostCellContent({ row }: { row: ArticleRow }) {
       <div className="text-sm font-semibold tabular-nums">ARS {fmtNum(main)}</div>
       {taxAmt > 0.005 && (
         <div className="text-[10px] text-muted/60 tabular-nums mt-0.5">
-          {fmtNum(base)} + {fmtNum(taxAmt.toFixed(2))} imp.
+          {fmtNum(base)} + {fmtNum(taxAmt)} imp.
         </div>
       )}
       <CompositionExtra view={view} />
@@ -591,7 +592,7 @@ function PriceCellContent({ row }: { row: ArticleRow }) {
       <div className="text-sm font-semibold tabular-nums text-text">ARS {fmtNum(main)}</div>
       {taxAmt > 0.005 && (
         <div className="text-[10px] text-muted/60 tabular-nums mt-0.5">
-          {fmtNum(price)} + {fmtNum(taxAmt.toFixed(2))} imp.
+          {fmtNum(price)} + {fmtNum(taxAmt)} imp.
         </div>
       )}
       <CompositionExtra view={view} />
@@ -623,10 +624,10 @@ function MarginCellContent({ row }: { row: ArticleRow }) {
         "tabular-nums text-sm font-semibold",
         isNeg ? "text-red-500 dark:text-red-400" : "text-emerald-600 dark:text-emerald-400",
       )}>
-        {isNeg ? "" : "+"}{margin.toFixed(1)}%
+        {isNeg ? "" : "+"}{formatDecimal(margin, 1)}%
       </div>
       <div className="text-[10px] text-muted/60 tabular-nums mt-0.5">
-        ARS {fmtNum(diff.toFixed(2))}
+        ARS {fmtNum(diff)}
       </div>
     </div>
   );
@@ -766,8 +767,7 @@ export default function InventarioArticulos() {
       .map((c) => {
         const metalName = c.metalVariant?.metal?.name ?? c.label;
         const alloyCode = c.metalVariant?.sku ? ` ${c.metalVariant.sku}` : "";
-        const grams     = parseFloat(String(c.quantity))
-          .toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+        const grams     = formatGrams(parseFloat(String(c.quantity)), 2);
         return `${metalName}${alloyCode}: ${grams} g`;
       })
       .join("\n"); // multilinea — cada metal en su propia línea
@@ -776,9 +776,9 @@ export default function InventarioArticulos() {
   /* ── etiquetas: helpers de campos ──────────────────────────────────────── */
   function buildDimensions(row: ArticleRow): string | null {
     const parts: string[] = [];
-    if (row.dimensionLength) parts.push(parseFloat(row.dimensionLength).toLocaleString("es-AR", { maximumFractionDigits: 2 }));
-    if (row.dimensionWidth)  parts.push(parseFloat(row.dimensionWidth).toLocaleString("es-AR", { maximumFractionDigits: 2 }));
-    if (row.dimensionHeight) parts.push(parseFloat(row.dimensionHeight).toLocaleString("es-AR", { maximumFractionDigits: 2 }));
+    if (row.dimensionLength) parts.push(formatDecimalUpTo(parseFloat(row.dimensionLength), 2));
+    if (row.dimensionWidth)  parts.push(formatDecimalUpTo(parseFloat(row.dimensionWidth), 2));
+    if (row.dimensionHeight) parts.push(formatDecimalUpTo(parseFloat(row.dimensionHeight), 2));
     if (parts.length === 0) return null;
     return `${parts.join("×")} ${row.dimensionUnit || "cm"}`;
   }

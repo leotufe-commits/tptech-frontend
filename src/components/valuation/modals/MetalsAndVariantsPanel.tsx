@@ -33,7 +33,8 @@ import {
 
 import { TPTECH_VALUATION_CHANGED, type ValuationChangedDetail } from "../../../services/valuation";
 
-import { fmtFactor, fmtMoneySmart, fmtNumber2, fmtNumberSmart, fmtPurity3, purityKey2 } from "../../../lib/format";
+import { purityKey2 } from "../../../lib/format";
+import { fmtFactor, fmtMoneySmart, fmtNumber2, fmtNumberSmart, fmtPurity3 } from "../../../lib/pricing/format";
 
 import {
   type VarSortKey,

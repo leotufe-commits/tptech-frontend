@@ -81,7 +81,7 @@ import { promotionsApi, type PromotionRow } from "../../services/promotions";
 import { quantityDiscountsApi, type QuantityDiscountRow } from "../../services/quantity-discounts";
 import { priceListsApi, type PriceListRow } from "../../services/price-lists";
 import { commercialEntitiesApi, type EntityRow } from "../../services/commercial-entities";
-import { fmtMoney } from "../../services/articles";
+import { formatMoneyAmount as fmtMoney, formatDecimal } from "../../lib/pricing/format";
 
 // ---------------------------------------------------------------------------
 // Visual helpers
@@ -1126,7 +1126,7 @@ export default function ArticleDetail() {
               ? ((spPrice - costActual) / spPrice * 100)
               : null;
             function fmtN(n: number) {
-              return n.toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+              return formatDecimal(n, 2);
             }
 
             return (
@@ -1710,7 +1710,7 @@ export default function ArticleDetail() {
                 {/* ══ Precio de venta: detalles — eliminado de view, usar Simulador ══ */}
                 {false && (() => {
                   function fmtN(n: number) {
-                    return n.toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+                    return formatDecimal(n, 2);
                   }
                   const spr     = salePriceResolution!;
                   const src     = spr?.priceSource;

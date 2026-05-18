@@ -196,6 +196,7 @@ export default function CreateMetalModal({
           />
 
           <TPNumberInput
+            formatType="MONEY_EXTENDED"
             label="Valor de referencia (moneda base)"
             value={referenceValue}
             onChange={setReferenceValue}

@@ -51,9 +51,9 @@ import {
   uid,
   todayISO,
   fmtDate,
-  fmtQty,
   nextDocNumber,
 } from "../lib/document-helpers";
+import { formatQty as fmtQty } from "../lib/pricing/format";
 import { type MovementLine } from "../lib/document-types";
 
 // ─────────────────────────────────────────────────────────────────────────────

@@ -17,7 +17,8 @@ import { TPTr, TPTd } from "../components/ui/TPTable";
 import { TPCard } from "../components/ui/TPCard";
 import { TPField } from "../components/ui/TPField";
 
-import { todayISO, fmtDate, fmtMoney } from "../lib/document-helpers";
+import { todayISO, fmtDate } from "../lib/document-helpers";
+import { formatMoneyDoc as fmtMoney } from "../lib/pricing/format";
 
 type SalesRow = {
   id: string;

@@ -3,6 +3,7 @@ import { Loader2, Save } from "lucide-react";
 
 import Modal from "../../ui/Modal";
 import { TP_INPUT, TP_SELECT, TP_BTN_PRIMARY, TP_BTN_SECONDARY } from "../../ui/tp";
+import { parseNumberInput, getActiveNumberFormatConfig } from "../../../lib/number-format";
 
 type CurrencyRow = {
   id: string;
@@ -101,7 +102,9 @@ export default function AddQuoteModal({
     const cid = String(currencyId || "").trim();
     if (!cid) return setErr("Moneda requerida.");
 
-    const p = Number(price);
+    // Acepta coma o punto (region-aware) y devuelve number puro. No formatea
+    // ni recalcula nada acá: solo normaliza la entrada del usuario.
+    const p = parseNumberInput(price, getActiveNumberFormatConfig()) ?? NaN;
     if (!Number.isFinite(p) || p <= 0) return setErr("Precio inválido.");
 
     const eff = String(effectiveAt || "").trim();

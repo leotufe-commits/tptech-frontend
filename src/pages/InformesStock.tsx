@@ -16,7 +16,8 @@ import { TPTr, TPTd } from "../components/ui/TPTable";
 import { TPCard } from "../components/ui/TPCard";
 import { TPField } from "../components/ui/TPField";
 
-import { todayISO, fmtDate, fmtQty } from "../lib/document-helpers";
+import { todayISO, fmtDate } from "../lib/document-helpers";
+import { formatQty as fmtQty } from "../lib/pricing/format";
 
 type StockRow = {
   id: string;

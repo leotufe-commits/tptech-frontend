@@ -22,6 +22,7 @@
 // ============================================================================
 
 import React from "react";
+import { formatMoneyDoc, formatDecimalUpTo, formatByType } from "../../lib/pricing/format";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Tipos públicos
@@ -98,29 +99,27 @@ export type TPBalanceBreakdownKpisProps = {
 // Formato (puro)
 // ─────────────────────────────────────────────────────────────────────────────
 
+// Todos region-aware vía motor central (Configuración → Formato numérico).
 function fmtMoneyLocal(v: number | null | undefined, sym?: string): string {
   if (v == null || !Number.isFinite(v)) return "—";
-  const formatted = v.toLocaleString("es-AR", {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  });
+  const formatted = formatMoneyDoc(v);
   return sym ? `${sym} ${formatted}` : formatted;
 }
 
 function fmtGrams(v: number | null | undefined): string {
   if (v == null || !Number.isFinite(v)) return "—";
-  return `${v.toLocaleString("es-AR", { maximumFractionDigits: 4 })} g`;
+  return `${formatDecimalUpTo(v, 4)} g`;
 }
 
 function fmtPct(v: number | null | undefined): string {
   if (v == null || !Number.isFinite(v)) return "—";
-  return `${v.toLocaleString("es-AR", { maximumFractionDigits: 2 })}%`;
+  return `${formatByType(v, "PERCENT", { bare: true })}%`;
 }
 
-/** Merma siempre 3 decimales (regla 0.000), alineado con el Simulador. */
+/** Merma — respeta el preset MERMA_PERCENT del tenant. */
 function fmtMermaPct(v: number | null | undefined): string {
   if (v == null || !Number.isFinite(v)) return "—";
-  return `${v.toLocaleString("es-AR", { minimumFractionDigits: 3, maximumFractionDigits: 3 })}%`;
+  return `${formatByType(v, "MERMA_PERCENT", { bare: true })}%`;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

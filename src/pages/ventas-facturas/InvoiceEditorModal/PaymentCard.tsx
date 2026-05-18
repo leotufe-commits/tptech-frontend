@@ -178,6 +178,7 @@ export function PaymentCard(props: PaymentCardProps): React.ReactElement {
                   <TPNumberInput
                     value={p.amount}
                     onChange={(v) => onUpdatePayment(p.id, { amount: v ?? 0 })}
+                    formatType="MONEY"
                     decimals={2}
                     min={0}
                   />
