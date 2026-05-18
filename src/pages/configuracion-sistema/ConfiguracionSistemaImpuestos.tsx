@@ -869,10 +869,24 @@ export default function ConfiguracionSistemaImpuestos() {
                   value={draft.applyOn}
                   onChange={(v) => patchDraft({ applyOn: v as TaxApplyOn })}
                   disabled={busySave}
-                  options={(Object.keys(APPLY_ON_LABELS) as TaxApplyOn[]).map((k) => ({
-                    value: k,
-                    label: APPLY_ON_LABELS[k],
-                  }))}
+                  // Decisión funcional (temporal): solo 3 bases simples
+                  // seleccionables. El backend sigue soportando las
+                  // avanzadas (datos viejos), pero la UI no permite
+                  // elegirlas. Si el impuesto YA tiene una base avanzada
+                  // guardada, se muestra como "(actual)" para NO perder el
+                  // dato; al cambiar a una simple, la avanzada desaparece
+                  // del combo y no se puede volver a elegir.
+                  options={(() => {
+                    const SIMPLE: TaxApplyOn[] = ["TOTAL", "METAL", "HECHURA"];
+                    const opts = SIMPLE.map((k) => ({ value: k, label: APPLY_ON_LABELS[k] }));
+                    if (draft.applyOn && !SIMPLE.includes(draft.applyOn)) {
+                      opts.push({
+                        value: draft.applyOn,
+                        label: `${APPLY_ON_LABELS[draft.applyOn] ?? draft.applyOn} (actual)`,
+                      });
+                    }
+                    return opts;
+                  })()}
                 />
               </TPField>
 

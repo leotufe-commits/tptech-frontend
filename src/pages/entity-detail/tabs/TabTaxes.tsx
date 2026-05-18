@@ -260,12 +260,23 @@ export function TabTaxes({ entityId, data, loading, onReload }: Props) {
                   value={draftApplyOn}
                   onChange={(v) => setDraftApplyOn(v as CommercialApplyOn)}
                   disabled={busySave}
-                  options={[
-                    { value: "TOTAL", label: "Total" },
-                    { value: "METAL", label: "Precio metal" },
-                    { value: "HECHURA", label: "Solo hechura" },
-                    { value: "METAL_Y_HECHURA", label: "Metal y hechura" },
-                  ]}
+                  // Decisión funcional (temporal): solo 3 bases simples. El
+                  // backend mantiene METAL_Y_HECHURA (datos viejos); no se
+                  // ofrece. Si ya está guardada se muestra como "(actual)".
+                  options={(() => {
+                    const opts = [
+                      { value: "TOTAL", label: "Total" },
+                      { value: "METAL", label: "Precio metal" },
+                      { value: "HECHURA", label: "Solo hechura" },
+                    ];
+                    if (draftApplyOn && !["TOTAL", "METAL", "HECHURA"].includes(draftApplyOn)) {
+                      opts.push({
+                        value: draftApplyOn,
+                        label: `${draftApplyOn === "METAL_Y_HECHURA" ? "Metal y hechura" : draftApplyOn} (actual)`,
+                      });
+                    }
+                    return opts;
+                  })()}
                 />
               </TPField>
             </>

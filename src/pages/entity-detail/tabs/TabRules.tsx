@@ -408,12 +408,23 @@ export function TabRules({ entityId, data, loading, onReload }: Props) {
                 value={draft.applyOn}
                 onChange={(v) => set("applyOn", v as CommercialApplyOn)}
                 disabled={busySave}
-                options={[
-                  { value: "TOTAL", label: "Total" },
-                  { value: "METAL", label: "Precio metal" },
-                  { value: "HECHURA", label: "Solo hechura" },
-                  { value: "METAL_Y_HECHURA", label: "Metal y hechura" },
-                ]}
+                // Decisión funcional (temporal): solo 3 bases simples. El
+                // backend mantiene METAL_Y_HECHURA (datos viejos); no se
+                // ofrece. Si ya está guardada se muestra como "(actual)".
+                options={(() => {
+                  const opts = [
+                    { value: "TOTAL", label: "Total" },
+                    { value: "METAL", label: "Precio metal" },
+                    { value: "HECHURA", label: "Solo hechura" },
+                  ];
+                  if (draft.applyOn && !["TOTAL", "METAL", "HECHURA"].includes(draft.applyOn)) {
+                    opts.push({
+                      value: draft.applyOn,
+                      label: `${draft.applyOn === "METAL_Y_HECHURA" ? "Metal y hechura" : draft.applyOn} (actual)`,
+                    });
+                  }
+                  return opts;
+                })()}
               />
             </TPField>
           </div>

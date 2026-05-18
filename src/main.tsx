@@ -8,6 +8,7 @@ import { GoogleOAuthProvider } from "@react-oauth/google";
 import { AuthProvider } from "./context/AuthContext";
 import { ThemeProvider } from "./context/ThemeContext";
 import { FieldFormatsProvider } from "./context/FieldFormatsContext";
+import { NumberFormatProvider } from "./context/NumberFormatContext";
 import { registerFeatureFlagsDevTools } from "./lib/featureFlags";
 
 // ✅ IMPORTANTE: themes primero (define variables), luego index.css (las usa)
@@ -26,7 +27,9 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
       <AuthProvider>
         <ThemeProvider>
           <FieldFormatsProvider>
-            <RouterProvider router={router} />
+            <NumberFormatProvider>
+              <RouterProvider router={router} />
+            </NumberFormatProvider>
           </FieldFormatsProvider>
         </ThemeProvider>
       </AuthProvider>

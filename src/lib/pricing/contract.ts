@@ -52,14 +52,14 @@ export type PricingManualPriceOverride = number;
 export type PricingManualDiscountOverride = {
   mode:       "PERCENT" | "AMOUNT";
   value:      number;
-  appliesTo?: "METAL" | "HECHURA" | "PRODUCT" | "SERVICE" | "TOTAL";
+  appliesTo?: "TOTAL" | "METAL" | "HECHURA" | "METAL_Y_HECHURA" | "SUBTOTAL_AFTER_DISCOUNT" | "SUBTOTAL_BEFORE_DISCOUNT" | "PRODUCT" | "SERVICE";
 };
 
 /** Override puntual del impuesto (item sintético). */
 export type PricingManualTaxOverride = {
   mode:       "PERCENT" | "AMOUNT";
   value:      number;
-  appliesTo?: "METAL" | "HECHURA" | "PRODUCT" | "SERVICE" | "TOTAL";
+  appliesTo?: "TOTAL" | "METAL" | "HECHURA" | "METAL_Y_HECHURA" | "SUBTOTAL_AFTER_DISCOUNT" | "SUBTOTAL_BEFORE_DISCOUNT" | "PRODUCT" | "SERVICE";
 };
 
 /** Overrides de COMPOSICIÓN DE COSTO a nivel línea (Fase 2 del backend). */
@@ -619,6 +619,10 @@ export type NormalizedPricingLine = {
   unitCost:      number | null;
   unitMargin:    number | null;
   marginPercent: number | null;
+  /** Markup % sobre costo. Provisto por el motor (POLICY R6 — frontend lector
+   *  puro). Derivable de unitCost/unitMargin pero no se persiste en snapshot.
+   *  Null si sin costo o costo ≤ 0. */
+  markupPercent: number | null;
   costMode:      string;
   costPartial:   boolean;
 

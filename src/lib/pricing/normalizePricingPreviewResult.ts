@@ -697,6 +697,7 @@ export function normalizeArticlePricingPreview(
     unitCost:      asNum(result.unitCost),
     unitMargin:    asNum(result.unitMargin),
     marginPercent: asNum(result.marginPercent),
+    markupPercent: asNum(result.markupPercent),
     costMode:      result.costMode ?? "NONE",
     costPartial:   Boolean(result.costPartial),
 
@@ -976,7 +977,7 @@ export function normalizeSalesPreview(result: SalePreviewResult): NormalizedPric
   };
 }
 
-function normalizeSalesLine(l: SalePreviewLine): NormalizedPricingLine {
+export function normalizeSalesLine(l: SalePreviewLine): NormalizedPricingLine {
   return {
     articleId: l.articleId,
     variantId: l.variantId ?? null,
@@ -1008,6 +1009,7 @@ function normalizeSalesLine(l: SalePreviewLine): NormalizedPricingLine {
     unitCost:      l.unitCost      ?? null,
     unitMargin:    l.unitMargin    ?? null,
     marginPercent: l.marginPercent ?? null,
+    markupPercent: l.markupPercent ?? null,
     costMode:      l.costMode      ?? "NONE",
     costPartial:   Boolean(l.costPartial),
 

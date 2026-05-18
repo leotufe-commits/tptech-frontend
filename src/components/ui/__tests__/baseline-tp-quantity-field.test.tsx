@@ -1,25 +1,25 @@
 // src/components/ui/__tests__/baseline-tp-quantity-field.test.tsx
 // =============================================================================
-// TPQuantityField — sidecar "×" (uniformidad visual con Bonificación / Impuestos).
+// TPQuantityField — la "X" de Cantidad vive DENTRO del TPNumber (igual que
+// Bonificación e Impuestos). Se eliminó el sidecar decorativo "×" externo
+// (caja entre Cantidad y Precio que parecía "borrar línea").
 //
 // Reglas verificadas:
-//   · compactInline=true  → renderea sidecar "×" (span no clickeable) al lado
-//     del TPNumberInput. Mismas clases visuales que el sidecar %/$ de
-//     Bonificación/Impuestos (h-[42px], rounded-md, border, bg-card, text-muted/60).
-//   · compactInline=false → NO renderea sidecar (preserva pantallas legacy:
-//     Compras / Presupuestos / Órdenes).
-//   · "×" es un span con aria-hidden="true" — semánticamente NO interactivo,
-//     solo indicador visual de multiplicador.
+//   · NUNCA se renderiza un sidecar "×" externo (ni con compactInline true/false).
+//   · Con `onClear` → el TPNumberInput muestra su "X" interna (botón
+//     aria-label="Limpiar valor"), MISMO patrón que Bonif/Impuestos.
+//   · Sin `onClear` → no hay ninguna "X".
+//   · El input numérico de cantidad sigue siendo editable.
 // =============================================================================
 
 import { describe, it, expect, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, fireEvent } from "@testing-library/react";
 import { TPQuantityField } from "../TPQuantityField";
 
 const noopChange = vi.fn();
 
-describe("TPQuantityField — sidecar × en compactInline", () => {
-  it("baseline correct: compactInline=true renderea sidecar '×'", () => {
+describe("TPQuantityField — X interna (sin sidecar externo)", () => {
+  it("NO renderea el sidecar decorativo '×' (compactInline=true)", () => {
     render(
       <TPQuantityField
         value={2}
@@ -28,44 +28,12 @@ describe("TPQuantityField — sidecar × en compactInline", () => {
         compactInline
       />,
     );
-    const sidecar = screen.getByText("×");
-    expect(sidecar).toBeInTheDocument();
-    // Es un <span>, NO un <button>.
-    expect(sidecar.tagName).toBe("SPAN");
-    // Tooltip aclaratorio.
-    expect(sidecar.getAttribute("title")).toBe("Multiplica por unitario");
-    // aria-hidden — no interactivo.
-    expect(sidecar.getAttribute("aria-hidden")).toBe("true");
+    expect(screen.queryByText("×")).toBeNull();
+    expect(screen.queryByTitle("Multiplica por unitario")).toBeNull();
   });
 
-  it("baseline correct: sidecar usa las mismas clases visuales que Bonif/Impuestos", () => {
-    render(
-      <TPQuantityField
-        value={2}
-        onChange={noopChange}
-        constraints={{ default: 1, step: 1 }}
-        compactInline
-      />,
-    );
-    const sidecar = screen.getByText("×");
-    // Replica idéntica del sidecar de Bonificación/Impuestos:
-    // inline-flex h-[42px] shrink-0 items-center justify-center
-    // rounded-md border border-border bg-card px-1.5 text-[11px]
-    // font-semibold text-muted/60
-    expect(sidecar.className).toMatch(/inline-flex/);
-    expect(sidecar.className).toMatch(/h-\[42px\]/);
-    expect(sidecar.className).toMatch(/rounded-md/);
-    expect(sidecar.className).toMatch(/border/);
-    expect(sidecar.className).toMatch(/bg-card/);
-    expect(sidecar.className).toMatch(/text-\[11px\]/);
-    expect(sidecar.className).toMatch(/font-semibold/);
-    // text-muted/50 (un poco menos contraste que Bonif/Impuestos /60)
-    // porque × es indicador semántico, no acción principal.
-    expect(sidecar.className).toMatch(/text-muted\/50/);
-  });
-
-  it("baseline correct: compactInline=false NO renderea sidecar (legacy intacto)", () => {
-    render(
+  it("NO renderea el sidecar '×' (compactInline=false ni default)", () => {
+    const { rerender } = render(
       <TPQuantityField
         value={2}
         onChange={noopChange}
@@ -74,16 +42,54 @@ describe("TPQuantityField — sidecar × en compactInline", () => {
       />,
     );
     expect(screen.queryByText("×")).toBeNull();
+    rerender(
+      <TPQuantityField value={2} onChange={noopChange} constraints={{ default: 1, step: 1 }} />,
+    );
+    expect(screen.queryByText("×")).toBeNull();
   });
 
-  it("baseline correct: compactInline omitido (default) tampoco renderea sidecar", () => {
+  it("con onClear → muestra la X interna del TPNumber (igual que Bonif/Impuestos) y dispara el handler", () => {
+    const onClear = vi.fn();
+    render(
+      <TPQuantityField
+        value={5}
+        onChange={noopChange}
+        constraints={{ default: 1, step: 1 }}
+        compactInline
+        onClear={onClear}
+      />,
+    );
+    const x = screen.getByRole("button", { name: "Limpiar valor" });
+    expect(x).toBeInTheDocument();
+    fireEvent.click(x);
+    expect(onClear).toHaveBeenCalledTimes(1);
+  });
+
+  it("sin onClear → no hay ninguna X de limpiar", () => {
+    render(
+      <TPQuantityField
+        value={5}
+        onChange={noopChange}
+        constraints={{ default: 1, step: 1 }}
+        compactInline
+      />,
+    );
+    expect(screen.queryByRole("button", { name: "Limpiar valor" })).toBeNull();
+  });
+
+  it("el input de cantidad sigue siendo editable", () => {
+    const onChange = vi.fn();
     render(
       <TPQuantityField
         value={2}
-        onChange={noopChange}
+        onChange={onChange}
         constraints={{ default: 1, step: 1 }}
+        compactInline
       />,
     );
-    expect(screen.queryByText("×")).toBeNull();
+    const input = document.querySelector("input") as HTMLInputElement;
+    expect(input).toBeTruthy();
+    fireEvent.change(input, { target: { value: "7" } });
+    expect(onChange).toHaveBeenCalledWith(7);
   });
 });

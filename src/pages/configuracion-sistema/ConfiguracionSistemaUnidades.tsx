@@ -106,16 +106,34 @@ export default function ConfiguracionSistemaUnidades() {
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState<Unit | null>(null);
   const [fName, setFName] = useState("");
+  // Código interno editable — el operador puede dejarlo vacío y se deriva
+  // del nombre vía `slugifyCode`. Cuando edita, conserva el existente.
+  const [fCode, setFCode] = useState("");
+  const [fCodeTouched, setFCodeTouched] = useState(false);
   const [fType, setFType] = useState<UnitType>("QUANTITY");
   const [formError, setFormError] = useState<string | null>(null);
 
-  /** Deriva un code corto desde el nombre (sin acentos, sin espacios, alfanumérico). */
+  /** Deriva un code AUTO desde el nombre (sin acentos, lowercase, alfanumérico).
+   *  Sólo se usa cuando el operador no editó el campo Código — al editarlo,
+   *  se respeta el case que tipea (via `sanitizeCodeInput`). */
   function slugifyCode(name: string): string {
     return name
       .normalize("NFD")
       .replace(/[̀-ͯ]/g, "")
       .toLowerCase()
       .replace(/[^a-z0-9]/g, "")
+      .slice(0, 40);
+  }
+
+  /** Sanitiza el código tipeado por el operador PRESERVANDO el case original
+   *  (mayúsculas/minúsculas/mixto). Mantiene letras y números, quita acentos
+   *  y caracteres peligrosos. Si el operador escribió "mL" → queda "mL";
+   *  "KG" → "KG"; "Pack" → "Pack". El backend valida unicidad. */
+  function sanitizeCodeInput(s: string): string {
+    return s
+      .normalize("NFD")
+      .replace(/[̀-ͯ]/g, "")
+      .replace(/[^A-Za-z0-9]/g, "")
       .slice(0, 40);
   }
 
@@ -158,6 +176,21 @@ export default function ConfiguracionSistemaUnidades() {
     const s = norm(q);
     if (s) rows = rows.filter(r => norm(r.name).includes(s) || norm(r.code).includes(s));
 
+    // Orden por defecto (sortKey=NAME + sortDir=asc, lectura inicial):
+    //   1. Favoritas primero
+    //   2. Unidades del sistema antes que personalizadas
+    //   3. Orden alfabético
+    // Cuando el usuario hace click en otra columna o invierte la dirección,
+    // se respeta ese sort explícito (sin imponer la prioridad de favoritos).
+    const isDefaultSort = sortKey === "NAME" && sortDir === "asc";
+    if (isDefaultSort) {
+      return [...rows].sort((a, b) => {
+        if (a.isFavorite !== b.isFavorite) return a.isFavorite ? -1 : 1;
+        if (a.isSystem   !== b.isSystem)   return a.isSystem   ? -1 : 1;
+        return a.name.localeCompare(b.name, "es", { sensitivity: "base" });
+      });
+    }
+
     const dir = sortDir === "asc" ? 1 : -1;
     return [...rows].sort((a, b) => {
       let primary = 0;
@@ -181,6 +214,8 @@ export default function ConfiguracionSistemaUnidades() {
   function openCreate() {
     setEditing(null);
     setFName("");
+    setFCode("");
+    setFCodeTouched(false);
     setFType(tab !== "ALL" ? (tab as UnitType) : "QUANTITY");
     setFormError(null);
     setModalOpen(true);
@@ -189,6 +224,8 @@ export default function ConfiguracionSistemaUnidades() {
   function openEdit(u: Unit) {
     setEditing(u);
     setFName(u.name);
+    setFCode(u.code ?? "");
+    setFCodeTouched(true); // En edit el operador ya tiene un code explícito.
     setFType(u.type);
     setFormError(null);
     setModalOpen(true);
@@ -205,9 +242,21 @@ export default function ConfiguracionSistemaUnidades() {
     const name = fName.trim();
     if (!name) { setFormError("El nombre es obligatorio."); return; }
 
-    // En edit conservamos el code existente (no lo cambia el usuario).
-    // En create derivamos un code desde el nombre — backend valida unicidad y devuelve 409 si choca.
-    const code = editing ? editing.code : (slugifyCode(name) || name);
+    // Code:
+    //   · Si el operador editó el campo (touched), respetar su valor PRESERVANDO
+    //     el case (mayúsc/minúsc/mixto) — solo se sanitiza para quitar acentos
+    //     y caracteres no alfanuméricos.
+    //   · Si no editó, derivar auto del nombre (lowercase via slugifyCode).
+    // Backend valida unicidad y devuelve 409 si colisiona.
+    const codeInput = fCode.trim();
+    const codeSanitized = fCodeTouched && codeInput.length > 0
+      ? sanitizeCodeInput(codeInput) || codeInput
+      : (slugifyCode(name) || name);
+    if (!codeSanitized) {
+      setFormError("El código no puede estar vacío.");
+      return;
+    }
+    const code = codeSanitized;
 
     try {
       setFormError(null);
@@ -286,28 +335,40 @@ export default function ConfiguracionSistemaUnidades() {
       subtitle="Administrá unidades de venta, peso, dimensión y volumen."
       icon={<Ruler size={22} />}
     >
-      {/* Tabs por tipo */}
-      <div className="mb-3 flex flex-wrap gap-2">
-        {TABS.map(t => {
-          const active = tab === t.key;
-          const n = counts[t.key];
-          return (
-            <button
-              key={t.key}
-              type="button"
-              onClick={() => setTab(t.key)}
-              className={cn(
-                "rounded-full border px-3 py-1.5 text-xs font-medium transition",
-                "focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-primary/20",
-                active
-                  ? "border-primary/50 bg-primary/10 text-primary"
-                  : "border-border bg-card text-muted hover:bg-surface2"
-              )}
-            >
-              {t.label} <span className="text-[10px] opacity-70">({n})</span>
-            </button>
-          );
-        })}
+      {/* Tabs por tipo — pestañas reales con border-bottom (estilo TPTech).
+          Reemplaza los chips redondeados anteriores. Mantiene los mismos
+          counts y el mismo handler (setTab) — sólo cambia el styling. */}
+      <div className="mb-3 border-b border-border" role="tablist" aria-label="Tipo de unidad">
+        <div className="flex flex-wrap gap-1 -mb-px">
+          {TABS.map(t => {
+            const active = tab === t.key;
+            const n = counts[t.key];
+            return (
+              <button
+                key={t.key}
+                type="button"
+                role="tab"
+                aria-selected={active}
+                onClick={() => setTab(t.key)}
+                className={cn(
+                  "px-3 py-2 text-xs font-medium transition border-b-2 -mb-px",
+                  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/20 rounded-t",
+                  active
+                    ? "border-primary text-primary"
+                    : "border-transparent text-muted hover:text-text hover:border-border",
+                )}
+              >
+                {t.label}
+                <span className={cn(
+                  "ml-1.5 text-[10px] tabular-nums",
+                  active ? "text-primary/70" : "text-muted/60",
+                )}>
+                  ({n})
+                </span>
+              </button>
+            );
+          })}
+        </div>
       </div>
 
       {err && <div className="mb-3 text-sm text-red-600">{err}</div>}
@@ -316,11 +377,12 @@ export default function ConfiguracionSistemaUnidades() {
         rows={visibleRows}
         columns={[
           { key: "name",     label: "Nombre",   canHide: false, sortKey: "NAME" },
+          { key: "code",     label: "Código",   sortKey: "CODE" },
           { key: "type",     label: "Tipo",     sortKey: "TYPE" },
           { key: "status",   label: "Estado",   sortKey: "STATUS" },
           { key: "acciones", label: "Acciones", canHide: false, align: "right" },
         ]}
-        storageKey="tptech_col_units"
+        storageKey="tptech_col_units_v2"
         search={q}
         onSearchChange={setQ}
         searchPlaceholder="Buscar por nombre o código…"
@@ -328,7 +390,15 @@ export default function ConfiguracionSistemaUnidades() {
         sortDir={sortDir}
         onSort={(key) => toggleSort(key as typeof sortKey)}
         loading={loading}
-        emptyText="No hay unidades con esos filtros."
+        // Estado vacío contextual: si hay búsqueda activa, indica "ningún
+        // match"; sino, indica que la pestaña activa no tiene unidades.
+        emptyText={
+          q.trim().length > 0
+            ? "No hay unidades con esos filtros."
+            : tab === "ALL"
+              ? "Todavía no hay unidades configuradas."
+              : `No hay unidades de tipo ${TYPE_LABELS[tab as UnitType].toLowerCase()}.`
+        }
         pagination
         countLabel={(n) => `${n} unidad${n === 1 ? "" : "es"}`}
         actions={
@@ -349,6 +419,17 @@ export default function ConfiguracionSistemaUnidades() {
                   <span className="font-medium text-text">{r.name}</span>
                   {r.isSystem && <SystemBadge />}
                 </div>
+              </TPTd>
+            )}
+            {vis.code && (
+              <TPTd>
+                {/* Badge técnico — monospace, legible, secundario al nombre.
+                    `min-w` garantiza ancho consistente para codes cortos (g)
+                    y largos (pack). Contraste mejorado: bg sólido + texto
+                    text/85 (antes era text-muted sobre bg muy translúcido). */}
+                <span className="inline-flex items-center justify-center rounded-md border border-border/70 bg-surface2 px-2 py-0.5 font-mono text-[11px] font-semibold text-text/85 tabular-nums min-w-[2.25rem]">
+                  {r.code}
+                </span>
               </TPTd>
             )}
             {vis.type && (
@@ -413,6 +494,33 @@ export default function ConfiguracionSistemaUnidades() {
               onChange={(v) => { setFName(v); setFormError(null); }}
               placeholder="Ej: Gramo, Centímetro, Par"
               disabled={savingBusy}
+            />
+          </TPField>
+
+          <TPField
+            label="Código"
+            hint={
+              editing
+                ? "Identificador técnico estable. Cambiarlo puede afectar artículos que ya lo usan."
+                : "Se autogenera desde el nombre. Podés editarlo (alfanumérico, sin espacios)."
+            }
+          >
+            <TPInput
+              value={fCode}
+              onChange={(v) => {
+                // Sanitiza en vivo PRESERVANDO el case que tipea el operador
+                // (mayúsculas/minúsculas/mixto). Solo quita acentos, espacios
+                // y caracteres no alfanuméricos. El backend valida unicidad.
+                const sanitized = sanitizeCodeInput(v);
+                setFCode(sanitized);
+                setFCodeTouched(true);
+                setFormError(null);
+              }}
+              placeholder={fName ? (slugifyCode(fName) || "código") : "Ej: g, kg, un, par"}
+              disabled={savingBusy}
+              // Visualmente técnico (monospace) — consistente con el pill de
+              // la columna Código en la tabla.
+              className="font-mono"
             />
           </TPField>
 

@@ -894,15 +894,30 @@ export default function EntityEditModal({
                           value={draft.taxApplyOnOverride}
                           onChange={(v) => set("taxApplyOnOverride", v)}
                           disabled={busy}
-                          options={[
-                            { value: "",                         label: "Heredar de cada impuesto (por defecto)" },
-                            { value: "TOTAL",                    label: "Total del precio" },
-                            { value: "METAL",                    label: "Solo el componente metal" },
-                            { value: "HECHURA",                  label: "Solo la hechura / mano de obra" },
-                            { value: "METAL_Y_HECHURA",          label: "Metal + hechura" },
-                            { value: "SUBTOTAL_BEFORE_DISCOUNT", label: "Subtotal antes de descuentos" },
-                            { value: "SUBTOTAL_AFTER_DISCOUNT",  label: "Subtotal después de descuentos" },
-                          ]}
+                          // Decisión funcional (temporal): solo 3 bases
+                          // simples (+ "Heredar"). El backend sigue
+                          // soportando las avanzadas (datos viejos); no se
+                          // ofrecen. Si ya hay una avanzada guardada se
+                          // muestra como "(actual)" para no perder el dato.
+                          options={(() => {
+                            const SIMPLE = ["", "TOTAL", "METAL", "HECHURA"];
+                            const opts = [
+                              { value: "",        label: "Heredar de cada impuesto (por defecto)" },
+                              { value: "TOTAL",   label: "Total del precio" },
+                              { value: "METAL",   label: "Solo el componente metal" },
+                              { value: "HECHURA", label: "Solo la hechura / mano de obra" },
+                            ];
+                            const cur = draft.taxApplyOnOverride;
+                            if (cur && !SIMPLE.includes(cur)) {
+                              const legacy: Record<string, string> = {
+                                METAL_Y_HECHURA:          "Metal + hechura",
+                                SUBTOTAL_BEFORE_DISCOUNT: "Subtotal antes de descuentos",
+                                SUBTOTAL_AFTER_DISCOUNT:  "Subtotal después de descuentos",
+                              };
+                              opts.push({ value: cur, label: `${legacy[cur] ?? cur} (actual)` });
+                            }
+                            return opts;
+                          })()}
                         />
                       </TPField>
 
@@ -993,15 +1008,30 @@ export default function EntityEditModal({
                                     value={overrideFormApplyOn}
                                     onChange={setOverrideFormApplyOn}
                                     disabled={busyOverride || overrideFormMode === "EXEMPT"}
-                                    options={[
-                                      { value: "",                         label: "Heredar global" },
-                                      { value: "TOTAL",                    label: "Total" },
-                                      { value: "METAL",                    label: "Metal" },
-                                      { value: "HECHURA",                  label: "Hechura" },
-                                      { value: "METAL_Y_HECHURA",          label: "Metal+Hechura" },
-                                      { value: "SUBTOTAL_BEFORE_DISCOUNT", label: "Antes descuento" },
-                                      { value: "SUBTOTAL_AFTER_DISCOUNT",  label: "Después descuento" },
-                                    ]}
+                                    // Decisión funcional (temporal): solo 3
+                                    // bases simples (+ "Heredar global").
+                                    // Avanzada ya guardada → "(actual)".
+                                    options={(() => {
+                                      const SIMPLE = ["", "TOTAL", "METAL", "HECHURA"];
+                                      const opts = [
+                                        { value: "",        label: "Heredar global" },
+                                        { value: "TOTAL",   label: "Total" },
+                                        { value: "METAL",   label: "Metal" },
+                                        { value: "HECHURA", label: "Hechura" },
+                                      ];
+                                      if (overrideFormApplyOn && !SIMPLE.includes(overrideFormApplyOn)) {
+                                        const lg: Record<string, string> = {
+                                          METAL_Y_HECHURA:          "Metal+Hechura",
+                                          SUBTOTAL_BEFORE_DISCOUNT: "Antes descuento",
+                                          SUBTOTAL_AFTER_DISCOUNT:  "Después descuento",
+                                        };
+                                        opts.push({
+                                          value: overrideFormApplyOn,
+                                          label: `${lg[overrideFormApplyOn] ?? overrideFormApplyOn} (actual)`,
+                                        });
+                                      }
+                                      return opts;
+                                    })()}
                                   />
                                 </TPField>
                               </div>
@@ -1231,13 +1261,26 @@ export default function EntityEditModal({
                           value={draft.commercialApplyOn}
                           onChange={(v) => set("commercialApplyOn", v as CommercialApplyOn | "")}
                           disabled={busy}
-                          options={[
-                            { value: "",                label: "Precio total (por defecto)" },
-                            { value: "TOTAL",           label: "Precio total" },
-                            { value: "METAL",           label: "Solo el componente metal" },
-                            { value: "HECHURA",         label: "Solo la hechura / mano de obra" },
-                            { value: "METAL_Y_HECHURA", label: "Metal + hechura" },
-                          ]}
+                          // Decisión funcional (temporal): solo 3 bases
+                          // simples. El backend mantiene METAL_Y_HECHURA
+                          // (datos viejos); no se ofrece. Si ya está
+                          // guardada se muestra como "(actual)".
+                          options={(() => {
+                            const opts = [
+                              { value: "",        label: "Precio total (por defecto)" },
+                              { value: "TOTAL",   label: "Precio total" },
+                              { value: "METAL",   label: "Solo el componente metal" },
+                              { value: "HECHURA", label: "Solo la hechura / mano de obra" },
+                            ];
+                            if (draft.commercialApplyOn
+                              && !["", "TOTAL", "METAL", "HECHURA"].includes(draft.commercialApplyOn)) {
+                              opts.push({
+                                value: draft.commercialApplyOn,
+                                label: `${draft.commercialApplyOn === "METAL_Y_HECHURA" ? "Metal + hechura" : draft.commercialApplyOn} (actual)`,
+                              });
+                            }
+                            return opts;
+                          })()}
                         />
                       </TPField>
                     </div>

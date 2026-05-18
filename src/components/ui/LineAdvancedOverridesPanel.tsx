@@ -51,7 +51,7 @@ import {
   type ComponentTypeKey,
 } from "../../lib/pricing/component-type-colors";
 
-export type AppliesTo = "METAL" | "HECHURA" | "PRODUCT" | "SERVICE" | "TOTAL";
+export type AppliesTo = "TOTAL" | "METAL" | "HECHURA" | "METAL_Y_HECHURA" | "SUBTOTAL_AFTER_DISCOUNT" | "SUBTOTAL_BEFORE_DISCOUNT" | "PRODUCT" | "SERVICE";
 
 export type LineOverridePatch = {
   taxOverride?:           { mode: "PERCENT" | "AMOUNT"; value: number; appliesTo?: AppliesTo } | null;

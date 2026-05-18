@@ -74,6 +74,23 @@ import { selectInvoiceLineView } from "../lib/sales/selectInvoiceLineView";
 import { useEnterTabNavigation } from "../lib/sales/useEnterTabNavigation";
 import { isPreviewableLine, matchPreviewLines } from "../lib/sales/matchPreviewLines";
 import { sortLinesPreservingHeaders, articleSkuSortKey } from "../lib/sales/sortLines";
+import type { SalesInvoice, SalesInvoiceStatus, ClientSnapshot } from "../lib/sales/types";
+import { buildClientSnapshot } from "../lib/sales/buildClientSnapshot";
+import { buildSalePreviewPayload } from "../lib/sales/buildSalePreviewPayload";
+import { applySalePreviewToDraft } from "../lib/sales/applySalePreviewToDraft";
+import { useCardCollapse } from "../lib/sales/useCardCollapse";
+import {
+  detectManualEdit,
+  buildPatchedLine,
+  computeManualTax as computeManualTaxLib,
+} from "../lib/sales/patchLineHelpers";
+import {
+  normalizeEntityCurrency,
+  resolveClientFxRate,
+  computeDueDateFromTerm,
+} from "../lib/sales/clientPickHelpers";
+import { buildReceiptDraftPayload } from "../lib/sales/buildReceiptDraftPayload";
+import { usePreviewFlow } from "../lib/sales/usePreviewFlow";
 import {
   TPArticleVariantSearchSelect,
   type TPArticleLite,
@@ -121,6 +138,10 @@ import { couponsApi, type ValidateCouponResult } from "../services/coupons";
 import { salesApi, type SaleDocumentTotals, type SalePreviewResult, type SalePreviewLine } from "../services/sales";
 import { taxesApi, type TaxRow } from "../services/taxes";
 import { CouponCard } from "./ventas-facturas/CouponCard";
+import {
+  DiscountCard, ShippingCard, TotalsHeroSection, LinesEditorSection,
+  AddressPickerPopover, CurrencyFXModal, PaymentCard, InvoiceHeaderForm,
+} from "./ventas-facturas/InvoiceEditorModal";
 import LabelPrintModal, { type LabelItem } from "./article-detail/LabelPrintModal";
 import type { WarehouseRow } from "./InventarioAlmacenes/types";
 import { TPDocumentModalFooter } from "../components/ui/TPDocumentModalFooter";
@@ -165,123 +186,10 @@ import {
 } from "../lib/document-types";
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Tipos
+// Tipos del dominio — extraídos a `src/lib/sales/types.ts` durante FASE 5.
+// Re-import al inicio del archivo. Mantener acá solo los tipos LOCALES a la
+// página (si los hubiese).
 // ─────────────────────────────────────────────────────────────────────────────
-
-type SalesInvoiceStatus =
-  | "DRAFT"
-  | "PENDING"
-  | "PARTIAL"
-  | "PAID"
-  | "CANCELLED";
-
-/**
- * Snapshot del cliente en el momento de armar el comprobante. Conserva los
- * datos comerciales relevantes para impresión / auditoría aunque la entidad
- * cambie luego en el catálogo.
- */
-type ClientSnapshot = {
-  name:            string;
-  /** Mismo que `name` cuando el backend lo expone explícitamente. */
-  displayName?:    string;
-  /** PERSON o COMPANY — define qué bloque de identidad mostrar. */
-  entityType?:     "PERSON" | "COMPANY";
-  /** Razón social (COMPANY). */
-  companyName?:    string;
-  /** Nombre comercial / fantasía. */
-  tradeName?:      string;
-  /** Nombre y apellido (PERSON). */
-  firstName?:      string;
-  lastName?:       string;
-  documentType?:   string;
-  documentNumber?: string;
-  taxCondition?:   string;
-  email?:          string;
-  phone?:          string;
-  currency?:       string;
-  priceList?:      string;     // priceListId
-  paymentTerm?:    string;
-  seller?:         string;     // sellerId
-  /** Línea legible de la dirección principal. */
-  address?:        string;
-  /** Id de la dirección elegida (cuando el usuario pueda alternar). */
-  addressId?:      string;
-};
-
-type SalesInvoice = {
-  id: string;
-  number: string;            // "FV-0001"
-  date: string;              // ISO
-  dueDate: string;           // ISO — opcional
-  /** Id real del cliente (CommercialEntity). Se setea al elegir del combo. */
-  clientId?: string;
-  /** Snapshot inmutable del cliente al armar el comprobante. */
-  clientSnapshot?: ClientSnapshot;
-  /** Nombre del cliente — duplicado del snapshot.name para compatibilidad. */
-  client: string;
-  salesOrderNumber: string;  // opcional — referencia a OV
-  deliveryNumber: string;    // opcional — referencia a entrega/remito
-  currency: string;
-  /** Cotización a moneda base. Default 1. Editable solo si currency ≠ base. */
-  fxRate: number;
-  /** IVA % placeholder — pricing-engine lo calcula en Fase 6 */
-  taxPercent: number;
-  /** Vendedor asignado. Visual por ahora. */
-  seller: string;
-  /** Almacén del documento. Visual por ahora; se pasa al editor de líneas para filtrar stock. */
-  warehouse: string;
-  /** Término de pago (mock — Fase 7 conectará con condición comercial del cliente). */
-  paymentTerm: string;
-  /** Nro. de referencia interna o externa (visual; libre). */
-  referenceNumber: string;
-  notes: string;
-  /** Términos y condiciones del comprobante. Visual. */
-  terms: string;
-
-  // Totales calculados
-  subtotal: number;
-  discountAmount: number;
-  taxAmount: number;
-  total: number;
-
-  // Cobros (por ahora siempre 0 — se maneja en Fase 6)
-  paidAmount: number;
-
-  lines: DocumentLine[];
-  status: SalesInvoiceStatus;
-
-  // ── Estructura doc-level agregada en esta fase ─────────────────────────
-  /** Lista de precios aplicada. Mock; Fase 7 tomará el id real. */
-  priceListId?: string;
-  /** Datos de envío — no se modela como línea. */
-  shipping?: DocumentShipping;
-  /** Descuento global aplicado sobre el subtotal. */
-  discountGlobal?: DocumentDiscountGlobal;
-  /** Canal de venta del documento. CUID real de SalesChannel. Se manda al
-   *  pricing-preview como `channelId` y el motor aplica el ajuste del canal
-   *  sobre el unitPrice. */
-  channelId?: string;
-  /** Cupón de venta — código ingresado por el operador. Si se valida y
-   *  aplica, el motor lo descuenta. Frontend NO recalcula. */
-  couponCode?: string;
-  /** Resultado de la validación del cupón — visual (chip + mensaje). El
-   *  cálculo del descuento lo hace el motor en `pricing-preview`. */
-  couponStatus?: {
-    code:           string;
-    valid:          boolean;
-    name?:          string;
-    reason?:        string;
-    discountType?:  string;
-    discountValue?: number;
-  };
-  // ── Flags "explícitamente vacío" ─────────────────────────────────────
-  // Cuando el operador elige "Sin canal / Sin lista / Sin almacén"
-  // explícitamente, los useEffects de inicialización con favoritos NO
-  // deben volver a inyectar el favorito. El reset global los limpia.
-  channelExplicitlyCleared?:   boolean;
-  priceListExplicitlyCleared?: boolean;
-  warehouseExplicitlyCleared?: boolean;
-};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers
@@ -464,41 +372,7 @@ function entityRowToLite(row: EntityRow): TPEntityLite {
   };
 }
 
-/**
- * Construye el snapshot completo del cliente para guardar en el documento.
- * Acepta opcionalmente el detail (con direcciones / documentación completa);
- * si no vino, completa con lo que ya hay en el row/lite.
- */
-function buildClientSnapshot(
-  lite: TPEntityLite,
-  detail?: EntityDetail | null,
-): ClientSnapshot {
-  const composed = detail?.entityType === "COMPANY"
-    ? (detail.tradeName || detail.companyName || "").trim()
-    : detail
-      ? `${detail.firstName ?? ""} ${detail.lastName ?? ""}`.trim()
-      : "";
-  const displayName = (detail?.displayName ?? "").trim() || composed || lite.name;
-
-  return {
-    name:           lite.name,
-    displayName,
-    entityType:     detail?.entityType ?? lite.entityType,
-    firstName:      detail?.firstName  || lite.firstName,
-    lastName:       detail?.lastName   || lite.lastName,
-    companyName:    detail?.companyName || lite.companyName,
-    tradeName:      detail?.tradeName  || lite.tradeName,
-    documentType:   detail?.documentType    || lite.documentType,
-    documentNumber: detail?.documentNumber  || lite.documentNumber,
-    taxCondition:   detail?.ivaCondition    || lite.ivaCondition,
-    email:          detail?.email           || lite.email,
-    phone:          detail?.phone           || lite.phone,
-    currency:       detail?.currencyId      || lite.currency,
-    priceList:      detail?.priceListId     || lite.priceListId,
-    paymentTerm:    detail?.paymentTerm     || lite.paymentTerm,
-    seller:         lite.sellerId,
-  };
-}
+// (Removido en FASE 5 — extraído a src/lib/sales/. Ver imports al inicio.)
 
 /**
  * Compone una línea legible de dirección a partir de los campos discretos.
@@ -702,339 +576,9 @@ function makeEmptyPayment(currency: string): PaymentEntry {
 
 // ─── Fase 5 — Payload e hidratación desde el backend ────────────────────────
 
-/**
- * Construye el payload de `salesApi.preview` a partir del draft. Solo manda
- * inputs comerciales — NUNCA `unitPrice`, `discountPct`, `taxAmount` ni
- * `lineTotal`. La fuente de verdad de esos valores es el motor del backend.
- *
- * Fase 6.5 — overrides per-line: si el usuario editó manualmente un campo
- * de la línea (precio / bonificación / impuesto), enviamos su valor como
- * override y el motor lo respeta. Esto se controla con `line.manualOverrides`.
- */
-function buildSalePreviewPayload(
-  draft: SalesInvoice,
-  /**
-   * Id (UUID) de la moneda del documento. El backend acepta `currencyId`
-   * (Fase MM) y devuelve el preview convertido a esa moneda. El caller
-   * lo resuelve contra el catálogo de monedas porque `draft.currency`
-   * puede ser code (ARS) o id, y el backend solo acepta id.
-   * Sin esto, el preview siempre vuelve en moneda base.
-   */
-  currencyId?: string | null,
-): {
-  hasRealLines: boolean;
-  payload:      Parameters<typeof salesApi.preview>[0];
-} {
-  // Líneas que entran al preview — predicado canónico en `isPreviewableLine`.
-  // ARTICLE: con `articleId` (catálogo). MANUAL: `isManual=true` + descripción
-  // no vacía. Cualquier cambio del filtro debe hacerse en una sola fuente
-  // (`matchPreviewLines.ts`) — ver el comentario allí sobre la invariante.
-  const realLines = draft.lines.filter(isPreviewableLine);
-  return {
-    hasRealLines: realLines.length > 0,
-    payload: {
-      lines: realLines.map((l) => {
-        const ov   = l.manualOverrides;
-        const meta = l.pricingMeta;
+// (Removido en FASE 5 — extraído a src/lib/sales/. Ver imports al inicio.)
 
-        type Mode = "PERCENT" | "AMOUNT";
-        type AppliesTo = "METAL" | "HECHURA" | "PRODUCT" | "SERVICE" | "TOTAL";
-        type LineOverride = { mode: Mode; value: number; appliesTo?: AppliesTo } | null;
-
-        // Override de precio: si flag activo → mandamos la INTENCIÓN del
-        // operador, que vive en `pricingMeta.manualPrice`. NO `l.unitPrice`:
-        // ese campo se hidrata desde el response del backend tras cada
-        // preview y puede tener un delta de redondeo mínimo (ej. moneda
-        // convertida, lista con `applyOn=PRICE`). Si el payload se
-        // construye desde `l.unitPrice`, el delta hace que la firma del
-        // siguiente preview sea distinta → se dispara otro fetch → la
-        // hidratación cambia `unitPrice` otra vez → LOOP INFINITO.
-        // Bonificación e impuestos ya leían de `meta.X` por la misma razón.
-        const manualPriceOverride: number | null =
-          ov?.price === true
-            ? (meta?.manualPrice != null ? meta.manualPrice : l.unitPrice)
-            : null;
-
-        // Override de bonificación: si flag → reconstruimos {mode,value,appliesTo}
-        // a partir de la última config en pricingMeta.manualDiscount, o del
-        // discountAmount unitario como AMOUNT/TOTAL fallback.
-        let manualDiscountOverride: LineOverride = null;
-        if (ov?.discount === true) {
-          if (meta?.manualDiscount) {
-            manualDiscountOverride = meta.manualDiscount;
-          } else {
-            const qty = Number.isFinite(l.quantity) ? l.quantity : 0;
-            const discUnit = qty > 0 ? (l.discountAmount ?? 0) / qty : 0;
-            manualDiscountOverride = discUnit > 0
-              ? { mode: "AMOUNT", value: discUnit, appliesTo: "TOTAL" }
-              : null;
-          }
-        }
-
-        // Override de impuesto: análogo. pricingMeta.taxOverride es la
-        // forma canónica; si no está, derivamos de taxAmount unitario.
-        let taxOverride: LineOverride = null;
-        if (ov?.tax === true) {
-          if (meta?.taxOverride) {
-            taxOverride = meta.taxOverride;
-          } else {
-            const qty = Number.isFinite(l.quantity) ? l.quantity : 0;
-            const taxUnit = qty > 0 ? (l.taxAmount ?? 0) / qty : 0;
-            taxOverride = { mode: "AMOUNT", value: taxUnit, appliesTo: "TOTAL" };
-          }
-        }
-
-        // Línea MANUAL: payload mínimo, sin overrides de catálogo. El
-        // precio del operador viaja como `manualPriceOverride` (el backend
-        // lo usa como base; sin él, lineTotal = 0 hasta que se ingrese).
-        if (l.isManual === true) {
-          return {
-            type: "MANUAL" as const,
-            description: l.manualDescription ?? "",
-            quantity: l.quantity,
-            // Para línea manual: si el operador editó el unitPrice (siempre
-            // local, sin flag `price`), lo mandamos como manualPriceOverride.
-            // Si el flag explícito está, prioriza meta.manualPrice.
-            manualPriceOverride:
-              meta?.manualPrice != null ? meta.manualPrice
-              : (l.unitPrice ?? null),
-            manualDiscountOverride,
-            taxOverride,
-          };
-        }
-
-        return {
-          articleId: l.articleId!,
-          variantId: l.variantId ?? null,
-          quantity:  l.quantity,
-          manualPriceOverride,
-          manualDiscountOverride,
-          taxOverride,
-          // Override de lista por línea — toma precedencia sobre la lista
-          // global del documento (resuelto por el motor del backend).
-          priceListIdOverride: l.priceListIdOverride ?? null,
-          // Fase 3B — overrides de composición. Viven en `pricingMeta` (los
-          // setea `applyLineOverrides` desde el panel avanzado o el editor
-          // PRE editable). Se mandan al backend para que el motor recalcule
-          // costo/margen/precio con la composición ajustada por línea sin
-          // tocar el artículo maestro.
-          gramsOverride:          meta?.gramsOverride         ?? null,
-          mermaPercentOverride:   meta?.mermaPercentOverride  ?? null,
-          metalVariantIdOverride: meta?.metalVariantIdOverride ?? null,
-          hechuraOverrideAmount:  meta?.hechuraOverrideAmount ?? null,
-          // F1.4 G5 #11-D — overrides per costLineId (pisa los legacy
-          // cuando match por id). El motor backend (commit 11-A) los
-          // resuelve y devuelve `costLineOverridesApplied` en el preview.
-          // Fase 1 plumbing: el campo ya está en `SalePreviewLineInput`
-          // — sin `as any`. TypeScript valida el shape contra el contrato.
-          costLineOverrides:      meta?.costLineOverrides     ?? undefined,
-        };
-      }),
-      clientId:       draft.clientId      ?? null,
-      channelId:      draft.channelId     ?? null,
-      couponCode:     draft.couponCode || null,
-      shippingAmount: draft.shipping?.cost ?? 0,
-      // Lista global del documento. Sin esto, cambiar la lista en el
-      // header no afectaría el preview: el backend caería a la jerarquía
-      // por cliente/favorita y los precios no se moverían.
-      priceListId:    draft.priceListId   ?? null,
-      // Fase MM — moneda del response. Cuando viene poblada, el backend
-      // convierte la respuesta (totales, taxBreakdown, metalHechura, etc.)
-      // a esa moneda. Si el caller no la resolvió (ej. catálogo aún no
-      // cargado), va `null` y el response viene en moneda base.
-      currencyId:     currencyId ?? null,
-      // Fase MM ext — cotización manual del documento. El backend la usa
-      // como override de la tasa vigente del catálogo. Sin esto, cambiar
-      // la cotización en el modal solo reescalaba visualmente y backend
-      // y frontend mostraban números distintos. Solo lo enviamos cuando
-      // hay `currencyId` resuelto y `fxRate` es un número válido > 0.
-      currencyRate:
-        currencyId && Number.isFinite(draft.fxRate) && draft.fxRate > 0
-          ? draft.fxRate
-          : null,
-      // Fase 5: enviamos el descuento global como objeto. El backend lo
-      // resuelve contra el subtotal post-descuentos de línea — así
-      // evitamos un feedback loop frontend↔backend.
-      globalDiscount: draft.discountGlobal && draft.discountGlobal.value > 0
-        ? { type: draft.discountGlobal.type, value: draft.discountGlobal.value }
-        : null,
-    },
-  };
-}
-
-/**
- * Hidrata el draft con la respuesta del backend. Reemplaza por línea
- * `unitPrice`, `discountAmount`, `subtotal`, `taxAmount`, `lineTotal` y
- * todos los campos de `pricingMeta`. En la cabecera reemplaza
- * `subtotal/discountAmount/taxAmount/total`.
- *
- * Fase 6.5 — respeta `manualOverrides`: si la línea tiene un flag manual
- * activo (price/discount/tax/quantity), NO pisa ese campo. Como el
- * payload ya envió esos valores como overrides, la respuesta del backend
- * es coherente con ellos; el guard adicional protege de races (ej. una
- * respuesta vieja de un preview anterior antes del flag).
- *
- * Mapeo: alinea las líneas reales del draft con `preview.lines` por orden
- * (es el mismo orden en el que `buildSalePreviewPayload` filtró).
- */
-function applySalePreviewToDraft(
-  draft: SalesInvoice,
-  preview: SalePreviewResult,
-): SalesInvoice {
-  // F1.4 #11-E.1 — Ajustes globales del documento. Mismo valor en
-  // todas las líneas (passthrough del preview response). El bloque
-  // "AJUSTES GLOBALES" del panel los muestra con tipografía financiera
-  // emerald/amber. Cero matemática frontend.
-  const docChannel: NonNullable<NonNullable<DocumentLine["pricingMeta"]>["documentAdjustments"]>["channel"] | null =
-    preview.channelResult && Number.isFinite(preview.channelResult.channelAmount)
-      && preview.channelResult.channelAmount !== 0
-      ? { name: preview.channelResult.channelName, amount: preview.channelResult.channelAmount }
-      : null;
-  const docCoupon: NonNullable<NonNullable<DocumentLine["pricingMeta"]>["documentAdjustments"]>["coupon"] | null =
-    preview.couponResult && preview.couponResult.applied
-      && Number.isFinite(preview.couponResult.discountAmount)
-      && preview.couponResult.discountAmount > 0
-      ? {
-          code:   preview.couponResult.couponCode,
-          name:   preview.couponResult.couponName,
-          amount: preview.couponResult.discountAmount,
-        }
-      : null;
-
-  let realIdx = 0;
-  const previewLines = preview.lines;
-  const updatedLines: DocumentLine[] = draft.lines.map((line) => {
-    // Coherente con `buildSalePreviewPayload` y `linesForView`: el filtro
-    // canónico vive en `isPreviewableLine`. Cualquier desalineamiento entre
-    // los tres consumidores corre los totales del backend de una línea a la
-    // siguiente (bug histórico: el "Total línea c/ imp." de un manual se
-    // pegaba al artículo siguiente).
-    if (!isPreviewableLine(line)) return line;
-    const pl: SalePreviewLine | undefined = previewLines[realIdx++];
-    if (!pl) return line;
-
-    const ov = line.manualOverrides;
-    // `pl.lineTotal` es el NETO sin tax YA REDONDEADO por el motor (es
-    // `lineTotalWithTax − lineTaxAmount`, preservando el redondeo de
-    // `applyOn=TOTAL` de la lista). Usar esto como subtotal de línea.
-    const subtotal         = pl.lineTotal       ?? pl.lineSubtotal ?? 0;
-    const lineTaxAmount    = pl.lineTaxAmount;
-    const lineTotalWithTax = pl.lineTotalWithTax ?? round2(subtotal + lineTaxAmount);
-    // Sprint 4 — POLICY.md §4 R4.1: el backend v3 emite `unitTotalWithTax`
-    // por línea. El frontend lo lee tal cual; no lo deriva.
-    const unitTotalWithTax = pl.unitTotalWithTax ?? null;
-
-    return {
-      ...line,
-      // Bug fix: la respuesta del backend YA respeta los overrides
-      // manuales (`buildSalePreviewPayload` los mandó como
-      // manualPriceOverride / manualDiscountOverride / taxOverride). Por
-      // eso `pl.X` es el valor correcto incluso cuando hay override
-      // activo. La protección anti-stale se hace por `reqId` arriba en
-      // el hook (las respuestas viejas se descartan antes de aplicar).
-      // No usamos `ov?.X ? line.X : pl.X` porque `line.X` retiene el
-      // valor PRE-EDIT (anterior al override del usuario), causando que
-      // labels como "+$59.086,26" sigan apareciendo cuando el usuario
-      // editó el impuesto a 0.
-      quantity:       line.quantity,
-      unitPrice:      pl.unitPrice ?? line.unitPrice,
-      discountAmount: pl.lineDiscount,
-      taxAmount:      lineTaxAmount,
-      // subtotal y lineTotal se recalculan a partir de los datos del
-      // backend SIEMPRE — son derivados, no campos editables. Si el
-      // override está activo, el backend ya consideró el override al
-      // calcular estos valores.
-      subtotal,
-      lineTotal:      lineTotalWithTax,
-      // Top-level `lineTotalWithTax` también se hidrata: la celda
-      // "Total línea c/ imp." lo lee directamente para evitar caer a un
-      // fallback (`subtotalNet + lineTax`) que en líneas manuales daba
-      // un monto inflado (porque `subtotalNet` lee `l.lineTotal` que ya
-      // incluye impuestos en este shape legacy).
-      lineTotalWithTax,
-      pricingMeta: {
-        ...line.pricingMeta,
-        priceSource:             pl.priceSource,
-        baseSource:              pl.pricingSnapshot?.baseSource,
-        appliedPriceListId:      pl.appliedPriceListId,
-        appliedPriceListName:    pl.appliedPriceListName,
-        appliedPromotionId:      pl.appliedPromotionId,
-        appliedPromotionName:    pl.appliedPromotionName,
-        basePrice:               pl.basePrice,
-        quantityDiscountAmount:  pl.quantityDiscountAmount,
-        promotionDiscountAmount: pl.promotionDiscountAmount,
-        unitCost:                pl.unitCost,
-        unitMargin:              pl.unitMargin,
-        marginPercent:           pl.marginPercent,
-        metalCost:               pl.metalHechuraBreakdown?.metalCost   ?? null,
-        metalSale:               pl.metalHechuraBreakdown?.metalSale   ?? null,
-        hechuraCost:             pl.metalHechuraBreakdown?.hechuraCost ?? null,
-        hechuraSale:             pl.metalHechuraBreakdown?.hechuraSale ?? null,
-        // Fase 2.7.b — márgenes agregados por tipo (passthrough).
-        metalMarginPct:          pl.metalHechuraBreakdown?.metalMarginPct   ?? null,
-        hechuraMarginPct:        pl.metalHechuraBreakdown?.hechuraMarginPct ?? null,
-        // Desglose por componente con adjustments (MANUAL_DISCOUNT / ENTITY_RULE
-        // / QUANTITY_DISCOUNT / PROMOTION). Permite que la UI muestre el monto
-        // absoluto de la bonificación junto al porcentaje configurado, leyendo
-        // backend sin recalcular en frontend (POLICY.md §4 R4.5).
-        componentSaleBreakdown:  (pl as any).componentSaleBreakdown ?? null,
-        // Composition (metal/hechura/taxes) — fuente única de `metalName`
-        // y `purityLabel` para cabeceras automáticas, panel de composición
-        // y otros consumidores. El backend ya lo emite per-line desde
-        // Fase 2A.7; antes lo descartábamos.
-        composition:             (pl as any).composition ?? null,
-        // F1.4 G5 #11-C — overrides per costLineId aplicados al preview
-        // y warnings internos. Passthrough puro: la tabla editable
-        // (11-D) los consumirá indexado por `costLineId` para
-        // `onChange(costLineId, patch)`. Sin UI nueva en 11-C.
-        costLineOverridesApplied: (pl as any).costLineOverridesApplied ?? undefined,
-        debugWarnings:            (pl as any).debugWarnings            ?? undefined,
-        // F1.4 #11-E.1 — ajustes globales del documento (passthrough).
-        documentAdjustments:     {
-          // lineManualDiscount: per línea. Si la línea tiene manualDiscount
-          // con appliesTo=TOTAL, lo exponemos para mostrar en el bloque.
-          lineManualDiscount: (() => {
-            const md = line.pricingMeta?.manualDiscount;
-            if (!md || (md.appliesTo ?? "TOTAL") !== "TOTAL") return null;
-            const lineDisc = Number.isFinite(pl.lineDiscount) ? pl.lineDiscount : 0;
-            if (lineDisc <= 0) return null;
-            return {
-              kind:     "BONUS" as const,   // manualDiscount = reduce precio
-              valuePct: md.mode === "PERCENT" ? md.value : null,
-              amount:   lineDisc,
-            };
-          })(),
-          channel: docChannel,
-          coupon:  docCoupon,
-        },
-        partial:                 false,
-        taxBreakdown:            (pl.taxBreakdown ?? []).map((tb: any) => ({
-          name:      tb?.name      ?? "",
-          rate:      tb?.rate      ?? null,
-          taxAmount: tb?.taxAmount ?? 0,
-        })),
-        unitTotalWithTax,
-      },
-    };
-  });
-
-  const dt = preview.documentTotals;
-  return {
-    ...draft,
-    lines:          updatedLines,
-    subtotal:       dt.subtotalAfterLineDiscounts,
-    // Suma honesta de TODOS los descuentos del documento. La columna
-    // backend `Sale.discountAmount` mantiene su semántica legacy (solo
-    // cupón) — la UI muestra el total real para el usuario.
-    discountAmount: round2(
-      dt.lineDiscountAmount +
-      dt.couponDiscountAmount +
-      dt.globalDiscountAmount,
-    ),
-    taxAmount:      dt.taxAmount,
-    total:          dt.total,
-  };
-}
+// (Removido en FASE 5 — extraído a src/lib/sales/. Ver imports al inicio.)
 
 function derivePaymentStatus(total: number, paid: number): SalesInvoiceStatus {
   if (total <= 0) return "DRAFT";
@@ -1640,20 +1184,13 @@ function InvoiceEditorModal(props: {
   const PAYMENT_CARD_KEY  = lsKey("sales", "invoices", "payment-card-expanded");
   const IMPACT_CARD_KEY   = lsKey("sales", "invoices", "account-impact-card-expanded");
 
-  function readBoolPref(key: string, fallback: boolean): boolean {
-    if (typeof window === "undefined") return fallback;
-    try {
-      const v = window.localStorage.getItem(key);
-      if (v === "true")  return true;
-      if (v === "false") return false;
-    } catch {}
-    return fallback;
-  }
-
-  const [discountOpen, setDiscountOpen] = useState<boolean>(() => readBoolPref(DISCOUNT_CARD_KEY, true));
-  const [shippingOpen, setShippingOpen] = useState<boolean>(() => readBoolPref(SHIPPING_CARD_KEY, true));
-  const [paymentOpen,  setPaymentOpen]  = useState<boolean>(() => readBoolPref(PAYMENT_CARD_KEY, true));
-  const [impactOpen,   setImpactOpen]   = useState<boolean>(() => readBoolPref(IMPACT_CARD_KEY, true));
+  // FASE 8.2.4 — el helper local `readBoolPref` y los 4 pares useState+useEffect
+  // se consolidaron en `useCardCollapse` (src/lib/sales/useCardCollapse.ts).
+  // Mismas claves → preferencias persistidas se preservan sin migración.
+  const [discountOpen, setDiscountOpen] = useCardCollapse(DISCOUNT_CARD_KEY, true);
+  const [shippingOpen, setShippingOpen] = useCardCollapse(SHIPPING_CARD_KEY, true);
+  const [paymentOpen,  setPaymentOpen]  = useCardCollapse(PAYMENT_CARD_KEY,  true);
+  const [impactOpen,   setImpactOpen]   = useCardCollapse(IMPACT_CARD_KEY,   true);
 
   // ── Fase 5 — Único camino: salesApi.preview ─────────────────────────────
   //
@@ -1667,12 +1204,9 @@ function InvoiceEditorModal(props: {
   // `legacyFallbackRecomputeTotals` para no mostrar ceros, y el header
   // muestra los últimos valores válidos del backend si los teníamos.
 
-  type PreviewStatus = "idle" | "loading" | "ok" | "error";
-  const [previewStatus, setPreviewStatus] = useState<PreviewStatus>("idle");
-  const [backendPreview, setBackendPreview] = useState<{
-    signature: string;
-    result:    SalePreviewResult;
-  } | null>(null);
+  // FASE 8.2.4b — state machine del preview encapsulada en `usePreviewFlow`.
+  // Conservamos el ref `previewReqIdRef` acá porque otros consumidores lo
+  // mutan para invalidar fetches en vuelo (handleClientPick, handleLineArticlePick).
   const previewReqIdRef = useRef(0);
 
   // Monedas reales (GET /valuation/currencies). Necesarias para mostrar code +
@@ -1726,49 +1260,45 @@ function InvoiceEditorModal(props: {
     draft.fxRate,
   ]);
 
-  useEffect(() => {
-    if (!previewSignature || !open) {
-      setBackendPreview(null);
-      setPreviewStatus("idle");
-      return;
-    }
-    setPreviewStatus("loading");
-    const myReqId = ++previewReqIdRef.current;
-    const sig     = previewSignature;
-    const handle  = setTimeout(async () => {
-      try {
+  // FASE 8.2.4b — hook reutilizable de preview flow.
+  // Encapsula: debounce 200ms + anti-stale via `previewReqIdRef` (compartido
+  // con handleClientPick / handleLineArticlePick) + status machine + cache.
+  const { status: previewStatus, cached: backendPreview } =
+    usePreviewFlow<SalePreviewResult>({
+      signature: previewSignature,
+      enabled:   open,
+      requestIdRef: previewReqIdRef,
+      executePreview: async () => {
         const { payload } = buildSalePreviewPayload(draft, documentCurrencyId);
         const res = await salesApi.preview(payload);
-        if (previewReqIdRef.current !== myReqId) return;
-        setBackendPreview({ signature: sig, result: res });
-        setPreviewStatus("ok");
-        // FASE 1 — paridad Simulador ↔ Factura. Logea el snapshot
-        // normalizado para que `__tptechParity.diff()` lo compare contra
-        // el del Simulador.
+        // FASE 1 — paridad Simulador ↔ Factura. Logea el snapshot normalizado
+        // para que `__tptechParity.diff()` lo compare contra el del Simulador.
         try {
-          logParity("invoice", {
-            payload,
-            normalized: normalizeSalesPreview(res),
-          });
+          logParity("invoice", { payload, normalized: normalizeSalesPreview(res) });
         } catch {
           // No bloquear la factura por un error del logger dev-only.
         }
-        // Fase 5 — hidratamos el draft con los datos del backend. Esto
-        // reemplaza por línea unitPrice/discountAmount/taxAmount/lineTotal
-        // y los totales de cabecera. La firma derivada de lo que sigue
-        // siendo el mismo input comercial → el efecto NO se redispara.
+        return res;
+      },
+      onApplyPreview: (res) => {
+        // Fase 5 — hidratamos el draft con los datos del backend.
         onChange(applySalePreviewToDraft(draft, res));
-      } catch (e) {
-        if (previewReqIdRef.current === myReqId) {
-          setPreviewStatus("error");
-        }
+      },
+      onPreviewError: (e) => {
+        // FASE 9 — I1: no podemos quedarnos en silencio. Si el motor falla
+        // (500, timeout, cliente desactivado), el footer deja de spinnear y
+        // los totales quedan congelados en el último resultado válido — el
+        // operador no se entera. Ahora avisamos con toast + chip "Totales
+        // sin actualizar" en <TotalsHeroSection> mientras `previewStatus`
+        // sea "error" y exista una respuesta cacheada.
+        toast.error(
+          "No se pudieron actualizar los totales. Los valores mostrados " +
+          "pueden estar desactualizados — repetí la acción para reintentar.",
+        );
         // eslint-disable-next-line no-console
         console.warn("[VentasFacturas] salesApi.preview falló:", e);
-      }
-    }, 200);   // Fase 4.3 — debounce 350→200ms (sensación de fluidez ERP).
-    return () => clearTimeout(handle);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [previewSignature, open]);
+      },
+    });
 
   /**
    * Totales que la UI muestra. Tras Fase 5 el draft YA está hidratado por
@@ -1941,22 +1471,9 @@ function InvoiceEditorModal(props: {
     return { channel, coupon, payment, shipping, globalDiscount };
   }, [backendPreview, previewSignature, draft.shipping, draft.discountGlobal]);
 
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    try { window.localStorage.setItem(DISCOUNT_CARD_KEY, String(discountOpen)); } catch {}
-  }, [discountOpen]);
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    try { window.localStorage.setItem(SHIPPING_CARD_KEY, String(shippingOpen)); } catch {}
-  }, [shippingOpen]);
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    try { window.localStorage.setItem(PAYMENT_CARD_KEY, String(paymentOpen)); } catch {}
-  }, [paymentOpen]);
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    try { window.localStorage.setItem(IMPACT_CARD_KEY, String(impactOpen)); } catch {}
-  }, [impactOpen]);
+  // FASE 8.2.4 — los 4 useEffect que persistían discountOpen/shippingOpen/
+  // paymentOpen/impactOpen a localStorage se eliminaron al adoptar
+  // `useCardCollapse`. El hook hace write-through automático.
 
   // ── Visibilidad del buscador rápido / escaneo (persiste por usuario) ─────
   // Clave SHARED entre todos los comprobantes con líneas — ver LS_KEYS en
@@ -2219,7 +1736,17 @@ function InvoiceEditorModal(props: {
     const prevCurrency = draft.currency;
     const nextCurrency = fxDraft.currency || baseCur?.code || "ARS";
     const prevFxRate   = draft.fxRate;
-    const nextFxRate   = isBase ? 1 : (Number.isFinite(fxDraft.fxRate) ? fxDraft.fxRate : 1);
+    // FASE 9 — C1: validamos que la cotización sea estrictamente positiva.
+    // Antes admitíamos `0` o negativo (TPNumberInput.min=0 deja pasar el
+    // literal cero). El downstream lo persistía en el receipt como
+    // `currencyRate=0` y `totalBase=0` aunque `draft.total > 0` — data
+    // corruption. Bloqueamos con toast y no aplicamos.
+    const fxOk = Number.isFinite(fxDraft.fxRate) && fxDraft.fxRate > 0;
+    if (!isBase && !fxOk) {
+      toast.error("La cotización debe ser un número mayor a cero.");
+      return;
+    }
+    const nextFxRate = isBase ? 1 : fxDraft.fxRate;
 
     // Side-effect opcional: actualizar la cotización oficial en el catálogo
     // de monedas (crea fila en `CurrencyRate` con `effectiveAt=now`). Solo
@@ -2265,98 +1792,31 @@ function InvoiceEditorModal(props: {
    * mantiene su estado local — el backend devuelve el receipt con su id y
    * code (placeholder DRAFT-...).
    */
+  /**
+   * FASE 8.2.5c — Orchestrator DELGADO de `saveDraftToBackend`.
+   *
+   * Toda la lógica pura (filtro de líneas reales + assembly del payload +
+   * line transformation + snapshot versionado) vive en
+   * `src/lib/sales/buildReceiptDraftPayload.ts` con tests unitarios.
+   *
+   * Acá queda lo NO-puro: guard `draftSaving`, toasts, setState, async POST.
+   */
   async function saveDraftToBackend() {
     if (draftSaving) return;
-    // Preparamos las líneas reales (sin headers ni placeholders).
-    const realLines = draft.lines.filter(
-      (l) => !isEmptyLine(l) && !isHeaderLine(l),
-    );
-    if (realLines.length === 0) {
+
+    const built = buildReceiptDraftPayload({
+      draft,
+      currencies,
+      predicates: { isEmptyLine, isHeaderLine },
+    });
+    if (!built.ok) {
       toast.error("Agregá al menos una línea para guardar el borrador.");
       return;
     }
 
-    const cur = currencies.find(
-      (c) => c.code === draft.currency || c.id === draft.currency,
-    );
-    const baseCur = currencies.find((c) => c.isBase);
-    const symbol  = (cur?.symbol ?? "").trim();
-
-    const payload: CreateReceiptDraftPayload = {
-      type:           "INVOICE",
-      direction:      "OUTBOUND",
-      counterpartyId: draft.clientId || undefined,
-      currencyCode:   cur?.code ?? draft.currency ?? "",
-      currencyRate:   cur?.isBase ? 1 : Number(draft.fxRate ?? 1),
-      subtotal:       round2(draft.subtotal ?? 0),
-      discountAmount: round2(draft.discountAmount ?? 0),
-      taxAmount:      round2(draft.taxAmount ?? 0),
-      total:          round2(draft.total ?? 0),
-      totalBase:      round2((draft.total ?? 0) * (cur?.isBase ? 1 : (draft.fxRate ?? 1))),
-      issueDate:      draft.date || undefined,
-      dueDate:        draft.dueDate || undefined,
-      notes:          [draft.notes, draft.terms].filter(Boolean).join("\n\n").trim(),
-
-      // Snapshot del documento (shape mínimo — el backend acepta Json libre).
-      pricingSnapshot: {
-        version:    1,
-        resolvedAt: new Date().toISOString(),
-        currency:   { code: cur?.code ?? draft.currency, rate: Number(draft.fxRate ?? 1), symbol },
-        client:     draft.clientSnapshot ?? null,
-        priceListId: draft.priceListId ?? null,
-        sellerId:   draft.seller || null,
-        warehouseId: draft.warehouse || null,
-        paymentTerm: draft.paymentTerm || null,
-        discountGlobal: draft.discountGlobal ?? null,
-        shipping:    draft.shipping ?? null,
-        totals: {
-          subtotal:       round2(draft.subtotal ?? 0),
-          discountAmount: round2(draft.discountAmount ?? 0),
-          taxAmount:      round2(draft.taxAmount ?? 0),
-          total:          round2(draft.total ?? 0),
-        },
-        lineCount: realLines.length,
-      },
-      currencySnapshot: {
-        currencyCode:     cur?.code ?? draft.currency ?? "",
-        symbol,
-        currencyRate:     cur?.isBase ? 1 : Number(draft.fxRate ?? 1),
-        baseCurrencyCode: baseCur?.code ?? "ARS",
-      },
-
-      lines: realLines.map((l, idx) => {
-        const lineSubtotal = round2(Math.max(0, (l.quantity || 0) * (l.unitPrice || 0) - (l.discountAmount || 0)));
-        const taxAmount    = round2(l.taxAmount ?? 0);
-        return {
-          articleId:      l.articleId,
-          variantId:      l.variantId,
-          itemKind:       l.itemKind ?? (l.variantId ? "ARTICLE_VARIANT" : "ARTICLE_SIMPLE"),
-          name:           l.article || "",
-          code:           l.sku || "",
-          sku:            l.sku || "",
-          barcode:        "",
-          quantity:       Number(l.quantity || 0),
-          unitPrice:      Number(l.unitPrice || 0),
-          subtotal:       round2((l.quantity || 0) * (l.unitPrice || 0)),
-          discountAmount: round2(l.discountAmount || 0),
-          lineTotal:      lineSubtotal,
-          taxAmount,
-          totalWithTax:   round2(lineSubtotal + taxAmount),
-          totalCost:      l.pricingMeta?.unitCost != null
-            ? round2(Number(l.pricingMeta.unitCost) * (l.quantity || 0))
-            : null,
-          totalMargin:    l.pricingMeta?.unitMargin != null
-            ? round2(Number(l.pricingMeta.unitMargin) * (l.quantity || 0))
-            : null,
-          sortOrder:      idx,
-          pricingSnapshot: l.pricingMeta ?? {},
-        };
-      }),
-    };
-
     setDraftSaving(true);
     try {
-      const saved = await receiptsApi.createDraft(payload);
+      const saved = await receiptsApi.createDraft(built.payload);
       toast.success(`Borrador guardado (id ${saved.id.slice(0, 8)}…).`);
     } catch (e: any) {
       toast.error(e?.message || "No se pudo guardar el borrador.");
@@ -2432,6 +1892,18 @@ function InvoiceEditorModal(props: {
     }
     return m;
   }, [unitsCatalog]);
+
+  // Mapa `currencyId → { code, symbol }` para que el editor avanzado pueda
+  // etiquetar cost lines en moneda distinta a la del comprobante (display
+  // de "Costo unit." en USD con equivalente en ARS). Passthrough puro del
+  // catálogo del tenant — no se calcula nada nuevo.
+  const currencyById = useMemo<Map<string, { code?: string | null; symbol?: string | null }>>(() => {
+    const m = new Map<string, { code?: string | null; symbol?: string | null }>();
+    for (const c of currencies) {
+      if (c.id) m.set(c.id, { code: c.code ?? null, symbol: c.symbol ?? null });
+    }
+    return m;
+  }, [currencies]);
 
   // Impuestos del tenant (GET /taxes) — solo se usa para asignar el
   // impuesto por defecto a líneas MANUALES (las de catálogo viajan con
@@ -2509,14 +1981,13 @@ function InvoiceEditorModal(props: {
   const [linkRemDraft, setLinkRemDraft] = useState("");
 
   // ── Address picker ──────────────────────────────────────────────────────
-  const addressBtnRef = useRef<HTMLButtonElement>(null);
-  const [addressPopOpen, setAddressPopOpen] = useState(false);
-
-  // Modal "Agregar / Editar dirección" — flotante, no navega.
+  // FASE 8.2.2b — `addressBtnRef` y el state `addressPopOpen` migraron a
+  // <InvoiceHeaderForm> (UI puramente local). Acá queda solo el modal
+  // "Agregar / Editar dirección" que SÍ es de scope del padre (modal flotante
+  // con su propio ciclo de vida + refetch del clientDetail).
   const [addressEditOpen, setAddressEditOpen] = useState(false);
 
   function openAddressEdit() {
-    setAddressPopOpen(false);
     setAddressEditOpen(true);
   }
 
@@ -2547,15 +2018,11 @@ function InvoiceEditorModal(props: {
   }
 
   function selectClientAddress(addrId: string) {
-    if (!clientDetail || !draft.clientSnapshot) {
-      setAddressPopOpen(false);
-      return;
-    }
+    // El popover ya se cerró desde InvoiceHeaderForm; acá solo aplicamos la
+    // dirección elegida al snapshot del cliente del documento.
+    if (!clientDetail || !draft.clientSnapshot) return;
     const addr = clientDetail.addresses.find((a) => a.id === addrId);
-    if (!addr) {
-      setAddressPopOpen(false);
-      return;
-    }
+    if (!addr) return;
     onChange({
       ...draft,
       clientSnapshot: {
@@ -2564,7 +2031,6 @@ function InvoiceEditorModal(props: {
         addressId: addr.id,
       },
     });
-    setAddressPopOpen(false);
   }
 
   // ── Ver / Editar cliente ────────────────────────────────────────────────
@@ -2868,7 +2334,7 @@ function InvoiceEditorModal(props: {
    * y `null` significa "limpiar este override". El backend recalcula y
    * devuelve la respuesta canónica — frontend NO calcula precios.
    */
-  type AppliesToScope = "METAL" | "HECHURA" | "PRODUCT" | "SERVICE" | "TOTAL";
+  type AppliesToScope = "TOTAL" | "METAL" | "HECHURA" | "METAL_Y_HECHURA" | "SUBTOTAL_AFTER_DISCOUNT" | "SUBTOTAL_BEFORE_DISCOUNT" | "PRODUCT" | "SERVICE";
   type LineOverridePatch = {
     taxOverride?:           { mode: "PERCENT" | "AMOUNT"; value: number; appliesTo?: AppliesToScope } | null;
     manualPrice?:           number | null;
@@ -2877,6 +2343,11 @@ function InvoiceEditorModal(props: {
     mermaPercentOverride?:  number | null;
     metalVariantIdOverride?: string | null;
     hechuraOverrideAmount?: number | null;
+    /** Override de SOLO la base ("Aplica a"), independiente del valor.
+     *  Viaja al backend aunque NO haya override de %/monto: permite que el
+     *  operador reescale el descuento/impuesto HEREDADO. `null` lo limpia. */
+    manualDiscountAppliesTo?: AppliesToScope | null;
+    manualTaxAppliesTo?:      AppliesToScope | null;
     /** F1.4 G5 #11-D — array completo de overrides per costLineId.
      *  Cuando viene en el patch, REEMPLAZA el array actual del meta
      *  (no merge — el caller es responsable de reconstruir el array
@@ -2918,6 +2389,8 @@ function InvoiceEditorModal(props: {
       mermaPercentOverride:  patch.mermaPercentOverride  !== undefined ? patch.mermaPercentOverride  : (prevMeta.mermaPercentOverride  ?? null),
       metalVariantIdOverride: patch.metalVariantIdOverride !== undefined ? patch.metalVariantIdOverride : (prevMeta.metalVariantIdOverride ?? null),
       hechuraOverrideAmount: patch.hechuraOverrideAmount !== undefined ? patch.hechuraOverrideAmount : (prevMeta.hechuraOverrideAmount ?? null),
+      manualDiscountAppliesTo: patch.manualDiscountAppliesTo !== undefined ? patch.manualDiscountAppliesTo : ((prevMeta as any).manualDiscountAppliesTo ?? null),
+      manualTaxAppliesTo:      patch.manualTaxAppliesTo      !== undefined ? patch.manualTaxAppliesTo      : ((prevMeta as any).manualTaxAppliesTo      ?? null),
       // F1.4 #11-D — array completo. El caller reconstruye el array (con
       // todas las entries previas) e incluye la edición nueva. Acá solo
       // pisamos.
@@ -2932,6 +2405,8 @@ function InvoiceEditorModal(props: {
       (merged.mermaPercentOverride  ?? null) === (prevMeta.mermaPercentOverride  ?? null) &&
       (merged.metalVariantIdOverride ?? null) === (prevMeta.metalVariantIdOverride ?? null) &&
       (merged.hechuraOverrideAmount ?? null) === (prevMeta.hechuraOverrideAmount ?? null) &&
+      (merged.manualDiscountAppliesTo ?? null) === ((prevMeta as any).manualDiscountAppliesTo ?? null) &&
+      (merged.manualTaxAppliesTo      ?? null) === ((prevMeta as any).manualTaxAppliesTo      ?? null) &&
       // Fase 2 fix — sin esta comparación, los edits de la nueva grilla
       // (que solo modifican `costLineOverrides[]` y dejan los 7 legacy
       // iguales) caían en este return temprano y el state nunca se
@@ -2953,6 +2428,9 @@ function InvoiceEditorModal(props: {
         mermaPercentOverride:   merged.mermaPercentOverride,
         metalVariantIdOverride: merged.metalVariantIdOverride,
         hechuraOverrideAmount:  merged.hechuraOverrideAmount,
+        // Override de SOLO la base ("Aplica a"), independiente del valor.
+        manualDiscountAppliesTo: merged.manualDiscountAppliesTo,
+        manualTaxAppliesTo:      merged.manualTaxAppliesTo,
         // F1.4 #11-D — array completo per costLineId.
         costLineOverrides:      merged.costLineOverrides,
         partial:                true,
@@ -3015,6 +2493,10 @@ function InvoiceEditorModal(props: {
       mermaPercentOverride:   null,
       metalVariantIdOverride: null,
       hechuraOverrideAmount:  null,
+      // Restaurar también limpia el override de SOLO la base ("Aplica a")
+      // → el combo re-hidrata del heredado (cliente / config impuesto).
+      manualDiscountAppliesTo: null,
+      manualTaxAppliesTo:      null,
     });
   }
 
@@ -3533,6 +3015,10 @@ function InvoiceEditorModal(props: {
             mermaPercentOverride:  null,
             metalVariantIdOverride: null,
             hechuraOverrideAmount: null,
+            // Override de SOLO la base ("Aplica a") también se limpia →
+            // el combo re-hidrata del heredado (cliente / config impuesto).
+            manualDiscountAppliesTo: null,
+            manualTaxAppliesTo:      null,
           }
         : undefined,
       // Fase 6.5 — Restablecer línea limpia TODOS los flags manuales
@@ -3618,6 +3104,10 @@ function InvoiceEditorModal(props: {
             mermaPercentOverride:  null,
             metalVariantIdOverride: null,
             hechuraOverrideAmount: null,
+            // Override de SOLO la base ("Aplica a") también se limpia →
+            // el combo re-hidrata del heredado (cliente / config impuesto).
+            manualDiscountAppliesTo: null,
+            manualTaxAppliesTo:      null,
           }
         : l.pricingMeta,
     }));
@@ -3763,116 +3253,29 @@ function InvoiceEditorModal(props: {
     patch("discountGlobal", nextDiscount);
   }
 
+  /**
+   * FASE 8.2.5a — Orchestrator DELGADO de `patchLine`.
+   *
+   * Toda la lógica pura (detección de flags manuales + recálculo transitorio
+   * cuando hay manualPriceEdit + recompute de manualTaxRate para líneas
+   * MANUAL + merge de flags) vive en `src/lib/sales/patchLineHelpers.ts`
+   * y tiene tests unitarios.
+   *
+   * Lo que queda acá es lo NO-puro: side-effect sobre `initialLineSnapshots`
+   * (ref de React) + `onChange(...)` que dispara el preview.
+   */
   function patchLine(lineId: string, p: Partial<DocumentLine>) {
     const before = draft.lines.find((l) => l.id === lineId);
-    // Si el patch cambia explícitamente el unitPrice y NO trae un
-    // pricingMeta propio (caso edición directa del input o "Aplicar
-    // simulador"), marcamos la línea como override manual para que los
-    // flujos automáticos no la pisen.
-    const isManualPriceEdit =
-      p.unitPrice != null
-      && before
-      && before.unitPrice !== p.unitPrice
-      && p.pricingMeta === undefined;
+    const { isManualPriceEdit, flagDeltas } = detectManualEdit(before, p);
 
-    // Fase 6.5 — Si el patch viene del editor (sin pricingMeta explícito) y
-    // muta uno de los campos editables manualmente (cantidad / precio /
-    // bonificación / impuesto), marcamos el flag correspondiente. Esto
-    // hace que `buildSalePreviewPayload` mande el override y que
-    // `applySalePreviewToDraft` no pise el campo. Si el patch viene del
-    // propio motor (trae `pricingMeta` o `articleId`), NO seteamos flags.
-    const isEngineDriven =
-      p.pricingMeta !== undefined || p.articleId !== undefined || p.manualOverrides !== undefined;
-    const flagDeltas: NonNullable<DocumentLine["manualOverrides"]> = {};
-    if (!isEngineDriven && before) {
-      if (p.quantity       != null && before.quantity       !== p.quantity)       flagDeltas.quantity = true;
-      if (p.unitPrice      != null && before.unitPrice      !== p.unitPrice)      flagDeltas.price    = true;
-      if (p.discountAmount != null && before.discountAmount !== p.discountAmount) flagDeltas.discount = true;
-      if (p.taxAmount      != null && before.taxAmount      !== p.taxAmount)      flagDeltas.tax      = true;
-    }
     const patched = draft.lines.map((l) => {
       if (l.id !== lineId) return l;
-      const merged = { ...l, ...p };
-      const { subtotal, lineTotal } = calcLineTotalsFromSnapshot(merged);
-      const out: DocumentLine = { ...merged, subtotal, lineTotal };
-      if (isManualPriceEdit) {
-        out.pricingMeta = {
-          ...(merged.pricingMeta ?? {}),
-          priceSource:    "MANUAL_OVERRIDE",
-          manualOverride: true,
-          partial:        false,
-          resolvedAt:     Date.now(),
-          // Invalidar derivado stale: `unitTotalWithTax` se calculó con el
-          // unitPrice anterior. Si lo dejamos vivo, calcLineTotalsFromSnapshot
-          // usa `qty × unitTotalWithTax` y devuelve el total VIEJO,
-          // pintando una inconsistencia visible (Precio Lista cambia, Total
-          // línea no). Lo dejamos en null hasta que el preview hidrate con
-          // el valor exacto del backend.
-          unitTotalWithTax: null,
-        };
-        // Recalcular subtotal / lineTotal / taxAmount transitorios usando la
-        // tasa conocida del último preview (taxBreakdown[0..n].rate). No
-        // dependemos del unitTotalWithTax stale ni del taxAmount absoluto
-        // viejo — escala con el cambio de precio para que el render sea
-        // coherente entre el campo "Precio lista" y la columna "Total línea"
-        // mientras el preview viaja (350 ms de debounce). Cuando llega,
-        // applySalePreviewToDraft pisa con los valores exactos del motor.
-        //
-        // Nota: el motor de venta (pricing-engine.sale.ts:1515-1525) IGNORA
-        // qty discount, promo y manualDiscount cuando hay manualPriceOverride
-        // — el precio manual define el final neto. Replicamos esa regla
-        // aquí: el transient asume disc=0 para que el render no haga un
-        // "salto" visual cuando el preview hidrata.
-        out.discountAmount = 0;
-        const qtyTr   = Number.isFinite(out.quantity)  ? out.quantity  : 0;
-        const unitTr  = Number.isFinite(out.unitPrice) ? out.unitPrice : 0;
-        const netTr   = Math.max(0, qtyTr * unitTr);
-        const totalRate = (out.pricingMeta?.taxBreakdown ?? [])
-          .map((t: any) => Number.isFinite(t?.rate) ? Number(t.rate) : 0)
-          .reduce((a: number, b: number) => a + b, 0);
-        if (totalRate > 0) {
-          const taxTr = netTr * (totalRate / 100);
-          out.taxAmount = round2(taxTr);
-          out.subtotal  = round2(netTr);
-          out.lineTotal = round2(netTr + taxTr);
-        } else if (Number.isFinite(out.taxAmount)) {
-          out.subtotal  = round2(netTr);
-          out.lineTotal = round2(netTr + Math.max(0, Number(out.taxAmount)));
-        } else {
-          out.subtotal  = round2(netTr);
-          out.lineTotal = round2(netTr);
-        }
-      }
-      // Línea MANUAL: el frontend es SSOT (no la toca el preview backend).
-      // Si tiene `manualTaxRate` configurada, recalculamos `taxAmount`
-      // aplicando el % sobre el subtotal y rehacemos `lineTotal`. Si el
-      // patch trae un `taxAmount` explícito (override directo del usuario),
-      // respetamos lo que escribió.
-      if (
-        out.isManual &&
-        typeof out.manualTaxRate === "number" &&
-        out.manualTaxRate > 0 &&
-        p.taxAmount === undefined
-      ) {
-        const tx = computeManualTax(out.subtotal, out.manualTaxRate);
-        out.taxAmount = tx;
-        out.lineTotal = round2(out.subtotal + tx);
-      }
-      // Acumulamos los flags manuales SIN pisar los previos. Quedan en
-      // true hasta que el usuario cambie de artículo o invoque "Restablecer
-      // línea" — esos dos paths limpian `manualOverrides` explícitamente.
-      if (Object.keys(flagDeltas).length > 0) {
-        out.manualOverrides = { ...(l.manualOverrides ?? {}), ...flagDeltas };
-      }
-      return out;
+      return buildPatchedLine({ line: l, patch: p, isManualPriceEdit, flagDeltas });
     });
-    // No agregamos placeholder automático — el usuario controla cuántas
-    // líneas hay con los botones / dotted area / quick-add.
-    const nextLines = patched;
-    // Fase 6: totales hidratados por salesApi.preview vía applySalePreviewToDraft.
-    // Snapshot inicial: si el patch trajo un articleId y no hay snapshot
-    // todavía para esta línea, capturarlo ahora (caso quick-pick dentro del
-    // editor avanzado).
+
+    // Side effect: snapshot inicial al primer asignamiento de articleId
+    // (quick-pick dentro del editor avanzado). Mutación de ref — NO entra
+    // en el orchestrator puro.
     if (p.articleId && !initialLineSnapshots.current.has(lineId)) {
       const justSet = patched.find((l) => l.id === lineId);
       if (justSet) {
@@ -3883,7 +3286,8 @@ function InvoiceEditorModal(props: {
         });
       }
     }
-    onChange({ ...draft, lines: nextLines });
+
+    onChange({ ...draft, lines: patched });
     // El cambio en draft.lines dispara previewSignature → salesApi.preview
     // hidrata la línea (con su debounce de 350 ms). NO refetch per-line.
   }
@@ -4034,11 +3438,10 @@ function InvoiceEditorModal(props: {
    *  `manualTaxRate > 0`. Líneas manuales nuevas nacen con `rate=0` →
    *  el bloque de recálculo se saltea (early-return) y el total queda
    *  exactamente en `subtotal` (WYSIWYG). */
-  function computeManualTax(subtotal: number, rate: number): number {
-    if (!Number.isFinite(rate) || rate <= 0) return 0;
-    if (!Number.isFinite(subtotal) || subtotal <= 0) return 0;
-    return round2(subtotal * (rate / 100));
-  }
+  // FASE 8.2.5a — `computeManualTax` se movió a `src/lib/sales/patchLineHelpers.ts`.
+  // Alias local conservado para los otros consumidores dentro del componente
+  // (e.g., setLineTaxOverride, applyLineOverrides). Mismo contrato byte-a-byte.
+  const computeManualTax = computeManualTaxLib;
 
   function addLine() {
     // Si ya hay placeholder vacío al final, no duplicar — enfocar esa
@@ -4426,6 +3829,16 @@ function InvoiceEditorModal(props: {
    * depender del `draft` capturado en closure (era el bug que obligaba a
    * seleccionar dos veces el mismo cliente).
    */
+  /**
+   * FASE 8.2.5b — Orchestrator DELGADO de `handleClientPick`.
+   *
+   * Helpers puros extraídos a `src/lib/sales/clientPickHelpers.ts`:
+   *   - `normalizeEntityCurrency` — resuelve id/code/undefined.
+   *   - `resolveClientFxRate`     — devuelve fxRate + warning opcional.
+   *   - `computeDueDateFromTerm`  — calcula vencimiento o "".
+   *
+   * Acá queda lo NO-puro: refs, setState, onChange, async fetch, recalc prompt.
+   */
   function handleClientPick(entity: TPEntityLite | null) {
     if (!entity) {
       lastPickedClientIdRef.current = null;
@@ -4440,75 +3853,34 @@ function InvoiceEditorModal(props: {
       return;
     }
 
-    // El backend guarda `currencyId` (CUID) en EntityRow, no el code ISO.
-    // Resolvemos contra el catálogo de monedas real ANTES de aplicar al
-    // draft — sino fmtMoney y el badge mostrarían el id como "currency".
-    const normalizedEntity: TPEntityLite = { ...entity };
-    if (normalizedEntity.currency) {
-      const known = currencies.some((c) => c.code === normalizedEntity.currency);
-      if (!known) {
-        const matchById = currencies.find((c) => c.id === normalizedEntity.currency);
-        if (matchById) normalizedEntity.currency = matchById.code;
-        else normalizedEntity.currency = undefined; // no corromper el draft
-      }
-    }
+    const normalizedEntity = normalizeEntityCurrency(entity, currencies);
     const autoPatch = applyClientToDraft(draft, normalizedEntity);
 
-    // ── Resolver cotización del cliente ─────────────────────────────────
-    // Si el cliente trae moneda asignada, resolverla contra el catálogo
-    // y tomar la última cotización vigente como `fxRate`. Sin esto, el
-    // draft pasaba a la moneda del cliente con `fxRate=1` → el botón
-    // mostraba "US$ 1.00" aunque hubiera una cotización real cargada en
-    // el módulo Divisas.
-    //
-    // Reglas:
-    //   · Moneda del cliente = base → fxRate = 1.
-    //   · No-base con `latestRate` válida → ese valor.
-    //   · No-base sin cotización vigente → fxRate = 1 + toast warning
-    //     para que el operador la cargue desde el botón superior.
-    //   · Cliente sin moneda → no tocamos `fxRate` (el del draft persiste).
-    let nextFxRate: number | undefined;
-    if (autoPatch.currency) {
-      const cur = currencies.find(
-        (c) => c.code === autoPatch.currency || c.id === autoPatch.currency,
-      );
-      if (cur?.isBase) {
-        nextFxRate = 1;
-      } else if (cur && typeof cur.latestRate === "number" && cur.latestRate > 0) {
-        nextFxRate = cur.latestRate;
-      } else if (cur) {
-        // Moneda válida pero sin cotización vigente.
-        nextFxRate = 1;
-        toast.warning(
-          `La moneda ${cur.code} no tiene cotización vigente. Cargala desde el botón de moneda.`,
-        );
-      }
-    }
+    // Resolver cotización del cliente (puro). El warning lo emite el orchestrator.
+    const { fxRate: nextFxRate, warning: fxWarning } =
+      resolveClientFxRate(autoPatch.currency, currencies);
+    if (fxWarning) toast.warning(fxWarning);
 
-    // Canonizar el paymentTerm contra el catálogo PAYMENT_TERM (matching
-    // case-insensitive). Así el combo lo encuentra y no aparece como
-    // "(no listado)" si solo difería en mayúsculas / espacios.
-    //
-    // IMPORTANTE: si el cliente NO tiene paymentTerm configurado,
-    // limpiamos explícitamente el del draft para que no quede el del
-    // cliente anterior. El combo cae a "— Sin definir —".
+    // Canonizar el paymentTerm contra el catálogo PAYMENT_TERM. Si el cliente
+    // NO tiene paymentTerm configurado, limpiamos explícitamente el del draft
+    // para que no quede el del cliente anterior. El combo cae a "— Sin definir —".
     const rawTerm = autoPatch.paymentTerm ?? normalizedEntity.paymentTerm ?? "";
     const canonicalTerm = canonicalizeTerm(rawTerm);
-    (autoPatch as any).paymentTerm = canonicalTerm; // "" si no hay → Sin definir
+    (autoPatch as any).paymentTerm = canonicalTerm;
 
     const snapshot = buildClientSnapshot(normalizedEntity);
     if (canonicalTerm) snapshot.paymentTerm = canonicalTerm;
 
-    // Si el cliente trae paymentTerm con días asociados, recalcular dueDate.
-    // Si NO trae paymentTerm (o no se puede calcular días), limpiamos el
-    // vencimiento — sino quedaría el del cliente anterior, que es engañoso.
-    const dueDatePatch: Partial<SalesInvoice> = { dueDate: "" };
-    if (canonicalTerm && draft.date) {
-      const days = getTermDays(canonicalTerm);
-      if (days !== null) {
-        dueDatePatch.dueDate = addDaysISO(draft.date, days);
-      }
-    }
+    // Vencimiento (puro). Limpieza explícita cuando no hay término o no se
+    // puede calcular — evita leak entre clientes.
+    const dueDatePatch: Partial<SalesInvoice> = {
+      dueDate: computeDueDateFromTerm({
+        canonicalTerm,
+        draftDate: draft.date,
+        getTermDays,
+        addDaysISO,
+      }),
+    };
 
     // Vendedor: al cambiar de cliente, vaciamos el `seller` actual para que
     // el effect re-aplique la jerarquía (cliente.sellerId → favorito → sin
@@ -4565,8 +3937,20 @@ function InvoiceEditorModal(props: {
           clientSnapshot: { ...optimisticDraft.clientSnapshot, ...fullSnap },
         });
       })
-      .catch(() => {
-        // Silencioso: el resto del comercial ya está autocompletado.
+      .catch((err) => {
+        // FASE 9 — I2: hasta ahora este catch era silencioso. Si el fetch del
+        // detail completo del cliente falla (timeout, 5xx, 404), el snapshot
+        // queda con lo optimista del paso 1 — sin dirección por defecto, sin
+        // condición fiscal extendida — y el operador no se entera. Avisamos
+        // con toast.
+        if (clientDetailRequestRef.current !== reqId) return;
+        if (lastPickedClientIdRef.current !== entity.id) return;
+        toast.error(
+          "No se pudo cargar toda la información del cliente. " +
+          "Verificá dirección y condición fiscal antes de confirmar.",
+        );
+        // eslint-disable-next-line no-console
+        console.warn("[VentasFacturas] commercialEntitiesApi.getOne falló:", err);
       });
 
     // 3) Si hay líneas reales, preguntamos por el recálculo (no afecta la
@@ -4687,382 +4071,69 @@ function InvoiceEditorModal(props: {
       }
     >
       <div className="space-y-3">
-        {/* ── Header compacto: cliente + fechas + lista + vendedor + almacén ── */}
-        <TPCard
-          title="Datos de la factura"
-          bodyClassName="!p-2.5 !pt-2"
-          headerClassName="!py-1.5"
-          right={(() => {
-            const cur = currencies.find(
-              (c) => c.code === draft.currency || c.id === draft.currency,
-            );
-            const isBase = cur?.isBase ?? isBaseCurrency(draft.currency);
-            const code   = cur?.code   ?? draft.currency;
-            const symbol = (cur?.symbol ?? "").trim();
-            // Cotización ACTIVA del documento — preferimos `draft.fxRate`
-            // (lo que el operador aplicó vía el modal "Actualizar cotización").
-            // Antes este valor caía a `cur.latestRate` (la del catálogo) ANTES
-            // del draft, lo que ignoraba la cotización manual aplicada y
-            // mostraba la del sistema → inconsistencia visual con el preview.
-            const draftRate = Number(draft.fxRate);
-            const rate   = isBase
-              ? 1
-              : (Number.isFinite(draftRate) && draftRate > 0
-                  ? draftRate
-                  : (cur?.latestRate ?? draft.fxRate));
-            const hasRate = isBase
-              || (Number.isFinite(draftRate) && draftRate > 0)
-              || cur?.latestRate != null;
-            const display = symbol || code;
-            return (
-              <button
-                type="button"
-                data-tp-enter="ignore"
-                onClick={openFx}
-                title={hasRate ? "Click para actualizar cotización" : "Sin cotización vigente — click para cargar"}
-                className={cn(
-                  "inline-flex items-center gap-1.5 rounded-md border bg-surface/50 px-2 py-1 text-left transition hover:bg-surface",
-                  hasRate ? "border-border" : "border-amber-500/50",
-                )}
-              >
-                <Coins size={12} className={hasRate ? "text-muted" : "text-amber-500"} />
-                <span className="text-[11px] font-bold tabular-nums text-text">
-                  {display} {hasRate ? Number(rate).toFixed(2) : "—"}
-                </span>
-                {!hasRate && (
-                  <AlertTriangle size={10} className="text-amber-500" />
-                )}
-              </button>
-            );
-          })()}
-        >
-          {/* ─── Bloque 1: Cliente (con dirección) | Fechas + Término ─── */}
-          <div className="grid grid-cols-1 gap-1.5 lg:grid-cols-[2fr_1fr]">
-            <div className="space-y-0.5">
-              <TPField label="Cliente" required>
-                <div className="flex items-stretch gap-1.5">
-                  <div className="min-w-0 flex-1">
-                    <TPEntitySearchSelect
-                      type="client"
-                      value={draft.clientId
-                        ? { id: draft.clientId, name: draft.clientSnapshot?.name ?? draft.client }
-                        : null}
-                      options={clientOptions}
-                      onChange={handleClientPick}
-                      onCreateNew={() => setClientCreateOpen(true)}
-                      hideAddressLine
-                    />
-                  </div>
-                  {draft.clientId && (
-                    <TPIconButton
-                      onClick={handleOpenEditClient}
-                      title="Editar cliente"
-                      className="h-9 w-9"
-                    >
-                      <Pencil size={14} />
-                    </TPIconButton>
-                  )}
-                </div>
-              </TPField>
-              {!draft.clientId && !draft.client && (
-                <div className="flex items-center gap-2 text-[11px] text-muted">
-                  <span>{clientsLoading ? "Cargando clientes…" : "Sin cliente seleccionado"}</span>
-                </div>
-              )}
-              {draft.clientId && draft.clientSnapshot && (() => {
-                const snap = draft.clientSnapshot;
-                // Línea 1 — segmentos sin labels (solo valores limpios).
-                const docSegment = (snap.documentType && snap.documentNumber)
-                  ? `${snap.documentType} ${snap.documentNumber}`
-                  : (snap.documentNumber || snap.documentType || null);
-                const segments = [
-                  docSegment,
-                  snap.taxCondition || null,
-                  snap.phone || null,
-                ].filter(Boolean) as string[];
+        {/* FASE 8.2.2b — Cabecera migrada a <InvoiceHeaderForm>.
+            Cero lógica comercial: callbacks semánticos cerrados sobre los
+            handlers del padre (handleClientPick, handlePaymentTermChange,
+            handleSellerChange, etc.). */}
+        <InvoiceHeaderForm
+          clientId={draft.clientId}
+          clientName={draft.client}
+          clientSnapshot={draft.clientSnapshot}
+          clientOptions={clientOptions}
+          clientsLoading={clientsLoading}
+          clientAddresses={(clientDetail?.addresses ?? []) as any}
+          composeAddressLine={composeAddressLine}
 
-                const handleAddressAction = () => {
-                  const hasAddrs = (clientDetail?.addresses?.length ?? 0) > 0;
-                  if (!hasAddrs) { openAddressEdit(); return; }
-                  setAddressPopOpen((o) => !o);
-                };
+          date={draft.date}
+          dueDate={draft.dueDate}
+          paymentTerm={draft.paymentTerm}
+          paymentTermOptions={paymentTermOptions}
 
-                // Render compartido de los segmentos fiscales (doc • iva •
-                // tel). Devuelve null si no hay ningún dato — así el
-                // caller decide si rendea la línea o no.
-                const fiscalLine = segments.length > 0 ? (
-                  <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[12px] text-muted">
-                    {segments.map((s, i) => (
-                      <React.Fragment key={i}>
-                        {i > 0 && <span className="text-border">•</span>}
-                        <span className="truncate text-text/80">{s}</span>
-                      </React.Fragment>
-                    ))}
-                  </div>
-                ) : null;
+          currency={draft.currency}
+          fxRate={draft.fxRate}
+          currencies={currencies}
+          isBaseCurrencyResolver={isBaseCurrency}
 
-                const cambiarBtn = (
-                  <button
-                    ref={addressBtnRef}
-                    type="button"
-                    data-tp-enter="ignore"
-                    onClick={handleAddressAction}
-                    className="inline-flex shrink-0 items-center gap-1 text-[12px] text-primary hover:underline"
-                  >
-                    <Pencil size={11} /> Cambiar dirección
-                  </button>
-                );
-                const agregarBtn = (
-                  <button
-                    ref={addressBtnRef}
-                    type="button"
-                    data-tp-enter="ignore"
-                    onClick={handleAddressAction}
-                    className="inline-flex shrink-0 items-center gap-1 text-[12px] text-primary hover:underline"
-                  >
-                    <Plus size={11} /> Agregar dirección
-                  </button>
-                );
+          seller={draft.seller}
+          sellers={sellers}
+          referenceNumber={draft.referenceNumber}
 
-                // Padding derecho que iguala el offset del botón lápiz a la
-                // derecha del combo: w-9 (36px) + gap-1.5 (6px) = 42px.
-                // Así el final del botón "Cambiar / Agregar dirección" se
-                // alinea verticalmente con el borde derecho del input.
-                const rowPadRight = "pr-[2.625rem]";
+          salesOrderNumber={draft.salesOrderNumber}
+          deliveryNumber={draft.deliveryNumber}
 
-                if (snap.address) {
-                  // Caso CON dirección — 2 líneas:
-                  //   1: 📍 dirección · . . . · Cambiar dirección
-                  //   2: doc • iva • tel
-                  return (
-                    <div className="flex flex-col gap-1.5">
-                      <div className={cn("flex items-center justify-between gap-3", rowPadRight)}>
-                        <div className="flex min-w-0 items-center gap-1.5 text-[13px] font-medium">
-                          <MapPin size={13} className="shrink-0 text-muted" />
-                          <span className="min-w-0 truncate text-text">
-                            {snap.address}
-                          </span>
-                        </div>
-                        {cambiarBtn}
-                      </div>
-                      {fiscalLine}
-                    </div>
-                  );
-                }
+          onPickClient={handleClientPick}
+          onCreateNewClient={() => setClientCreateOpen(true)}
+          onOpenEditClient={handleOpenEditClient}
 
-                // Caso SIN dirección — 1 línea:
-                //   doc • iva • tel · . . . · + Agregar dirección
-                //   (si tampoco hay info fiscal, el link queda solo a la derecha)
-                return (
-                  <div className={cn("flex items-center justify-between gap-3", rowPadRight)}>
-                    {fiscalLine ?? <span className="min-w-0 flex-1" />}
-                    {agregarBtn}
-                  </div>
-                );
-              })()}
+          onDateChange={handleDateChange}
+          onDueDateChange={handleDueDateChange}
+          onPaymentTermChange={handlePaymentTermChange}
 
-              {/* Popover: lista de direcciones del cliente */}
-              <TPPopover
-                open={addressPopOpen}
-                onClose={() => setAddressPopOpen(false)}
-                anchorRef={addressBtnRef}
-                width={360}
-              >
-                <div className="py-1.5">
-                  <div className="px-3 pb-1.5 pt-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted">
-                    Direcciones del cliente
-                  </div>
-                  {(clientDetail?.addresses ?? []).map((a) => {
-                    const line = composeAddressLine(a);
-                    const isSel = draft.clientSnapshot?.addressId === a.id;
-                    const typeLabel = ADDRESS_TYPE_LABELS[a.type] ?? a.type;
-                    const heading = (a.attn || a.label || typeLabel).trim() || typeLabel;
-                    return (
-                      <button
-                        key={a.id}
-                        type="button"
-                        onClick={() => selectClientAddress(a.id)}
-                        className={cn(
-                          "flex w-full items-start gap-2 px-3 py-2 text-left transition hover:bg-surface2/60",
-                          isSel && "bg-primary/10",
-                        )}
-                      >
-                        <div className="min-w-0 flex-1">
-                          <div className="flex flex-wrap items-center gap-1.5">
-                            <span className={cn(
-                              "rounded-full border border-border bg-surface2/60 px-1.5 py-0 text-[9px] uppercase tracking-wide text-muted",
-                            )}>
-                              {typeLabel}
-                            </span>
-                            <span className={cn(
-                              "text-[11px] font-semibold truncate",
-                              isSel ? "text-primary" : "text-text",
-                            )}>
-                              {heading}
-                            </span>
-                            {a.isDefault && (
-                              <span className="rounded-full border border-emerald-500/40 bg-emerald-500/10 px-1.5 py-0 text-[9px] font-medium text-emerald-500">
-                                Predeterminada
-                              </span>
-                            )}
-                          </div>
-                          <div className="mt-0.5 truncate text-[10px] text-muted">{line || "—"}</div>
-                        </div>
-                        {isSel && <Check size={12} className="mt-1 text-primary" />}
-                      </button>
-                    );
-                  })}
-                  {(clientDetail?.addresses ?? []).length === 0 && (
-                    <div className="px-3 py-3 text-center text-[11px] text-muted">
-                      Este cliente no tiene direcciones cargadas.
-                    </div>
-                  )}
-                  <div className="mt-1 border-t border-border/40 px-2 py-1">
-                    <button
-                      type="button"
-                      onClick={openAddressEdit}
-                      className="inline-flex w-full items-center justify-start gap-1 rounded px-2 py-1 text-[11px] font-medium text-primary hover:bg-primary/10"
-                    >
-                      <Plus size={12} /> Agregar dirección
-                    </button>
-                  </div>
-                </div>
-              </TPPopover>
-            </div>
-            <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-3">
-              <TPField label="Fecha" required>
-                <input
-                  type="date"
-                  value={draft.date}
-                  onChange={(e) => handleDateChange(e.target.value)}
-                  className="tp-input w-full"
-                />
-              </TPField>
-              <TPField label="Vencimiento">
-                <input
-                  type="date"
-                  value={draft.dueDate}
-                  onChange={(e) => handleDueDateChange(e.target.value)}
-                  className="tp-input w-full"
-                />
-              </TPField>
-              <TPField label="Término de pago">
-                <TPSelect
-                  value={draft.paymentTerm}
-                  onChange={handlePaymentTermChange}
-                  options={paymentTermOptions}
-                />
-              </TPField>
-            </div>
-          </div>
+          onOpenFx={openFx}
 
-          {/* ─── Bloque 2: Comercial (Vendedor + Nº referencia) ─── */}
-          <div className="mt-1.5 grid grid-cols-1 gap-1.5 sm:grid-cols-2">
-            <TPField label="Vendedor">
-              {(() => {
-                const sellerOptions: Array<{ value: string; label: string }> = [
-                  { value: "", label: "— Sin asignar —" },
-                  ...sellers.map((s) => ({
-                    value: s.id,
-                    label: s.displayName
-                      || `${s.firstName} ${s.lastName}`.trim()
-                      || "(sin nombre)",
-                  })),
-                ];
-                // Ghost option si el draft.seller no está en la lista
-                // activa (ej. vendedor desactivado / id legacy del cliente).
-                if (
-                  draft.seller
-                  && !sellerOptions.some((o) => o.value === draft.seller)
-                ) {
-                  sellerOptions.push({
-                    value: draft.seller,
-                    label: `${draft.seller.slice(0, 8)}… (no listado)`,
-                  });
-                }
-                return (
-                  <TPSelect
-                    value={draft.seller}
-                    onChange={(v) => {
-                      // Recordamos si el usuario eligió explícitamente
-                      // "Sin asignar" para que el effect del favorito no
-                      // vuelva a setearlo encima.
-                      sellerExplicitlyClearedRef.current = v === "";
-                      patch("seller", v);
-                    }}
-                    options={sellerOptions}
-                  />
-                );
-              })()}
-            </TPField>
-            <TPField label="Nro. de referencia">
-              <TPInput
-                value={draft.referenceNumber}
-                onChange={(v: string) => patch("referenceNumber", v)}
-                placeholder="Referencia interna / externa"
-              />
-            </TPField>
-          </div>
+          onSellerChange={(v) => {
+            // Recordamos si el usuario eligió explícitamente "Sin asignar"
+            // para que el effect del favorito no vuelva a setearlo encima.
+            sellerExplicitlyClearedRef.current = v === "";
+            patch("seller", v);
+          }}
+          onReferenceChange={(v) => patch("referenceNumber", v)}
 
-          {/* ─── Bloque 3: Documentos origen (chips al pie) ─── */}
-          <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
-            <span className="text-[10px] font-semibold uppercase tracking-wide text-muted">
-              Documentos origen:
-            </span>
-            {draft.salesOrderNumber ? (
-              <button
-                type="button"
-                data-tp-enter="ignore"
-                onClick={() => toast.info(`Ver ${draft.salesOrderNumber} — próximamente`)}
-                className="inline-flex items-center gap-1 rounded-full border border-info/30 bg-info/10 px-2 py-0.5 text-[11px] font-mono text-info hover:bg-info/20"
-                title="Ver documento origen"
-              >
-                <FileText size={11} />
-                {draft.salesOrderNumber}
-              </button>
-            ) : (
-              <button
-                type="button"
-                data-tp-enter="ignore"
-                onClick={() => { setLinkOvDraft(""); setLinkOvOpen(true); }}
-                className="inline-flex items-center gap-1 rounded-full border border-dashed border-border bg-surface/40 px-2 py-0.5 text-[11px] text-muted hover:bg-surface"
-              >
-                <Link2 size={11} /> Vincular OV
-              </button>
-            )}
-            {draft.deliveryNumber ? (
-              <button
-                type="button"
-                data-tp-enter="ignore"
-                onClick={() => toast.info(`Ver ${draft.deliveryNumber} — próximamente`)}
-                className="inline-flex items-center gap-1 rounded-full border border-info/30 bg-info/10 px-2 py-0.5 text-[11px] font-mono text-info hover:bg-info/20"
-                title="Ver documento origen"
-              >
-                <FileText size={11} />
-                {draft.deliveryNumber}
-              </button>
-            ) : (
-              <button
-                type="button"
-                data-tp-enter="ignore"
-                onClick={() => { setLinkRemDraft(""); setLinkRemOpen(true); }}
-                className="inline-flex items-center gap-1 rounded-full border border-dashed border-border bg-surface/40 px-2 py-0.5 text-[11px] text-muted hover:bg-surface"
-              >
-                <Link2 size={11} /> Vincular Remito
-              </button>
-            )}
-            {(draft.salesOrderNumber || draft.deliveryNumber) && (
-              <button
-                type="button"
-                data-tp-enter="ignore"
-                onClick={() => onChange({ ...draft, salesOrderNumber: "", deliveryNumber: "" })}
-                className="ml-auto text-[11px] text-muted hover:text-text hover:underline"
-              >
-                Quitar vínculos
-              </button>
-            )}
-          </div>
-        </TPCard>
+          onOpenAddressEdit={openAddressEdit}
+          onSelectAddress={selectClientAddress}
+
+          onLinkSalesOrderOpen={() => { setLinkOvDraft(""); setLinkOvOpen(true); }}
+          onLinkDeliveryOpen={() => { setLinkRemDraft(""); setLinkRemOpen(true); }}
+          onClearOriginDocs={() =>
+            onChange({ ...draft, salesOrderNumber: "", deliveryNumber: "" })
+          }
+          onViewSalesOrder={() =>
+            toast.info(`Ver ${draft.salesOrderNumber} — próximamente`)
+          }
+          onViewDelivery={() =>
+            toast.info(`Ver ${draft.deliveryNumber} — próximamente`)
+          }
+        />
 
         {/* ── Líneas — ancho completo del modal para aprovechar el espacio
             horizontal disponible (combo de artículo, composición, etc.). */}
@@ -5522,113 +4593,67 @@ function InvoiceEditorModal(props: {
               </div>
             </TPPopover>
 
-            {/* Fase 4.5 — wrapper ref-eable que acota el scope del hook
-                Enter=next field a la zona del editor de líneas. */}
-            <div ref={editorScopeRef}>
-            {draft.lines.length === 0 ? (
-              <div
-                role="button"
-                tabIndex={0}
-                aria-label="Agregar línea vacía"
-                onClick={addLine}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" || e.key === " ") {
-                    e.preventDefault();
-                    addLine();
-                  }
-                }}
-                className={cn(
-                  "cursor-pointer rounded-lg border border-dashed border-border bg-surface2/20 px-4 py-8 text-center transition",
-                  "hover:bg-surface2/40 hover:border-primary/40",
-                  "focus:outline-none focus-visible:border-primary/60 focus-visible:bg-surface2/40",
-                )}
-              >
-                <FileText size={24} className="mx-auto text-muted" />
-                <div className="mt-2 text-sm font-semibold text-text">
-                  Todavía no hay líneas
-                </div>
-                <div className="mt-1 text-xs text-muted">
-                  Buscá arriba un artículo o hacé click acá para agregar una línea vacía.
-                </div>
-              </div>
-            ) : (
-              <TPDocumentLineAdvancedEditor
-                lines={linesForView}
-                currency={currencyDisplay}
-                displayRate={displayRate}
-                showLineTotalWithTax
-                updateLine={patchLine}
-                removeLine={removeLine}
-                duplicateLine={duplicateLine}
-                priceListId={draft.priceListId}
-                priceListName={draft.priceListId ? listLabel : undefined}
-                priceListOptions={priceLists.map((p) => ({ id: p.id, name: p.name }))}
-                channelId={draft.channelId}
-                channelName={draft.channelId ? chLabel : undefined}
-                channelOptions={salesChannels.map((c) => ({ id: c.id, name: c.name }))}
-                onChangePriceList={(id) => onChange({ ...draft, priceListId: id })}
-                onChangeLinePriceList={(lineId, priceListId) => {
-                  // Override de lista por línea: persiste en
-                  // `line.priceListIdOverride` + `line.priceListOverride=true`.
-                  // El flag explícito alinea con `warehouseOverride` y permite
-                  // que el header global pueda cascadear a líneas sin override
-                  // sin pisar las que el operador eligió manualmente.
-                  // `priceListId === null` limpia ambos: la línea vuelve a usar
-                  // la lista global del documento.
-                  onChange({
-                    ...draft,
-                    lines: draft.lines.map((l) =>
-                      l.id === lineId
-                        ? {
-                            ...l,
-                            priceListIdOverride: priceListId,
-                            priceListOverride:   priceListId != null,
-                          }
-                        : l,
-                    ),
-                  });
-                }}
-                onChangeChannel={(id) => onChange({ ...draft, channelId: id || undefined })}
-                warehouseId={draft.warehouse || undefined}
-                reorderLines={reorderLines}
-                isReorderable={(l) => !isEmptyLine(l)}
-                expandedIds={expandedLineIds}
-                onToggleExpand={toggleLineExpand}
-                advancedOpenIds={advancedOpenLineIds}
-                onToggleAdvancedOpen={toggleLineAdvancedOpen}
-                onEditArticle={handleEditArticle}
-                onResetLine={resetLine}
-                viewMode={viewMode}
-                headerSubtotals={headerSubtotals}
-                onArticlePicked={handleLineArticlePick}
-                onCreateManualLine={handleCreateManualLine}
-                focusedLineId={focusLineId}
-                focusSignal={focusLineBump}
-                articleSearch={searchArticles}
-                pickedItemsByLineId={pickedItemsByLineId}
-                articleExactLookup={exactLookupArticle}
-                onArticleNoExactMatch={(q) => {
-                  toast.warning(`No se encontró código exacto: "${q}". Buscá manualmente y elegí de la lista.`);
-                }}
-                onArticleMultipleExactMatches={(q, matches) => {
-                  toast.warning(
-                    `Se encontraron ${matches.length} ítems con el código "${q}". Elegí uno desde la lista.`,
-                  );
-                }}
-                warehouses={warehouses.map((w) => ({ id: w.id, name: w.name }))}
-                articleStockBreakdown={articleStockBreakdown}
-                onSetLineTaxOverride={setLineTaxOverride}
-                onApplyLineOverrides={applyLineOverrides}
-                onClearLineOverrides={clearLineOverrides}
-                compositionView="sale"
-                unitNameByCode={unitNameByCode}
-                saleGlobalAdjustments={saleGlobalAdjustments}
-                // Fase 4.3 — feedback de "Recalculando" en el header de
-                // la grilla de composición durante un preview en vuelo.
-                saleCompositionLoading={previewStatus === "loading"}
-              />
-            )}
-            </div>
+            {/* FASE 8.2.2 — Editor de líneas extraído a <LinesEditorSection>.
+                Wrapper presentacional: passthrough de callbacks + empty state.
+                Sin lógica comercial. */}
+            <LinesEditorSection
+              lines={linesForView}
+              totalLinesInDraft={draft.lines.length}
+              currency={currencyDisplay}
+              displayRate={displayRate}
+              viewMode={viewMode}
+              headerSubtotals={headerSubtotals}
+              priceLists={priceLists.map((p) => ({ id: p.id, name: p.name }))}
+              channels={salesChannels.map((c) => ({ id: c.id, name: c.name }))}
+              warehouses={warehouses.map((w) => ({ id: w.id, name: w.name }))}
+              unitNameByCode={unitNameByCode}
+              currencyById={currencyById}
+              saleGlobalAdjustments={saleGlobalAdjustments}
+              articleStockBreakdown={articleStockBreakdown}
+              pickedItemsByLineId={pickedItemsByLineId}
+              currentPriceListId={draft.priceListId}
+              currentPriceListLabel={listLabel}
+              currentChannelId={draft.channelId}
+              currentChannelLabel={chLabel}
+              currentWarehouseId={draft.warehouse}
+              expandedLineIds={expandedLineIds}
+              advancedOpenLineIds={advancedOpenLineIds}
+              onToggleExpand={toggleLineExpand}
+              onToggleAdvancedOpen={toggleLineAdvancedOpen}
+              patchLine={patchLine}
+              removeLine={removeLine}
+              duplicateLine={duplicateLine}
+              reorderLines={reorderLines}
+              resetLine={resetLine}
+              isReorderable={(l) => !isEmptyLine(l)}
+              onAddLine={addLine}
+              setLineTaxOverride={setLineTaxOverride}
+              applyLineOverrides={applyLineOverrides}
+              clearLineOverrides={clearLineOverrides}
+              onChangePriceList={(id) => onChange({ ...draft, priceListId: id ?? undefined })}
+              onChangeLinePriceList={(lineId, priceListId) => {
+                // Override de lista por línea: persiste en
+                // `line.priceListIdOverride` + `line.priceListOverride=true`.
+                onChange({
+                  ...draft,
+                  lines: draft.lines.map((l) =>
+                    l.id === lineId
+                      ? { ...l, priceListIdOverride: priceListId, priceListOverride: priceListId != null }
+                      : l,
+                  ),
+                });
+              }}
+              onChangeChannel={(id) => onChange({ ...draft, channelId: id || undefined })}
+              handleEditArticle={handleEditArticle}
+              handleLineArticlePick={handleLineArticlePick}
+              handleCreateManualLine={handleCreateManualLine}
+              searchArticles={searchArticles}
+              exactLookupArticle={exactLookupArticle}
+              focusedLineId={focusLineId}
+              focusSignal={focusLineBump}
+              editorScopeRef={editorScopeRef}
+              previewLoading={previewStatus === "loading"}
+            />
           </TPCard>
 
         {/* ── Zona inferior — grid 2 columnas:
@@ -5677,107 +4702,22 @@ function InvoiceEditorModal(props: {
 
           {/* Aside derecho: Descuento global → Envío → Cupón → Totales */}
           <aside className="space-y-3">
-            {/* Descuento global (colapsable) */}
-            <TPCard
-              title="Descuento global"
-              bodyClassName="!p-3"
-              headerClassName="!py-2"
-              collapsible
+            {/* FASE 8.2 — Cards extraídos a ./ventas-facturas/InvoiceEditorModal/.
+                Sin lógica comercial: solo passthrough de value/onPatch. */}
+            <DiscountCard
+              value={draft.discountGlobal}
+              onPatch={patchDiscountGlobal}
               open={discountOpen}
               onOpenChange={setDiscountOpen}
-              right={
-                (() => {
-                  const v = draft.discountGlobal?.value ?? 0;
-                  if (!v) return <span className="text-[11px] text-muted">Sin descuento</span>;
-                  const isPct = (draft.discountGlobal?.type ?? "PERCENT") === "PERCENT";
-                  return (
-                    <span className="text-[11px] font-semibold tabular-nums text-amber-500">
-                      {isPct ? `${v}%` : mFmt(v)}
-                    </span>
-                  );
-                })()
-              }
-            >
-              <div className="grid grid-cols-2 gap-2">
-                <TPField label="Tipo">
-                  <TPSelect
-                    value={draft.discountGlobal?.type ?? "PERCENT"}
-                    onChange={(v) => patchDiscountGlobal({ type: (v as "PERCENT" | "AMOUNT") })}
-                    options={[
-                      { value: "PERCENT", label: "%" },
-                      { value: "AMOUNT",  label: "$" },
-                    ]}
-                  />
-                </TPField>
-                <TPField label="Valor">
-                  <TPNumberInput
-                    value={draft.discountGlobal?.value ?? 0}
-                    onChange={(v) => patchDiscountGlobal({ value: v ?? 0 })}
-                    decimals={2}
-                    min={0}
-                    max={draft.discountGlobal?.type === "PERCENT" ? 100 : undefined}
-                  />
-                </TPField>
-                <TPField label="Motivo" className="col-span-2">
-                  <TPInput
-                    value={draft.discountGlobal?.reason ?? ""}
-                    onChange={(v: string) => patchDiscountGlobal({ reason: v })}
-                    placeholder="Fidelidad, promo, etc."
-                  />
-                </TPField>
-              </div>
-            </TPCard>
-
-            {/* Envío (colapsable) */}
-            <TPCard
-              title="Envío"
-              bodyClassName="!p-3"
-              headerClassName="!py-2"
-              collapsible
+              fmtCurrency={mFmt}
+            />
+            <ShippingCard
+              value={draft.shipping}
+              onPatch={patchShipping}
               open={shippingOpen}
               onOpenChange={setShippingOpen}
-              right={
-                (() => {
-                  const methodId = draft.shipping?.methodId ?? "";
-                  const cost     = draft.shipping?.cost ?? 0;
-                  const methodLabel = SHIPPING_METHOD_MOCK_OPTIONS.find((m) => m.id === methodId)?.label;
-                  if (!methodLabel && cost <= 0) {
-                    return <span className="text-[11px] text-muted">Sin envío</span>;
-                  }
-                  return (
-                    <span className="text-[11px] text-muted">
-                      {methodLabel ?? "Envío"}
-                      {cost > 0 && (
-                        <>
-                          {" · "}
-                          <span className="font-semibold tabular-nums text-text">
-                            {mFmt(cost)}
-                          </span>
-                        </>
-                      )}
-                    </span>
-                  );
-                })()
-              }
-            >
-              <div className="grid grid-cols-2 gap-2">
-                <TPField label="Método">
-                  <TPSelect
-                    value={draft.shipping?.methodId ?? ""}
-                    onChange={(v) => patchShipping({ methodId: v || undefined })}
-                    options={SHIPPING_METHOD_MOCK_OPTIONS.map((m) => ({ value: m.id, label: m.label }))}
-                  />
-                </TPField>
-                <TPField label="Costo">
-                  <TPNumberInput
-                    value={draft.shipping?.cost ?? 0}
-                    onChange={(v) => patchShipping({ cost: v ?? 0 })}
-                    decimals={2}
-                    min={0}
-                  />
-                </TPField>
-              </div>
-            </TPCard>
+              fmtCurrency={mFmt}
+            />
 
             {/* Cupón de venta — justo arriba del Hero Total. Solo manda
                 couponCode al backend; el motor aplica el descuento si el
@@ -5789,206 +4729,38 @@ function InvoiceEditorModal(props: {
               onApplied={() => { /* draft.couponCode ya está en deps de previewSignature → recálculo automático */ }}
             />
 
-            {/* Hero "Total a facturar" — composición desglosada del precio
-                final. Toma todos los datos del pricing-engine vía
-                `pricingDetail`; el componente NO recalcula nada.
-                Wrapper relativo + indicador discreto: se muestra solo
-                durante el PRIMER fetch (no hay backendPreview todavía y
-                previewStatus="loading"). En recálculos sucesivos los
-                valores se atenúan vía la transición interna del Hero,
-                pero acá evitamos el estado "todo en blanco" que confundía
-                al operador al abrir el comprobante. */}
-            <div className="relative">
-              <TPDocumentTotalsHero
-                composition={pricingDetail}
-                currency={currencyDisplay}
-                displayRate={displayRate}
-                viewMode={viewMode}
-                onViewModeChange={setViewMode}
-                totalLabel="Total a facturar"
-              />
-              {previewStatus === "loading" && !backendPreview && (
-                <div className="pointer-events-none absolute right-3 top-3 z-10">
-                  <TPTechPricingLoader active label="Calculando totales…" />
-                </div>
-              )}
-            </div>
+            {/* FASE 8.2.2 — Hero migrado a <TotalsHeroSection>.
+                Sin lógica: passthrough de pricingDetail (computado en este
+                componente) + indicador discreto durante el PRIMER fetch. */}
+            <TotalsHeroSection
+              composition={pricingDetail}
+              currency={currencyDisplay}
+              displayRate={displayRate}
+              viewMode={viewMode}
+              onViewModeChange={setViewMode}
+              previewStatus={previewStatus}
+              hasResponse={backendPreview != null}
+              previewStale={previewStatus === "error" && backendPreview != null}
+            />
 
-            {/* Cobro (colapsable) — múltiples entradas mock con saldo en vivo */}
-            <TPCard
-              title="Cobro"
-              bodyClassName="!p-3"
-              headerClassName="!py-2"
-              collapsible
+            {/* FASE 8.2.3 — Cobro migrado a <PaymentCard>.
+                Sin lógica: state `payments[]` + sync a `draft.paidAmount`
+                permanecen en este componente. La card es presentacional. */}
+            <PaymentCard
+              payments={payments}
+              effectiveTotal={effectiveTotals.total}
+              totalCobrado={totalCobrado}
+              balance={balance}
               open={paymentOpen}
               onOpenChange={setPaymentOpen}
-              right={
-                <span className="text-[11px]">
-                  <span className={cn(
-                    "font-semibold",
-                    balance <= 0 && totalCobrado > 0 ? "text-emerald-500" : "text-amber-500"
-                  )}>
-                    {balance <= 0 && totalCobrado > 0
-                      ? "Cobrada"
-                      : totalCobrado > 0 ? "Parcial" : "Pendiente"}
-                  </span>
-                  {(totalCobrado > 0 || balance > 0) && (
-                    <>
-                      <span className="mx-1.5 text-border">·</span>
-                      <span className="text-muted">Saldo </span>
-                      <span className="font-semibold tabular-nums text-text">
-                        {mFmt(balance)}
-                      </span>
-                    </>
-                  )}
-                </span>
-              }
-            >
-              <div className="space-y-2">
-                {payments.length === 0 && (
-                  <div className="rounded-md border border-dashed border-border bg-surface2/30 px-3 py-3 text-center text-[11px] text-muted">
-                    No hay cobros cargados todavía.
-                  </div>
-                )}
-
-                {payments.map((p, idx) => {
-                  const depositMissing = !p.depositId;
-                  const depositLabel = DEPOSIT_MOCK_OPTIONS.find((d) => d.value === p.depositId)?.label;
-                  return (
-                    <div
-                      key={p.id}
-                      className={cn(
-                        "space-y-1.5 rounded-md border bg-surface2/30 p-2",
-                        depositMissing ? "border-red-500/60" : "border-border",
-                      )}
-                    >
-                      <div className="flex items-center gap-1.5">
-                        <span className="text-[10px] font-semibold uppercase tracking-wide text-muted">
-                          Cobro {idx + 1}
-                        </span>
-                        {!depositMissing && depositLabel && (
-                          <span className="text-[10px] text-muted truncate">· {depositLabel}</span>
-                        )}
-                        <button
-                          type="button"
-                          data-tp-enter="ignore"
-                          onClick={() => removePayment(p.id)}
-                          title="Eliminar cobro"
-                          aria-label="Eliminar cobro"
-                          className="ml-auto inline-flex h-6 w-6 items-center justify-center rounded text-muted transition hover:bg-red-500/10 hover:text-red-400"
-                        >
-                          <Trash2 size={12} />
-                        </button>
-                      </div>
-
-                      {/* 1. Cómo paga → Medio de pago */}
-                      <div>
-                        <div className="text-[10px] font-semibold uppercase tracking-wide text-muted">Medio de pago</div>
-                        <TPSelect
-                          value={p.methodId}
-                          onChange={(v) => updatePayment(p.id, { methodId: v })}
-                          options={PAYMENT_METHOD_MOCK_OPTIONS.map((m) => ({ value: m.value, label: m.label }))}
-                        />
-                      </div>
-
-                      {/* 2. Dónde impacta → Depósito (full width, mismo ancho que Medio) */}
-                      <div>
-                        <div className="text-[10px] font-semibold uppercase tracking-wide text-muted">
-                          Depósito / Caja destino <span className="text-red-500">*</span>
-                        </div>
-                        <TPSelect
-                          value={p.depositId}
-                          onChange={(v) => updatePayment(p.id, { depositId: v })}
-                          options={[
-                            { value: "", label: "— Seleccionar —" },
-                            ...DEPOSIT_MOCK_OPTIONS.map((d) => ({ value: d.value, label: d.label })),
-                          ]}
-                          className={cn(depositMissing && "!border-red-500/60")}
-                        />
-                        {depositMissing && (
-                          <div className="mt-1 text-[10px] text-red-500">
-                            Seleccioná un depósito o caja destino para registrar el cobro.
-                          </div>
-                        )}
-                      </div>
-
-                      {/* 3. Cuánto → Monto + Moneda */}
-                      <div className="grid grid-cols-2 gap-2">
-                        <div>
-                          <div className="text-[10px] font-semibold uppercase tracking-wide text-muted">Monto</div>
-                          <TPNumberInput
-                            value={p.amount}
-                            onChange={(v) => updatePayment(p.id, { amount: v ?? 0 })}
-                            decimals={2}
-                            min={0}
-                          />
-                        </div>
-                        <div>
-                          <div className="text-[10px] font-semibold uppercase tracking-wide text-muted">Moneda</div>
-                          <TPSelect
-                            value={p.currency}
-                            onChange={(v) => updatePayment(p.id, { currency: v })}
-                            options={CURRENCY_MOCK_OPTIONS.map((c) => ({ value: c.id, label: c.label }))}
-                          />
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })}
-
-                <button
-                  type="button"
-                  data-tp-enter="ignore"
-                  onClick={addPayment}
-                  className="inline-flex w-full items-center justify-center gap-1 rounded-md border border-dashed border-border bg-surface2/30 px-3 py-2 text-[11px] font-semibold text-primary transition hover:bg-surface2/60"
-                >
-                  <Plus size={12} /> Agregar cobro
-                </button>
-
-                {/* Resumen */}
-                <div className="space-y-1 rounded-md border border-border/60 bg-surface2/30 p-2 text-[11px]">
-                  <div className="flex justify-between">
-                    <span className="text-muted">Total a facturar</span>
-                    <span className="tabular-nums font-semibold text-text">{mFmt(effectiveTotals.total)}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-muted">Cobrado</span>
-                    <span className="tabular-nums font-semibold text-emerald-500">
-                      {totalCobrado > 0 ? mFmt(totalCobrado) : "—"}
-                    </span>
-                  </div>
-                  <div className="flex justify-between border-t border-border/60 pt-1">
-                    <span className="font-semibold text-text">Saldo</span>
-                    <span className={cn(
-                      "tabular-nums font-bold",
-                      balance > 0 ? "text-amber-500" : "text-emerald-500"
-                    )}>
-                      {mFmt(balance)}
-                    </span>
-                  </div>
-                </div>
-
-                {totalCobrado > effectiveTotals.total + 0.001 && (
-                  <div className="flex items-start gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-2 py-1.5 text-[11px] text-amber-500">
-                    <AlertTriangle size={14} className="mt-0.5 shrink-0" />
-                    <span>
-                      El total cobrado <strong className="tabular-nums">{mFmt(totalCobrado)}</strong> supera el total a facturar.
-                    </span>
-                  </div>
-                )}
-
-                <div className="rounded bg-surface2/40 px-2 py-1 text-center text-[10px] uppercase tracking-wide">
-                  <span className={cn(
-                    "font-semibold",
-                    balance <= 0 && totalCobrado > 0 ? "text-emerald-500" : "text-amber-500",
-                  )}>
-                    {balance <= 0 && totalCobrado > 0
-                      ? "Cobrada"
-                      : totalCobrado > 0 ? "Parcial" : "Pendiente"}
-                  </span>
-                </div>
-              </div>
-            </TPCard>
+              onAddPayment={addPayment}
+              onUpdatePayment={updatePayment}
+              onRemovePayment={removePayment}
+              paymentMethodOptions={PAYMENT_METHOD_MOCK_OPTIONS}
+              depositOptions={DEPOSIT_MOCK_OPTIONS}
+              currencyOptions={CURRENCY_MOCK_OPTIONS.map(c => ({ value: c.id, label: c.label }))}
+              fmtCurrency={mFmt}
+            />
 
             {/* Impacto en cuenta corriente (colapsable) */}
             <TPCard
@@ -6280,116 +5052,18 @@ function InvoiceEditorModal(props: {
       </TPField>
     </Modal>
 
-    {/* ── Modal: Actualizar cotización ─────────────────────────────────── */}
-    <Modal
+    {/* FASE 8.2.3 — Modal FX migrado a <CurrencyFXModal>.
+        Sin lógica: state + side-effects (applyFx) viven en el padre. */}
+    <CurrencyFXModal
       open={fxOpen}
       onClose={() => setFxOpen(false)}
-      title="Actualizar cotización"
-      maxWidth="sm"
-      onEnter={applyFx}
-      footer={
-        <div className="flex justify-end gap-2">
-          <TPButton variant="secondary" onClick={() => setFxOpen(false)} iconLeft={<X size={14} />}>
-            Cancelar
-          </TPButton>
-          <TPButton variant="primary" onClick={applyFx} iconLeft={<CheckCircle2 size={14} />}>
-            Aplicar
-          </TPButton>
-        </div>
-      }
-    >
-      {(() => {
-        const fxCurrency = findCurrency(fxDraft.currency);
-        const fxIsBase   = fxCurrency?.isBase ?? isBaseCurrency(fxDraft.currency);
-        const baseCur    = currencies.find((c) => c.isBase);
-
-        // Opciones del combo: monedas reales (activas). Mostramos símbolo +
-        // nombre (sin el código ARS/USD/etc. — el símbolo + nombre alcanza
-        // para identificarla). Fallback al mock solo mientras no cargaron.
-        const options = currencies.length > 0
-          ? currencies.map((c) => {
-              const sym = (c.symbol ?? "").trim() || c.code;
-              return {
-                value: c.code,
-                label: `${sym} · ${c.name}${c.isBase ? "  ·  Base" : ""}`,
-              };
-            })
-          : CURRENCY_MOCK_OPTIONS.map((c) => ({ value: c.id, label: c.label }));
-
-        const ratePreviewText = fxIsBase
-          ? "Moneda base"
-          : fxCurrency?.latestRate != null
-            ? `Última cotización del sistema: ${Number(fxCurrency.latestRate).toFixed(2)}${fxCurrency.latestAt ? ` · ${fmtDate(fxCurrency.latestAt)}` : ""}`
-            : "Sin cotización vigente — cargá una a mano para esta factura.";
-
-        const fxSymbol = (fxCurrency?.symbol ?? "").trim() || fxCurrency?.code || "";
-
-        return (
-          <div className="space-y-3">
-            <TPField label="Moneda" required>
-              <TPSelect
-                value={fxDraft.currency || baseCur?.code || ""}
-                onChange={handleFxCurrencyChange}
-                options={options}
-              />
-              {fxIsBase && (
-                <div className="mt-1 inline-flex items-center gap-1 rounded-full border border-border bg-surface2/40 px-2 py-0.5 text-[10px] text-muted">
-                  Moneda base del tenant
-                </div>
-              )}
-            </TPField>
-            <TPField
-              label="Cotización a moneda base"
-              hint={ratePreviewText}
-            >
-              <TPNumberInput
-                value={fxIsBase ? 1 : fxDraft.fxRate}
-                onChange={(v) => setFxDraft((s) => ({ ...s, fxRate: v ?? 1 }))}
-                decimals={2}
-                disabled={fxIsBase}
-                min={0}
-              />
-            </TPField>
-            {/* Preview del valor formateado tal como se va a ver en el badge */}
-            <div className="rounded-md border border-border/60 bg-surface2/30 px-3 py-2 text-[11px]">
-              <div className="text-[10px] font-semibold uppercase tracking-wide text-muted">
-                Vista previa
-              </div>
-              <div className="mt-0.5 text-sm font-bold tabular-nums text-text">
-                {fxSymbol} {(fxIsBase ? 1 : fxDraft.fxRate).toFixed(2)}
-              </div>
-            </div>
-            {!fxIsBase && fxCurrency && fxCurrency.latestRate == null && (
-              <div className="flex items-start gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-2 py-1.5 text-[11px] text-amber-500">
-                <AlertTriangle size={14} className="mt-0.5 shrink-0" />
-                <span>
-                  Esta moneda no tiene una cotización cargada en Divisas. Lo que
-                  ingreses acá vale solo para esta factura.
-                </span>
-              </div>
-            )}
-            {/* Flag para impactar también el catálogo global de monedas. */}
-            {!fxIsBase && (
-              <label className="flex cursor-pointer items-start gap-2 rounded-md border border-amber-500/30 bg-amber-500/5 px-2 py-1.5 text-[11px] hover:bg-amber-500/10">
-                <TPCheckbox
-                  checked={fxUpdateSystem}
-                  onChange={(checked) => setFxUpdateSystem(checked)}
-                />
-                <span className="text-text">
-                  <span className="font-semibold">
-                    Actualizar también en monedas y aplicar al sistema
-                  </span>
-                  <span className="mt-0.5 block text-muted">
-                    Impacta a futuros documentos. Los comprobantes confirmados
-                    no se modifican.
-                  </span>
-                </span>
-              </label>
-            )}
-          </div>
-        );
-      })()}
-    </Modal>
+      currencies={currencies}
+      value={fxDraft}
+      onValueChange={setFxDraft}
+      updateSystem={fxUpdateSystem}
+      onUpdateSystemChange={setFxUpdateSystem}
+      onApply={applyFx}
+    />
     </>
   );
 }

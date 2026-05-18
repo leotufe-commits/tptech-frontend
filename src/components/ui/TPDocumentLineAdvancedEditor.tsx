@@ -253,6 +253,9 @@ export type TPDocumentLineAdvancedEditorProps = {
       taxOverride?:    { mode: "PERCENT" | "AMOUNT"; value: number; appliesTo?: AppliesToScope } | null;
       manualPrice?:    number | null;
       manualDiscount?: { mode: "PERCENT" | "AMOUNT"; value: number; appliesTo?: AppliesToScope } | null;
+      /** Override de SOLO la base ("Aplica a"), independiente del valor. */
+      manualDiscountAppliesTo?: AppliesToScope | null;
+      manualTaxAppliesTo?:      AppliesToScope | null;
     },
   ) => void;
   /**
@@ -311,6 +314,12 @@ export type TPDocumentLineAdvancedEditorProps = {
    * (Presupuestos / Órdenes / Compras).
    */
   unitNameByCode?: Map<string, string>;
+  /** Mapa `currencyId → { code, symbol }` del catálogo de monedas del
+   *  tenant. Se propaga a `SaleCompositionEditableGrid` para que cuando
+   *  un cost line tenga moneda distinta a la del documento, la celda
+   *  "Costo unit." muestre el code original y el equivalente convertido.
+   *  Opcional — si no se pasa, el comportamiento es idéntico al anterior. */
+  currencyById?: Map<string, { code?: string | null; symbol?: string | null }>;
   /**
    * Modo controlado del panel avanzado por línea (`LineAdvancedOverridesPanel`).
    * Cuando el padre pasa este Set, el editor LEE de ahí para decidir si el
@@ -801,28 +810,57 @@ function derivePriceChip(
 // (mismo componente que el Almacén/Lista/Canal del header), heredando
 // fondo del card, borde sutil, hover, opción seleccionada con check y
 // z-index manejado por portal.
-type AppliesToScope = "METAL" | "HECHURA" | "PRODUCT" | "SERVICE" | "TOTAL";
+// Dominio completo de "Aplica a" — alineado con los enums del backend
+// (Prisma `TaxApplyOn` = 6 valores; `CommercialApplyOn` = 4 valores). El
+// frontend NO inventa: muestra exactamente lo que el motor soporta.
+// PRODUCT/SERVICE se conservan en el tipo por compat de datos viejos
+// (`composition`/meta) pero NO se ofrecen en los combos.
+type AppliesToScope =
+  | "TOTAL"
+  | "METAL"
+  | "HECHURA"
+  | "METAL_Y_HECHURA"
+  | "SUBTOTAL_AFTER_DISCOUNT"
+  | "SUBTOTAL_BEFORE_DISCOUNT"
+  | "PRODUCT"
+  | "SERVICE";
+// Labels claros y consistentes con Configuración → Impuestos. Sin nombres
+// técnicos (nada de "METAL_Y_HECHURA" en pantalla).
 const APPLIES_TO_LABELS: Record<AppliesToScope, string> = {
-  METAL:    "Metal",
-  HECHURA:  "Hechura",
-  PRODUCT:  "Producto",
-  SERVICE:  "Servicio",
-  TOTAL:    "Total",
+  TOTAL:                    "Total",
+  METAL:                    "Solo metal",
+  HECHURA:                  "Solo hechura",
+  METAL_Y_HECHURA:          "Metal + Hechura",
+  SUBTOTAL_AFTER_DISCOUNT:  "Subtotal después del descuento",
+  SUBTOTAL_BEFORE_DISCOUNT: "Subtotal antes del descuento",
+  PRODUCT:                  "Producto",
+  SERVICE:                  "Servicio",
 };
+// ── Decisión funcional (temporal) ───────────────────────────────────────────
+// El combo "Aplica a" se limita a 3 opciones simples: Total / Solo metal /
+// Solo hechura. Las bases avanzadas (METAL_Y_HECHURA, SUBTOTAL_*, PRODUCT,
+// SERVICE) NO se ofrecen en la UI por ahora — el backend las sigue
+// soportando (datos viejos / tests) pero no son seleccionables.
+// `SIMPLE_SCOPES` es la fuente única de lo que la UI permite elegir.
+const SIMPLE_SCOPES = ["TOTAL", "METAL", "HECHURA"] as const;
+// Orden canónico de presentación (el AppliesToLink filtra/ordena por esto).
+const APPLIES_TO_ORDER: AppliesToScope[] = ["TOTAL", "METAL", "HECHURA"];
 
 /**
- * Devuelve los scopes disponibles para una línea según su composición.
- * TOTAL siempre está; los demás solo si el motor expuso ese componente
- * en `pricingMeta.composition`. Evita listar opciones vacías que no
- * aplican a la línea.
+ * Scopes seleccionables para una línea (UI). Limitado a las 3 simples:
+ *   · TOTAL siempre.
+ *   · METAL / HECHURA solo si la línea tiene esa composición (no ofrecer
+ *     "Solo metal" en una línea sin metal).
+ * `kind` se conserva por compat de firma; ya no diferencia (ambos = 3).
  */
-function getAvailableScopes(line: DocumentLine): AppliesToScope[] {
+function getAvailableScopes(
+  line: DocumentLine,
+  _kind: "TAX" | "DISCOUNT" = "TAX",
+): AppliesToScope[] {
   const comp = line.pricingMeta?.composition;
   const out: AppliesToScope[] = ["TOTAL"];
   if (comp?.metal)   out.push("METAL");
   if (comp?.hechura) out.push("HECHURA");
-  // product / service: cuando el motor los exponga en composition se
-  // sumarán acá automáticamente. Por ahora no se listan.
   return out;
 }
 
@@ -852,11 +890,10 @@ function AppliesToLink({
 
   const visible: AppliesToScope[] = (() => {
     if (!scopes || scopes.length === 0) {
-      return ["TOTAL", "METAL", "HECHURA", "PRODUCT", "SERVICE"];
+      return APPLIES_TO_ORDER;
     }
     const set = new Set<AppliesToScope>(["TOTAL", ...scopes]);
-    return (["TOTAL", "METAL", "HECHURA", "PRODUCT", "SERVICE"] as AppliesToScope[])
-      .filter((k) => set.has(k));
+    return APPLIES_TO_ORDER.filter((k) => set.has(k));
   })();
 
   return (
@@ -910,6 +947,25 @@ function AppliesToLink({
   );
 }
 
+/**
+ * Intención EXPLÍCITA de "sin impuesto": el operador borró el input o lo
+ * puso en 0 (override manual con value 0). Cuando es true, el label de
+ * impuestos NO debe revivir el IVA/monto anterior (ni desde
+ * `composition.taxes` / `taxBreakdown` / cache de rate). Pura, sin estado.
+ *
+ * - `null`/`undefined` (sin override) → false (impuesto automático normal).
+ * - `{ value: 0 }` (PERCENT o AMOUNT) → true (cleared).
+ * - `{ value: 21 }` → false.
+ * - value no finito → false (no se considera "cleared" explícito).
+ */
+export function isTaxClearedOverride(
+  override: { value?: number | null } | null | undefined,
+): boolean {
+  if (override == null) return false;
+  const v = Number(override.value);
+  return Number.isFinite(v) && v === 0;
+}
+
 export function TPDocumentLineAdvancedEditor({
   lines,
   updateLine,
@@ -958,6 +1014,7 @@ export function TPDocumentLineAdvancedEditor({
   advancedOpenIds: advancedOpenIdsProp,
   onToggleAdvancedOpen,
   unitNameByCode,
+  currencyById,
   onChangeLinePriceList,
   saleGlobalAdjustments,
   saleCompositionLoading,
@@ -1167,13 +1224,40 @@ export function TPDocumentLineAdvancedEditor({
     }
   }, [lines]);
 
+  // Solo las 3 opciones simples se hidratan. Si el valor heredado/persistido
+  // es una base avanzada (METAL_Y_HECHURA, SUBTOTAL_*, PRODUCT, SERVICE) o
+  // cualquier otra cosa → cae a "TOTAL" como fallback seguro (no se ofrece
+  // ni se vuelve a poder seleccionar la base avanzada desde la UI).
+  const SCOPE_SET = new Set<AppliesToScope>(SIMPLE_SCOPES);
+  const asScope = (v: unknown): AppliesToScope | undefined =>
+    typeof v === "string" && SCOPE_SET.has(v as AppliesToScope) ? (v as AppliesToScope) : undefined;
+
+  // "Aplica a" — jerarquía de hidratación (display-only, sin cálculo).
+  // Fuente ÚNICA = `pricingMeta` (persiste y round-trip por el preview), así
+  // tras "Restablecer línea" (meta limpiado) re-hidrata solo. Orden:
+  //   1. `appliesTo` embebido en el override de VALOR (meta.{manualDiscount
+  //      | taxOverride}.appliesTo) — el operador fijó valor + base juntos.
+  //   2. Override de SOLO la base (meta.{manualDiscountAppliesTo |
+  //      manualTaxAppliesTo}) — base manual sin tocar el valor.
+  //   3. Default HEREDADO del backend (passthrough):
+  //       · Bonificación → regla comercial del cliente
+  //         (`pricingMeta.inheritedDiscountAppliesTo`).
+  //       · Impuestos    → base efectiva del impuesto que usó el motor
+  //         (`pricingMeta.composition.taxes[].appliesTo`).
+  //   4. "TOTAL" como último recurso.
   function getDiscountAppliesTo(id: string): AppliesToScope {
-    const fromMeta = lines.find((l) => l.id === id)?.pricingMeta?.manualDiscount?.appliesTo;
-    return discountAppliesToById.get(id) ?? (fromMeta as AppliesToScope | undefined) ?? "TOTAL";
+    const m = lines.find((l) => l.id === id)?.pricingMeta as any;
+    return asScope(m?.manualDiscount?.appliesTo)
+      ?? asScope(m?.manualDiscountAppliesTo)
+      ?? asScope(m?.inheritedDiscountAppliesTo)
+      ?? "TOTAL";
   }
   function getTaxAppliesTo(id: string): AppliesToScope {
-    const fromMeta = lines.find((l) => l.id === id)?.pricingMeta?.taxOverride?.appliesTo;
-    return taxAppliesToById.get(id) ?? (fromMeta as AppliesToScope | undefined) ?? "TOTAL";
+    const m = lines.find((l) => l.id === id)?.pricingMeta as any;
+    return asScope(m?.taxOverride?.appliesTo)
+      ?? asScope(m?.manualTaxAppliesTo)
+      ?? asScope(m?.composition?.taxes?.[0]?.appliesTo)
+      ?? "TOTAL";
   }
   function setDiscountAppliesTo(id: string, v: AppliesToScope) {
     setDiscountAppliesToById((prev) => { const next = new Map(prev); next.set(id, v); return next; });
@@ -1842,6 +1926,7 @@ export function TPDocumentLineAdvancedEditor({
                   )}
                 </div>
                 <TPQuantityField
+                  formatType="QUANTITY"
                   value={l.quantity}
                   onChange={(v) => {
                     // El componente ya hace fallback a default; acá sólo
@@ -1859,6 +1944,20 @@ export function TPDocumentLineAdvancedEditor({
                     updateLine(l.id, { quantity: safeQty });
                   }}
                   constraints={{ ...qtyConstraints, min: enforcedMin, default: enforcedMin }}
+                  // "X" interna del TPNumber, MISMO patrón/visual que la X de
+                  // Bonificación e Impuestos (es el mismo TPNumberInput).
+                  // Restablece la cantidad al default/min de venta
+                  // (`enforcedMin`, ya respeta minSaleQuantity) vía
+                  // `updateLine` → dispara el preview, sin lógica nueva. Solo
+                  // visible cuando hay algo que restablecer (qty ≠ enforcedMin).
+                  onClear={
+                    Number.isFinite(l.quantity) && l.quantity !== enforcedMin
+                      ? () => {
+                          if (l.quantity === enforcedMin) return;
+                          updateLine(l.id, { quantity: enforcedMin });
+                        }
+                      : undefined
+                  }
                   unit={unitDisplay}
                   totalStock={lineManagesStock ? totalStock : null}
                   hasPromotion={!!l.pricingMeta?.appliedPromotionId}
@@ -1885,6 +1984,7 @@ export function TPDocumentLineAdvancedEditor({
                 </div>
                 <div className="relative">
                   <TPNumberInput
+                    formatType="MONEY"
                     // Mostrar el override manual cuando exista. Si no, el
                     // basePrice del backend (precio de lista). El `unitPrice`
                     // como último fallback (líneas legacy sin pricingMeta).
@@ -2058,7 +2158,10 @@ export function TPDocumentLineAdvancedEditor({
                   }
                 }
 
-                const bonifLineTotal = unitEff * qty;
+                // Nota: el monto de bonificación que se MUESTRA usa
+                // `l.discountAmount` (motor), no un recálculo local — ver
+                // más abajo. `unitEff`/`pctEff` solo alimentan el VALOR del
+                // input (eco de lo que tipeó el operador), no el importe.
                 const isManualBonif  = source === "MANUAL";
 
                 // % desglosado para el detalle textual debajo (tooltip):
@@ -2129,14 +2232,6 @@ export function TPDocumentLineAdvancedEditor({
                   <div>
                     <div className="text-[9px] font-semibold uppercase tracking-wide text-muted">
                       Bonificación
-                      {/* Factura: sufijo "(por unidad)" para clarificar que
-                          el TPNumber edita el % o monto unitario; el impacto
-                          monetario total de la línea se ve debajo del input
-                          (línea verde con signo "−"). Pantallas legacy
-                          mantienen el label sin sufijo. */}
-                      {showLineTotalWithTax && (
-                        <span className="ml-1 normal-case text-muted/70">(por unidad)</span>
-                      )}
                     </div>
 
                     {lockedByBackend ? (
@@ -2149,6 +2244,7 @@ export function TPDocumentLineAdvancedEditor({
                           <TPNumberInput
                             value={displayValue}
                             onChange={() => { /* read-only en modo bloqueado */ }}
+                            formatType={isPct ? "PERCENT" : "MONEY"}
                             decimals={2}
                             min={0}
                             compact
@@ -2163,34 +2259,30 @@ export function TPDocumentLineAdvancedEditor({
                             {isPct ? "%" : "$"}
                           </span>
                         </div>
-                      <div className="mt-1 flex flex-col gap-1 rounded-md border border-border/60 bg-surface2/30 px-2 py-1.5">
-                        {hasPromo && (
-                          <div className="flex items-center justify-between gap-2">
-                            <TPBadge
-                              tone="success"
-                              size="sm"
-                              title={l.pricingMeta?.appliedPromotionName ?? "Promoción aplicada"}
-                            >
-                              Promo
-                            </TPBadge>
-                            <span className="text-[11px] font-semibold tabular-nums text-emerald-500">
-                              −{mFmt(promoDiscUnit * qty)}
-                            </span>
-                          </div>
+                      {/* Paso 1 — caja persistente reemplazada por chip
+                          compacto `Auto` + monto efectivo. El detalle
+                          ("gobernada por backend / abrí Ajustes avanzados")
+                          vive ahora en el `title` (hover), no como bloque. */}
+                      <div className="mt-0.5 flex flex-wrap items-center gap-1.5">
+                        <TPBadge
+                          tone="info"
+                          size="sm"
+                          title={
+                            (hasPromo && hasQty
+                              ? "Promoción + descuento por cantidad gobernados por el backend. "
+                              : hasPromo
+                                ? `${l.pricingMeta?.appliedPromotionName ?? "Promoción"} gobernada por el backend. `
+                                : "Descuento por cantidad gobernado por el backend. ") +
+                            "Para sobreescribir, abrí «Ajustes avanzados»."
+                          }
+                        >
+                          Auto
+                        </TPBadge>
+                        {(promoDiscUnit + qtyDiscUnit) * qty > 0 && (
+                          <span className="text-[10px] font-semibold tabular-nums text-emerald-600/85 dark:text-emerald-400/85">
+                            −{mFmt((promoDiscUnit + qtyDiscUnit) * qty)}
+                          </span>
                         )}
-                        {hasQty && (
-                          <div className="flex items-center justify-between gap-2">
-                            <TPBadge tone="success" size="sm" title="Descuento por cantidad">
-                              Desc. cantidad
-                            </TPBadge>
-                            <span className="text-[11px] font-semibold tabular-nums text-emerald-500">
-                              −{mFmt(qtyDiscUnit * qty)}
-                            </span>
-                          </div>
-                        )}
-                        <div className="text-[10px] leading-tight text-muted">
-                          Bonificación gobernada por el backend. Para sobreescribir, abrí «Ajustes avanzados».
-                        </div>
                       </div>
                       </>
                     ) : (
@@ -2200,6 +2292,7 @@ export function TPDocumentLineAdvancedEditor({
                           <TPNumberInput
                             value={displayValue}
                             onChange={(v) => commitBonifChange(Math.max(0, v ?? 0))}
+                            formatType={isPct ? "PERCENT" : "MONEY"}
                             decimals={2}
                             min={0}
                             compact
@@ -2257,20 +2350,31 @@ export function TPDocumentLineAdvancedEditor({
                             {isPct ? "%" : "$"}
                           </button>
                         </div>
-                        {/* Aplica a (si hay handler de overrides) + badge "Manual" + importe efectivo. */}
-                        {onApplyLineOverrides && (
+                        {/* Paso 1 — "Aplica a" se oculta cuando scope=TOTAL
+                            y no hay alternativas (ruido puro). Si la línea
+                            tiene metal/hechura (hay scopes reales) o el scope
+                            ya NO es TOTAL, se sigue mostrando para no perder
+                            la capacidad de cambiarlo. */}
+                        {onApplyLineOverrides
+                          && (discAppliesTo !== "TOTAL" || getAvailableScopes(l, "DISCOUNT").length > 1) && (
                           <div className="mt-0.5">
                             <AppliesToLink
                               value={discAppliesTo}
-                              scopes={getAvailableScopes(l)}
+                              scopes={getAvailableScopes(l, "DISCOUNT")}
                               onChange={(next) => {
                                 setDiscountAppliesTo(l.id, next);
                                 const md2 = l.pricingMeta?.manualDiscount;
-                                if (md2 && md2.value > 0 && l.articleId) {
-                                  onApplyLineOverrides(l.id, {
-                                    manualDiscount: { ...md2, appliesTo: next },
-                                  });
-                                }
+                                // SIEMPRE viaja la base como override
+                                // independiente del valor → el motor
+                                // recalcula al toque aunque el %/monto siga
+                                // heredado. Si además hay override de valor,
+                                // sincronizamos su `appliesTo` embebido.
+                                onApplyLineOverrides(l.id, {
+                                  manualDiscountAppliesTo: next,
+                                  ...(md2 && md2.value > 0
+                                    ? { manualDiscount: { ...md2, appliesTo: next } }
+                                    : {}),
+                                });
                               }}
                             />
                           </div>
@@ -2280,47 +2384,54 @@ export function TPDocumentLineAdvancedEditor({
                             <TPBadge tone="warning" size="sm">Bonificación manual</TPBadge>
                           </div>
                         )}
-                        {bonifLineTotal > 0 && (
-                          <div className="mt-0.5 text-[11px] font-semibold tabular-nums text-emerald-500">
-                            −{mFmt(bonifLineTotal)}
-                          </div>
-                        )}
-                        {/* Si hay promo/desc cantidad automáticos y el usuario
-                            todavía NO fijó manual, mostramos los conceptos
-                            del backend como referencia + advertencia: si edita,
-                            su valor reemplaza ambos en esa línea (Opción A). */}
-                        {!isManualBonif && (hasPromo || hasQty) && (
-                          <div className="mt-1 flex flex-col gap-0.5 rounded-md border border-border/40 bg-surface2/20 px-2 py-1">
-                            {hasPromo && (
-                              <div className="flex items-center justify-between gap-2 text-[10px]">
-                                <span
-                                  className="truncate text-muted"
-                                  title={l.pricingMeta?.appliedPromotionName ?? "Promoción"}
-                                >
-                                  Promo
-                                </span>
-                                <span className="shrink-0 tabular-nums text-emerald-500">
-                                  −{mFmt(promoDiscUnit * qty)}
-                                </span>
-                              </div>
-                            )}
-                            {hasQty && (
-                              <div className="flex items-center justify-between gap-2 text-[10px]">
-                                <span className="text-muted">Desc. cantidad</span>
-                                <span className="shrink-0 tabular-nums text-emerald-500">
-                                  −{mFmt(qtyDiscUnit * qty)}
-                                </span>
-                              </div>
-                            )}
-                            <div className="text-[9px] italic leading-tight text-muted/70">
-                              Si editás, tu bonificación reemplaza{" "}
-                              {hasQty && hasPromo
-                                ? "promo + desc. cantidad"
-                                : hasPromo
-                                  ? "la promoción"
-                                  : "el desc. por cantidad"}{" "}
-                              en esta línea.
+                        {/* Monto de bonificación = SIEMPRE el del motor
+                            (`l.discountAmount`, hidratado desde
+                            `pl.lineDiscount`). NO se recalcula en frontend:
+                            así refleja la base "Aplica a" (Total/Metal/
+                            Hechura) y funciona con o SIN cliente. Antes se
+                            mostraba `bonifLineTotal` (= md.value% ×
+                            basePrice, recálculo local) que ignoraba el
+                            appliesTo → el label no cambiaba. */}
+                        {(() => {
+                          const eng = typeof l.discountAmount === "number"
+                            && Number.isFinite(l.discountAmount)
+                            ? l.discountAmount
+                            : 0;
+                          if (eng <= 0) return null;
+                          return (
+                            <div className="mt-0.5 text-[11px] font-semibold tabular-nums text-emerald-500">
+                              −{mFmt(eng)}
                             </div>
+                          );
+                        })()}
+                        {/* Paso 1 — descuento automático (promo / desc.
+                            cantidad) sin manual fijado: chip compacto `Auto`
+                            + monto efectivo. La aclaración ("si editás
+                            reemplaza…") va al `title` (hover). */}
+                        {!isManualBonif && (hasPromo || hasQty) && (
+                          <div className="mt-0.5 flex flex-wrap items-center gap-1.5">
+                            <TPBadge
+                              tone="info"
+                              size="sm"
+                              title={
+                                `${l.pricingMeta?.appliedPromotionName
+                                  ? `${l.pricingMeta.appliedPromotionName}. `
+                                  : ""}Si editás, tu bonificación reemplaza ${
+                                  hasQty && hasPromo
+                                    ? "promo + desc. cantidad"
+                                    : hasPromo
+                                      ? "la promoción"
+                                      : "el desc. por cantidad"
+                                } en esta línea.`
+                              }
+                            >
+                              Auto
+                            </TPBadge>
+                            {(promoDiscUnit + qtyDiscUnit) * qty > 0 && (
+                              <span className="text-[10px] font-semibold tabular-nums text-emerald-600/85 dark:text-emerald-400/85">
+                                −{mFmt((promoDiscUnit + qtyDiscUnit) * qty)}
+                              </span>
+                            )}
                           </div>
                         )}
                       </>
@@ -2338,13 +2449,30 @@ export function TPDocumentLineAdvancedEditor({
                 const meta      = l.pricingMeta;
                 const exempt    = meta?.taxExemptByEntity === true;
                 const override  = meta?.taxOverride ?? null;
+                // FIX label stale — el operador borró/puso 0 el impuesto:
+                // intención EXPLÍCITA de "sin impuesto". El label NO debe
+                // revivir el IVA anterior ni el monto anterior (ni desde
+                // `composition.taxes`/`taxBreakdown`/cache de rate). Se trata
+                // como "sin impuesto" y se limpia el bloque inferior. El
+                // total línea c/ imp. ya viene correcto del backend.
+                const taxZeroed = isTaxClearedOverride(override);
                 const breakdown = meta?.taxBreakdown ?? [];
                 const items     = exempt ? [] : breakdown;
                 const qty       = Number.isFinite(l.quantity) ? l.quantity : 0;
-                // line.taxAmount es TOTAL de línea (qty × unitTax). NO se
-                // usa para derivar el % — sería STALE entre el cambio de
-                // qty y la respuesta del preview backend (causaría flicker).
-                const taxLineTotal = exempt ? 0 : (l.taxAmount ?? 0);
+                // Importe de impuesto de la línea = SIEMPRE el del motor
+                // (`l.taxAmount`, ya hidratado por `selectInvoiceLineView` /
+                // `applySalePreviewToDraft`). FUENTE ÚNICA del "+$" que se
+                // muestra debajo del input: es el MISMO valor que consume la
+                // celda "Total línea c/ imp." (ahí se llama `lineTax`). No se
+                // deriva del rate ni de qty en frontend (eso divergía del
+                // total y revivía importes viejos del cache de rate). Para
+                // derivar el % visible sí se usa una cascada estable aparte
+                // (`taxRateStable`), porque el % no debe parpadear con qty.
+                const taxLineTotal = exempt
+                  ? 0
+                  : (typeof l.taxAmount === "number" && Number.isFinite(l.taxAmount)
+                      ? l.taxAmount
+                      : 0);
                 // Base imponible unitaria (precio neto unitario).
                 const taxBaseUnit  = (l.unitPrice && l.unitPrice > 0)
                   ? l.unitPrice
@@ -2408,16 +2536,14 @@ export function TPDocumentLineAdvancedEditor({
                 }
 
                 // Unit tax derivado del rate estable (NO de taxAmount/qty).
-                // Para AMOUNT mode el motor backend sería más fiable, pero
-                // mientras llega, este derivado es estable bajo qty.
+                // SOLO se usa para el VALOR del input cuando el operador
+                // está en modo AMOUNT y todavía no fijó un override (mientras
+                // tanto mostramos una estimación del unitario). El IMPORTE
+                // monetario que se muestra como "+$" NO se deriva de acá:
+                // ese sale del motor (`l.taxAmount`) — ver `taxLineTotal`.
                 const taxUnitStable = override?.mode === "AMOUNT"
                   ? override.value
                   : (taxBaseUnit * taxRateStable) / 100;
-                // Total efectivo del impuesto en la línea = unit estable × qty.
-                // Bug fix: usamos esto en el label en lugar de `l.taxAmount`,
-                // que queda STALE entre edit y respuesta del preview. Con
-                // override manual=0, taxUnitStable=0 → taxLineEffective=0 → label $0.
-                const taxLineEffective = Math.max(0, taxUnitStable * qty);
 
                 const fmtPct = (n: number) => {
                   const r = Math.round(n * 100) / 100;
@@ -2438,20 +2564,13 @@ export function TPDocumentLineAdvancedEditor({
                   <div>
                     <div className="text-[9px] font-semibold uppercase tracking-wide text-muted">
                       Impuestos
-                      {/* Factura: sufijo "(por unidad)" para clarificar
-                          que el TPNumber edita el % (o monto) unitario; el
-                          importe monetario total de la línea se muestra
-                          debajo del input (línea ámbar con signo "+").
-                          Pantallas legacy mantienen el label sin sufijo. */}
-                      {showLineTotalWithTax && (
-                        <span className="ml-1 normal-case text-muted/70">(por unidad)</span>
-                      )}
                     </div>
                     {/* TPNumber + selector %/$ — siempre editables si la
                         línea no es exenta. */}
                     <div className="flex items-stretch gap-1">
                       <TPNumberInput
                         value={displayValue}
+                        formatType={isPct ? "TAX_PERCENT" : "MONEY"}
                         onChange={(v) => {
                           if (!canEdit) return;
                           const raw = Math.max(0, v ?? 0);
@@ -2558,6 +2677,9 @@ export function TPDocumentLineAdvancedEditor({
                       // un desglose detallado (nombre + monto) en su lugar.
                       const taxBadge: string | null =
                         exempt          ? "Exento"
+                        // Tax borrado/0 → sin badge (no "Impuesto manual"
+                        // ni IVA anterior). El label queda limpio.
+                        : taxZeroed     ? null
                         : override      ? "Impuesto manual"
                         : displayItems.length === 1
                           ? `${displayItems[0].name}${displayItems[0].rate != null ? ` ${fmtPct(displayItems[0].rate)}` : ""}${labelForApplyOn(displayItems[0].applyOn)}`
@@ -2577,14 +2699,26 @@ export function TPDocumentLineAdvancedEditor({
 
                       return (
                         <>
-                          {/* Línea 1: Aplica a (link compacto) */}
-                          {canEdit && (
+                          {/* Línea 1: Aplica a — Paso 1: oculto cuando
+                              scope=TOTAL y no hay alternativas (ruido puro).
+                              Se mantiene si scope ≠ TOTAL o la línea tiene
+                              metal/hechura (no se pierde la capacidad). */}
+                          {canEdit
+                            && (getTaxAppliesTo(l.id) !== "TOTAL" || getAvailableScopes(l, "TAX").length > 1) && (
                             <div className="mt-0.5">
                               <AppliesToLink
                                 value={getTaxAppliesTo(l.id)}
-                                scopes={getAvailableScopes(l)}
+                                scopes={getAvailableScopes(l, "TAX")}
                                 onChange={(next) => {
                                   setTaxAppliesTo(l.id, next);
+                                  // SIEMPRE viaja la base como override
+                                  // independiente del valor → el motor
+                                  // recalcula el impuesto HEREDADO sobre esa
+                                  // base aunque la tasa siga configurada.
+                                  onApplyLineOverrides?.(l.id, { manualTaxAppliesTo: next });
+                                  // Si hay override de valor, sincronizamos
+                                  // su `appliesTo` embebido (precedencia
+                                  // backend: el de valor gana).
                                   if (override) {
                                     onSetLineTaxOverride!(l.id, {
                                       mode:      override.mode,
@@ -2634,16 +2768,25 @@ export function TPDocumentLineAdvancedEditor({
                             </div>
                           )}
                           {/* Línea 3: importe total impuestos (ámbar).
-                              Bug fix: el label debe derivar del estado
-                              EFECTIVO (taxUnitStable × qty), no de
-                              `l.taxAmount` que puede quedar stale entre el
-                              edit y la respuesta del preview. Si hay
-                              override manual (incluso 0), mostramos el
-                              importe efectivo del override (puede ser $0).
-                              Sin override y monto 0 → ocultamos el label. */}
-                          {!exempt && (override != null || taxLineEffective > 0) && (
+                              FUENTE ÚNICA = motor (`taxLineTotal` = l.taxAmount).
+                              Es exactamente el mismo número que muestra la
+                              celda "Total línea c/ imp." (`lineTax`), así que
+                              el "+$" del input y el total de la línea SIEMPRE
+                              coinciden. Al limpiar el impuesto, `taxZeroed`
+                              oculta este label (no revive el importe viejo);
+                              cuando el preview vuelve con tax 0, taxLineTotal
+                              también es 0. Mostrar solo si hay importe > 0. */}
+                          {!exempt && !taxZeroed && taxLineTotal > 0 && (
                             <div className="mt-0.5 text-[11px] font-semibold tabular-nums text-amber-500">
-                              +{mFmt(taxLineEffective)}
+                              +{mFmt(taxLineTotal)}
+                            </div>
+                          )}
+                          {/* Tax borrado/0 → indicador limpio "Sin impuesto"
+                              (NO el IVA/monto anterior). El total línea c/
+                              imp. ya refleja 0 impuesto (passthrough motor). */}
+                          {!exempt && taxZeroed && (
+                            <div className="mt-0.5 text-[10px] italic text-muted/70">
+                              Sin impuesto
                             </div>
                           )}
                         </>
@@ -2913,6 +3056,7 @@ export function TPDocumentLineAdvancedEditor({
                 onClear={onClearLineOverrides ? () => onClearLineOverrides(l.id) : undefined}
                 onClose={() => toggleAdvancedOpen(l.id)}
                 unitNameByCode={unitNameByCode}
+                currencyById={currencyById}
                 globalAdjustments={saleGlobalAdjustments}
                 previewLoading={saleCompositionLoading}
               />
@@ -2971,12 +3115,21 @@ export function TPDocumentLineAdvancedEditor({
   }
 
   return (
-    // Wrapper con overflow-x:auto en lg+ para preservar los min-widths de
-    // las columnas. Si el ancho disponible no alcanza, aparece scroll
-    // horizontal en lugar de comprimir los inputs. min-width interno
-    // calculado como suma de columnas + gaps + padding.
+    // Wrapper con overflow-x:auto en lg+: scroll horizontal interno
+    // controlado (no del body) si el ancho no alcanza, en vez de comprimir
+    // inputs o desbordar el card.
+    //
+    // FIX contención — el min-width interno DEBE cubrir el ancho real del
+    // row para que el borde del card contenga TODAS las columnas (incl. la
+    // de acciones/total a la derecha). Cálculo real del grid `lg`:
+    //   columnas: 14 + 420 + 110 + 220 + 130 + 130 + 180 + 160 = 1364
+    //   gaps (gap-x-2 = 8px × 7)                                =   56
+    //   padding del card (px-2 = 8px × 2) + borde (1px × 2)     =   18
+    //   total ≈ 1438  → usamos 1460 con holgura (gutter scroll).
+    // Antes era 1320 (< 1438): el grid se salía ~100px del card y la
+    // toolbar derecha quedaba flotando fuera del borde.
     <div className="space-y-3 lg:overflow-x-auto">
-      <div className="space-y-3 lg:min-w-[1320px]">
+      <div className="space-y-3 lg:min-w-[1460px]">
       {reorderLines ? (
         <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
           <SortableContext items={reorderable.map((l) => l.id)} strategy={verticalListSortingStrategy}>

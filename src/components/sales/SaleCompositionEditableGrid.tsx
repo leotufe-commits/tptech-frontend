@@ -45,9 +45,9 @@ import type { CostLineOverride } from "../../services/sales";
 // Fase 6 — flujo visual de construcción del precio (4 cards). Reemplaza
 // SaleImpactBlock + CostAdjustmentBlock + RentabilidadBlock con la misma data
 // pero presentación rediseñada (azul/ámbar/verde/neutro).
-import PriceFlowCards from "./PriceFlowCards";
 import {
   COMPONENT_TYPE_BADGE,
+  COMPONENT_TYPE_TEXT,
   type ComponentTypeKey,
 } from "../../lib/pricing/component-type-colors";
 
@@ -55,7 +55,7 @@ import {
 // Tipos públicos
 // ─────────────────────────────────────────────────────────────────────────────
 
-export type AppliesTo = "METAL" | "HECHURA" | "PRODUCT" | "SERVICE" | "TOTAL";
+export type AppliesTo = "TOTAL" | "METAL" | "HECHURA" | "METAL_Y_HECHURA" | "SUBTOTAL_AFTER_DISCOUNT" | "SUBTOTAL_BEFORE_DISCOUNT" | "PRODUCT" | "SERVICE";
 
 export type LineOverridePatch = {
   taxOverride?:           { mode: "PERCENT" | "AMOUNT"; value: number; appliesTo?: AppliesTo } | null;
@@ -95,6 +95,13 @@ export type SaleCompositionEditableGridProps = {
   onClose?: () => void;
   /** Mapping `code → name` del catálogo de unidades del tenant. Solo display. */
   unitNameByCode?: Map<string, string>;
+  /** Mapping `currencyId → { code, symbol }` del catálogo de monedas del
+   *  tenant. Cuando un cost line tiene `currencyId` distinto al code del
+   *  documento, la celda "Costo unit." muestra el code original sobre el
+   *  número y agrega una sub-línea con el equivalente en moneda del
+   *  comprobante (`totalValue / quantity`, derivación trivial sobre datos
+   *  del motor). Si no se provee, el comportamiento es idéntico al anterior. */
+  currencyById?: CurrencyByIdMap;
   /** Ajustes globales del documento (passthrough del preview backend). */
   globalAdjustments?: SaleGlobalAdjustments;
   /**
@@ -147,15 +154,23 @@ function useOverrideNumber(
     }
   }, [initialValue, originalValue]);
 
-  const commitRef = useRef<{ timer: number | null; lastSent: number | null | "INIT" }>({
-    timer: null, lastSent: "INIT",
+  // FIX — `lastSent` se inicializa al valor commiteado INICIAL (no a un
+  // sentinel "INIT"). Así el commit de montaje es no-op (same) sin tragarse
+  // la PRIMERA edición real del usuario: con el sentinel, si el usuario
+  // tocaba la flecha antes del primer timer, ese primer cambio se perdía
+  // (había que tocar dos veces). Con el valor inicial real, montar no
+  // commitea pero el primer cambio sí.
+  const commitRef = useRef<{ timer: number | null; lastSent: number | null }>({
+    timer: null,
+    lastSent: nearlyEqual(initialValue ?? originalValue, originalValue)
+      ? null
+      : (initialValue ?? originalValue),
   });
   useEffect(() => {
     const c = commitRef.current;
     if (c.timer) window.clearTimeout(c.timer);
     c.timer = window.setTimeout(() => {
       const next = nearlyEqual(value, originalValue) ? null : value;
-      if (c.lastSent === "INIT") { c.lastSent = next; return; }
       const same =
         (next == null && c.lastSent == null) ||
         (typeof next === "number" && typeof c.lastSent === "number" && nearlyEqual(next, c.lastSent));
@@ -211,68 +226,566 @@ function useFlashOnChange(value: number | null | undefined, key?: string): strin
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Helpers display-only para esta grilla (extraídos a `src/lib/pricing/display/`
+// para reuso futuro desde Simulador / Comparador). Re-export local para que
+// los tests existentes los importen vía este archivo (compat).
+// ─────────────────────────────────────────────────────────────────────────────
+import {
+  resolveItemCurrencyDisplay,
+  resolveSaleForRowDisplay,
+  resolveMarginForRowDisplay,
+  buildMetalParentSaleTotals,
+  computeMetalSaleFactor,
+  type CurrencyByIdMap,
+} from "../../lib/pricing/display/saleCompositionDisplay";
+
+export {
+  resolveItemCurrencyDisplay,
+  resolveSaleForRowDisplay,
+  resolveMarginForRowDisplay,
+};
+export type { CurrencyByIdMap };
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Layout — tabla compacta. Columnas: badge (24) · componente (1.6fr) ·
 // cantidad (90) · unidad (60) · val.unit (95) · merma (75) · ajuste (130) ·
 // val.venta (95) · total (105) · acciones (30).
 // ─────────────────────────────────────────────────────────────────────────────
 
+// FASE 12.4 — vista única (sin switch). Antes había dos layouts:
+// `TABLE_COLS_CLS` (vista costo) y `TABLE_COLS_CLS_COMMERCIAL` (con Margen
+// como columna extra). Ahora la tabla es UNA sola: Margen vive como
+// sub-línea debajo de "Costo Total" en cada fila, y Merma/Ajuste vive como
+// sub-línea debajo de "Costo unit." (FASE 12.3).
+//
+// Layout final: badge · componente · cantidad · costo unit (con
+// merma/ajuste debajo) · costo total (con margen debajo) · costo de venta
+// · acciones — 7 cells en total.
+// FASE 12.11 — anchos rebalanceados:
+//   · COMPONENTE: 1.6fr → 1.4fr (reducimos un poco; el secondary es corto).
+//   · CANTIDAD:    0.7fr → 0.6fr (más compacta — input + sub-línea unidad).
+//   · COSTO UNIT.: 1.1fr → 1.4fr (más espacio: contiene moneda + input +
+//     merma/ajuste editor).
+//   · COSTO TOTAL: 0.95fr → 1.05fr (margen + ajuste global pueden crecer).
+//   · COSTO DE VENTA: sin cambios (0.85fr).
+// FASE F23 — Columnas con anchos configurables + columna "Margen" nueva.
+// FASE F24 — "Margen" se reubica ENTRE "Costo Total" y "Costo de Venta"
+// (antes estaba entre Merma/Ajuste y Costo Total).
+// Total de columnas: 10 (icon + 8 datos + acciones).
+// Layout:
+//   1 → icon          (24px, fijo, sin resize)
+//   2 → Componente    (320 / min 220)
+//   3 → Cantidad      (110 / min 90)
+//   4 → Unidad        (120 / min 90)
+//   5 → Costo unit.   (160 / min 130)
+//   6 → Merma/Ajuste  (150 / min 130)
+//   7 → Costo Total   (170 / min 140)
+//   8 → Margen        (150 / min 120)
+//   9 → Costo Venta   (170 / min 140)
+//  10 → acciones      (28px, fijo, sin resize)
+//
+// La grilla ya no usa `grid-cols-[...]` Tailwind fijo. Cada fila consume el
+// `gridTemplateColumns` calculado via Context (`TableLayoutContext`), que
+// vive en `SaleCompositionEditableGrid` y se persiste en localStorage
+// (key: `tptech.sales.costComposition.columnWidths.v1`).
 const TABLE_COLS_CLS =
-  // Fase 2.4 — quitamos la columna UNID. (la unidad ahora va inline en
-  // el secondary del COMPONENTE). Espacio liberado se reparte:
-  //   · COMPONENTE pasa de 1.5fr a 1.8fr (más ancho, mejor legibilidad).
-  //   · Las demás conservan su min/fr.
-  // Layout: badge · componente · cantidad · val.unit · merma · ajuste ·
-  //          v.venta · total · acciones.
-  "grid grid-cols-[24px_minmax(0,1.8fr)_minmax(80px,0.7fr)_minmax(85px,0.75fr)_minmax(70px,0.65fr)_minmax(145px,1.2fr)_minmax(85px,0.75fr)_minmax(95px,0.85fr)_28px] " +
-  "items-center gap-x-1.5";
+  "grid items-start gap-x-1.5";
 
-// Fase MVP híbrido (Print 2) — layout extendido con 4 columnas comerciales
-// adicionales a la derecha del costo: Precio Unit. Venta, Margen %, Venta
-// Línea, Participación %. Solo aplica cuando `commercialView === true`.
-const TABLE_COLS_CLS_COMMERCIAL =
-  "grid grid-cols-[24px_minmax(0,1.5fr)_minmax(80px,0.7fr)_minmax(85px,0.75fr)_minmax(70px,0.65fr)_minmax(145px,1.2fr)_minmax(85px,0.75fr)_minmax(95px,0.85fr)_minmax(95px,0.85fr)_minmax(70px,0.6fr)_minmax(95px,0.85fr)_minmax(70px,0.55fr)_28px] " +
-  "items-center gap-x-1.5";
+/** Configuración de las columnas redimensionables (FASE F23).
+ *  Cada entry describe una columna del medio (no icon ni acciones, que
+ *  son fijos). El orden DEBE coincidir con el orden visual de la tabla. */
+const RESIZABLE_COLS = [
+  { key: "componente",  label: "Componente",     def: 320, min: 220 },
+  { key: "cantidad",    label: "Cantidad",       def: 110, min:  90 },
+  { key: "unidad",      label: "Unidad",         def: 120, min:  90 },
+  { key: "costoUnit",   label: "Costo unit.",    def: 160, min: 130 },
+  { key: "mermaAjuste", label: "Merma / Ajuste", def: 150, min: 130 },
+  // FASE F24 — Costo Total antes que Margen, y Margen antes que Costo Venta.
+  { key: "costoTotal",  label: "Costo Total",    def: 170, min: 140 },
+  { key: "margen",      label: "Margen",         def: 150, min: 120 },
+  { key: "costoVenta",  label: "Venta", def: 170, min: 140 },
+] as const;
 
-function TableHeader({ commercialView }: { commercialView: boolean }) {
+const COL_WIDTHS_DEFAULTS = RESIZABLE_COLS.map((c) => c.def);
+const COL_WIDTHS_MINS     = RESIZABLE_COLS.map((c) => c.min);
+// FASE F24 — bump a `v2` por reordenar columnas (Margen ↔ Costo Total).
+// Persistencias `v1` quedan ignoradas → recae a defaults.
+const COL_WIDTHS_STORAGE  = "tptech.sales.costComposition.columnWidths.v2";
+
+/** Lee anchos persistidos en localStorage; cae a defaults si falta o está
+ *  corrupto. Acepta sólo arrays de N números (mismo length que defaults). */
+function loadPersistedColWidths(): number[] {
+  if (typeof window === "undefined" || !window.localStorage) return [...COL_WIDTHS_DEFAULTS];
+  try {
+    const raw = window.localStorage.getItem(COL_WIDTHS_STORAGE);
+    if (!raw) return [...COL_WIDTHS_DEFAULTS];
+    const arr = JSON.parse(raw);
+    if (
+      Array.isArray(arr)
+      && arr.length === COL_WIDTHS_DEFAULTS.length
+      && arr.every((n) => typeof n === "number" && Number.isFinite(n) && n > 0)
+    ) {
+      // Clamp a min para evitar widths corruptos persistidos.
+      return arr.map((n, i) => Math.max(n, COL_WIDTHS_MINS[i]));
+    }
+  } catch {
+    // Ignored.
+  }
+  return [...COL_WIDTHS_DEFAULTS];
+}
+
+/** Compone el `grid-template-columns` para una fila. Mantiene los extremos
+ *  fijos (24px icon + 28px acciones) y rellena el medio con los widths
+ *  configurables, todos como `<N>px`. */
+function buildGridTemplateColumns(widths: number[]): string {
+  const middle = widths.map((w) => `${w}px`).join(" ");
+  return `24px ${middle} 28px`;
+}
+
+/** Context con el `gridTemplateColumns` ya calculado para que header, filas
+ *  y footers compartan el mismo layout sin que el caller tenga que pasar
+ *  la prop a cada Row (rompería los memos). */
+const TableLayoutContext = React.createContext<string>(
+  buildGridTemplateColumns(COL_WIDTHS_DEFAULTS),
+);
+
+// FASE F2 — passthrough del backend para el origen de la merma:
+// Manual / Cliente / Catálogo / —. Se mantiene el tipo en el contrato
+// del MermaLabelEditor para no romper callers; el badge visual fue
+// removido en FASE F10.
+type MermaSource = "costLineOverride" | "entity" | "line" | "default" | null;
+
+// FASE F9 — Merma como input siempre visible (sin pill, sin ✎, sin
+// snapshot/cancel). Se renderea similar al campo de Cantidad: input
+// compacto con sufijo "%" fijo a la derecha.
+// FASE F10 — el origen entre paréntesis (Catálogo/Cliente/Manual/—) se
+// eliminó del render. La prop `mermaSource` se mantiene en el contrato
+// del componente para no romper callers, pero ya no se muestra.
+function MermaLabelEditor({
+  value, original, onChange, readOnly, mermaSource,
+}: {
+  value:    number | null;
+  original: number | null;
+  onChange: (v: number | null) => void;
+  readOnly?: boolean;
+  mermaSource?: MermaSource;
+}) {
+  // FASE F10 — mermaSource ya no se renderea; aceptado para compat de callers.
+  void mermaSource;
+  // FIX oscilación flechitas — commit DEBOUNCED vía `useOverrideNumber`
+  // (igual que Cantidad/Costo unit.), en vez de llamar `onChange` síncrono
+  // por cada tick de la flecha. El commit por tick re-renderizaba
+  // `TPNumberInput` con el `value` prop aún viejo (parent async) y su
+  // effect lo trataba como "cambio externo" revirtiendo el valor:
+  // 10 → 10,5 → 10 → 10,5. Con el hook, el valor local es estable y se
+  // commitea una sola vez al pausar. `originalValue=null` → siempre emite
+  // el valor literal (misma semántica que el onChange directo; el grid
+  // hace `v ?? 0`). El sync interno del hook re-hidrata si el parent
+  // cambia el valor de verdad (preview/reset).
+  const { value: mermaLocal, setValue: setMermaLocal } = useOverrideNumber(
+    value, null, (v) => onChange(v),
+  );
+  // FASE F13 — el label "Merma" se elimina del editor; el sufijo "%" alcanza
+  // como pista contextual. El número queda como protagonista visual. El
+  // input se ensancha (w-[120px]) para que cabe "-100,00" con 2–3 decimales
+  // sin truncado, considerando los ~36px que `pr-9` del compact reserva
+  // para los arrows.
+  return (
+    <div
+      data-merma-inline-editor
+      className="inline-flex items-center"
+    >
+      <PrefixedField suffix="%" interactive={!readOnly}>
+        <CellNumberInput
+          value={mermaLocal}
+          onChange={setMermaLocal}
+          decimals={2}
+          // Step 1,00 (antes 0,5): saltos enteros estables, sin oscilar.
+          step={1}
+          widthClass="w-[176px] max-w-none"
+          original={original}
+          readOnly={readOnly}
+          tooltip={readOnly ? READ_ONLY_TOOLTIP : undefined}
+          noInputBg
+        />
+      </PrefixedField>
+    </div>
+  );
+}
+
+// FASE 12.9 — Header de grupo por tipo de componente. Pure display:
+// muestra el nombre del grupo, conteo de líneas y subtotal (sum trivial
+// de `lineCost` ya emitidos — NO matemática comercial nueva).
+// FASE 12.11 — totales del grupo INLINE junto al nombre (no a la derecha).
+// FASE F18 — removidas las líneas divisorias horizontales superiores.
+// La separación entre grupos ahora descansa en spacing + background
+// suave por tipo. Look moderno, sin ruido tipo "tabla vieja".
+// FASE 12.13 — background muy suave por tipo (≈5% del color semántico) y
+// label coloreado: refuerza la identificación visual del grupo sin saturar
+// el contraste de las filas editables. Color tomado de la fuente única
+// `COMPONENT_TYPE_TEXT` / `COMPONENT_TYPE_BADGE` (no se hardcodean tonos).
+const GROUP_HEADER_BG: Record<ComponentTypeKey, string> = {
+  METAL:   "bg-amber-500/[0.06]",
+  HECHURA: "bg-blue-500/[0.06]",
+  PRODUCT: "bg-violet-500/[0.06]",
+  SERVICE: "bg-green-500/[0.06]",
+};
+// FASE F10 — el adjetivo "puro/pura" del header de METALES fue eliminado.
+// El header ahora muestra solo el nombre del metal padre seguido de los
+// gramos (ej. "Oro: 3,76 gr · Plata: 5,00 gr"). La agrupación por metal
+// padre se mantiene tal cual (FASE F5).
+
+function TypeGroupHeader({
+  label, count, subtotal, currency, type, equivGramsByMetal,
+}: {
+  label:    string;
+  count:    number;
+  subtotal: number | null;
+  currency: string;
+  /** Tipo de componente — define el color semántico del label y del bg. */
+  type:     ComponentTypeKey;
+  /** Gramos equivalentes de VENTA por metal padre (costo equiv × factor de
+   *  venta del motor), IDÉNTICO a las cards del Simulador "Composición del
+   *  precio" (ORO (Au) 8,01 gr). Ej:
+   *  `[{ name: "Oro", grams: 8.01 }, { name: "Plata", grams: 3.11 }]`.
+   *  Solo se muestra en el grupo METAL. Vacío/undefined → no se renderea. */
+  equivGramsByMetal?: Array<{ name: string; grams: number }>;
+}) {
+  // FASE F15 — subtotal y currency aceptados para compat de callers, pero
+  // ya no se renderean en el header.
+  void subtotal; void currency;
+  return (
+    <div
+      data-group-type={type}
+      className={cn(
+        // FASE F18 — removido `border-t border-border/40` que dibujaba una
+        // línea divisoria fuerte arriba de cada grupo. La separación visual
+        // ahora descansa en `mt-3` (16px) + `GROUP_HEADER_BG` (tono suave
+        // por tipo). Look más liviano, sin ruido tipo "tabla vieja".
+        "mt-3 mb-1.5 flex items-baseline gap-2 rounded-t px-2 py-1.5 first:mt-0",
+        GROUP_HEADER_BG[type],
+      )}
+    >
+      <span className={cn("text-[11px] font-semibold uppercase tracking-wide", COMPONENT_TYPE_TEXT[type])}>
+        {label}
+      </span>
+      <span className="text-[10px] text-muted/55">
+        · {count} {count === 1 ? "línea" : "líneas"}
+      </span>
+      {/* FASE F15 — el importe monetario se removió del header de grupo.
+          El total queda únicamente en la fila inferior `Total <grupo>`
+          (TypeGroupFooter). El header conserva: nombre, count y, en
+          METAL, los gramos agrupados por metal padre. Las props
+          `subtotal` y `currency` siguen aceptándose en el contrato para
+          no romper callers, pero ya no se renderean. */}
+      {type === "METAL" && Array.isArray(equivGramsByMetal) && equivGramsByMetal.length > 0 && (
+        <>
+          {equivGramsByMetal.map((g, i) => (
+            <span
+              key={`${g.name}-${i}`}
+              className="text-[11px] text-slate-500 dark:text-slate-400"
+              title="Gramos equivalentes de VENTA por metal padre (costo equiv × factor de venta) — idéntico a las cards del Simulador (Composición del precio)"
+            >
+              · {g.name}:{" "}
+              <span className="tabular-nums">
+                {g.grams.toLocaleString("es-AR", {
+                  minimumFractionDigits: 2,
+                  maximumFractionDigits: 2,
+                })} gr
+              </span>
+            </span>
+          ))}
+        </>
+      )}
+    </div>
+  );
+}
+
+// Subtotal de COSTO del grupo, expandido por `qtyLine` del documento para
+// quedar en la misma escala que la columna "Costo Total" de cada fila
+// detalle (`lineCost × line.quantity`). Sin `qtyLine` (default 1) mantiene
+// el comportamiento legacy.
+function sumGroupLineCost(items: any[], qtyLine: number = 1): number | null {
+  if (!Array.isArray(items) || items.length === 0) return null;
+  const q = Number.isFinite(qtyLine) && qtyLine > 1 ? qtyLine : 1;
+  let total = 0;
+  let any = false;
+  for (const it of items) {
+    const raw = it?.lineCost ?? it?.totalValue ?? null;
+    const v = raw != null ? Number(raw) : NaN;
+    if (Number.isFinite(v)) {
+      total += v * q;
+      any = true;
+    }
+  }
+  return any ? total : null;
+}
+
+/**
+ * Suma de la columna "Cantidad" para la fila "Total <grupo>".
+ *
+ * Display only — NO afecta cálculos financieros (costo/venta/margen). Solo
+ * suma las `quantities` de las líneas del grupo, usando el MISMO origen por
+ * tipo que la celda Cantidad de cada fila (paridad visual con lo mostrado):
+ *   · METAL  → `appliedGrams` (se omite si es null, igual que la fila)
+ *   · HECHURA/PRODUCT/SERVICE → `quantity` (fallback por tipo, ver callers)
+ *
+ * Igual que `sumGroupLineCost`, NO aplica overrides (refleja la base del
+ * snapshot). Devuelve `null` si ninguna línea aporta cantidad finita.
+ */
+function sumGroupQuantity(
+  items: any[],
+  qtyOf: (it: any) => number | null,
+): number | null {
+  if (!Array.isArray(items) || items.length === 0) return null;
+  let total = 0;
+  let any = false;
+  for (const it of items) {
+    const v = qtyOf(it);
+    if (v != null && Number.isFinite(v)) {
+      total += v;
+      any = true;
+    }
+  }
+  return any ? total : null;
+}
+
+// Subtotal de VENTA del grupo, aplicando los mismos overrides que la columna
+// "Venta" de cada fila detalle:
+//   1. `resolveSaleForRowDisplay(lineCost, lineSale, unifiedFactor, marginUnattributable)`
+//      → en MARGIN_TOTAL / modos derivados, reemplaza el `lineSale` colapsado
+//      por `lineCost × unifiedFactor` (display unificado).
+//   2. Multiplica por `qtyLine` del documento para alinear con `totalForRow`.
+//
+// Snapshots viejos sin `lineSale` ni breakdown caen al `canonical` (sale
+// agregado del grupo emitido por el motor para metal/hechura).
+// Cero matemática nueva — usa el mismo helper display que las filas detalle.
+function sumGroupLineSaleDisplay(
+  items: any[],
+  ctx: {
+    qtyLine:              number;
+    marginUnattributable: boolean;
+    unifiedFactor:        number | null;
+    canonical?:           number | null;
+  },
+): number | null {
+  if (!Array.isArray(items) || items.length === 0) return null;
+  const q = Number.isFinite(ctx.qtyLine) && ctx.qtyLine > 1 ? ctx.qtyLine : 1;
+  let total = 0;
+  let anySale = false;
+  for (const it of items) {
+    const lineCostRaw = it?.lineCost ?? it?.totalValue ?? null;
+    const lineCost = lineCostRaw != null && Number.isFinite(Number(lineCostRaw))
+      ? Number(lineCostRaw)
+      : null;
+    const lineSaleRaw = (it as any)?.lineSale ?? null;
+    const canonicalSale = lineSaleRaw != null && Number.isFinite(Number(lineSaleRaw))
+      ? Number(lineSaleRaw)
+      : null;
+    if (canonicalSale == null) continue;
+    const { saleForRow } = resolveSaleForRowDisplay(
+      lineCost,
+      canonicalSale,
+      ctx.unifiedFactor,
+      ctx.marginUnattributable,
+    );
+    if (saleForRow != null && Number.isFinite(saleForRow)) {
+      total += saleForRow * q;
+      anySale = true;
+    }
+  }
+  if (anySale) return total;
+  // Fallback snapshot legacy: el motor emitió un sale agregado para el grupo.
+  if (ctx.canonical != null && Number.isFinite(ctx.canonical)) {
+    return ctx.canonical * q;
+  }
+  return null;
+}
+
+// FASE F7 — Fila de "Total <grupo>" al cierre de cada bloque visible.
+// Display only — sin inputs ni iconos editables. Refleja sumas ya
+// emitidas por el motor backend; cero matemática comercial nueva.
+// Layout: usa TABLE_COLS_CLS para alinear con la grilla; las columnas
+// "Costo Total" y "Costo de Venta" muestran los montos en tabular-nums.
+function TypeGroupFooter({
+  label, costTotal, saleTotal, currency, type, quantityTotal = null,
+}: {
+  label:     string;
+  costTotal: number | null;
+  saleTotal: number | null;
+  currency:  string;
+  type:      ComponentTypeKey;
+  /** Suma de la columna "Cantidad" del grupo. Display only — NO altera
+   *  ningún cálculo financiero. Se muestra SIEMPRE (incluso 1 línea). */
+  quantityTotal?: number | null;
+}) {
+  const gridTpl = React.useContext(TableLayoutContext);
+  const fmt = (v: number) => `${currency} ${v.toLocaleString("es-AR", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })}`;
+  return (
+    <div
+      data-group-footer={type}
+      className={cn(
+        TABLE_COLS_CLS,
+        // FASE F19 — sin border-top. F23 — grid layout viene del context.
+        "mt-1 mb-2 rounded-b px-1.5 py-1",
+        GROUP_HEADER_BG[type],
+      )}
+      style={{ gridTemplateColumns: gridTpl }}
+    >
+      {/* Col 1 — icono */}
+      <span aria-hidden />
+      {/* Col 2 — Componente */}
+      <span className={cn("text-[11px] font-semibold", COMPONENT_TYPE_TEXT[type])}>
+        Total {label}
+      </span>
+      {/* Col 3 — Cantidad: total del grupo (siempre, incluso 1 línea).
+          Centrado para alinear con la celda Cantidad de cada fila. */}
+      <span className="text-center text-[11px] tabular-nums font-semibold text-text/85">
+        {quantityTotal != null && Number.isFinite(quantityTotal)
+          ? quantityTotal.toLocaleString("es-AR", {
+              minimumFractionDigits: 2,
+              maximumFractionDigits: 2,
+            })
+          : "—"}
+      </span>
+      {/* Col 4 — Unidad (FASE F21) */}
+      <span aria-hidden />
+      {/* Col 5 — Costo unit. */}
+      <span aria-hidden />
+      {/* Col 6 — Merma / Ajuste (FASE F22) */}
+      <span aria-hidden />
+      {/* Col 7 — Costo Total (FASE F24: vuelve antes de Margen) */}
+      <span className="text-center text-[11px] tabular-nums font-semibold text-text/85">
+        {costTotal != null && Number.isFinite(costTotal) ? fmt(costTotal) : "—"}
+      </span>
+      {/* Col 8 — Margen (FASE F24) — vacío en totales (sin margen agregado a nivel grupo) */}
+      <span className="text-center text-[11px] tabular-nums text-muted/40">—</span>
+      {/* Col 9 — Costo de Venta */}
+      <span className="text-center text-[11px] tabular-nums font-semibold text-text/85">
+        {saleTotal != null && Number.isFinite(saleTotal) ? fmt(saleTotal) : "—"}
+      </span>
+      {/* Col 10 — acciones */}
+      <span aria-hidden />
+    </div>
+  );
+}
+
+/** F23 — Handle de resize entre columnas. mousedown registra listeners en
+ *  window; mousemove actualiza el ancho (clamped a min); mouseup persiste
+ *  en localStorage. Doble click resetea al default. Visible solo en hover
+ *  del header para no saturar. */
+function ColumnResizeHandle({
+  index, widths, onChange,
+}: {
+  index: number;
+  widths: number[];
+  onChange: (next: number[]) => void;
+}) {
+  const handleMouseDown = React.useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const startX = e.clientX;
+    const startW = widths[index];
+    const minW   = COL_WIDTHS_MINS[index];
+    const onMove = (ev: MouseEvent) => {
+      const next = Math.max(minW, startW + (ev.clientX - startX));
+      const arr  = widths.slice();
+      arr[index] = Math.round(next);
+      onChange(arr);
+    };
+    const onUp = () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+  }, [index, widths, onChange]);
+
+  const handleDoubleClick = React.useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const arr = widths.slice();
+    arr[index] = COL_WIDTHS_DEFAULTS[index];
+    onChange(arr);
+  }, [index, widths, onChange]);
+
+  return (
+    <span
+      data-column-resize-handle={RESIZABLE_COLS[index].key}
+      onMouseDown={handleMouseDown}
+      onDoubleClick={handleDoubleClick}
+      role="separator"
+      aria-label={`Redimensionar columna ${RESIZABLE_COLS[index].label}`}
+      title="Arrastrá para redimensionar · doble click para resetear"
+      className={cn(
+        // Hit area de 6px a la derecha del header (translado 50% del width).
+        "absolute top-0 right-0 h-full w-1.5 cursor-col-resize",
+        // Línea fina visible solo en hover/active (sutileza Linear/Excel).
+        "after:absolute after:right-0 after:top-1 after:bottom-1 after:w-px",
+        "after:bg-transparent hover:after:bg-primary/40 active:after:bg-primary/70",
+        "after:transition-colors after:duration-150",
+        "select-none",
+      )}
+    />
+  );
+}
+
+function TableHeader({
+  widths, onWidthsChange,
+}: {
+  widths: number[];
+  onWidthsChange: (next: number[]) => void;
+}) {
+  const gridStyle = React.useMemo(
+    () => ({ gridTemplateColumns: buildGridTemplateColumns(widths) }),
+    [widths],
+  );
   return (
     <div
       className={cn(
-        commercialView ? TABLE_COLS_CLS_COMMERCIAL : TABLE_COLS_CLS,
-        // Fase 2.1 — header más compacto (px-1.5 / py-0.5) + tracking más apretado.
+        TABLE_COLS_CLS,
+        // Fase 2.1 — header más compacto (px-1.5 / py-0.5).
         // Fase 4.4 — sticky top para que el header se mantenga visible
         // durante scroll vertical en composiciones largas. `bg-card`
         // evita que las filas debajo se vean a través del header
         // semi-transparente. `z-10` lo mantiene sobre las filas pero por
         // debajo del modal.
         "sticky top-0 z-10 bg-card",
-        "px-1.5 py-1 border-b border-border/30 text-[9px] font-semibold uppercase tracking-[0.04em] text-muted/65",
+        "px-1.5 py-1 border-b border-slate-200/40 dark:border-slate-700/30 text-[10px] font-medium normal-case text-muted/60",
       )}
+      style={gridStyle}
     >
       <span aria-hidden />
-      <span>Componente</span>
-      <span className="text-right">Cantidad</span>
-      {/* Fase 2.7.a — labels alineados a la realidad funcional:
-          la tabla muestra COMPOSICIÓN DE COSTO (no precio de venta).
-          "Val. unit." → "Costo unit.";  "V. venta" → "Costo línea". */}
-      <span className="text-right" title="Costo base del componente">Costo unit.</span>
-      <span className="text-right">Merma</span>
-      <span className="text-center">Ajuste</span>
-      <span className="text-right" title="Costo final del componente">Costo línea</span>
-      <span className="text-right">Total</span>
-      {commercialView && (
-        <>
-          <span className="text-right text-emerald-700/80 dark:text-emerald-400/80" title="Precio unitario de venta (sale-side, solo cuando es canónico)">
-            P. unit. venta
-          </span>
-          <span className="text-right">Margen</span>
-          <span className="text-right text-emerald-700/80 dark:text-emerald-400/80">
-            Venta línea
-          </span>
-          <span className="text-right" title="Participación del costo de este componente sobre el costo total">
-            Particip.
-          </span>
-        </>
-      )}
+      {/* FASE F23 — todos los títulos centrados, incluyendo Componente.
+          Cada header tiene un ColumnResizeHandle en el borde derecho. */}
+      {RESIZABLE_COLS.map((col, i) => (
+        <span
+          key={col.key}
+          data-column-header={col.key}
+          className="relative text-center px-1"
+          title={
+            col.key === "costoUnit"   ? "Costo base del componente"
+          : col.key === "mermaAjuste" ? "Merma (METAL) o Bonif./Recargo (HECHURA/PRODUCT/SERVICE) editable"
+          : col.key === "margen"      ? "Margen efectivo por línea (Venta − Costo Total). En listas con valor unificado, el margen se aplica al total y no se distribuye por línea (se muestra «—»)."
+          : col.key === "costoTotal"  ? "Costo final del componente"
+          : undefined
+          }
+        >
+          {col.label}
+          <ColumnResizeHandle
+            index={i}
+            widths={widths}
+            onChange={onWidthsChange}
+          />
+        </span>
+      ))}
+      {/* FASE 12.2 — "P. unit venta", "Venta línea" y "Particip." quedan
+          ocultos visualmente. Los datos siguen computándose en el caller
+          (precioUnitVentaText / ventaLineaText / participacionText) por si
+          se reactivan más adelante. */}
       <span aria-hidden />
     </div>
   );
@@ -286,6 +799,7 @@ function CellNumberInput({
   value, onChange, decimals = 2, step = 0.01, suffix,
   readOnly = false, disabled = false, tooltip, widthClass,
   original, decimalsOriginal, formatOriginal,
+  noInputBg = false,
 }: {
   value:    number | null;
   onChange: (v: number | null) => void;
@@ -306,20 +820,24 @@ function CellNumberInput({
   decimalsOriginal?: number;
   /** Formato custom del original (default: toLocaleString es-AR). */
   formatOriginal?: (v: number) => string;
+  /** FASE 12.20 — el input vive dentro de un `PrefixedField` que aplica
+   *  hover/focus-within a TODO el campo compuesto. Para evitar
+   *  double-feedback, este flag suprime las clases hover/focus del
+   *  input interno (sólo se mantiene la transición y el tinte amber del
+   *  manual override). */
+  noInputBg?: boolean;
 }) {
   const isInteractive = !readOnly && !disabled;
   const hasManualOverride =
     original != null && value != null && !nearlyEqual(original, value);
-  const origDec = decimalsOriginal ?? decimals;
-  const origText =
-    hasManualOverride && original != null
-      ? (formatOriginal
-          ? formatOriginal(original)
-          : original.toLocaleString("es-AR", {
-              minimumFractionDigits: 0,
-              maximumFractionDigits: origDec,
-            }))
-      : null;
+  // FASE 12.23 — el tachado del "valor original" debajo del input se
+  // eliminó: aparecía como flash al editar y ensuciaba la tabla. El
+  // manual override sigue marcándose con el `text-amber` del input
+  // (`hasManualOverride`) y con el punto/etiqueta "Manual" en el primary
+  // del componente. Las props `original` / `decimalsOriginal` /
+  // `formatOriginal` se mantienen en el contrato del componente para no
+  // romper callers, pero ya no se renderean.
+  void original; void decimalsOriginal; void formatOriginal;
   return (
     <div
       className={cn(
@@ -348,20 +866,27 @@ function CellNumberInput({
           "!h-6 !text-[11px] text-right tabular-nums",
           isInteractive ? (widthClass ?? "w-[88px]") : (widthClass ?? "w-[80px]"),
           !isInteractive && "cursor-help opacity-70",
-          // Manual override: input ligeramente más fuerte para destacar
-          // el valor "Manual" sin gritar.
-          hasManualOverride && "!font-semibold ring-1 ring-amber-400/35",
+          // ── FASE 12.17 — texto editable + feedback con color del theme ──
+          // Anulamos el `tp-input` global (rounded-xl + border + shadow) y
+          // dejamos texto plano. Feedback visual SOLO en hover/focus,
+          // usando el `primary` del theme (var --primary-rgb) en lugar de
+          // un azul Google hardcoded. El `!` es necesario porque
+          // `tp-input` tiene specificity propia desde index.css.
+          "!bg-transparent !rounded-sm !shadow-none !border-0",
+          isInteractive && !noInputBg && "hover:!bg-primary/[0.05] dark:hover:!bg-primary/[0.08]",
+          isInteractive && !noInputBg && "focus:!bg-primary/[0.06] dark:focus:!bg-primary/[0.10]",
+          // Línea inferior 1px en color del theme, dibujada vía inset-shadow
+          // para no alterar la altura del input. Cuando el input está dentro
+          // de un `PrefixedField`, el wrap externo aplica este feedback al
+          // campo completo — el input no lo duplica.
+          isInteractive && !noInputBg && "focus:!shadow-[inset_0_-1px_0_0_rgb(var(--primary-rgb)_/_0.7)]",
+          "!transition-[background-color,box-shadow] !duration-150",
+          // Manual override: texto un poco más bold + tinte amber, marca
+          // sutil sin agregar caja ni outline.
+          hasManualOverride && "!font-semibold !text-amber-700 dark:!text-amber-400",
         )}
         wrapClassName="!w-auto"
       />
-      {origText != null && (
-        <span
-          className="mt-0.5 text-[9px] leading-none text-muted/65 tabular-nums line-through"
-          title="Valor original del artículo"
-        >
-          {origText}
-        </span>
-      )}
     </div>
   );
 }
@@ -369,247 +894,255 @@ function CellNumberInput({
 const READ_ONLY_TOOLTIP = "Editar desde la ficha del artículo";
 
 // ─────────────────────────────────────────────────────────────────────────────
-// AdjustmentEditor — bonificación / recargo per cost line.
-//
-// 4 controles compactos:
-//   · Kind:  toggle BONUS (−) / SURCHARGE (+)
-//   · Value: número
-//   · Type:  toggle PERCENTAGE (%) / FIXED_AMOUNT ($)
-//   · Clear: × (vuelve a "sin ajuste")
-//
-// Sin ajuste activo → muestra solo un botón "Bonif/Recargo" que al click
-// inicia el editor con BONUS + PERCENTAGE + 0. Cero matemática local —
-// el patch dispara preview backend.
+// FASE 12.20 — PrefixedField: wrap inline-flex que se ve como un solo campo
+// compuesto. El prefix queda dentro del rectángulo visual del input (a la
+// izquierda del valor). Hover y focus pintan el campo COMPLETO con el
+// color del theme — el input interno corre con `noInputBg` para no
+// duplicar el feedback.
+// FASE F11 — extendido con `suffix` opcional (signo "%" / "$" / etc.
+// integrado a la derecha del valor) y posibilidad de prefix/suffix
+// interactivos (no aria-hidden) para los toggles de signo del editor
+// de Bonificación/Recargo. Cuando `prefix` o `suffix` son ReactNode
+// interactivos, el caller los pasa como tal y el wrap NO los marca como
+// pointer-events-none.
 // ─────────────────────────────────────────────────────────────────────────────
-
-/**
- * Fase 2.2 — formato compacto del ajuste original/override.
- *   "Bonif. 14% · −ARS 17.269,56"
- *   "Recargo 15% · +ARS 148.275,00"
- *   "Bonif. ARS 5.000,00"
- *
- * Cuando `amount` no está disponible (snapshot viejo / motor no lo emitió),
- * se omite el sufijo monetario sin recalcular.
- */
-function fmtAdjustmentText(
-  kind:     "BONUS" | "SURCHARGE" | null,
-  type:     "PERCENTAGE" | "FIXED_AMOUNT" | null,
-  value:    number | null,
-  amount:   number | null,
-  currency: string,
-): { kindWord: string; valuePart: string; amountPart: string | null } | null {
-  if (!kind) return null;
-  const kindWord = kind === "BONUS" ? "Bonif." : "Recargo";
-  const valuePart = (() => {
-    if (value == null || !Number.isFinite(value)) return "";
-    if (type === "PERCENTAGE") return `${value}%`;
-    if (type === "FIXED_AMOUNT") return fmtMoney(value, currency);
-    return String(value);
-  })();
-  const amountPart = amount != null && Number.isFinite(amount) && Math.abs(amount) > 0
-    ? `${kind === "BONUS" ? "−" : "+"}${fmtMoney(Math.abs(amount), currency)}`
-    : null;
-  return { kindWord, valuePart, amountPart };
+function PrefixedField({
+  prefix, suffix, children, interactive = true, className,
+  prefixStatic = true, suffixStatic = true,
+}: {
+  prefix?:      React.ReactNode;
+  suffix?:      React.ReactNode;
+  children:     React.ReactNode;
+  /** False → no aplica hover/focus visual (modo read-only). */
+  interactive?: boolean;
+  className?:   string;
+  /** Default true: el prefix es decorativo (`%`, `Gramos`). False = button. */
+  prefixStatic?: boolean;
+  /** Default true: el suffix es decorativo. False = button. */
+  suffixStatic?: boolean;
+}) {
+  return (
+    <div
+      className={cn(
+        // FASE F13 — padding y gap apretados para dar más espacio al input
+        // (el número es la pieza protagonista). Antes: gap-1, pl-1.5, pr-1.5.
+        "inline-flex items-center gap-0.5 rounded-sm",
+        prefix != null ? "pl-1" : "pl-0.5",
+        suffix != null ? "pr-1" : "pr-0",
+        "transition-[background-color,box-shadow] duration-150",
+        interactive && "hover:bg-primary/[0.05] dark:hover:bg-primary/[0.08]",
+        interactive && "focus-within:bg-primary/[0.06] dark:focus-within:bg-primary/[0.10]",
+        interactive && "focus-within:shadow-[inset_0_-1px_0_0_rgb(var(--primary-rgb)_/_0.7)]",
+        className,
+      )}
+    >
+      {prefix != null && (
+        prefixStatic ? (
+          <span
+            aria-hidden="true"
+            className="shrink-0 select-none pointer-events-none text-[10px] leading-none text-muted/55 tabular-nums"
+          >
+            {prefix}
+          </span>
+        ) : (
+          <span className="shrink-0 leading-none">{prefix}</span>
+        )
+      )}
+      {children}
+      {suffix != null && (
+        suffixStatic ? (
+          <span
+            aria-hidden="true"
+            className="shrink-0 select-none pointer-events-none text-[10px] leading-none text-muted/55 tabular-nums"
+          >
+            {suffix}
+          </span>
+        ) : (
+          <span className="shrink-0 leading-none">{suffix}</span>
+        )
+      )}
+    </div>
+  );
 }
 
-function AdjustmentEditor({
-  kind, type, value, onChange, currency, disabled,
+// FASE F9 — AdjustmentLabelEditor: editor inline siempre visible.
+// Sin pill, sin ✎, sin ✓/×, sin popover. Tres controles compactos en línea:
+//   [signo +/−] [valor numérico] [unidad %/$]
+//   −  = BONUS    (descuento)
+//   +  = SURCHARGE (recargo)
+//   %  = PERCENTAGE
+//   $  = FIXED_AMOUNT
+// Cada cambio crea/actualiza el override completo (kind+type+value) para
+// que el motor backend reciba el patch consistente, incluso cuando se
+// arranca desde "sin ajuste" o desde un original del catálogo. Cero
+// matemática nueva — el monto/impacto sigue viniendo del preview.
+function AdjustmentLabelEditor({
+  kind, type, value, currency, disabled, onChange,
   originalKind, originalType, originalValue, originalAmount,
+  currentAmount,
 }: {
   kind:     "BONUS" | "SURCHARGE" | null;
   type:     "PERCENTAGE" | "FIXED_AMOUNT" | null;
   value:    number | null;
-  /** Cambio total — el caller decide si es patch o clear (kind=null). */
+  currency: string;
+  disabled?: boolean;
   onChange: (patch: {
     adjustmentKind?:  "BONUS" | "SURCHARGE" | null;
     adjustmentType?:  "PERCENTAGE" | "FIXED_AMOUNT" | null;
     adjustmentValue?: number | null;
   }) => void;
-  currency: string;
-  disabled?: boolean;
-  /**
-   * Fase 2.2 — ajuste ORIGINAL del cost line del artículo (`lineAdjKind/Type/
-   * Value/Amount`). Cuando hay override, se muestra tachado debajo del editor.
-   * Cuando NO hay override pero SÍ original, se muestra como chip clickeable
-   * que al click activa el editor precargado con esos valores. Sin original
-   * ni override → botón "+ Bonif./Recargo".
-   */
   originalKind?:   "BONUS" | "SURCHARGE" | null;
   originalType?:   "PERCENTAGE" | "FIXED_AMOUNT" | null;
   originalValue?:  number | null;
   originalAmount?: number | null;
+  /** @deprecated Recálculo local (`lineCost − unitVal·qty`) — currency-unsafe
+   *  en líneas NO base (mezcla moneda base con original). Ya NO se usa para
+   *  el label de impacto: la fuente es `originalAmount` (= `lineAdjAmount`
+   *  del motor, moneda base). Se mantiene en el contrato para no romper
+   *  callers; eliminar cuando se limpien los sitios de invocación. */
+  currentAmount?:  number | null;
 }) {
-  const active = kind != null;
-  const originalText = fmtAdjustmentText(
-    originalKind ?? null,
-    originalType ?? null,
-    originalValue ?? null,
-    originalAmount ?? null,
-    currency,
-  );
+  // Valores efectivos para el render: override → original → defaults.
+  const hasOverride = kind != null;
+  const effKind:  "BONUS" | "SURCHARGE"            = (kind  ?? originalKind  ?? "BONUS");
+  const effType:  "PERCENTAGE" | "FIXED_AMOUNT"    = (type  ?? originalType  ?? "PERCENTAGE");
+  const effValue: number | null                     = hasOverride ? value : (originalValue ?? null);
 
-  // Estado A — sin override.
-  if (!active) {
-    // Sin original tampoco → botón "+ Bonif./Recargo".
-    if (!originalText) {
-      return (
-        <button
-          type="button"
-          // Fase 4.2 — fuera del flujo TAB. El operador llega por click
-          // intencional, no como paso de navegación entre inputs.
-          tabIndex={-1}
-          disabled={disabled}
-          onClick={() => onChange({
-            adjustmentKind:  "BONUS",
-            adjustmentType:  "PERCENTAGE",
-            adjustmentValue: 0,
-          })}
-          className={cn(
-            "inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] uppercase tracking-wide",
-            "text-muted/70 hover:bg-surface2 hover:text-text",
-            disabled && "opacity-50 cursor-not-allowed",
-          )}
-          title={disabled ? READ_ONLY_TOOLTIP : "Agregar bonificación o recargo"}
-        >
-          + Bonif./Recargo
-        </button>
-      );
-    }
-    // Con original — chip clickeable que precarga el editor con esos valores
-    // si el operador quiere modificarlo. Cero matemática local.
-    const isBonus = originalKind === "BONUS";
-    const cls = isBonus
-      ? "text-emerald-600 dark:text-emerald-400"
-      : "text-amber-600 dark:text-amber-400";
-    return (
-      <button
-        type="button"
-        // Fase 4.2 — chip clickeable del original; entrada intencional por click.
-        tabIndex={-1}
-        disabled={disabled}
-        onClick={() => onChange({
-          adjustmentKind:  originalKind!,
-          adjustmentType:  originalType ?? "PERCENTAGE",
-          adjustmentValue: originalValue ?? 0,
-        })}
-        title={disabled
-          ? READ_ONLY_TOOLTIP
-          : "Ajuste de la ficha del artículo. Click para editarlo."}
-        className={cn(
-          "inline-flex flex-col items-end rounded px-1 py-0.5 text-[10px] hover:bg-surface2",
-          disabled && "opacity-70 cursor-help",
-        )}
-      >
-        <span className={cn("font-semibold tabular-nums", cls)}>
-          {originalText.kindWord}
-          {originalText.valuePart && (
-            <span className="ml-1 font-normal">{originalText.valuePart}</span>
-          )}
-        </span>
-        {originalText.amountPart && (
-          <span className={cn("text-[9px] tabular-nums leading-none", cls, "opacity-90")}>
-            {originalText.amountPart}
-          </span>
-        )}
-      </button>
-    );
-  }
-
-  const isBonus    = kind === "BONUS";
-  const isPercent  = type === "PERCENTAGE";
-  // Fase 2.2 — el kind ahora se representa con la palabra completa
-  // ("Bonif" / "Recargo") en lugar del símbolo "−"/"+", para que el
-  // operador entienda qué está aplicando sin tener que adivinar.
-  const kindWord   = isBonus ? "Bonif" : "Recargo";
-  const kindCls    = isBonus
+  const isBonus   = effKind === "BONUS";
+  const isPercent = effType === "PERCENTAGE";
+  const signCls   = isBonus
     ? "text-emerald-600 dark:text-emerald-400"
     : "text-amber-600 dark:text-amber-400";
-  const typeLabel  = isPercent ? "%" : "$";
 
-  // Fase 2.2 — cuando hay override Y existe original distinto, mostramos
-  // el original tachado debajo del editor.
-  const overrideDiffersFromOriginal = (() => {
-    if (!originalText) return false;
-    if (originalKind !== kind || originalType !== type) return true;
-    if ((originalValue ?? null) !== (value ?? null)) return true;
-    return false;
-  })();
+  // Cualquier change envía el trío completo para que el override quede
+  // consistente aún si arrancaba en null.
+  const apply = (patch: Partial<{
+    adjustmentKind:  "BONUS" | "SURCHARGE";
+    adjustmentType:  "PERCENTAGE" | "FIXED_AMOUNT";
+    adjustmentValue: number | null;
+  }>) => {
+    onChange({
+      adjustmentKind:  patch.adjustmentKind  ?? effKind,
+      adjustmentType:  patch.adjustmentType  ?? effType,
+      adjustmentValue: patch.adjustmentValue ?? effValue ?? 0,
+    });
+  };
+
+  const flipSign = () => apply({ adjustmentKind: isBonus ? "SURCHARGE" : "BONUS" });
+  const flipUnit = () => apply({ adjustmentType: isPercent ? "FIXED_AMOUNT" : "PERCENTAGE" });
+  const setValue = (v: number | null) => apply({ adjustmentValue: v ?? 0 });
+
+  // FIX oscilación flechitas — mismo patrón que MermaLabelEditor/Cantidad:
+  // commit DEBOUNCED vía `useOverrideNumber` en lugar de `setValue` síncrono
+  // por cada tick. El commit por tick re-renderizaba `TPNumberInput` con el
+  // `value` prop aún viejo (parent async) → su effect lo revertía y el valor
+  // oscilaba (10 → 10,5 → 10 → 10,5). `originalValue=null` → emite siempre el
+  // valor literal (misma semántica que el `setValue` directo). El sync del
+  // hook re-hidrata cuando cambia `effValue` real (toggle %/$, signo,
+  // preview/reset).
+  const { value: adjLocal, setValue: setAdjLocal } = useOverrideNumber(
+    effValue, null, (v) => setValue(v),
+  );
+
+  // FASE F25 — eliminado el render del "ajuste original tachado" debajo
+  // del editor. Aparecía por un segundo al editar mientras viajaba el
+  // preview y daba sensación de flash/glitch. La info del original sigue
+  // disponible via props para futuros consumidores; solo se removió el
+  // render visual.
+
+  // FIX — el impacto del ajuste es SIEMPRE el `lineAdjAmount` que emite el
+  // motor (`originalAmount`): passthrough en moneda BASE, ya = baseConvertida
+  // × %, correcto aún con conversión de moneda y tras edición inline (el
+  // preview se refetchea con el override aplicado y el motor reemite el
+  // dato). El path anterior usaba `currentAmount` (= lineCost − unitVal·qty)
+  // cuando había override: en líneas NO base eso MEZCLA monedas (lineCost en
+  // base vs unitVal en USD) y mostraba ~el total de la línea en lugar del
+  // impacto del 10%. Usar siempre el backend da paridad con el bloque
+  // read-only (Simulador == Factura). `currentAmount` queda deprecado.
+  void currentAmount;
+  const showAmount = originalAmount != null ? originalAmount : null;
+  const amountText = showAmount != null && Math.abs(Number(showAmount)) > 0
+    ? `${isBonus ? "−" : "+"}${currency} ${Math.abs(Number(showAmount)).toLocaleString("es-AR", {
+        minimumFractionDigits: 2, maximumFractionDigits: 2,
+      })}`
+    : null;
+
+  // FASE F11 — signo y unidad como prefix/suffix INTERACTIVOS del wrap.
+  // El wrap se ve como UN solo control compacto: `[− 11,00 %]` / `[+ 5,00 $]`.
+  // Los botones siguen siendo buttons (no decorativos): tabIndex=-1 los
+  // mantiene fuera del flujo TAB, pero responden a click.
+  // FASE F13 — buttons compactados a w-3.5 y el input ensanchado a w-[96px]
+  // para dar prioridad visual al número. Antes: w-4 + w-[60px], el "+/−" y
+  // "%/$" robaban espacio y el número quedaba truncado.
+  const signButton = (
+    <button
+      type="button"
+      tabIndex={-1}
+      disabled={disabled}
+      onClick={flipSign}
+      title={isBonus
+        ? "Bonificación (−). Click para cambiar a recargo (+)."
+        : "Recargo (+). Click para cambiar a bonificación (−)."}
+      aria-label={isBonus ? "Signo: bonificación" : "Signo: recargo"}
+      className={cn(
+        "h-5 w-3.5 rounded text-[12px] font-bold leading-none tabular-nums hover:bg-surface2",
+        signCls,
+        disabled && "opacity-50 cursor-not-allowed",
+      )}
+    >
+      {isBonus ? "−" : "+"}
+    </button>
+  );
+  const unitButton = (
+    <button
+      type="button"
+      tabIndex={-1}
+      disabled={disabled}
+      onClick={flipUnit}
+      title={isPercent ? `Porcentaje (toggle a ${currency || "$"})` : `Monto fijo (toggle a %)`}
+      aria-label={isPercent ? "Unidad: porcentaje" : "Unidad: monto fijo"}
+      className={cn(
+        "h-5 w-3.5 rounded text-[10px] font-semibold text-muted/85 hover:bg-surface2 hover:text-text",
+        disabled && "opacity-50 cursor-not-allowed",
+      )}
+    >
+      {isPercent ? "%" : "$"}
+    </button>
+  );
 
   return (
-    <div className="inline-flex flex-col items-end gap-0.5">
-      <div className="inline-flex items-center gap-0.5">
-        {/* Kind toggle — Bonif/Recargo como palabra (Fase 2.2).
-            Fase 4.2 — fuera del flujo TAB: el operador edita el valor con
-            teclado y cambia kind/type por click si quiere otra cosa. */}
-        <button
-          type="button"
-          tabIndex={-1}
-          disabled={disabled}
-          onClick={() => onChange({ adjustmentKind: isBonus ? "SURCHARGE" : "BONUS" })}
-          title={isBonus
-            ? "Bonificación activa (reduce). Click para cambiar a recargo."
-            : "Recargo activo (aumenta). Click para cambiar a bonificación."}
-          className={cn(
-            "h-5 rounded px-1 text-[9.5px] font-semibold uppercase tracking-tight tabular-nums hover:bg-surface2",
-            kindCls,
-            disabled && "opacity-50 cursor-not-allowed",
-          )}
-        >
-          {kindWord}
-        </button>
-        {/* Value */}
+    <div
+      data-adjustment-inline-editor
+      className="inline-flex flex-col items-end gap-0"
+    >
+      <PrefixedField
+        prefix={signButton}
+        suffix={unitButton}
+        prefixStatic={false}
+        suffixStatic={false}
+        interactive={!disabled}
+      >
         <CellNumberInput
-          value={value}
-          onChange={(v) => onChange({ adjustmentValue: v ?? 0 })}
+          value={adjLocal}
+          onChange={setAdjLocal}
           decimals={2}
-          step={isPercent ? 0.5 : 1}
+          // Step 1,00 para % y $ (antes 0,5 en %): saltos enteros estables.
+          step={1}
           readOnly={disabled}
-          widthClass="w-[60px]"
+          widthClass="w-[128px]"
+          noInputBg
         />
-        {/* Type toggle — Fase 4.2 fuera del flujo TAB. */}
-        <button
-          type="button"
-          tabIndex={-1}
-          disabled={disabled}
-          onClick={() => onChange({ adjustmentType: isPercent ? "FIXED_AMOUNT" : "PERCENTAGE" })}
-          title={isPercent ? `Porcentaje (toggle a ${currency || "$"})` : `Monto fijo (toggle a %)`}
-          className={cn(
-            "h-5 w-5 rounded text-[10px] font-semibold text-muted/85 hover:bg-surface2 hover:text-text",
-            disabled && "opacity-50 cursor-not-allowed",
-          )}
-        >
-          {typeLabel}
-        </button>
-        {/* Clear — Fase 4.2 fuera del flujo TAB. */}
-        <button
-          type="button"
-          tabIndex={-1}
-          disabled={disabled}
-          onClick={() => onChange({
-            adjustmentKind:  null,
-            adjustmentType:  null,
-            adjustmentValue: null,
-          })}
-          title="Quitar ajuste"
-          className={cn(
-            "h-5 w-5 rounded text-muted/60 hover:bg-surface2 hover:text-text",
-            disabled && "opacity-50 cursor-not-allowed",
-          )}
-        >
-          <XIcon size={11} className="mx-auto" />
-        </button>
-      </div>
-      {/* Original tachado cuando override difiere (Fase 2.2). */}
-      {overrideDiffersFromOriginal && originalText && (
-        <span
-          className="text-[9px] leading-none text-muted/65 tabular-nums line-through"
-          title="Ajuste original del artículo"
-        >
-          {originalText.kindWord}
-          {originalText.valuePart && <> {originalText.valuePart}</>}
-          {originalText.amountPart && <> · {originalText.amountPart}</>}
+      </PrefixedField>
+      {/* Monto signado debajo (display only) cuando el backend lo emite. */}
+      {amountText && (
+        <span className={cn("text-[10px] tabular-nums leading-tight px-0.5", signCls, "opacity-90")}>
+          {amountText}
         </span>
       )}
+      {/* FASE F25 — render del "Ajuste original del artículo" tachado
+          eliminado. Causaba flash visual al editar (parpadeaba mientras
+          viajaba el preview). El input mantiene el valor editado limpio
+          sin overlay legacy. */}
     </div>
   );
 }
@@ -621,12 +1154,15 @@ function AdjustmentEditor({
 
 function RowImpl({
   componentType, Icon, primary, secondary,
-  quantityCell, unitValueCell, mermaCell, adjustmentCell,
-  saleValueValue, saleValueText, totalValue, totalText,
+  quantityCell, unitValueCell, mermaOrAdjustmentCell,
+  unitValueCurrencyOverride, unitValueSubLine,
+  saleValueValue, saleValueText, totalValue, totalText, totalTooltip,
   manual, onResetRow, canResetRow,
   commercialView,
-  precioUnitVentaText, margenPctText, margenTone,
+  precioUnitVentaText, margenPctText, margenTone, margenTooltip,
   ventaLineaText, participacionText,
+  quantityUnitLabel, currencyLabel,
+  globalAdjustmentText, globalAdjustmentKind,
 }: {
   componentType:   ComponentTypeKey;
   Icon:            LucideIcon;
@@ -636,24 +1172,62 @@ function RowImpl({
   secondary?:      React.ReactNode;
   quantityCell:    React.ReactNode;
   unitValueCell:   React.ReactNode;
-  mermaCell:       React.ReactNode;
-  adjustmentCell:  React.ReactNode;
+  /** FASE 12.1 — celda fusionada Merma + Ajuste. El caller decide qué
+   *  inyectar según el tipo: METAL → `<CellNumberInput>` para merma %;
+   *  HECHURA/PRODUCT/SERVICE → `<AdjustmentEditor>` para bonif/recargo. */
+  mermaOrAdjustmentCell: React.ReactNode;
   /** Fase 2.1 — el valor numérico (no el texto) se pasa para detectar
    *  cambios y disparar el flash de highlight. */
   saleValueValue?: number | null;
   saleValueText?:  string | null;
   totalValue?:     number | null;
   totalText?:      string | null;
+  /** Tooltip opcional sobre la celda "Costo de Venta". Se usa cuando el monto
+   *  mostrado es derivado del `unifiedFactor` del artículo (modo derivado
+   *  MARGIN_TOTAL / PROPORTIONAL_COST), para diferenciarlo del lineSale
+   *  atribuido por línea por el backend. */
+  totalTooltip?:   string | null;
   manual:          boolean;
   onResetRow:      () => void;
   canResetRow:     boolean;
-  // MVP híbrido — campos comerciales solo cuando `commercialView`. Todos
-  // ya pre-formateados por el caller (passthrough; cero matemática nueva
-  // en este componente).
+  /** FASE 12.5 — etiqueta de unidad mostrada como SUB-LÍNEA tenue debajo
+   *  del input de Cantidad (antes vivía como sufijo dentro del input).
+   *  Ejemplos: "gr" (METAL), "un" (resto). */
+  quantityUnitLabel?: string;
+  /** FASE 12.5 — etiqueta de moneda mostrada INLINE antes del valor en
+   *  Costo unit. Ejemplos: "ARS", "USD". */
+  currencyLabel?: string;
+  /** Override de la etiqueta de moneda PARA la celda Costo unit. Se usa
+   *  cuando el cost line está en moneda distinta a la del comprobante: la
+   *  celda muestra el code original (USD) sobre el número original, en lugar
+   *  del code del documento. Sólo afecta esa celda — el resto sigue usando
+   *  `currencyLabel`. */
+  unitValueCurrencyOverride?: string | null;
+  /** Sub-línea informativa debajo del Costo unit. — equivalente unitario
+   *  en moneda del comprobante. Solo se renderea cuando aplica conversión
+   *  (cost line en moneda distinta). */
+  unitValueSubLine?: React.ReactNode | null;
+  /** FASE 12.11 — texto pre-formateado del ajuste global del documento
+   *  aplicado a esta línea (ej. "Aj. global −5%"). Se renderea como sub-
+   *  línea bajo "Margen" en la celda Costo Total. Si null/undefined, no
+   *  se renderea nada extra. El caller deriva esto desde
+   *  `meta.documentAdjustments.lineManualDiscount` (passthrough) — cero
+   *  matemática nueva. */
+  globalAdjustmentText?: string | null;
+  /** Tono ("BONUS"=verde, "SURCHARGE"=amber) para colorear el texto. */
+  globalAdjustmentKind?: "BONUS" | "SURCHARGE" | null;
+  // FASE 12.4 — `commercialView` deprecated (vista única). Los siguientes
+  // campos siguen llegando como props para no romper la API del Row ni
+  // los memos; cualquier prop nuevo se evalúa en otra parte. `margenPctText`
+  // ahora se renderea SIEMPRE como sub-línea debajo de "Costo Total".
   commercialView?: boolean;
   precioUnitVentaText?: string | null;
   margenPctText?:       string | null;
   margenTone?:          string;
+  /** Tooltip opcional sobre la celda Margen. Se usa cuando el % mostrado es
+   *  derivado del `unifiedFactor` del artículo (modo derivado MARGIN_TOTAL /
+   *  PROPORTIONAL_COST), para diferenciarlo del margen real por línea. */
+  margenTooltip?:       string | null;
   ventaLineaText?:      string | null;
   participacionText?:   string | null;
 }) {
@@ -663,16 +1237,23 @@ function RowImpl({
   // bg-emerald que se desvanece (transition-colors).
   const flashSale  = useFlashOnChange(saleValueValue ?? null);
   const flashTotal = useFlashOnChange(totalValue ?? null);
+  // FASE F23 — el `gridTemplateColumns` se inyecta vía context para que
+  // header + filas + footers compartan widths configurables sin tener
+  // que pasar la prop por cada layer (rompería los memos).
+  const gridTpl = React.useContext(TableLayoutContext);
 
   return (
     <div
       className={cn(
-        commercialView ? TABLE_COLS_CLS_COMMERCIAL : TABLE_COLS_CLS,
+        TABLE_COLS_CLS,
         // Fase 2.1 — padding vertical reducido (py-1 vs py-1.5 anterior).
-        "px-1.5 py-1 text-[11px]",
+        // FASE 12.7 — `group` habilita hover-coordinado entre celdas.
+        "group px-1.5 py-1 text-[11px] rounded-md transition-colors duration-150",
+        "hover:bg-slate-500/[0.04] dark:hover:bg-slate-200/[0.04]",
         // Indicador lateral muy sutil cuando la fila tiene override manual.
         manual && "bg-amber-500/[0.025]",
       )}
+      style={{ gridTemplateColumns: gridTpl }}
     >
       <span
         className={cn("inline-flex h-5 w-5 items-center justify-center rounded ring-1", cls.bg, cls.ring)}
@@ -701,50 +1282,171 @@ function RowImpl({
           )}
         </div>
         {secondary && (
-          <div className="text-[10px] text-muted/75 leading-tight truncate">{secondary}</div>
+          <div className="text-[10px] text-muted/55 leading-none truncate -mt-px">{secondary}</div>
         )}
       </div>
-      <div className="text-right tabular-nums text-text/90">{quantityCell}</div>
-      <div className="text-right tabular-nums text-text/90">{unitValueCell}</div>
-      <div className="text-right tabular-nums text-text/90">{mermaCell}</div>
-      <div className="flex justify-center tabular-nums">{adjustmentCell}</div>
-      <div
-        className={cn(
-          "text-right tabular-nums font-medium text-text rounded transition-colors duration-500 px-1",
-          flashSale,
-        )}
-      >
-        {saleValueText ?? "—"}
+      {/* FASE 12.25 — Cantidad: valor + unidad INLINE a la derecha.
+          FASE F21 — refactor: Cantidad y Unidad pasan a columnas separadas.
+          La celda Cantidad ahora contiene SOLO el input (sin texto de
+          unidad al lado). */}
+      <div className="flex items-baseline justify-center tabular-nums text-text/90">
+        {quantityCell}
       </div>
+      {/* FASE F21 — celda Unidad independiente. Texto compacto, gris medio,
+          aria-hidden + pointer-events-none (no focusable, no clickeable). */}
+      <div className="flex items-baseline justify-center">
+        {quantityUnitLabel && (
+          <span
+            aria-hidden="true"
+            className="select-none pointer-events-none text-[10px] leading-none text-muted/55"
+          >
+            {quantityUnitLabel}
+          </span>
+        )}
+      </div>
+      {/* FASE 12.24 — Costo unit. con grid interno estable de 2 columnas:
+          col1 = moneda (auto, justify-end), col2 = valor (96px fijo, ancho
+          del CellNumberInput + margen para arrows).
+          FASE F22 — la sub-línea Merma/Ajuste fue sacada de esta celda y
+          pasa a vivir en su propia columna (`mermaOrAdjustmentCell` a la
+          derecha). Costo unit. ahora muestra SOLO el valor unitario. */}
+      <div className="flex flex-col items-center tabular-nums text-text/90 leading-tight">
+        <div className="inline-grid grid-cols-[auto_96px] items-center gap-x-0.5">
+          <span
+            aria-hidden={!(unitValueCurrencyOverride ?? currencyLabel) || undefined}
+            className="justify-self-end text-[10px] font-semibold text-muted/70 tabular-nums select-none"
+          >
+            {unitValueCurrencyOverride ?? currencyLabel ?? ""}
+          </span>
+          <div className="min-w-0 flex justify-end">{unitValueCell}</div>
+        </div>
+        {unitValueSubLine && (
+          <div className="text-[9px] italic text-muted/60 leading-tight mt-0.5 tabular-nums">
+            {unitValueSubLine}
+          </div>
+        )}
+      </div>
+      {/* FASE F22 — celda Merma/Ajuste independiente. Para METAL renderea
+          el MermaLabelEditor (input siempre visible con sufijo %); para
+          HECHURA/PRODUCT/SERVICE renderea el AdjustmentLabelEditor (signo +
+          valor + unidad %/$ en un único control compacto). El caller
+          inyecta el ReactNode correspondiente vía `mermaOrAdjustmentCell`. */}
+      <div data-merma-ajuste-cell className="flex justify-center tabular-nums leading-tight">
+        {mermaOrAdjustmentCell}
+      </div>
+      {/* FASE F23/F24 — Celda COSTO TOTAL queda con SOLO el importe principal.
+          El % y el delta del margen se movieron a la columna Margen (a la
+          DERECHA de Costo Total, antes de Costo de Venta). El
+          `globalAdjustmentText` (ajuste global del documento, no del
+          artículo) se mantiene acá como sub-línea opcional. */}
+      <div className="text-center leading-tight">
+        <div
+          className={cn(
+            "tabular-nums font-medium text-text rounded transition-colors duration-500 px-1",
+            flashSale,
+          )}
+        >
+          {saleValueText ?? "—"}
+        </div>
+        {/* FASE 12.11 — sub-línea opcional del ajuste global de la línea. */}
+        {globalAdjustmentText && (
+          <div
+            className={cn(
+              "text-[9px] tabular-nums leading-tight",
+              globalAdjustmentKind === "SURCHARGE"
+                ? "text-amber-600/80 dark:text-amber-400/80"
+                : "text-emerald-600/75 dark:text-emerald-400/75",
+            )}
+            title="Ajuste global aplicado a la línea del documento"
+          >
+            {globalAdjustmentText}
+          </div>
+        )}
+      </div>
+      {/* FASE F23/F24 — Celda MARGEN entre Costo Total y Costo de Venta.
+          Contiene el porcentaje del margen y el importe del impacto
+          monetario (delta entre Costo de Venta y Costo Total).
+          Reglas:
+            · Porcentaje arriba (`+10,0%` / `-5,0%`).
+            · Importe abajo (`+ARS X` / `-ARS X`).
+            · Verde si positivo, rose si negativo, "—" si no hay datos.
+          Display only — no recalcula comercialmente. */}
+      <div data-margin-cell className="text-center leading-tight">
+        {margenPctText != null ? (
+          <div
+            className={cn(
+              "text-[11px] font-semibold tabular-nums",
+              margenPctText.startsWith("-")
+                ? "text-rose-500/80 dark:text-rose-400/80"
+                : "text-emerald-600/85 dark:text-emerald-400/85",
+              // Pista visual via cursor en hover cuando hay tooltip — sin
+              // subrayado para mantener la celda limpia.
+              margenTooltip && "cursor-help",
+            )}
+            title={margenTooltip ?? undefined}
+            data-margin-source={margenTooltip ? "unified" : "line"}
+          >
+            {margenPctText.startsWith("-") ? "" : "+"}{margenPctText}
+          </div>
+        ) : (
+          <div className="text-[10px] text-muted/40">—</div>
+        )}
+        {(() => {
+          // UTILIDAD de línea = Venta de línea − Costo total de línea.
+          // Ambos operandos vienen YA en base "total de línea" (escalados ×
+          // cantidad): `totalValue` = venta línea, `saleValueValue` = costo
+          // total línea. Antes `totalValue` llegaba sin escalar (venta
+          // unitaria) y el importe se volvía rojo/negativo al subir la
+          // cantidad pese a margen positivo. Display puro: no recalcula
+          // precios, solo resta dos valores ya provistos por el motor.
+          // El signo/color es ahora coherente con el % de margen.
+          if (
+            saleValueValue == null || totalValue == null ||
+            !Number.isFinite(saleValueValue) || !Number.isFinite(totalValue)
+          ) return null;
+          const utilidad = Number(totalValue) - Number(saleValueValue);
+          if (!Number.isFinite(utilidad) || Math.abs(utilidad) < 0.005) return null;
+          const isNeg = utilidad < 0;
+          const sign  = isNeg ? "−" : "+";
+          const text  = `${sign}${currencyLabel ?? ""} ${Math.abs(utilidad).toLocaleString("es-AR", {
+            minimumFractionDigits: 2,
+            maximumFractionDigits: 2,
+          })}`.trim();
+          return (
+            <div
+              data-margin-amount-impact
+              className={cn(
+                "text-[10px] tabular-nums leading-tight",
+                isNeg
+                  ? "text-rose-500/80 dark:text-rose-400/80"
+                  : "text-emerald-600/85 dark:text-emerald-400/85",
+              )}
+              title="Utilidad de la línea (Venta de línea − Costo total de línea)"
+            >
+              {text}
+            </div>
+          );
+        })()}
+      </div>
+      {/* FASE 12.2 — "Costo de Venta" (antes "Total"). Mismo dato (totalText). */}
+      {/* FASE 12.22 — centrado para coincidir con el header centrado. */}
       <div
         className={cn(
-          "text-right tabular-nums font-semibold text-emerald-600 dark:text-emerald-400 rounded transition-colors duration-500 px-1",
+          "text-center tabular-nums font-semibold text-emerald-600 dark:text-emerald-400 rounded transition-colors duration-500 px-1",
           flashTotal,
+          // Pista via cursor en hover cuando hay tooltip — sin subrayado
+          // para mantener la celda limpia.
+          totalTooltip && totalText != null && "cursor-help",
         )}
+        title={totalTooltip ?? undefined}
+        data-sale-source={totalTooltip ? "unified" : "line"}
       >
         {totalText ?? "—"}
       </div>
-      {commercialView && (
-        <>
-          {/* Precio unit. venta — solo cuando es canónico (count===1).
-              "—" cuando el caller no pudo resolverlo sin matemática nueva. */}
-          <div className="text-right tabular-nums font-medium text-emerald-700/90 dark:text-emerald-300/90">
-            {precioUnitVentaText ?? "—"}
-          </div>
-          {/* Margen % — derivación trivial sobre cost+sale del motor. */}
-          <div className={cn("text-right tabular-nums font-semibold", margenTone ?? "text-muted/60")}>
-            {margenPctText ?? "—"}
-          </div>
-          {/* Venta línea — `precioUnitVenta × cantidad` (passthrough sale). */}
-          <div className="text-right tabular-nums font-semibold text-emerald-700 dark:text-emerald-300">
-            {ventaLineaText ?? "—"}
-          </div>
-          {/* Participación — display-only, lineCost / Σ lineCost × 100. */}
-          <div className="text-right tabular-nums text-muted/85 text-[10px]">
-            {participacionText ?? "—"}
-          </div>
-        </>
-      )}
+      {/* FASE 12.2 — "P. unit venta", "Venta línea" y "Particip." quedan
+          ocultos visualmente. Los textos (precioUnitVentaText / ventaLineaText
+          / participacionText) siguen llegando como props para no romper la
+          API del Row ni los memos; simplemente no se rendean. */}
       <div className="flex justify-center">
         <button
           type="button"
@@ -756,7 +1458,12 @@ function RowImpl({
           title={canResetRow ? "Restaurar esta fila" : "Sin overrides en esta fila"}
           className={cn(
             "h-5 w-5 rounded text-muted/60 hover:bg-surface2 hover:text-text",
-            !canResetRow && "opacity-30 cursor-not-allowed",
+            // FASE 12.7 — acciones laterales solo en hover/focus de la fila.
+            // Limpia visualmente la tabla: las filas sin manipulación reciente
+            // no muestran iconos compitiendo con los datos.
+            "opacity-0 transition-opacity",
+            "group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100",
+            !canResetRow && "cursor-not-allowed group-hover:opacity-40",
           )}
         >
           <RotateCcw size={11} className="mx-auto" />
@@ -795,11 +1502,15 @@ const Row = React.memo(RowImpl, (prev, next) => {
   if (prev.totalValue      !== next.totalValue)      return false;
   if (prev.saleValueText   !== next.saleValueText)   return false;
   if (prev.totalText       !== next.totalText)       return false;
+  if (prev.totalTooltip    !== next.totalTooltip)    return false;
+  if (prev.unitValueCurrencyOverride !== next.unitValueCurrencyOverride) return false;
+  if (prev.unitValueSubLine          !== next.unitValueSubLine)          return false;
   // MVP híbrido — props comerciales.
   if (prev.commercialView      !== next.commercialView)      return false;
   if (prev.precioUnitVentaText !== next.precioUnitVentaText) return false;
   if (prev.margenPctText       !== next.margenPctText)       return false;
   if (prev.margenTone          !== next.margenTone)          return false;
+  if (prev.margenTooltip       !== next.margenTooltip)       return false;
   if (prev.ventaLineaText      !== next.ventaLineaText)      return false;
   if (prev.participacionText   !== next.participacionText)   return false;
   // primary / secondary / *Cell son JSX nodes derivados de los primitivos
@@ -977,6 +1688,117 @@ function CostAdjustmentBlock({
   );
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// CostAdjustmentDetailSection — F20
+// Sección compacta al final del card con el detalle del ajuste global:
+//
+//   AJUSTE GLOBAL
+//   Costo antes del ajuste: AR$ X
+//   Bonificación 5%: −AR$ Y     (verde)
+//   Costo total: AR$ Z          (= Valor de costo del header)
+//
+// Display only. Pasa por:
+//   · `data` = `composition.costAdjustment` (kind/type/value/amount).
+//   · `costTotalFinal` = `totalComponents` (suma post-ajuste = Valor de costo).
+// "Costo antes del ajuste" se deriva visualmente cuando el motor no emite el
+// dato explícito:
+//   · BONUS:     antes = total + amount  (la bonif redujo, antes era mayor)
+//   · SURCHARGE: antes = total − amount  (el recargo sumó, antes era menor)
+// Cero matemática comercial — solo formato.
+// Si `data?.kind == null` → no renderea (silencio).
+// ─────────────────────────────────────────────────────────────────────────────
+function CostAdjustmentDetailSection({
+  data, costTotalFinal, currency,
+}: {
+  data: {
+    kind:   "BONUS" | "SURCHARGE" | null;
+    type:   "PERCENTAGE" | "FIXED_AMOUNT" | null;
+    value:  number | null;
+    amount: number | null;
+  } | null | undefined;
+  /** Costo final post-ajuste (mismo valor que el header "Valor de costo"). */
+  costTotalFinal: number | null;
+  currency: string;
+}) {
+  if (!data || data.kind == null) return null;
+  const isBonus   = data.kind === "BONUS";
+  const isPercent = data.type === "PERCENTAGE";
+  const sign      = isBonus ? "−" : "+";
+  const cls       = isBonus
+    ? "text-emerald-600 dark:text-emerald-400"
+    : "text-amber-600 dark:text-amber-400";
+  const kindWord  = isBonus ? "Bonificación" : "Recargo";
+
+  // Monto del ajuste (motor) y costo antes del ajuste (derivación visual).
+  const amount = data.amount != null && Number.isFinite(data.amount)
+    ? Math.abs(Number(data.amount))
+    : null;
+  const costoAntes = (() => {
+    if (costTotalFinal == null || !Number.isFinite(costTotalFinal)) return null;
+    if (amount == null) return null;
+    return isBonus ? costTotalFinal + amount : costTotalFinal - amount;
+  })();
+
+  // Texto del label del ajuste: "Bonificación 5%" / "Recargo $1.000".
+  const adjLabel = (() => {
+    if (isPercent && data.value != null && Number.isFinite(data.value)) {
+      const pct = Number(data.value).toLocaleString("es-AR", {
+        minimumFractionDigits: 0,
+        maximumFractionDigits: 2,
+      });
+      return `${kindWord} ${pct}%`;
+    }
+    if (data.value != null && Number.isFinite(data.value)) {
+      return `${kindWord} ${currency} ${Math.abs(Number(data.value)).toLocaleString("es-AR", {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2,
+      })}`;
+    }
+    return kindWord;
+  })();
+
+  const amountText = amount != null
+    ? `${sign}${currency} ${amount.toLocaleString("es-AR", {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2,
+      })}`
+    : null;
+
+  const fmt = (v: number) => `${currency} ${v.toLocaleString("es-AR", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })}`;
+
+  return (
+    <div
+      data-cost-adjustment-detail
+      className="mt-2 flex flex-col gap-0.5 px-2 py-1.5 text-[11px] rounded-sm bg-slate-500/[0.04] dark:bg-slate-500/[0.06]"
+    >
+      <span className="text-[10px] font-semibold uppercase tracking-wide text-muted/70">
+        Ajuste global
+      </span>
+      {costoAntes != null && (
+        <div className="flex items-baseline justify-between gap-2">
+          <span className="text-muted/70">Costo antes del ajuste:</span>
+          <span className="tabular-nums text-text/85">{fmt(costoAntes)}</span>
+        </div>
+      )}
+      {amountText && (
+        <div className="flex items-baseline justify-between gap-2">
+          <span className={cn("font-medium", cls)}>{adjLabel}:</span>
+          <span className={cn("tabular-nums font-semibold", cls)}>{amountText}</span>
+        </div>
+      )}
+      {costTotalFinal != null && Number.isFinite(costTotalFinal) && (
+        <div className="flex items-baseline justify-between gap-2 border-t border-border/20 pt-0.5">
+          <span className="font-semibold text-text/85">Costo total:</span>
+          <span className="tabular-nums font-semibold text-text/90">{fmt(costTotalFinal)}</span>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function GlobalAdjustmentsBlock({
   data, currency,
 }: {
@@ -1025,9 +1847,27 @@ export function SaleCompositionEditableGrid({
   line, currency,
   onApply, onClear, onClose,
   unitNameByCode,
+  currencyById,
   globalAdjustments,
   previewLoading,
 }: SaleCompositionEditableGridProps) {
+  // FASE F23 — state de widths configurables (persistido en localStorage).
+  // Lazy init para que solo se lea el storage en mount; cambios en
+  // `widths` se persisten en un useEffect.
+  const [colWidths, setColWidths] = React.useState<number[]>(() => loadPersistedColWidths());
+  React.useEffect(() => {
+    if (typeof window === "undefined" || !window.localStorage) return;
+    try {
+      window.localStorage.setItem(COL_WIDTHS_STORAGE, JSON.stringify(colWidths));
+    } catch {
+      // Ignored (e.g. storage quota / SSR).
+    }
+  }, [colWidths]);
+  const gridTpl = React.useMemo(
+    () => buildGridTemplateColumns(colWidths),
+    [colWidths],
+  );
+
   const meta        = line.pricingMeta ?? {};
   const composition = (meta.composition ?? null) as any;
 
@@ -1036,12 +1876,76 @@ export function SaleCompositionEditableGrid({
   const products  = (composition?.products  ?? []) as any[];
   const services  = (composition?.services  ?? []) as any[];
 
+  // ── Margen "no atribuible por línea" — detector display-only ─────────────
+  // El motor backend emite `hechuraMarginPct = 0` (y `metalMarginPct = 0`) de
+  // forma explícita en los modos derivados de breakdown — PROPORTIONAL_COST,
+  // SERVICE_AS_HECHURA, MANUAL_AS_HECHURA, COMBO_COMPONENTS — porque en esos
+  // modos no existe un margen explícito por componente: el margen real es
+  // unificado a nivel total/artículo. Ver `pricing-engine.sale.ts:2770-2773`
+  // y `pricing-composition.ts:936-956`.
+  //
+  // En ese caso, `composition.hechuras[i].lineSale` colapsa a `lineCost`
+  // (porque `hechuraSaleFactor = 1 + 0/100 = 1`) y el cálculo display
+  // `(lineSale − lineCost)/lineCost × 100` daría 0,0% engañoso. Detectamos
+  // el caso comparando `metal/hechuraSale` agregado contra `metal/hechuraCost`:
+  // si difieren con `pct === 0`, sabemos que hay margen real pero el motor
+  // NO lo distribuye por línea. La grilla mostrará "—" en lugar de "+0,0%".
+  //
+  // Caso edge respetado: lista METAL_HECHURA con margen 0% declarado a
+  // propósito → `sale === cost` → este detector da false → seguimos
+  // mostrando "0,0%" (que en ese contexto sí es la verdad).
+  //
+  // NO recalcula precios — sólo decide si mostrar el % o "—". POLICY R4.5.
+  const isHechuraMarginUnattributable = (() => {
+    const mpct  = Number((meta as any).hechuraMarginPct);
+    const hcost = Number((meta as any).hechuraCost);
+    const hsale = Number((meta as any).hechuraSale);
+    return Number.isFinite(mpct) && Math.abs(mpct) < 0.001
+        && Number.isFinite(hcost) && hcost > 0.001
+        && Number.isFinite(hsale) && Math.abs(hsale - hcost) > 0.005;
+  })();
+  const isMetalMarginUnattributable = (() => {
+    const mpct  = Number((meta as any).metalMarginPct);
+    const mcost = Number((meta as any).metalCost);
+    const msale = Number((meta as any).metalSale);
+    return Number.isFinite(mpct) && Math.abs(mpct) < 0.001
+        && Number.isFinite(mcost) && mcost > 0.001
+        && Number.isFinite(msale) && Math.abs(msale - mcost) > 0.005;
+  })();
+
+  // ── Factor unificado del artículo (display-only) ────────────────────────
+  // Cuando el motor opera en modo derivado (MARGIN_TOTAL / PROPORTIONAL_COST /
+  // etc.) emite `metalMarginPct = hechuraMarginPct = 0` a propósito y los
+  // `lineSale` por componente colapsan al `lineCost`. La columna "Margen"
+  // quedaba en "—" para cada fila aunque el artículo SÍ tiene margen real
+  // (basePrice ≠ unitCost). Mismo criterio que el Simulador
+  // (`PriceBaseSection` / `PriceCompositionCards`): reusamos el ratio
+  // `basePrice / unitCost` que ya emite el motor como passthrough y lo
+  // mostramos como margen visual unificado en filas colapsadas.
+  // Σ(lineCost × unifiedFactor) === basePrice por construcción del motor en
+  // los modos derivados (paridad agregada).
+  // Es display puro — no recalcula precios ni reemplaza `lineSale` real.
+  const unifiedFactor: number | null = (() => {
+    const uc = Number((meta as any).unitCost ?? 0);
+    const bp = Number((meta as any).basePrice ?? 0);
+    if (!Number.isFinite(uc) || uc <= 0.001) return null;
+    if (!Number.isFinite(bp) || bp <= 0.001) return null;
+    return bp / uc;
+  })();
+
   // MVP híbrido (Print 2) — toggle vista costo / vista comercial.
   // OFF por default: la grilla muestra solo composición de costo (Print 1).
   // ON: agrega 4 columnas comerciales con sale-side SOLO cuando es canónico
   // (count===1 para METAL/HECHURA). PRODUCT/SERVICE quedan en "—" porque
   // el motor no descompone su sale-side per-item. Cero matemática nueva.
-  const [commercialView, setCommercialView] = useState(false);
+  // FASE 12.4 — vista única (sin switch). Antes había useState(false) y una
+  // pill que alternaba entre "Vista costo" y "Vista comercial". Ahora la
+  // tabla siempre renderea el modo "comercial" (con margen embebido en
+  // Costo Total). Mantenemos el binding por compatibilidad con los renderers
+  // que aún pasan `commercialView={commercialView}` al Row — el prop ya no
+  // afecta el JSX (RowImpl lo ignora), pero evitamos tener que tocar las
+  // 4 firmas de renderers internos.
+  const commercialView = true;
 
   // Suma de costos para "Participación %". Display-only — derivación trivial
   // sobre datos del motor (lineCost/totalValue de cada cost-line).
@@ -1066,19 +1970,70 @@ export function SaleCompositionEditableGrid({
     return [];
   })();
 
+  // BUGFIX (unidades mezcladas) — `applyCostLinePatch` se invoca también
+  // desde el commit con debounce de `useOverrideNumber`, cuyo `useEffect`
+  // tiene `onCommit` FUERA de deps (eslint-disable). Ese closure es STALE:
+  // captura el `activeCostLineOverrides` de un render viejo. Al editar una
+  // línea con unidad distinta se dispara un preview que recomputa la
+  // composición del grupo → cambia `initialValue` de las otras filas → el
+  // sync effect re-dispara sus commits con el `onCommit` viejo, que
+  // mergearía sobre un array de overrides DESACTUALIZADO y borraría las
+  // cantidades ya editadas de las otras líneas.
+  //
+  // Solución: el merge SIEMPRE se hace contra el array MÁS RECIENTE (ref),
+  // nunca contra el snapshot del render. Así cada patch preserva todos los
+  // overrides previos y solo toca el costLineId editado. Indexación por
+  // costLineId se mantiene en `patchCostLineOverride` (sin cambios).
+  const activeOverridesRef = useRef<CostLineOverride[]>(activeCostLineOverrides);
+  // Mantener el ref con el array MÁS RECIENTE. Se actualiza en effect (no en
+  // render — regla react-hooks). Seguro: el commit de `useOverrideNumber`
+  // está debounced (250ms) y los effects corren mucho antes, así que el ref
+  // ya está fresco cuando un commit (incluso con closure stale) lo lee.
+  useEffect(() => {
+    activeOverridesRef.current = activeCostLineOverrides;
+  }, [activeCostLineOverrides]);
+
   function applyCostLinePatch(
     costLineId: string,
     type:       CostLineOverride["type"],
     patch:      Partial<Omit<CostLineOverride, "costLineId" | "type">>,
   ) {
-    const next = patchCostLineOverride(activeCostLineOverrides, costLineId, type, patch);
+    const next = patchCostLineOverride(activeOverridesRef.current, costLineId, type, patch);
     onApply({ costLineOverrides: next });
   }
 
   function resetCostLine(costLineId: string) {
-    const next = activeCostLineOverrides.filter(o => o?.costLineId !== costLineId);
+    const next = activeOverridesRef.current.filter(o => o?.costLineId !== costLineId);
     onApply({ costLineOverrides: next });
   }
+
+  // FASE 12.11 — derivación display-only del ajuste global de la línea del
+  // documento (`pricingMeta.documentAdjustments.lineManualDiscount`). Es la
+  // ÚNICA pieza de "ajuste global" que el motor backend emite a nivel de
+  // línea de Factura hoy; el resto (canal, cupón, payment, shipping,
+  // globalDiscount del documento) son agregados puros sin breakdown
+  // per-componente. Este texto se muestra como sub-línea bajo "Margen" en
+  // CADA fila del grid (todas comparten el mismo ajuste de línea).
+  //
+  // GAP DE BACKEND: para mostrar UN ajuste global *prorrateado por componente*
+  // se necesitaría que el motor emita `componentAdjustmentBreakdown[]` con
+  // su porción por costLineId. Hoy no existe — F1.5 deuda.
+  const lineGlobalAdj = (() => {
+    const md: any = (meta as any).documentAdjustments?.lineManualDiscount;
+    if (!md || md.amount == null || md.amount === 0) return null;
+    const sign = md.kind === "SURCHARGE" ? "+" : "−";
+    if (md.valuePct != null && Number.isFinite(Number(md.valuePct))) {
+      const pct = Number(md.valuePct).toLocaleString("es-AR", {
+        minimumFractionDigits: 1, maximumFractionDigits: 2,
+      });
+      return { text: `Aj. global ${sign}${pct}%`, kind: md.kind as "BONUS" | "SURCHARGE" };
+    }
+    // Sin pct (modo AMOUNT) → mostrar solo signo + monto bruto del ajuste.
+    const amt = Math.abs(Number(md.amount)).toLocaleString("es-AR", {
+      minimumFractionDigits: 2, maximumFractionDigits: 2,
+    });
+    return { text: `Aj. global ${sign}${currency} ${amt}`, kind: md.kind as "BONUS" | "SURCHARGE" };
+  })();
 
   function handleClearAll() {
     // Limpia explícitamente el array Y los legacy. El backend recalcula sin
@@ -1112,10 +2067,14 @@ export function SaleCompositionEditableGrid({
   const totalForRow = (saleVal: number | null) =>
     saleVal != null && qtyLine > 1 ? saleVal * qtyLine : saleVal;
 
+  // FASE 12.5b — `fallback` se usa también cuando el código existe pero el
+  // catálogo no lo mapea (antes devolvía el código crudo, ej. "g"). Esto
+  // permite que la sub-línea de Cantidad muestre siempre un nombre amigable
+  // ("Gramos", "Unidades") aunque el tenant no haya populado `unitNameByCode`.
   const resolveUnitName = (code: string | null | undefined, fallback: string): string => {
     if (!code) return fallback;
     const name = unitNameByCode?.get(code);
-    return name ?? code;
+    return name ?? fallback;
   };
 
   // MVP híbrido — helper que arma las 4 cells comerciales de una fila.
@@ -1129,10 +2088,22 @@ export function SaleCompositionEditableGrid({
     lineCost:      number | null,
     saleLineValue: number | null,
     qtyComp:       number | null,
+    // Cuando true, indica que el motor backend NO atribuye margen a esta
+    // línea (modo derivado: MARGIN_TOTAL / PROPORTIONAL_COST / etc.) — el
+    // `lineSale` viene colapsado al `lineCost`. Si tenemos un factor unificado
+    // global (`unifiedFactorForRow != null`), lo usamos para mostrar el margen
+    // visual del artículo en lugar de "—". Si no hay factor unificado, caemos
+    // a "—" para evitar mostrar "+0,0%" engañoso.
+    marginUnattributable: boolean = false,
+    // Factor unificado del artículo (basePrice/unitCost). Solo se usa como
+    // fallback display cuando `marginUnattributable` es true y el % calculado
+    // da ≈ 0 (lineSale colapsado). Display puro — no reemplaza `lineSale` real.
+    unifiedFactorForRow: number | null = null,
   ): {
     precioUnitVentaText: string | null;
     margenPctText:       string | null;
     margenTone:          string;
+    margenTooltip:       string | null;
     ventaLineaText:      string | null;
     participacionText:   string | null;
   } {
@@ -1142,22 +2113,14 @@ export function SaleCompositionEditableGrid({
         && qtyComp != null && Number.isFinite(qtyComp) && qtyComp > 0) {
       precioUnitVentaText = fmt(saleLineValue / qtyComp);
     }
-    // Margen % = (sale - cost) / cost × 100. Solo cuando ambos válidos.
-    let margenPctText: string | null = null;
-    let margenPct: number | null = null;
-    if (lineCost != null && Number.isFinite(lineCost) && lineCost > 0
-        && saleLineValue != null && Number.isFinite(saleLineValue)) {
-      margenPct = ((saleLineValue - lineCost) / lineCost) * 100;
-      // Formato es-AR: coma decimal para consistencia con `fmt()` del resto.
-      margenPctText = `${margenPct.toFixed(1).replace(".", ",")}%`;
-    }
-    const margenTone = (() => {
-      if (margenPct == null) return "text-muted/60";
-      if (margenPct >= 40)   return "text-emerald-600 dark:text-emerald-400";
-      if (margenPct >= 15)   return "text-text";
-      if (margenPct >  0)    return "text-amber-600 dark:text-amber-400";
-      return "text-red-500";
-    })();
+    // Margen — helper compartido (también usado por el Simulador a futuro).
+    const margin = resolveMarginForRowDisplay(
+      lineCost,
+      saleLineValue,
+      marginUnattributable,
+      unifiedFactorForRow,
+    );
+    const { margenPctText, margenTone, margenTooltip } = margin;
     // Venta línea = sale × line.quantity (mismo patrón que `totalForRow` de cost).
     let ventaLineaText: string | null = null;
     if (saleLineValue != null && Number.isFinite(saleLineValue)) {
@@ -1170,7 +2133,7 @@ export function SaleCompositionEditableGrid({
       const part = (lineCost / totalCostForParticipation) * 100;
       participacionText = `${part.toFixed(1).replace(".", ",")}%`;
     }
-    return { precioUnitVentaText, margenPctText, margenTone, ventaLineaText, participacionText };
+    return { precioUnitVentaText, margenPctText, margenTone, margenTooltip, ventaLineaText, participacionText };
   }
 
   // Sale-side per-cost-line ÚNICAMENTE cuando es canónico:
@@ -1216,6 +2179,7 @@ export function SaleCompositionEditableGrid({
   const flashHeaderSale = useFlashOnChange(headerSaleTotal);
 
   return (
+    <TableLayoutContext.Provider value={gridTpl}>
     <div className="space-y-2" data-testid="sale-composition-editable-grid">
       {/* ── Header ────────────────────────────────────────────────────── */}
       <div className="flex items-center justify-between gap-2">
@@ -1240,10 +2204,15 @@ export function SaleCompositionEditableGrid({
           )}
           {showTotalSum && (
             <span className="ml-2 normal-case text-muted/60">
-              {/* Fase 2.6.2 — el label "Total:" era ambiguo (sugería que
-                  coincidía con el precio del artículo). Ahora es
-                  "Componentes:" — es la suma de cost lines. */}
-              · Componentes:{" "}
+              {/* FASE F14 — "Componentes:" renombrado a "Valor de costo:"
+                  para hablar el mismo lenguaje que el resto del flujo
+                  comercial. La suma sigue siendo la misma (cost lines).
+                  FASE F20 — el ajuste global del artículo dejó de mostrarse
+                  inline en el header. Su detalle (antes / bonif|recargo /
+                  total) vive ahora en la sección compacta al final del
+                  card (`<CostAdjustmentDetailSection>`). El header solo
+                  muestra el costo final ya ajustado. */}
+              · Valor de costo:{" "}
               <span className={cn(
                 "font-semibold text-text/90 tabular-nums rounded px-1 transition-colors duration-500",
                 flashTotal,
@@ -1252,13 +2221,31 @@ export function SaleCompositionEditableGrid({
               </span>
             </span>
           )}
-          {/* Fase 2.6.2 — Valor de venta neto inline en header. Mismo
-              campo que el KPI Rentabilidad (basePrice × qty). Fase 2.6.3:
-              label clarificado a "Valor de venta neto" para distinguir
-              que NO incluye impuestos. */}
+          {/* FASE F17 — "Costo con impuestos" entre "Valor de costo" y
+              "Valor de venta". Solo se muestra si el backend emitió
+              `costTaxAmount > 0` (passthrough; cero matemática FE). */}
+          {(() => {
+            const taxAmt = (meta as any)?.costTaxAmount;
+            const withTax = (meta as any)?.costWithTax;
+            const parsed = taxAmt != null ? parseFloat(String(taxAmt)) : 0;
+            if (!Number.isFinite(parsed) || parsed <= 0) return null;
+            const withTaxNum = withTax != null ? parseFloat(String(withTax)) : null;
+            if (withTaxNum == null || !Number.isFinite(withTaxNum)) return null;
+            return (
+              <span className="ml-2 normal-case text-muted/60">
+                · Costo con impuestos:{" "}
+                <span className="font-semibold text-text/90 tabular-nums rounded px-1">
+                  {fmtMoney(withTaxNum, currency)}
+                </span>
+              </span>
+            );
+          })()}
+          {/* FASE F14 — "Valor de venta neto:" renombrado a "Valor de venta:"
+              (más corto, igualmente claro). Sigue siendo basePrice × qty,
+              sin impuestos. */}
           {headerSaleTotal != null && (
             <span className="ml-2 normal-case text-muted/60">
-              · Valor de venta neto:{" "}
+              · Valor de venta:{" "}
               <span className={cn(
                 "font-semibold tabular-nums rounded px-1 transition-colors duration-500",
                 "text-emerald-700 dark:text-emerald-300",
@@ -1270,52 +2257,9 @@ export function SaleCompositionEditableGrid({
           )}
         </span>
         <div className="flex items-center gap-1">
-          {/* MVP híbrido — segmented control "Costo / Comercial".
-              OFF default = "Costo". Cuando ON, la tabla agrega 4 columnas
-              comerciales a la derecha (Precio Unit. Venta, Margen %, Venta
-              Línea, Participación). Sale-side solo donde es canónico. */}
-          <div
-            role="tablist"
-            aria-label="Vista de la composición"
-            data-testid="sale-grid-view-segmented"
-            className="inline-flex items-center rounded-md border border-border/40 bg-surface2/60 p-0.5 text-[10px] uppercase tracking-wide"
-          >
-            <button
-              type="button"
-              role="tab"
-              tabIndex={-1}
-              aria-selected={!commercialView}
-              data-testid="sale-grid-view-cost"
-              onClick={() => setCommercialView(false)}
-              title="Vista de costo (compacta, 8 columnas)"
-              className={cn(
-                "inline-flex items-center gap-1 rounded px-2 py-0.5 transition-colors",
-                !commercialView
-                  ? "bg-card text-text shadow-sm ring-1 ring-border/40"
-                  : "text-muted hover:text-text",
-              )}
-            >
-              Vista costo
-            </button>
-            <button
-              type="button"
-              role="tab"
-              tabIndex={-1}
-              aria-selected={commercialView}
-              data-testid="sale-grid-commercial-toggle"
-              aria-pressed={commercialView}
-              onClick={() => setCommercialView(true)}
-              title="Vista comercial (+ precio venta, margen, participación)"
-              className={cn(
-                "inline-flex items-center gap-1 rounded px-2 py-0.5 transition-colors",
-                commercialView
-                  ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 ring-1 ring-emerald-500/40 shadow-sm"
-                  : "text-muted hover:text-text",
-              )}
-            >
-              Vista comercial
-            </button>
-          </div>
+          {/* FASE 12.4 — switch "Vista costo / Vista comercial" eliminado.
+              La tabla siempre se muestra en modo comercial: Margen embebido
+              debajo de Costo Total, Costo unit. con Merma/Ajuste debajo. */}
           {hasAnyOverride && (
             <button
               type="button"
@@ -1353,15 +2297,67 @@ export function SaleCompositionEditableGrid({
         <div
           className={cn(
             "rounded-md border border-border/30 bg-card/30",
-            // En vista comercial las 13 columnas requieren más espacio
-            // — habilitamos scroll horizontal con un min-width interno.
-            commercialView && "overflow-x-auto",
+            // FIX responsive — las columnas son REDIMENSIBLES y su ancho
+            // mínimo total (~1100px) supera el card en pantallas chicas /
+            // zoom alto. Sin un contenedor de scroll, las filas (grid con
+            // px fijos) se desbordaban FUERA del card (botones, columna
+            // Venta, inputs). `overflow-x-auto` + `max-w-full` mantienen
+            // la tabla SIEMPRE dentro del card y, si no entra, el scroll
+            // es interno (no del body). `box-border` + `min-w-0` evitan
+            // que el borde empuje el card. No se achican inputs ni
+            // columnas: el grid conserva sus px y se desplaza.
+            //
+            // Nota: al crear scroll-x, CSS computa overflow-y→auto; como el
+            // wrapper NO tiene altura fija, NO aparece scroll vertical
+            // interno (crece con el contenido). El header sigue `sticky`
+            // dentro de este wrapper (visible y con resize funcional).
+            "overflow-x-auto max-w-full min-w-0 box-border",
           )}
         >
-          <div className={cn(commercialView && "min-w-[1180px]")}>
-          <TableHeader commercialView={commercialView} />
-          <div className="divide-y divide-border/25">
-            {/* METAL — una fila por costLineId */}
+          {/* `min-w-max` → el contenido se dimensiona al ancho real de las
+              filas (header + rows + footers comparten el mismo
+              gridTemplateColumns en px), así el scroll aparece en el
+              wrapper de arriba en vez de desbordar el card. */}
+          <div className="min-w-max">
+          <TableHeader widths={colWidths} onWidthsChange={setColWidths} />
+          {/* FASE 12.7 — quitamos `divide-y` para reducir sensación de
+              tabla rígida. La separación entre filas viene del padding
+              vertical de cada Row + del hover suave (rounded).
+              FASE 12.9 — agrupamos visualmente por tipo. Cada grupo
+              no-vacío tiene su header (nombre · conteo · subtotal) y un
+              divider tenue. Cero cambios en lógica/orden — el orden por
+              tipo ya estaba implícito en el render. */}
+          <div className="px-1 py-1">
+            {/* ─── METALES ─────────────────────────────────── */}
+            {metals.length > 0 && (() => {
+              // Consolidado por metal padre del LADO VENTA, IDÉNTICO a las
+              // cards del Simulador ("Composición del precio" → ORO (Au)
+              // 8,01 gr). Origen único: `buildMetalParentSaleTotals` =
+              // costEquivGr × metalSaleFactor, exactamente `padre.totalEquivGr
+              // * metalSaleFactor` de MetalSaleCard. El factor sale del MISMO
+              // helper que usa el Simulador (`computeMetalSaleFactor`) sobre
+              // el agregado metalCost/metalSale del motor. Cero recálculo /
+              // cero fórmula paralela.
+              const metalSaleFactor = computeMetalSaleFactor({
+                metalCost: (meta as any)?.metalCost != null && Number.isFinite(Number((meta as any).metalCost))
+                  ? Number((meta as any).metalCost) : null,
+                metalSale: (meta as any)?.metalSale != null && Number.isFinite(Number((meta as any).metalSale))
+                  ? Number((meta as any).metalSale) : null,
+              });
+              const equivGramsByMetal = buildMetalParentSaleTotals(metals as any[], metalSaleFactor)
+                .map((m) => ({ name: m.name, grams: m.saleEquivGr }));
+              return (
+                <TypeGroupHeader
+                  label="Metales"
+                  count={metals.length}
+                  subtotal={sumGroupLineCost(metals, qtyLine)}
+                  currency={currency}
+                  type="METAL"
+                  equivGramsByMetal={equivGramsByMetal}
+                />
+              );
+            })()}
+            <div className="divide-y divide-slate-200/40 dark:divide-slate-700/25">
             {metals.map((m: any, idx: number) => {
               const costLineId = m?.costLineId ?? null;
               const isEditable = costLineId != null;
@@ -1404,27 +2400,26 @@ export function SaleCompositionEditableGrid({
                 if (name && variant) return `${name} ${variant}`;
                 return name ?? variant ?? "Metal";
               })();
-              // Fase 2.4 — secondary = "Ley: 0,750 · gramos" (combina ley
-              // técnica + unidad). Antes la unidad vivía en columna
-              // separada UNID; ahora va inline para liberar espacio.
+              // Fase 2.4 — secondary = "Ley 0,750".
+              // FASE 12.23 — eliminado el prefix "18k · " redundante: el
+              // kilataje ya vive en el primary del metal ("Oro 18 Kilates"),
+              // duplicarlo en el secondary era ruido visual.
               const leyText = (() => {
-                if (m?.purity != null && Number.isFinite(Number(m.purity))) {
-                  return `Ley: ${Number(m.purity).toLocaleString("es-AR", {
-                    minimumFractionDigits: 3,
-                    maximumFractionDigits: 3,
-                  })}`;
-                }
-                if (m?.purityLabel) {
-                  return `Ley: ${m.purityLabel}`;
-                }
+                const value = m?.purity != null && Number.isFinite(Number(m.purity))
+                  ? Number(m.purity).toLocaleString("es-AR", {
+                      minimumFractionDigits: 3,
+                      maximumFractionDigits: 3,
+                    })
+                  : null;
+                if (value) return `Ley ${value}`;
+                const label = m?.purityLabel ?? null;
+                if (label) return `Ley ${label}`;
                 return null;
               })();
-              const secondary = (
-                <span>
-                  {leyText && <>{leyText} · </>}
-                  <span className="text-muted/60">gramos</span>
-                </span>
-              );
+              // FASE 12.7 — secondary solo muestra leyText (sin tipo cierre).
+              // El tipo "Metal" ya está implícito en el icono coloreado de
+              // la izquierda — repetirlo era ruido visual redundante.
+              const secondary = leyText ? <span>{leyText}</span> : null;
 
               const totalRow = totalForRow(lineCost);
               // F1.5 #A++ — `lineSale` per METAL ahora viene canónico del motor
@@ -1432,14 +2427,23 @@ export function SaleCompositionEditableGrid({
               // snapshots legacy sin este campo, fallback a `metalSaleCanonical`
               // (válido solo cuando count===1, sino "—").
               const metalLineSale = (m as any)?.lineSale;
-              const saleForRow: number | null =
+              const canonicalSale: number | null =
                 metalLineSale != null && Number.isFinite(Number(metalLineSale))
                   ? Number(metalLineSale)
                   : metalSaleCanonical;
+              const { saleForRow, isUnified: isUnifiedSaleRow } =
+                resolveSaleForRowDisplay(
+                  lineCost,
+                  canonicalSale,
+                  unifiedFactor,
+                  isMetalMarginUnattributable,
+                );
               const commercialCells = buildCommercialCells(
                 lineCost,
                 saleForRow,
                 qtyValue ?? null,
+                isMetalMarginUnattributable,
+                unifiedFactor,
               );
               return (
                 <Row
@@ -1452,8 +2456,20 @@ export function SaleCompositionEditableGrid({
                   precioUnitVentaText={commercialCells.precioUnitVentaText}
                   margenPctText={commercialCells.margenPctText}
                   margenTone={commercialCells.margenTone}
+                  margenTooltip={isUnifiedSaleRow
+                    ? "Margen unificado aplicado al total del artículo"
+                    : commercialCells.margenTooltip}
                   ventaLineaText={commercialCells.ventaLineaText}
+                  globalAdjustmentText={lineGlobalAdj?.text ?? null}
+                  globalAdjustmentKind={lineGlobalAdj?.kind ?? null}
                   participacionText={commercialCells.participacionText}
+                  // FASE 12.5 — etiquetas para sub-línea Cantidad y prefijo
+                  // moneda en Costo unit. (rendering al nivel de RowImpl).
+                  // FASE 12.5b — nombre amigable completo: METAL siempre en
+                  // gramos; usamos `resolveUnitName` para tomarlo del catálogo
+                  // (`unitNameByCode`) si existe, con fallback "Gramos".
+                  quantityUnitLabel={resolveUnitName("g", "Gramos")}
+                  currencyLabel={currency}
                   quantityCell={
                     <CellNumberInput
                       value={qtyValue}
@@ -1463,7 +2479,9 @@ export function SaleCompositionEditableGrid({
                       // Fase 2.3 — gramos con 2 decimales (era 3 → "1,000").
                       decimals={2}
                       step={0.05}
-                      suffix={<span className="text-[10px] text-muted/60">g</span>}
+                      // FASE 12.5 — sufijo "g" REMOVIDO del input (la unidad
+                      // ahora vive como prefix interno del PrefixedField
+                      // vía `quantityUnitLabel`).
                       readOnly={!isEditable}
                       tooltip={!isEditable ? READ_ONLY_TOOLTIP : undefined}
                       // Fase 2.1 — original = `appliedGrams` del backend.
@@ -1477,36 +2495,67 @@ export function SaleCompositionEditableGrid({
                   // El base por gramo (`quotePrice`) queda como tooltip
                   // informativo, no como valor principal.
                   unitValueCell={
-                    <span
-                      className="text-text/90"
-                      title={baseQuotePriceText ? `Valor base por gramo: ${baseQuotePriceText}` : undefined}
-                    >
-                      {postMermaPerGramText ?? "—"}
-                    </span>
-                  }
-                  mermaCell={
+                    // FASE 12.21 — antes era un `<span>{fmt(...)}` que
+                    // incluía la moneda en el texto ("ARS 206.250,00"), y
+                    // como el wrap externo de la celda Costo Unit. también
+                    // muestra `currencyLabel`, se renderizaba "ARS ARS …".
+                    // Reemplazado por CellNumberInput read-only: muestra
+                    // SOLO el número, alineado igual que los inputs
+                    // editables de HECHURA/PRODUCT/SERVICE — la moneda
+                    // vive una sola vez en el prefix del wrap externo.
                     <CellNumberInput
+                      value={lineCost != null && qtyValue && qtyValue > 0
+                        ? lineCost / Number(qtyValue)
+                        : null}
+                      onChange={() => {}}
+                      decimals={2}
+                      readOnly
+                      tooltip={baseQuotePriceText
+                        ? `Valor base por gramo: ${baseQuotePriceText}`
+                        : undefined}
+                    />
+                  }
+                  // FASE 12.11 — Merma como label editable (chip-style).
+                  // Click expande el input; ✓ vuelve al label. Mismo callback.
+                  mermaOrAdjustmentCell={
+                    <MermaLabelEditor
                       value={mermaValue}
+                      original={m?.appliedMermaPct ?? null}
                       onChange={isEditable && costLineId
                         ? (v) => applyCostLinePatch(costLineId, "METAL", { mermaPercentOverride: v ?? 0 })
                         : () => {}}
-                      decimals={2}
-                      step={0.5}
-                      suffix={<span className="text-[10px] text-muted/60">%</span>}
                       readOnly={!isEditable}
-                      tooltip={!isEditable ? READ_ONLY_TOOLTIP : undefined}
-                      widthClass="w-[72px]"
-                      original={m?.appliedMermaPct ?? null}
+                      // FASE F2 — badge "Manual" si el operador editó local
+                      // (override aún no propagado al preview); si no, usar
+                      // el `mermaSource` que vino del backend.
+                      mermaSource={
+                        ov?.mermaPercentOverride != null
+                          ? "costLineOverride"
+                          : ((m as any)?.mermaSource ?? null)
+                      }
                     />
                   }
-                  // METAL no soporta lineAdj cost-side (motor lo descarta).
-                  adjustmentCell={<span className="text-muted/40">—</span>}
-                  // Fase 2.4 — V. VENTA = `lineCost` (total del componente
-                  // post-merma). TOTAL = lineCost × line.quantity.
-                  saleValueValue={lineCost}
-                  saleValueText={fmt(lineCost)}
-                  totalValue={totalRow}
-                  totalText={fmt(totalRow)}
+                  // Costo Total del componente para la línea de factura completa
+                  // (= `lineCost × line.quantity`). Display puro — `lineCost`
+                  // viene post-conv post-adj por unidad de artículo desde el
+                  // motor; multiplicar por la qty del documento NO recalcula
+                  // precios, sólo expande el subtotal a la escala "línea
+                  // factura", simétrico a la columna Venta.
+                  saleValueValue={totalForRow(lineCost)}
+                  saleValueText={fmt(totalForRow(lineCost))}
+                  // FASE 12.10 — última columna ("Costo de Venta") debe
+                  // mostrar el dato comercial, no el costo. Usamos
+                  // `commercialCells.ventaLineaText` (passthrough de lineSale
+                  // del motor); si no existe → "—". Antes mostraba
+                  // `lineCost × line.quantity`, que es costo, no venta.
+                  // Utilidad coherente: venta de LÍNEA (× cantidad), misma
+                  // base que `saleValueValue` (costo total × cantidad). Antes
+                  // se pasaba `saleForRow` SIN escalar → mezclaba venta
+                  // unitaria con costo total y el importe bajo el % se volvía
+                  // rojo/negativo al subir la cantidad pese a margen positivo.
+                  totalValue={saleForRow != null && qtyValue ? totalForRow(saleForRow) : null}
+                  totalText={commercialCells.ventaLineaText}
+                  totalTooltip={isUnifiedSaleRow ? "Valor unificado del artículo" : null}
                   manual={!!ov}
                   onResetRow={costLineId ? () => resetCostLine(costLineId) : () => {}}
                   canResetRow={!!ov}
@@ -1514,7 +2563,38 @@ export function SaleCompositionEditableGrid({
               );
             })}
 
-            {/* HECHURA — una fila por costLineId */}
+            </div>
+            {/* FASE F7 — Total del grupo METALES. Display only. */}
+            {metals.length > 0 && (
+              <TypeGroupFooter
+                label="metales"
+                costTotal={sumGroupLineCost(metals, qtyLine)}
+                saleTotal={sumGroupLineSaleDisplay(metals, {
+                  qtyLine,
+                  marginUnattributable: isMetalMarginUnattributable,
+                  unifiedFactor,
+                  canonical: metalSaleCanonical,
+                })}
+                currency={currency}
+                quantityTotal={sumGroupQuantity(metals, (it) =>
+                  it?.appliedGrams != null && Number.isFinite(Number(it.appliedGrams))
+                    ? Number(it.appliedGrams)
+                    : null,
+                )}
+                type="METAL"
+              />
+            )}
+            {/* ─── HECHURAS ────────────────────────────────── */}
+            {hechuras.length > 0 && (
+              <TypeGroupHeader
+                label="Hechuras"
+                count={hechuras.length}
+                subtotal={sumGroupLineCost(hechuras, qtyLine)}
+                currency={currency}
+                type="HECHURA"
+              />
+            )}
+            <div className="divide-y divide-slate-200/40 dark:divide-slate-700/25">
             {hechuras.map((h: any, idx: number) => {
               const costLineId = h?.costLineId ?? null;
               const isEditable = costLineId != null;
@@ -1522,9 +2602,16 @@ export function SaleCompositionEditableGrid({
                 ? findCostLineOverride(activeCostLineOverrides, costLineId)
                 : undefined;
 
+              // Cantidad del cost line por unidad de artículo. Backend emite
+              // `h.quantity` (= step.meta.qty, paridad con PRODUCT/SERVICE).
+              // Snapshots viejos sin el campo → fallback a 1 (HECHURA típica).
+              const hQuantityRaw = (h as any)?.quantity;
+              const hQuantityNum = hQuantityRaw != null && Number.isFinite(Number(hQuantityRaw))
+                ? Number(hQuantityRaw)
+                : 1;
               const qtyValue = ov?.quantityOverride != null
                 ? Number(ov.quantityOverride)
-                : 1;
+                : hQuantityNum;
               // Fase 2.3.1 — VAL. UNIT. = `h.unitValue` (base pre-ajuste).
               // Antes usaba `h.appliedAmount` que es step.value (post-ajuste);
               // cuando la HECHURA tenía bonif/recargo configurado, VAL. UNIT.
@@ -1540,14 +2627,35 @@ export function SaleCompositionEditableGrid({
               // hacemos fallback al `hechuraSaleCanonical` (count===1) por
               // compatibilidad. Cuando ninguno aplica → "—".
               const lineSaleFromBackend = (h as any)?.lineSale;
-              const saleForRow: number | null =
+              const canonicalSale: number | null =
                 lineSaleFromBackend != null && Number.isFinite(Number(lineSaleFromBackend))
                   ? Number(lineSaleFromBackend)
                   : hechuraSaleCanonical;
+              const hechuraCurrencyInfo = resolveItemCurrencyDisplay(
+                {
+                  currencyId:    (h as any)?.currencyId    ?? null,
+                  currencyCode:  (h as any)?.currencyCode  ?? null,
+                  unitValue:     unitValValue,
+                  unitValueBase: (h as any)?.unitValueBase ?? null,
+                  totalValue:    lineCost,
+                  quantity:      qtyValue,
+                },
+                currency,
+                currencyById,
+              );
+              const { saleForRow, isUnified: isUnifiedSaleRow } =
+                resolveSaleForRowDisplay(
+                  lineCost,
+                  canonicalSale,
+                  unifiedFactor,
+                  isHechuraMarginUnattributable,
+                );
               const commercialCells = buildCommercialCells(
                 lineCost,
                 saleForRow,
                 qtyValue ?? null,
+                isHechuraMarginUnattributable,
+                unifiedFactor,
               );
 
               return (
@@ -1556,17 +2664,45 @@ export function SaleCompositionEditableGrid({
                   componentType="HECHURA"
                   Icon={Hammer}
                   primary={h?.lineLabel ?? "Hechura"}
-                  // Fase 2.4 — la moneda ya se entiende por los importes;
-                  // el secondary deja solo la unidad.
-                  secondary={
-                    <span className="text-muted/60">unidad</span>
-                  }
+                  // FASE 12.7 — sin secondary cierre: el tipo ya está
+                  // implícito en el icono. HECHURA típica no tiene metadata
+                  // útil adicional. (Si en el futuro hace falta mostrar
+                  // categoría / referencia, va acá.)
+                  secondary={undefined}
                   commercialView={commercialView}
                   precioUnitVentaText={commercialCells.precioUnitVentaText}
                   margenPctText={commercialCells.margenPctText}
                   margenTone={commercialCells.margenTone}
+                  margenTooltip={isUnifiedSaleRow
+                    ? "Margen unificado aplicado al total del artículo"
+                    : commercialCells.margenTooltip}
                   ventaLineaText={commercialCells.ventaLineaText}
+                  globalAdjustmentText={lineGlobalAdj?.text ?? null}
+                  globalAdjustmentKind={lineGlobalAdj?.kind ?? null}
                   participacionText={commercialCells.participacionText}
+                  // FASE 12.5 — etiquetas para sub-línea Cantidad + prefijo moneda.
+                  // FASE 12.5b — preferimos `h.quantityUnit` del snapshot si
+                  // existe (HECHURA puede ir en kg, hr, etc.); fallback "Unidades".
+                  quantityUnitLabel={(() => {
+                    // Display COMERCIAL — preferimos el NOMBRE legible del
+                    // catálogo de Units del tenant (ej. "Hora", "Gramo")
+                    // sobre el code técnico ("hr", "g"). Cascada:
+                    //   1. `unitNameByCode[code]` (catálogo del tenant)
+                    //   2. code crudo (legacy/catálogo incompleto)
+                    //   3. fallback "Unidad"
+                    const code = (h as any)?.quantityUnit;
+                    if (code) {
+                      const mapped = unitNameByCode?.get(code);
+                      if (mapped) return mapped;
+                      return code;
+                    }
+                    return "Unidad";
+                  })()}
+                  currencyLabel={currency}
+                  unitValueCurrencyOverride={hechuraCurrencyInfo?.originalCurrencyLabel ?? null}
+                  unitValueSubLine={hechuraCurrencyInfo?.equivalentUnitValue != null
+                    ? <>≈ {fmtMoney(hechuraCurrencyInfo.equivalentUnitValue, currency)} / unidad</>
+                    : null}
                   quantityCell={
                     <CellNumberInput
                       value={qtyValue}
@@ -1590,6 +2726,7 @@ export function SaleCompositionEditableGrid({
                         ? (v) => applyCostLinePatch(costLineId, "HECHURA", { unitValueOverride: v ?? 0 })
                         : () => {}}
                       decimals={2}
+                      step={1}
                       readOnly={!isEditable}
                       tooltip={!isEditable ? READ_ONLY_TOOLTIP : undefined}
                       // Fase 2.3.1 — original tachado = BASE pre-ajuste
@@ -1597,38 +2734,47 @@ export function SaleCompositionEditableGrid({
                       original={(h as any)?.unitValue ?? h?.appliedAmount ?? null}
                     />
                   }
-                  mermaCell={<span className="text-muted/40">—</span>}
-                  adjustmentCell={
-                    <AdjustmentEditor
+                  // FASE 12.12 — HECHURA: AdjustmentLabelEditor (label →
+                  // editor en click). currentAmount = lineCost − raw (display).
+                  mermaOrAdjustmentCell={
+                    <AdjustmentLabelEditor
                       kind={ov?.adjustmentKind ?? null}
                       type={ov?.adjustmentType ?? null}
                       value={ov?.adjustmentValue ?? null}
                       currency={currency}
                       disabled={!isEditable}
                       onChange={(p) => costLineId && applyCostLinePatch(costLineId, "HECHURA", p)}
-                      // Fase 2.2 — ajuste original del cost line del artículo
-                      // (si la HECHURA en la ficha trae lineAdj configurado).
                       originalKind={(h as any)?.lineAdjKind   ?? null}
                       originalType={(h as any)?.lineAdjType   ?? null}
                       originalValue={(h as any)?.lineAdjValue ?? null}
                       originalAmount={(h as any)?.lineAdjAmount ?? null}
+                      currentAmount={
+                        lineCost != null && unitValValue != null && qtyValue
+                          ? Number(lineCost) - Number(unitValValue) * Number(qtyValue)
+                          : null
+                      }
                     />
                   }
-                  // Fase 2.3 — V. VENTA = per-unit post-ajuste (`lineCost / qty`).
-                  // Para HECHURA típica (qty=1) es equivalente a lineCost; cuando
-                  // qty > 1 (override), divide para mostrar valor por unidad.
-                  saleValueValue={
-                    lineCost != null && qtyValue && qtyValue > 0
-                      ? lineCost / Number(qtyValue)
-                      : lineCost
-                  }
-                  saleValueText={
-                    lineCost != null && qtyValue && qtyValue > 0
-                      ? fmt(lineCost / Number(qtyValue))
-                      : fmt(lineCost)
-                  }
-                  totalValue={totalForRow(lineCost)}
-                  totalText={fmt(totalForRow(lineCost))}
+                  // Costo Total del componente para la línea de factura completa
+                  // (= `lineCost × line.quantity`). Display puro — simétrico a
+                  // Venta. Antes esta celda dividía `lineCost / qtyValue` para
+                  // mostrar "per-unit post-ajuste"; era invisible cuando
+                  // HECHURA típica tenía qty=1, pero rompía al rehidratar
+                  // cost lines con qty real > 1 (mostraba costo unitario en
+                  // lugar de total). El total real es passthrough del motor
+                  // multiplicado por la cantidad del documento.
+                  saleValueValue={totalForRow(lineCost)}
+                  saleValueText={fmt(totalForRow(lineCost))}
+                  // FASE 12.10 — Costo de Venta = lineSale (passthrough),
+                  // no `lineCost × qty`. Si no hay venta → "—".
+                  // Utilidad coherente: venta de LÍNEA (× cantidad), misma
+                  // base que `saleValueValue` (costo total × cantidad). Antes
+                  // se pasaba `saleForRow` SIN escalar → mezclaba venta
+                  // unitaria con costo total y el importe bajo el % se volvía
+                  // rojo/negativo al subir la cantidad pese a margen positivo.
+                  totalValue={saleForRow != null && qtyValue ? totalForRow(saleForRow) : null}
+                  totalText={commercialCells.ventaLineaText}
+                  totalTooltip={isUnifiedSaleRow ? "Valor unificado del artículo" : null}
                   manual={!!ov}
                   onResetRow={costLineId ? () => resetCostLine(costLineId) : () => {}}
                   canResetRow={!!ov}
@@ -1636,7 +2782,37 @@ export function SaleCompositionEditableGrid({
               );
             })}
 
-            {/* PRODUCT — una fila por costLineId */}
+            </div>
+            {/* FASE F7 — Total del grupo HECHURAS. Display only. */}
+            {hechuras.length > 0 && (
+              <TypeGroupFooter
+                label="hechuras"
+                costTotal={sumGroupLineCost(hechuras, qtyLine)}
+                saleTotal={sumGroupLineSaleDisplay(hechuras, {
+                  qtyLine,
+                  marginUnattributable: isHechuraMarginUnattributable,
+                  unifiedFactor,
+                  canonical: hechuraSaleCanonical,
+                })}
+                currency={currency}
+                quantityTotal={sumGroupQuantity(hechuras, (it) => {
+                  const r = (it as any)?.quantity;
+                  return r != null && Number.isFinite(Number(r)) ? Number(r) : 1;
+                })}
+                type="HECHURA"
+              />
+            )}
+            {/* ─── PRODUCTOS ───────────────────────────────── */}
+            {products.length > 0 && (
+              <TypeGroupHeader
+                label="Productos"
+                count={products.length}
+                subtotal={sumGroupLineCost(products, qtyLine)}
+                currency={currency}
+                type="PRODUCT"
+              />
+            )}
+            <div className="divide-y divide-slate-200/40 dark:divide-slate-700/25">
             {products.map((p: any, idx: number) => {
               const costLineId = p?.costLineId ?? null;
               const isEditable = costLineId != null;
@@ -1668,28 +2844,56 @@ export function SaleCompositionEditableGrid({
                 }
                 return null;
               })();
-              const secondary = (
+              // FASE 12.7 — secondary sin tipo cierre. SKU/Código + flag
+              // "Descuenta stock" si aplica. Tipo "Producto" ya implícito
+              // en el icono coloreado.
+              const secondary = (skuOrCode || p?.affectsStock === true) ? (
                 <span>
-                  {skuOrCode && <>{skuOrCode.label}: {skuOrCode.value} · </>}
-                  {p?.affectsStock === true && <>Descuenta stock · </>}
-                  <span className="text-muted/60">unidad</span>
+                  {skuOrCode && <>{skuOrCode.label}: {skuOrCode.value}</>}
+                  {skuOrCode && p?.affectsStock === true && <> · </>}
+                  {p?.affectsStock === true && <>Descuenta stock</>}
                 </span>
-              );
+              ) : null;
 
               // F1.5 #A+ — PRODUCT ahora tiene `lineSale` canónico (passthrough
               // del motor). Sin él (snapshot legacy / margen no derivable) → "—".
               const productLineCost = (p as any)?.totalValue ?? (p as any)?.lineCost ?? null;
+              const productLineCostNum: number | null =
+                productLineCost != null && Number.isFinite(Number(productLineCost))
+                  ? Number(productLineCost)
+                  : null;
               const productLineSale = (p as any)?.lineSale;
-              const productSaleForRow: number | null =
+              const productCanonicalSale: number | null =
                 productLineSale != null && Number.isFinite(Number(productLineSale))
                   ? Number(productLineSale)
                   : null;
+              const productCurrencyInfo = resolveItemCurrencyDisplay(
+                {
+                  currencyId:    (p as any)?.currencyId    ?? null,
+                  currencyCode:  (p as any)?.currencyCode  ?? null,
+                  unitValue:     unitValValue,
+                  unitValueBase: (p as any)?.unitValueBase ?? null,
+                  totalValue:    productLineCostNum,
+                  quantity:      qtyValue,
+                },
+                currency,
+                currencyById,
+              );
+              const { saleForRow: productSaleForRow, isUnified: isUnifiedSaleRow } =
+                resolveSaleForRowDisplay(
+                  productLineCostNum,
+                  productCanonicalSale,
+                  unifiedFactor,
+                  // PRODUCT/SERVICE viven en el bucket "hechura" del motor (sus
+                  // lineSale derivan de `hechuraSaleFactor`). Mismo flag.
+                  isHechuraMarginUnattributable,
+                );
               const commercialCells = buildCommercialCells(
-                productLineCost != null && Number.isFinite(Number(productLineCost))
-                  ? Number(productLineCost)
-                  : null,
+                productLineCostNum,
                 productSaleForRow,
                 qtyValue ?? null,
+                isHechuraMarginUnattributable,
+                unifiedFactor,
               );
               return (
                 <Row
@@ -1702,8 +2906,37 @@ export function SaleCompositionEditableGrid({
                   precioUnitVentaText={commercialCells.precioUnitVentaText}
                   margenPctText={commercialCells.margenPctText}
                   margenTone={commercialCells.margenTone}
+                  margenTooltip={isUnifiedSaleRow
+                    ? "Margen unificado aplicado al total del artículo"
+                    : commercialCells.margenTooltip}
                   ventaLineaText={commercialCells.ventaLineaText}
+                  globalAdjustmentText={lineGlobalAdj?.text ?? null}
+                  globalAdjustmentKind={lineGlobalAdj?.kind ?? null}
                   participacionText={commercialCells.participacionText}
+                  // FASE 12.5 — etiquetas para sub-línea Cantidad + prefijo moneda.
+                  // FASE 12.5b — nombre amigable: PRODUCT en unidades por
+                  // default (`p.quantityUnit` si el snapshot lo trae).
+                  quantityUnitLabel={(() => {
+                    // Display COMERCIAL — siempre NOMBRE legible. Cascada:
+                    //   1. `unitNameByCode[code]` (nombre del catálogo del tenant)
+                    //   2. `quantityUnitName` (Article maestro referenciado)
+                    //   3. code crudo (legacy/catálogo incompleto)
+                    //   4. fallback "Unidad"
+                    const code = (p as any)?.quantityUnit;
+                    if (code) {
+                      const mapped = unitNameByCode?.get(code);
+                      if (mapped) return mapped;
+                    }
+                    const masterName = (p as any)?.quantityUnitName;
+                    if (masterName) return masterName;
+                    if (code) return code;
+                    return "Unidad";
+                  })()}
+                  currencyLabel={currency}
+                  unitValueCurrencyOverride={productCurrencyInfo?.originalCurrencyLabel ?? null}
+                  unitValueSubLine={productCurrencyInfo?.equivalentUnitValue != null
+                    ? <>≈ {fmtMoney(productCurrencyInfo.equivalentUnitValue, currency)} / unidad</>
+                    : null}
                   quantityCell={
                     <CellNumberInput
                       value={qtyValue}
@@ -1711,6 +2944,9 @@ export function SaleCompositionEditableGrid({
                         ? (v) => applyCostLinePatch(costLineId, "PRODUCT", { quantityOverride: v ?? 0 })
                         : () => {}}
                       decimals={2}
+                      // Cantidad PRODUCT: step entero (1,00) — paridad con
+                      // HECHURA. METAL conserva su step (gramos).
+                      step={1}
                       readOnly={!isEditable}
                       tooltip={!isEditable ? READ_ONLY_TOOLTIP : undefined}
                       original={p?.quantity ?? null}
@@ -1723,40 +2959,41 @@ export function SaleCompositionEditableGrid({
                         ? (v) => applyCostLinePatch(costLineId, "PRODUCT", { unitValueOverride: v ?? 0 })
                         : () => {}}
                       decimals={2}
+                      step={1}
                       readOnly={!isEditable}
                       tooltip={!isEditable ? READ_ONLY_TOOLTIP : undefined}
                       original={p?.unitValue ?? null}
                     />
                   }
-                  mermaCell={<span className="text-muted/40">—</span>}
-                  adjustmentCell={
-                    <AdjustmentEditor
+                  // FASE 12.12 — PRODUCT: AdjustmentLabelEditor (label-style).
+                  mermaOrAdjustmentCell={
+                    <AdjustmentLabelEditor
                       kind={ov?.adjustmentKind ?? null}
                       type={ov?.adjustmentType ?? null}
                       value={ov?.adjustmentValue ?? null}
                       currency={currency}
                       disabled={!isEditable}
                       onChange={(patch) => costLineId && applyCostLinePatch(costLineId, "PRODUCT", patch)}
-                      // Fase 2.2 — ajuste original (lineAdj* del ArticleCostLine).
                       originalKind={p?.lineAdjKind   ?? null}
                       originalType={p?.lineAdjType   ?? null}
                       originalValue={p?.lineAdjValue ?? null}
                       originalAmount={p?.lineAdjAmount ?? null}
+                      currentAmount={
+                        lineCost != null && unitValValue != null && qtyValue
+                          ? Number(lineCost) - Number(unitValValue) * Number(qtyValue)
+                          : null
+                      }
                     />
                   }
-                  // Fase 2.3 — V. VENTA = per-unit post-ajuste (totalValue/qty).
-                  saleValueValue={
-                    lineCost != null && qtyValue && qtyValue > 0
-                      ? lineCost / Number(qtyValue)
-                      : lineCost
-                  }
-                  saleValueText={
-                    lineCost != null && qtyValue && qtyValue > 0
-                      ? fmt(lineCost / Number(qtyValue))
-                      : fmt(lineCost)
-                  }
-                  totalValue={totalForRow(lineCost)}
-                  totalText={fmt(totalForRow(lineCost))}
+                  // Costo Total = `lineCost × line.quantity` (display).
+                  // Mismo criterio que HECHURA — ver comentario allí.
+                  saleValueValue={totalForRow(lineCost)}
+                  saleValueText={fmt(totalForRow(lineCost))}
+                  // FASE 12.10 — PRODUCT: Costo de Venta = productSaleForRow.
+                  // Ver nota en METAL/HECHURA: venta de línea escalada × qty.
+                  totalValue={productSaleForRow != null && qtyValue ? totalForRow(productSaleForRow) : null}
+                  totalText={commercialCells.ventaLineaText}
+                  totalTooltip={isUnifiedSaleRow ? "Valor unificado del artículo" : null}
                   manual={!!ov}
                   onResetRow={costLineId ? () => resetCostLine(costLineId) : () => {}}
                   canResetRow={!!ov}
@@ -1764,7 +3001,37 @@ export function SaleCompositionEditableGrid({
               );
             })}
 
-            {/* SERVICE — una fila por costLineId */}
+            </div>
+            {/* FASE F7 — Total del grupo PRODUCTOS. Display only. */}
+            {products.length > 0 && (
+              <TypeGroupFooter
+                label="productos"
+                costTotal={sumGroupLineCost(products, qtyLine)}
+                saleTotal={sumGroupLineSaleDisplay(products, {
+                  qtyLine,
+                  marginUnattributable: isHechuraMarginUnattributable,
+                  unifiedFactor,
+                })}
+                currency={currency}
+                quantityTotal={sumGroupQuantity(products, (it) =>
+                  it?.quantity != null && Number.isFinite(Number(it.quantity))
+                    ? Number(it.quantity)
+                    : 0,
+                )}
+                type="PRODUCT"
+              />
+            )}
+            {/* ─── SERVICIOS ───────────────────────────────── */}
+            {services.length > 0 && (
+              <TypeGroupHeader
+                label="Servicios"
+                count={services.length}
+                subtotal={sumGroupLineCost(services, qtyLine)}
+                currency={currency}
+                type="SERVICE"
+              />
+            )}
+            <div className="divide-y divide-slate-200/40 dark:divide-slate-700/25">
             {services.map((s: any, idx: number) => {
               const costLineId = s?.costLineId ?? null;
               const isEditable = costLineId != null;
@@ -1792,27 +3059,50 @@ export function SaleCompositionEditableGrid({
                 }
                 return null;
               })();
-              const secondary = (
-                <span>
-                  {skuOrCode && <>{skuOrCode.label}: {skuOrCode.value} · </>}
-                  <span className="text-muted/60">unidad</span>
-                </span>
-              );
+              // FASE 12.7 — secondary sin tipo cierre. Solo SKU/Código.
+              const secondary = skuOrCode ? (
+                <span>{skuOrCode.label}: {skuOrCode.value}</span>
+              ) : null;
 
               // F1.5 #A+ — SERVICE ahora tiene `lineSale` canónico (passthrough
               // del motor). Sin él → "—".
               const serviceLineCost = (s as any)?.totalValue ?? (s as any)?.lineCost ?? null;
+              const serviceLineCostNum: number | null =
+                serviceLineCost != null && Number.isFinite(Number(serviceLineCost))
+                  ? Number(serviceLineCost)
+                  : null;
               const serviceLineSale = (s as any)?.lineSale;
-              const serviceSaleForRow: number | null =
+              const serviceCanonicalSale: number | null =
                 serviceLineSale != null && Number.isFinite(Number(serviceLineSale))
                   ? Number(serviceLineSale)
                   : null;
+              const serviceCurrencyInfo = resolveItemCurrencyDisplay(
+                {
+                  currencyId:    (s as any)?.currencyId    ?? null,
+                  currencyCode:  (s as any)?.currencyCode  ?? null,
+                  unitValue:     unitValValue,
+                  unitValueBase: (s as any)?.unitValueBase ?? null,
+                  totalValue:    serviceLineCostNum,
+                  quantity:      qtyValue,
+                },
+                currency,
+                currencyById,
+              );
+              const { saleForRow: serviceSaleForRow, isUnified: isUnifiedSaleRow } =
+                resolveSaleForRowDisplay(
+                  serviceLineCostNum,
+                  serviceCanonicalSale,
+                  unifiedFactor,
+                  // PRODUCT/SERVICE viven en el bucket "hechura" del motor (sus
+                  // lineSale derivan de `hechuraSaleFactor`). Mismo flag.
+                  isHechuraMarginUnattributable,
+                );
               const commercialCells = buildCommercialCells(
-                serviceLineCost != null && Number.isFinite(Number(serviceLineCost))
-                  ? Number(serviceLineCost)
-                  : null,
+                serviceLineCostNum,
                 serviceSaleForRow,
                 qtyValue ?? null,
+                isHechuraMarginUnattributable,
+                unifiedFactor,
               );
               return (
                 <Row
@@ -1825,8 +3115,37 @@ export function SaleCompositionEditableGrid({
                   precioUnitVentaText={commercialCells.precioUnitVentaText}
                   margenPctText={commercialCells.margenPctText}
                   margenTone={commercialCells.margenTone}
+                  margenTooltip={isUnifiedSaleRow
+                    ? "Margen unificado aplicado al total del artículo"
+                    : commercialCells.margenTooltip}
                   ventaLineaText={commercialCells.ventaLineaText}
+                  globalAdjustmentText={lineGlobalAdj?.text ?? null}
+                  globalAdjustmentKind={lineGlobalAdj?.kind ?? null}
                   participacionText={commercialCells.participacionText}
+                  // FASE 12.5 — etiquetas para sub-línea Cantidad + prefijo moneda.
+                  // FASE 12.5b — SERVICE: igual que PRODUCT.
+                  quantityUnitLabel={(() => {
+                    // Mismo criterio que PRODUCT — display COMERCIAL, NOMBRE
+                    // legible siempre primero. Cascada:
+                    //   1. `unitNameByCode[code]` (catálogo del tenant)
+                    //   2. `quantityUnitName` (Article maestro)
+                    //   3. code crudo (fallback legacy)
+                    //   4. "Unidad"
+                    const code = (s as any)?.quantityUnit;
+                    if (code) {
+                      const mapped = unitNameByCode?.get(code);
+                      if (mapped) return mapped;
+                    }
+                    const masterName = (s as any)?.quantityUnitName;
+                    if (masterName) return masterName;
+                    if (code) return code;
+                    return "Unidad";
+                  })()}
+                  currencyLabel={currency}
+                  unitValueCurrencyOverride={serviceCurrencyInfo?.originalCurrencyLabel ?? null}
+                  unitValueSubLine={serviceCurrencyInfo?.equivalentUnitValue != null
+                    ? <>≈ {fmtMoney(serviceCurrencyInfo.equivalentUnitValue, currency)} / unidad</>
+                    : null}
                   quantityCell={
                     <CellNumberInput
                       value={qtyValue}
@@ -1834,6 +3153,9 @@ export function SaleCompositionEditableGrid({
                         ? (v) => applyCostLinePatch(costLineId, "SERVICE", { quantityOverride: v ?? 0 })
                         : () => {}}
                       decimals={2}
+                      // Cantidad SERVICE: step entero (1,00) — paridad con
+                      // HECHURA. METAL conserva su step (gramos).
+                      step={1}
                       readOnly={!isEditable}
                       tooltip={!isEditable ? READ_ONLY_TOOLTIP : undefined}
                       original={s?.quantity ?? null}
@@ -1846,73 +3168,88 @@ export function SaleCompositionEditableGrid({
                         ? (v) => applyCostLinePatch(costLineId, "SERVICE", { unitValueOverride: v ?? 0 })
                         : () => {}}
                       decimals={2}
+                      step={1}
                       readOnly={!isEditable}
                       tooltip={!isEditable ? READ_ONLY_TOOLTIP : undefined}
                       original={s?.unitValue ?? null}
                     />
                   }
-                  mermaCell={<span className="text-muted/40">—</span>}
-                  adjustmentCell={
-                    <AdjustmentEditor
+                  // FASE 12.12 — SERVICE: AdjustmentLabelEditor (label-style).
+                  mermaOrAdjustmentCell={
+                    <AdjustmentLabelEditor
                       kind={ov?.adjustmentKind ?? null}
                       type={ov?.adjustmentType ?? null}
                       value={ov?.adjustmentValue ?? null}
                       currency={currency}
                       disabled={!isEditable}
                       onChange={(patch) => costLineId && applyCostLinePatch(costLineId, "SERVICE", patch)}
-                      // Fase 2.2 — ajuste original (lineAdj* del ArticleCostLine).
                       originalKind={s?.lineAdjKind   ?? null}
                       originalType={s?.lineAdjType   ?? null}
                       originalValue={s?.lineAdjValue ?? null}
                       originalAmount={s?.lineAdjAmount ?? null}
+                      currentAmount={
+                        lineCost != null && unitValValue != null && qtyValue
+                          ? Number(lineCost) - Number(unitValValue) * Number(qtyValue)
+                          : null
+                      }
                     />
                   }
-                  // Fase 2.3 — V. VENTA = per-unit post-ajuste (totalValue/qty).
-                  saleValueValue={
-                    lineCost != null && qtyValue && qtyValue > 0
-                      ? lineCost / Number(qtyValue)
-                      : lineCost
-                  }
-                  saleValueText={
-                    lineCost != null && qtyValue && qtyValue > 0
-                      ? fmt(lineCost / Number(qtyValue))
-                      : fmt(lineCost)
-                  }
-                  totalValue={totalForRow(lineCost)}
-                  totalText={fmt(totalForRow(lineCost))}
+                  // Costo Total = `lineCost × line.quantity` (display).
+                  // Mismo criterio que HECHURA — ver comentario allí.
+                  saleValueValue={totalForRow(lineCost)}
+                  saleValueText={fmt(totalForRow(lineCost))}
+                  // FASE 12.10 — SERVICE: Costo de Venta = serviceSaleForRow.
+                  // Ver nota en METAL/HECHURA: venta de línea escalada × qty.
+                  totalValue={serviceSaleForRow != null && qtyValue ? totalForRow(serviceSaleForRow) : null}
+                  totalText={commercialCells.ventaLineaText}
+                  totalTooltip={isUnifiedSaleRow ? "Valor unificado del artículo" : null}
                   manual={!!ov}
                   onResetRow={costLineId ? () => resetCostLine(costLineId) : () => {}}
                   canResetRow={!!ov}
                 />
               );
             })}
+            </div>
+            {/* FASE F7 — Total del grupo SERVICIOS. Display only. */}
+            {services.length > 0 && (
+              <TypeGroupFooter
+                label="servicios"
+                costTotal={sumGroupLineCost(services, qtyLine)}
+                saleTotal={sumGroupLineSaleDisplay(services, {
+                  qtyLine,
+                  marginUnattributable: isHechuraMarginUnattributable,
+                  unifiedFactor,
+                })}
+                currency={currency}
+                quantityTotal={sumGroupQuantity(services, (it) =>
+                  it?.quantity != null && Number.isFinite(Number(it.quantity))
+                    ? Number(it.quantity)
+                    : 0,
+                )}
+                type="SERVICE"
+              />
+            )}
           </div>
           </div>
         </div>
       )}
 
-      {/* ── Fase 6 — Flujo visual de construcción del precio (4 cards) ──
-          Reemplaza SaleImpactBlock + CostAdjustmentBlock + RentabilidadBlock
-          con un layout de cards horizontales (Costo base · Ajustes globales ·
-          Impacto en venta · Rentabilidad). Cero matemática nueva — todos los
-          números siguen viniendo del backend vía `pricingMeta`. */}
-      <PriceFlowCards
-        metalCost={meta.metalCost ?? null}
-        metalSale={meta.metalSale ?? null}
-        metalMarginPct={meta.metalMarginPct ?? null}
-        hechuraCost={meta.hechuraCost ?? null}
-        hechuraSale={meta.hechuraSale ?? null}
-        hechuraMarginPct={meta.hechuraMarginPct ?? null}
-        costAdjustment={(composition as any)?.costAdjustment ?? null}
-        unitCost={meta.unitCost ?? null}
-        unitMargin={meta.unitMargin ?? null}
-        marginPercent={meta.marginPercent ?? null}
-        saleUnitPrice={
-          Number.isFinite((meta as any)?.basePrice) ? (meta as any).basePrice
-          : Number.isFinite(line.unitPrice)         ? line.unitPrice
-          : null
-        }
-        quantity={Number.isFinite(line.quantity) ? line.quantity : 1}
+      {/* FASE F7 — Removido el bloque "Flujo de construcción del precio"
+          (`<PriceFlowCards>`) de la Factura de Ventas: la composición de
+          costo ya muestra el desglose por grupo con totales (FASE F7) y
+          los cards de Rentabilidad / Impacto / Costo base eran
+          duplicación visual + ruido para el operador. El componente
+          `PriceFlowCards` se mantiene en el árbol del repo por si otra
+          pantalla lo necesita; acá no se renderea. */}
+
+      {/* FASE F20 — Sección compacta de detalle del Ajuste Global, debajo
+          de todos los grupos (METALES / HECHURAS / PRODUCTOS / SERVICIOS).
+          Display only — pasa por `composition.costAdjustment` + el
+          `totalComponents` calculado arriba (mismo monto que "Valor de
+          costo" del header). Si no hay ajuste, no renderea. */}
+      <CostAdjustmentDetailSection
+        data={(meta as any)?.composition?.costAdjustment ?? null}
+        costTotalFinal={showTotalSum ? totalComponents : null}
         currency={currency}
       />
 
@@ -1922,6 +3259,7 @@ export function SaleCompositionEditableGrid({
         <GlobalAdjustmentsBlock data={globalAdjustments} currency={currency} />
       )}
     </div>
+    </TableLayoutContext.Provider>
   );
 }
 

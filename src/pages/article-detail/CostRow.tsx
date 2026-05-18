@@ -108,6 +108,12 @@ export type SortableCostRowProps = {
    *  Reemplaza al antiguo CatalogItem[] de MULTIPLIER_BASE.
    *  El valor que se persiste sigue siendo string (Unit.code), no FK. */
   weightUnits: Unit[];
+  /** Catálogo COMPLETO de unidades activas del tenant (QUANTITY + WEIGHT +
+   *  LENGTH + VOLUME + OTHER). Alimenta el selector de unidad por cost line
+   *  para que el operador pueda elegir cualquier unidad configurada en
+   *  Configuración → Unidades — no solo las de tipo WEIGHT.
+   *  Opcional: si está vacío, el selector cae a `weightUnits` (compat). */
+  allActiveUnits?: Unit[];
 
   onPatch: (patch: Partial<CostLine>) => void;
   onRemove: () => void;
@@ -140,6 +146,7 @@ export function SortableCostRow({
   productItems,
   serviceItems,
   weightUnits,
+  allActiveUnits = [],
   onPatch,
   onRemove,
   onSetMetalFavorite,
@@ -324,8 +331,15 @@ export function SortableCostRow({
             />
           </div>
 
-          {/* Selector de unidad solo para HECHURA */}
-          {line.type === "HECHURA" && (
+          {/* Selector de unidad — disponible para HECHURA / PRODUCT / SERVICE
+              / MANUAL. METAL queda sin selector (gramos implícito). El
+              catálogo es `allActiveUnits` (TODAS las unidades activas del
+              tenant, cualquier type). Fallback a `weightUnits` cuando el
+              caller no provee allActiveUnits (compat). */}
+          {line.type !== "METAL" && (() => {
+            const unitOptions = allActiveUnits.length > 0 ? allActiveUnits : weightUnits;
+            const activeOptions = unitOptions.filter(u => u.isActive);
+            return (
             <div
               className="relative shrink-0"
               onBlur={(e) => {
@@ -356,40 +370,40 @@ export function SortableCostRow({
                   }}
                   className="rounded-lg border border-border bg-surface shadow-lg py-1 max-h-48 overflow-y-auto"
                 >
-                  {weightUnits.filter(w => w.isActive).map(w => (
-                    <div key={w.id} className="flex items-center gap-1 px-2 hover:bg-surface2 transition">
+                  {activeOptions.map(u => (
+                    <div key={u.id} className="flex items-center gap-1 px-2 hover:bg-surface2 transition">
                       <button
                         type="button"
                         onMouseDown={() => {
-                          onPatch({ quantityUnit: w.code as QuantityUnit });
+                          onPatch({ quantityUnit: u.code as QuantityUnit });
                           setPickerOpen(false);
                         }}
                         className={cn(
                           "flex-1 text-left py-1.5 text-xs",
-                          line.quantityUnit === w.code && "text-primary font-semibold",
+                          line.quantityUnit === u.code && "text-primary font-semibold",
                         )}
                       >
-                        {w.name} <span className="text-muted">({w.code})</span>
+                        {u.name} <span className="text-muted">({u.code})</span>
                       </button>
                       <button
                         type="button"
-                        title={w.isFavorite ? "Quitar de favoritos" : "Marcar como favorito"}
+                        title={u.isFavorite ? "Quitar de favoritos" : "Marcar como favorito"}
                         onMouseDown={(e) => {
                           e.preventDefault();
-                          if (!w.isFavorite) onPatch({ quantityUnit: w.code as QuantityUnit });
-                          onToggleUnitFavorite(w.id, !!w.isFavorite);
+                          if (!u.isFavorite) onPatch({ quantityUnit: u.code as QuantityUnit });
+                          onToggleUnitFavorite(u.id, !!u.isFavorite);
                         }}
                         className={cn(
                           "shrink-0 transition-colors",
-                          w.isFavorite ? "text-yellow-400" : "text-muted/20 hover:text-yellow-400",
+                          u.isFavorite ? "text-yellow-400" : "text-muted/20 hover:text-yellow-400",
                         )}
                       >
-                        <Star size={11} className={w.isFavorite ? "fill-yellow-400" : ""} />
+                        <Star size={11} className={u.isFavorite ? "fill-yellow-400" : ""} />
                       </button>
                     </div>
                   ))}
-                  {/* Preserva valor legacy si no existe en weightUnits */}
-                  {line.quantityUnit && !weightUnits.some(w => w.code === line.quantityUnit) && (
+                  {/* Preserva valor legacy si no existe en las unidades activas */}
+                  {line.quantityUnit && !activeOptions.some(u => u.code === line.quantityUnit) && (
                     <div className="px-2 py-1.5 text-[11px] text-muted italic border-t border-border/30">
                       {line.quantityUnit} (legacy)
                     </div>
@@ -398,7 +412,8 @@ export function SortableCostRow({
                 document.body,
               )}
             </div>
-          )}
+            );
+          })()}
         </div>
       </div>
 
@@ -651,7 +666,10 @@ type ProductSelectorProps = {
   fmtN: (n: number) => string;
 };
 
-function ProductSelector({
+// Exportado para tests unitarios (FASE 10.2). Sigue siendo no-default para
+// preservar la API pública del módulo (solo SortableCostRow / COST_GRID /
+// COST_TYPE_CHIP / calcCostLine se usan fuera).
+export function ProductSelector({
   line,
   productItems,
   currencyOptions,
@@ -762,6 +780,43 @@ function ProductSelector({
     });
   }
 
+  // ── FASE 10.2 — Salvavidas defensivo: option sintética por currentValue ──
+  //
+  // Cuando una línea persistida tiene catalogItemId/catalogVariantId pero la
+  // option correspondiente no está en `flatOptions`, TPComboFixed no encuentra
+  // el value y muestra el placeholder ("Seleccionar...") aunque los datos
+  // estén guardados. Casos que disparan esta inconsistencia:
+  //   A. Race en primer render: variants cache aún sin cargar.
+  //   B. Variante eliminada/desactivada después de guardar el combo.
+  //   C. Artículo componente desactivado (no aparece en productItems).
+  //   D. Cualquier reload donde los items async lleguen tarde.
+  //
+  // Solución: si currentValue !== "" y NO hay match, inyectamos una option
+  // sintética AL FINAL del array. TPComboFixed.options.find() agarra el
+  // primer match, así que cuando la option real existe (caso normal) ésta
+  // gana y la sintética queda redundante. Si no existe (los 4 casos), la
+  // sintética rescata el `line.label` persistido.
+  //
+  // Cero efecto sobre pricing/persistencia/handleChange. El fix vive
+  // exclusivamente en el render del trigger del combo.
+  const matchedInOptions =
+    currentValue !== "" && flatOptions.some(o => o.value === currentValue);
+  const syntheticOption = !matchedInOptions && currentValue !== ""
+    ? (() => {
+        const fromLine = (line.label ?? "").trim();
+        const fromCatalog = productItems.find(p => p.id === line.catalogItemId)?.name;
+        const label = fromLine || fromCatalog || "(componente)";
+        return {
+          value:    currentValue,
+          label,
+          sublabel: !fromLine && fromCatalog
+            ? "Información completa cargando…"
+            : undefined,
+          imageUrl: productItems.find(p => p.id === line.catalogItemId)?.mainImageUrl ?? "",
+        };
+      })()
+    : null;
+
   return (
     <div className="space-y-1">
       <TPComboFixed
@@ -777,6 +832,7 @@ function ProductSelector({
             // y mantiene el alineamiento con las opciones que sí tienen imagen.
             imageUrl: o.imageUrl ?? "",
           })),
+          ...(syntheticOption ? [syntheticOption] : []),
         ]}
         searchable
       />

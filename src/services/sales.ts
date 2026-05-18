@@ -56,6 +56,8 @@ export type SalePriceResult = {
   unitMargin: string | null;
   /** Margen % sobre precio de venta. Null si sin costo. */
   marginPercent: string | null;
+  /** Markup % sobre costo. Provisto por el motor (POLICY R6). Null si sin costo. */
+  markupPercent: string | null;
   /** true cuando el costo no pudo resolverse completamente. */
   costPartial: boolean;
   /** MANUAL | MULTIPLIER | METAL_MERMA_HECHURA | COST_LINES | NONE */
@@ -165,13 +167,13 @@ export type SalePreviewLineInput = {
   manualDiscountOverride?: {
     mode:      "PERCENT" | "AMOUNT";
     value:     number;
-    appliesTo?: "METAL" | "HECHURA" | "PRODUCT" | "SERVICE" | "TOTAL";
+    appliesTo?: "TOTAL" | "METAL" | "HECHURA" | "METAL_Y_HECHURA" | "SUBTOTAL_AFTER_DISCOUNT" | "SUBTOTAL_BEFORE_DISCOUNT" | "PRODUCT" | "SERVICE";
   } | null;
   /** Override manual del impuesto por línea. */
   taxOverride?: {
     mode:      "PERCENT" | "AMOUNT";
     value:     number;
-    appliesTo?: "METAL" | "HECHURA" | "PRODUCT" | "SERVICE" | "TOTAL";
+    appliesTo?: "TOTAL" | "METAL" | "HECHURA" | "METAL_Y_HECHURA" | "SUBTOTAL_AFTER_DISCOUNT" | "SUBTOTAL_BEFORE_DISCOUNT" | "PRODUCT" | "SERVICE";
   } | null;
   /** Fase 2A.7 — override de lista de precios por línea. Tiene precedencia
    *  sobre el `priceListId` doc-level. */
@@ -267,6 +269,8 @@ export type SalePreviewPricingSnapshot = {
   unitCost:             number | null;
   unitMargin:           number | null;
   marginPercent:        number | null;
+  /** Markup % sobre costo. Provisto por el motor (POLICY R6). Null si sin costo. */
+  markupPercent:        number | null;
   costPartial:          boolean;
   costMode:             string;
   partial:              boolean;
@@ -325,6 +329,8 @@ export type SalePreviewLine = {
   unitMargin:           number | null;
   /** Margen % sobre precio final (Fase 5). */
   marginPercent:        number | null;
+  /** Markup % sobre costo. Provisto por el motor (POLICY R6). Null si sin costo. */
+  markupPercent:        number | null;
   costPartial:          boolean;
   costMode:             string;
   policy: { canConfirm: boolean; blockingAlerts: string[] };
@@ -413,6 +419,23 @@ export type SalePreviewLine = {
       // campo, así que con HECHURA con bonificación se veía el descuento ya
       // aplicado en VAL. UNIT.
       unitValue?:        number | null;
+      /** `unitValue × rate` en moneda base, pre-ajuste. Display-only — usado
+       *  por la sub-línea de equivalente para evitar percepción de doble
+       *  descuento. */
+      unitValueBase?:    number;
+      /** Cantidad del cost line por unidad de artículo (= meta.qty del motor).
+       *  Paridad con PRODUCT/SERVICE. Opcional para snapshots viejos: el
+       *  frontend cae a `1` cuando este campo no está. */
+      quantity?:         number;
+      /** Unidad seleccionada por el operador en el modal del artículo
+       *  (`u`, `g`, `hr`, etc.). Display-only. Cuando falta o es vacío, el
+       *  frontend cae al fallback "Unidades". */
+      quantityUnit?:     string;
+      /** Moneda original del cost line — sólo se emite cuando el motor
+       *  registró conversión efectiva (cost line en moneda != base). */
+      currencyId?:       string | null;
+      currencyCode?:     string | null;
+      currencySymbol?:   string | null;
     }>;
     /** F1.3 G4.1 — items PRODUCT del costo (insumos / piedras / etc.).
      *  El backend (commit G4.1.3 / G4.1.4) los emite per línea desde steps
@@ -427,9 +450,18 @@ export type SalePreviewLine = {
       catalogItemSku?:  string | null;
       catalogItemName:  string | null;
       quantity:         number;
+      /** Unidad seleccionada por el operador en el modal del artículo. */
+      quantityUnit?:    string;
       unitValue:        number;
+      /** `unitValue × rate` en moneda base, pre-ajuste. Display-only. */
+      unitValueBase?:   number;
       totalValue:       number;
       currencyId:       string | null;
+      /** Moneda original del cost line — sólo cuando hubo conversión efectiva. */
+      currencyCode?:    string | null;
+      currencySymbol?:  string | null;
+      /** Unidad de medida del Article referenciado (`Article.unitOfMeasure`). */
+      quantityUnitName?: string | null;
       lineAdjKind:      "BONUS" | "SURCHARGE" | null;
       lineAdjType:      "PERCENTAGE" | "FIXED_AMOUNT" | null;
       lineAdjValue:     number | null;
@@ -446,9 +478,18 @@ export type SalePreviewLine = {
       catalogItemSku?:  string | null;
       catalogItemName:  string | null;
       quantity:         number;
+      /** Unidad seleccionada por el operador en el modal del artículo. */
+      quantityUnit?:    string;
       unitValue:        number;
+      /** `unitValue × rate` en moneda base, pre-ajuste. Display-only. */
+      unitValueBase?:   number;
       totalValue:       number;
       currencyId:       string | null;
+      /** Moneda original del cost line — sólo cuando hubo conversión efectiva. */
+      currencyCode?:    string | null;
+      currencySymbol?:  string | null;
+      /** Unidad de medida del Article referenciado (`Article.unitOfMeasure`). */
+      quantityUnitName?: string | null;
       lineAdjKind:      "BONUS" | "SURCHARGE" | null;
       lineAdjType:      "PERCENTAGE" | "FIXED_AMOUNT" | null;
       lineAdjValue:     number | null;

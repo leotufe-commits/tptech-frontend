@@ -60,6 +60,7 @@ export {
 export {
   normalizeArticlePricingPreview,
   normalizeSalesPreview,
+  normalizeSalesLine,
   type NormalizeArticleArgs,
 } from "./normalizePricingPreviewResult";
 

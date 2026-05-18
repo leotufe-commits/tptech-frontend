@@ -360,7 +360,7 @@ export interface DocumentLine {
     taxOverride?: {
       mode:      "PERCENT" | "AMOUNT";
       value:     number;
-      appliesTo?: "METAL" | "HECHURA" | "PRODUCT" | "SERVICE" | "TOTAL";
+      appliesTo?: "TOTAL" | "METAL" | "HECHURA" | "METAL_Y_HECHURA" | "SUBTOTAL_AFTER_DISCOUNT" | "SUBTOTAL_BEFORE_DISCOUNT" | "PRODUCT" | "SERVICE";
     } | null;
     /**
      * Override manual del precio neto unitario. Pisa el resultado de la
@@ -375,8 +375,27 @@ export interface DocumentLine {
     manualDiscount?: {
       mode:      "PERCENT" | "AMOUNT";
       value:     number;
-      appliesTo?: "METAL" | "HECHURA" | "PRODUCT" | "SERVICE" | "TOTAL";
+      appliesTo?: "TOTAL" | "METAL" | "HECHURA" | "METAL_Y_HECHURA" | "SUBTOTAL_AFTER_DISCOUNT" | "SUBTOTAL_BEFORE_DISCOUNT" | "PRODUCT" | "SERVICE";
     } | null;
+    /**
+     * Base ("Aplica a") HEREDADA de la regla comercial del cliente
+     * (`commercialApplyOn`), passthrough del preview backend
+     * (`SalePreviewResult.clientCommercialRules.applyOn`). Display-only:
+     * el combo "Aplica a" de Bonificación lo usa como valor por defecto
+     * cuando NO hay override manual de descuento en la línea, en lugar de
+     * caer siempre a "TOTAL". El frontend NO calcula nada con esto.
+     */
+    inheritedDiscountAppliesTo?: "TOTAL" | "METAL" | "HECHURA" | "METAL_Y_HECHURA" | "SUBTOTAL_AFTER_DISCOUNT" | "SUBTOTAL_BEFORE_DISCOUNT" | "PRODUCT" | "SERVICE" | null;
+    /**
+     * Override de SOLO la base ("Aplica a"), elegido por el operador en la
+     * línea, INDEPENDIENTE del %/monto. Viaja al backend como
+     * `manualDiscountAppliesToOverride` / `manualTaxAppliesToOverride` aunque
+     * NO haya override de valor → el motor recalcula el descuento/impuesto
+     * HEREDADO sobre esa base. `null` = sin override (usa heredado). El
+     * frontend NO calcula nada: solo persiste y envía la elección.
+     */
+    manualDiscountAppliesTo?: "TOTAL" | "METAL" | "HECHURA" | "METAL_Y_HECHURA" | "SUBTOTAL_AFTER_DISCOUNT" | "SUBTOTAL_BEFORE_DISCOUNT" | "PRODUCT" | "SERVICE" | null;
+    manualTaxAppliesTo?:      "TOTAL" | "METAL" | "HECHURA" | "METAL_Y_HECHURA" | "SUBTOTAL_AFTER_DISCOUNT" | "SUBTOTAL_BEFORE_DISCOUNT" | "PRODUCT" | "SERVICE" | null;
 
     /**
      * Overrides de COMPOSICIÓN DE COSTO a nivel línea (Fase 2). NO modifican
@@ -568,7 +587,36 @@ export interface DocumentLine {
         taxAmount: number;
         manual:    boolean;
       }>;
+      // F17 — espejo de `Composition.costAdjustment` (Article.manualAdjustment*
+      // ya aplicado por el motor). null/undefined cuando el artículo no
+      // tiene ajuste global configurado. La UI lo muestra como sección
+      // compacta "AJUSTE GLOBAL" debajo de los grupos.
+      costAdjustment?: {
+        kind:   "BONUS" | "SURCHARGE" | null;
+        type:   "PERCENTAGE" | "FIXED_AMOUNT" | null;
+        value:  number | null;
+        amount: number | null;
+      } | null;
     } | null;
+    // F17 — impuestos de costo emitidos por el backend
+    // (`computePurchaseTaxes`). Passthrough puro — la UI solo formatea.
+    //   · costBase = costo post-ajuste global (sin impuestos).
+    //   · costTaxAmount = suma de impuestos de costo no recuperables.
+    //   · costWithTax = costBase + costTaxAmount.
+    //   · costTaxBreakdown = desglose por impuesto resuelto.
+    // Strings Decimal con 4 decimales (backend usa Prisma.Decimal). La UI
+    // hace `parseFloat()` para mostrar.
+    costBase?:         string | null;
+    costTaxAmount?:    string | null;
+    costWithTax?:      string | null;
+    costTaxBreakdown?: Array<{
+      taxId:           string;
+      name:            string;
+      calculationType: string;
+      rate:            number | null;
+      fixedAmount:     number | null;
+      taxAmount:       number;
+    }>;
     /** Última vez que se calculó (timestamp). Para debounce / staleness. */
     resolvedAt?:            number;
     /**

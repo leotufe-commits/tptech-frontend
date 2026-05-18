@@ -1,6 +1,13 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { ChevronDown, ChevronUp, X as XIcon } from "lucide-react";
 import { cn } from "./tp";
+import { useNumberFormat } from "../../context/NumberFormatContext";
+import {
+  formatNumber,
+  getNumberFormatConfig,
+  parseNumberInput,
+  type NumberFormatType,
+} from "../../lib/number-format";
 
 type Props = {
   label?: string;
@@ -15,6 +22,14 @@ type Props = {
   max?: number;
 
   decimals?: number;
+  /**
+   * Opt-in: tipo de dato del motor central de formato. Cuando se pasa, el
+   * display/blur usa los decimales y el separador decimal de la región
+   * configurada por el tenant. Sin esto, el input mantiene el comportamiento
+   * histórico (punto, decimales del prop). El parseo SIEMPRE acepta coma o
+   * punto, con o sin `formatType`.
+   */
+  formatType?: NumberFormatType;
   placeholder?: string;
 
   disabled?: boolean;
@@ -71,17 +86,6 @@ function isIntermediate(raw: string) {
   return false;
 }
 
-function parseSmartNumber(raw: string) {
-  const s = String(raw ?? "").trim();
-  if (!s) return NaN;
-
-  const normalized = s.replace(/\s+/g, "").replace(",", ".");
-  if (!/^-?\d*\.?\d*$/.test(normalized)) return NaN;
-
-  const n = Number(normalized);
-  return Number.isFinite(n) ? n : NaN;
-}
-
 function formatFixed(n: number, decimals?: number) {
   if (!Number.isFinite(n)) return "";
   return n.toFixed(typeof decimals === "number" ? decimals : 2);
@@ -131,6 +135,7 @@ export default function TPNumberInput({
   min,
   max,
   decimals,
+  formatType,
   placeholder,
   disabled,
   readOnly,
@@ -165,7 +170,38 @@ export default function TPNumberInput({
     return Number.isFinite(s) && s > 0 ? s : 1;
   }, [step]);
 
-  const p = useMemo(() => pow10(decimals), [decimals]);
+  // Config del tenant. Sin provider devuelve el default (AR) — seguro en tests.
+  const { config } = useNumberFormat();
+
+  // Decimales efectivos: prop explícito gana; si no y hay formatType, el del
+  // preset; si no, undefined (comportamiento histórico = libre).
+  const effectiveDecimals = useMemo<number | undefined>(() => {
+    if (typeof decimals === "number") return decimals;
+    if (formatType) return getNumberFormatConfig(formatType, config).decimals;
+    return undefined;
+  }, [decimals, formatType, config]);
+
+  // Display en reposo / blur. Con formatType: número completo de la región
+  // (miles + decimal del tenant), SIN prefijo/sufijo (los pone la UI por
+  // fuera). El draft mientras se tipea queda crudo (onChange no reformatea),
+  // así que agrupar acá no genera problemas de caret. Sin formatType:
+  // comportamiento histórico (punto, decimales del prop).
+  function formatDraft(n: number): string {
+    if (!Number.isFinite(n)) return "";
+    if (formatType) {
+      return formatNumber(n, formatType, config, { bare: true, blank: "" });
+    }
+    return formatFixed(n, effectiveDecimals);
+  }
+
+  // Parseo SIEMPRE tolerante (coma o punto, con/sin miles). Devuelve NaN si
+  // no es un número (compat con la lógica previa basada en Number.isFinite).
+  function parseDraft(raw: string): number {
+    const v = parseNumberInput(raw, config);
+    return v === null ? NaN : v;
+  }
+
+  const p = useMemo(() => pow10(effectiveDecimals), [effectiveDecimals]);
 
   useEffect(() => {
     const isExternalChange = value !== lastEmittedRef.current;
@@ -183,7 +219,7 @@ export default function TPNumberInput({
       if (isEditing) setIsEditing(false);
       setDraft(
         typeof value === "number" && Number.isFinite(value)
-          ? formatFixed(value, decimals)
+          ? formatDraft(value)
           : ""
       );
     } else if (!isEditing) {
@@ -191,7 +227,7 @@ export default function TPNumberInput({
       // si no estamos editando activamente.
       setDraft(
         typeof value === "number" && Number.isFinite(value)
-          ? formatFixed(value, decimals)
+          ? formatDraft(value)
           : ""
       );
     }
@@ -224,7 +260,7 @@ export default function TPNumberInput({
 
   function getBaseNumberForSpinner() {
     if (!isIntermediate(draft)) {
-      const n = parseSmartNumber(draft);
+      const n = parseDraft(draft);
       if (Number.isFinite(n)) return n;
     }
 
@@ -264,7 +300,7 @@ export default function TPNumberInput({
     apply(nextNum);
 
     setIsEditing(true);
-    setDraft(formatFixed(nextNum, decimals));
+    setDraft(formatDraft(nextNum));
 
     innerRef.current?.focus();
   }
@@ -335,7 +371,7 @@ export default function TPNumberInput({
             setIsEditing(true);
 
             if (draft === "" && typeof value === "number" && Number.isFinite(value)) {
-              setDraft(formatFixed(value, decimals));
+              setDraft(formatDraft(value));
             }
 
             if (wantSelectAll) {
@@ -357,13 +393,13 @@ export default function TPNumberInput({
               return;
             }
 
-            const n = parseSmartNumber(raw);
+            const n = parseDraft(raw);
             if (Number.isFinite(n)) {
               apply(n);
-              setDraft(formatFixed(n, decimals));
+              setDraft(formatDraft(n));
             } else {
               if (typeof value === "number" && Number.isFinite(value)) {
-                setDraft(formatFixed(value, decimals));
+                setDraft(formatDraft(value));
               } else {
                 setDraft("");
               }
@@ -398,7 +434,7 @@ export default function TPNumberInput({
 
             if (isIntermediate(raw)) return;
 
-            const n = parseSmartNumber(raw);
+            const n = parseDraft(raw);
             if (!Number.isFinite(n)) return;
 
             apply(n);
@@ -444,7 +480,7 @@ export default function TPNumberInput({
               // para que el próximo cambio de `value=0` se vea como eco
               // interno y NO dispare un nuevo setDraft.
               lastEmittedRef.current = 0;
-              setDraft(formatFixed(0, decimals));
+              setDraft(formatDraft(0));
               setIsEditing(false);
               onClear?.();
             }}

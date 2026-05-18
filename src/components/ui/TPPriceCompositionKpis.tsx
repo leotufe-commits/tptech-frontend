@@ -848,13 +848,32 @@ export default function TPPriceCompositionKpis(props: TPPriceCompositionKpisProp
               </div>
             )}
 
-            {/* ── Precio / Hechura (costo aplicado) ────────────────────── */}
+            {/* ── Costo / Hechura — passthrough `metalHechuraBreakdown.hechuraCost`.
+                El valor que viaja en este campo es el COSTO de la hechura
+                (Σ líneas de costo no-metal). El precio de venta se ve en el
+                hero del card, en la fórmula `costo × factor` y en "Total
+                componente" más abajo. NO renombrar a "Precio /…" porque el
+                valor no es venta — sería confundir al operador. */}
             {(metalHechuraBreakdown?.hechuraCost != null
               || composition?.hechura?.appliedAmount != null) && (
               <InfoLine
-                label="Precio / Hechura"
+                label="Costo / Hechura"
                 value={money(metalHechuraBreakdown?.hechuraCost
                   ?? composition?.hechura?.appliedAmount ?? null)}
+              />
+            )}
+
+            {/* ── Margen lista (hechura) — passthrough `hechuraMarginPct`.
+                Sólo aparece en venta y cuando el modo NO es MARGIN_TOTAL
+                (en MARGIN_TOTAL el margen unificado ya se muestra en la card
+                "TOTAL PRODUCTO"). Si el motor no expone margen propio para
+                hechura (PROPORTIONAL_COST y derivados) cae a 0 y se oculta. */}
+            {view === "sale"
+              && !isMarginTotal
+              && hechuraMarginPct > 0.001 && (
+              <InfoLine
+                label="Margen lista"
+                value={fmtPct(hechuraMarginPct)}
               />
             )}
 

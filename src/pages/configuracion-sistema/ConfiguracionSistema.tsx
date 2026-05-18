@@ -222,6 +222,12 @@ export default function ConfiguracionSistema() {
             icon: <Sliders size={18} />,
           },
           {
+            to: "/configuracion-sistema/formato-numerico",
+            title: "Formato numérico",
+            desc: "Región (1.000,00 o 1,000.00) y decimales por tipo de dato. Solo visual, no afecta cálculos.",
+            icon: <Hash size={18} />,
+          },
+          {
             to: "/inventario/almacenes",
             title: "Almacenes",
             desc: "Alta y gestión de almacenes, activación y favoritos.",

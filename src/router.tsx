@@ -86,11 +86,12 @@ import ConfiguracionSistemaPoliticaPrecios from "./pages/configuracion-sistema/C
 import ConfiguracionSistemaCanalesDeVenta from "./pages/configuracion-sistema/ConfiguracionSistemaCanalesDeVenta";
 import ConfiguracionSistemaCupones from "./pages/configuracion-sistema/ConfiguracionSistemaCupones";
 import FormatoCamposPage from "./pages/configuracion-sistema/FormatoCamposPage";
+import FormatoNumericoPage from "./pages/configuracion-sistema/FormatoNumericoPage";
 import DocumentosHub from "./pages/configuracion-sistema/documentos/DocumentosHub";
 import DocumentTemplateEditor from "./pages/configuracion-sistema/documentos/DocumentTemplateEditor";
 import DashboardRentabilidad from "./pages/DashboardRentabilidad";
 import PricingSimulator from "./pages/PricingSimulator";
-import PricingCompare from "./pages/dev/PricingCompare";
+const PricingCompare = React.lazy(() => import("./pages/dev/PricingCompare"));
 import EntityDetail from "./pages/entity-detail/EntityDetail";
 import EntityAccountStatement from "./pages/entity-detail/EntityAccountStatement";
 import ArticleDetail from "./pages/article-detail/ArticleDetail";
@@ -292,6 +293,7 @@ const router = createBrowserRouter([
           { path: "configuracion-sistema/numeracion", element: <Placeholder title="Numeración de comprobantes" /> },
           { path: "configuracion-sistema/etiquetas", element: <ConfiguracionSistemaEtiquetas /> },
           { path: "configuracion-sistema/formato-campos",    element: <FormatoCamposPage /> },
+          { path: "configuracion-sistema/formato-numerico",  element: <FormatoNumericoPage /> },
           { path: "configuracion-sistema/documentos",        element: <DocumentosHub /> },
           { path: "configuracion-sistema/documentos/:kind",  element: <DocumentTemplateEditor /> },
 
@@ -309,7 +311,14 @@ const router = createBrowserRouter([
           // página se autobloquea con un Navigate al dashboard. No aparece
           // en sidebar.
           ...(import.meta.env.DEV
-            ? [{ path: "dev/pricing-compare", element: <PricingCompare /> }]
+            ? [{
+                path: "dev/pricing-compare",
+                element: (
+                  <React.Suspense fallback={<LoadingGate />}>
+                    <PricingCompare />
+                  </React.Suspense>
+                ),
+              }]
             : []),
 
           /* =====================

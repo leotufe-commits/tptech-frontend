@@ -790,6 +790,10 @@ export default function ArticleModal({
   const [unitItems,    setUnitItems]    = useState<Unit[]>([]);
   const [weightUnits,  setWeightUnits]  = useState<Unit[]>([]);
   const [lengthUnits,  setLengthUnits]  = useState<Unit[]>([]);
+  // Catálogo completo de unidades activas del tenant — para que el selector
+  // de unidad de cada cost line ofrezca TODAS las opciones configuradas
+  // (no solo las de tipo WEIGHT). Se carga junto con los otros catálogos.
+  const [allActiveUnits, setAllActiveUnits] = useState<Unit[]>([]);
 
   /* ── Valores predeterminados para nuevos artículos (estrellita) ─────── */
   const [defaultArticleType, setDefaultArticleType] = useState<ArticleType | null>(
@@ -1771,6 +1775,14 @@ export default function ArticleModal({
       setUnitItems(allUnits);
       setWeightUnits(wUnits);
       setLengthUnits(lUnits);
+
+      // Carga TODAS las unidades activas (cualquier type) en una sola query
+      // — alimenta el selector de unidad por línea de composición de costo,
+      // que debe ofrecer cualquier unidad configurada por el operador en
+      // Configuración → Unidades (QUANTITY / WEIGHT / LENGTH / VOLUME / OTHER).
+      listUnits({ isActive: true })
+        .then(units => setAllActiveUnits(units))
+        .catch(() => setAllActiveUnits([]));
 
       const fBrand     = brands.find((i) => i.isFavorite && i.isActive !== false)?.label ?? "";
       const fManuf     = manufacturers.find((i) => i.isFavorite && i.isActive !== false)?.label ?? "";
@@ -4463,6 +4475,7 @@ export default function ArticleModal({
                             productItems={productItems}
                             serviceItems={serviceItems}
                             weightUnits={weightUnits}
+                            allActiveUnits={allActiveUnits}
                             onPatch={(patch) => patchLine(i, patch)}
                             onRemove={() => dropLine(i)}
                             onSetMetalFavorite={handleSetMetalFavorite}

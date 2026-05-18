@@ -154,3 +154,40 @@ export async function updateFieldFormats(patch: Partial<FieldFormatsConfig>): Pr
     documentFormat: data.jewelry.documentFormat ?? "raw",
   };
 }
+
+// ---------------------------------------------------------------------------
+// Formato numérico (config visual por tenant — JSON en Jewelry.numberFormat)
+// ---------------------------------------------------------------------------
+
+import type { NumberFormatConfig } from "../lib/number-format";
+import { DEFAULT_NUMBER_FORMAT_CONFIG } from "../lib/number-format";
+
+function coerceNumberFormat(raw: any): NumberFormatConfig {
+  if (
+    raw && typeof raw === "object" && !Array.isArray(raw) &&
+    ["AR", "US", "CUSTOM"].includes(String(raw.region))
+  ) {
+    return {
+      region: raw.region,
+      custom: {
+        thousands: typeof raw.custom?.thousands === "string" ? raw.custom.thousands : DEFAULT_NUMBER_FORMAT_CONFIG.custom.thousands,
+        decimal:   typeof raw.custom?.decimal   === "string" ? raw.custom.decimal   : DEFAULT_NUMBER_FORMAT_CONFIG.custom.decimal,
+      },
+      presets: (raw.presets && typeof raw.presets === "object" && !Array.isArray(raw.presets)) ? raw.presets : {},
+    };
+  }
+  return DEFAULT_NUMBER_FORMAT_CONFIG;
+}
+
+export async function fetchNumberFormat(): Promise<NumberFormatConfig> {
+  const data = await apiFetch<{ jewelry: any }>("/company/me", { method: "GET" });
+  return coerceNumberFormat(data.jewelry?.numberFormat);
+}
+
+export async function updateNumberFormat(config: NumberFormatConfig): Promise<NumberFormatConfig> {
+  const data = await apiFetch<{ jewelry: any }>("/company/me", {
+    method: "PATCH",
+    body: { numberFormat: config },
+  });
+  return coerceNumberFormat(data.jewelry?.numberFormat);
+}

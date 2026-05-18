@@ -56,13 +56,13 @@ export type ArticlePricingPreviewArgs = {
     taxOverride?: {
       mode:       "PERCENT" | "AMOUNT";
       value:      number;
-      appliesTo?: "METAL" | "HECHURA" | "PRODUCT" | "SERVICE" | "TOTAL";
+      appliesTo?: "TOTAL" | "METAL" | "HECHURA" | "METAL_Y_HECHURA" | "SUBTOTAL_AFTER_DISCOUNT" | "SUBTOTAL_BEFORE_DISCOUNT" | "PRODUCT" | "SERVICE";
     } | null;
     manualPriceOverride?: number | null;
     manualDiscountOverride?: {
       mode:       "PERCENT" | "AMOUNT";
       value:      number;
-      appliesTo?: "METAL" | "HECHURA" | "PRODUCT" | "SERVICE" | "TOTAL";
+      appliesTo?: "TOTAL" | "METAL" | "HECHURA" | "METAL_Y_HECHURA" | "SUBTOTAL_AFTER_DISCOUNT" | "SUBTOTAL_BEFORE_DISCOUNT" | "PRODUCT" | "SERVICE";
     } | null;
     gramsOverride?:          number | null;
     mermaPercentOverride?:   number | null;
@@ -145,12 +145,12 @@ export type SalesPreviewArgs = {
     manualDiscountOverride?: {
       mode:       "PERCENT" | "AMOUNT";
       value:      number;
-      appliesTo?: "METAL" | "HECHURA" | "PRODUCT" | "SERVICE" | "TOTAL";
+      appliesTo?: "TOTAL" | "METAL" | "HECHURA" | "METAL_Y_HECHURA" | "SUBTOTAL_AFTER_DISCOUNT" | "SUBTOTAL_BEFORE_DISCOUNT" | "PRODUCT" | "SERVICE";
     } | null;
     taxOverride?: {
       mode:       "PERCENT" | "AMOUNT";
       value:      number;
-      appliesTo?: "METAL" | "HECHURA" | "PRODUCT" | "SERVICE" | "TOTAL";
+      appliesTo?: "TOTAL" | "METAL" | "HECHURA" | "METAL_Y_HECHURA" | "SUBTOTAL_AFTER_DISCOUNT" | "SUBTOTAL_BEFORE_DISCOUNT" | "PRODUCT" | "SERVICE";
     } | null;
     /** Fase 2A.7 — override de lista por línea. Tiene precedencia sobre
      *  `priceListId` doc-level. */

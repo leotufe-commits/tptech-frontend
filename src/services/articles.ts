@@ -135,6 +135,8 @@ export type PricingPreviewResult = {
   appliedPromotionName:    string | null;
   appliedDiscountId:       string | null;
   marginPercent:           string | null;
+  /** Markup % sobre costo. Provisto por el motor (POLICY R6). Null si sin costo. */
+  markupPercent:           string | null;
   unitCost:                string | null;
   unitMargin:              string | null;
   costPartial:             boolean;
@@ -1254,7 +1256,7 @@ export const articlesApi = {
       taxOverride?: {
         mode: "PERCENT" | "AMOUNT";
         value: number;
-        appliesTo?: "METAL" | "HECHURA" | "PRODUCT" | "SERVICE" | "TOTAL";
+        appliesTo?: "TOTAL" | "METAL" | "HECHURA" | "METAL_Y_HECHURA" | "SUBTOTAL_AFTER_DISCOUNT" | "SUBTOTAL_BEFORE_DISCOUNT" | "PRODUCT" | "SERVICE";
       } | null;
       // Override manual del precio neto unitario (sin impuestos). Pisa
       // PRICE_LIST y salteamos qty discount + promotion.
@@ -1265,7 +1267,7 @@ export const articlesApi = {
       manualDiscountOverride?: {
         mode: "PERCENT" | "AMOUNT";
         value: number;
-        appliesTo?: "METAL" | "HECHURA" | "PRODUCT" | "SERVICE" | "TOTAL";
+        appliesTo?: "TOTAL" | "METAL" | "HECHURA" | "METAL_Y_HECHURA" | "SUBTOTAL_AFTER_DISCOUNT" | "SUBTOTAL_BEFORE_DISCOUNT" | "PRODUCT" | "SERVICE";
       } | null;
       // Overrides de COMPOSICIÓN DE COSTO a nivel línea (Fase 2).
       // NO modifican el artículo en DB — el motor opera sobre una copia.

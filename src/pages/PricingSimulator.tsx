@@ -25,6 +25,7 @@ import { TPCard } from "../components/ui/TPCard";
 import { CostSummaryCard } from "../components/ui/CostSummaryCard";
 import { CostBreakdown as CostBreakdownPanel } from "../components/ui/CostBreakdown";
 import type { CostBreakdownRow } from "../components/ui/CostBreakdown";
+import { CostCompositionBlock, PricingStepsBreakdown, PriceCompositionCards } from "../components/pricing";
 import { resolveAdjustmentLabel } from "../components/ui/TPPriceCompositionKpis";
 import { TPField } from "../components/ui/TPField";
 import TPNumberInput from "../components/ui/TPNumberInput";
@@ -33,9 +34,18 @@ import TPSelect from "../components/ui/TPSelect";
 import TPComboFixed from "../components/ui/TPComboFixed";
 import {
   articlesApi,
-  fmtMoney,
   COST_MODE_LABELS,
 } from "../services/articles";
+// Formato config-aware (región del tenant). `fmtMoney` aliasado al helper
+// central config-aware → todos los montos del simulador respetan la región
+// sin tocar cada call-site. Cero toFixed/toLocaleString nuevo.
+import {
+  formatMoneyAmount as fmtMoney,
+  formatMoneyDisplay,
+  formatGrams,
+  formatDecimal,
+  formatPercent,
+} from "../lib/pricing/format";
 import ArticleSearchSelect from "../components/ui/ArticleSearchSelect";
 import EntitySearchSelect from "../components/ui/EntitySearchSelect";
 // Fase 2 — helper visual unificado del breakdown del factor (bruto / ajuste / efectivo).
@@ -189,10 +199,8 @@ function stepFormula(step: PricingStepResult): string | null {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const m = (step.meta ?? {}) as Record<string, any>;
   // Formateo local: 2 decimales para gramos/precios, 3 para merma (regla del simulador)
-  const n2 = (v: number | string) =>
-    parseFloat(String(v)).toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-  const n3 = (v: number | string) =>
-    parseFloat(String(v)).toLocaleString("es-AR", { minimumFractionDigits: 3, maximumFractionDigits: 3 });
+  const n2 = (v: number | string) => formatDecimal(parseFloat(String(v)), 2);
+  const n3 = (v: number | string) => formatDecimal(parseFloat(String(v)), 3);
 
   switch (step.key) {
     case "COST_LINES_METAL":
@@ -269,8 +277,8 @@ function stepFormula(step: PricingStepResult): string | null {
           : baseLabel;
         // Formato unificado: "Base: $X × Y% = −$Z"
         if (m.type === "PERCENTAGE" && m.discountBase != null)
-          return `Base: $${parseFloat(String(m.discountBase)).toFixed(2)}${applyLbl} × ${m.value}% = −$${discAmt.toFixed(2)}${scopeSuffix}${qty}`;
-        return `−$${discAmt.toFixed(2)}${applyLbl}${scopeSuffix}${qty}`;
+          return `Base: $${formatDecimal(parseFloat(String(m.discountBase)), 2)}${applyLbl} × ${m.value}% = −$${formatDecimal(discAmt, 2)}${scopeSuffix}${qty}`;
+        return `−$${formatDecimal(discAmt, 2)}${applyLbl}${scopeSuffix}${qty}`;
       }
       if (m.type && m.value && m.quantity)
         return `${m.type === "PERCENTAGE" ? `${m.value}%` : `$${m.value}`}${scopeSuffix} · cant. ${m.quantity}`;
@@ -287,8 +295,8 @@ function stepFormula(step: PricingStepResult): string | null {
           : baseLabel;
         // Formato unificado: "Base: $X × Y% = −$Z"
         if (m.type === "PERCENTAGE" && m.discountBase != null)
-          return `Base: $${parseFloat(String(m.discountBase)).toFixed(2)}${applyLbl} × ${m.value}% = −$${discAmt.toFixed(2)}${scope}`;
-        return `−$${discAmt.toFixed(2)}${applyLbl}${scope}`;
+          return `Base: $${formatDecimal(parseFloat(String(m.discountBase)), 2)}${applyLbl} × ${m.value}% = −$${formatDecimal(discAmt, 2)}${scope}`;
+        return `−$${formatDecimal(discAmt, 2)}${applyLbl}${scope}`;
       }
       if (m.type && m.value)
         return `${m.type === "PERCENTAGE" ? `${m.value}%` : `$${m.value}`} · ámbito ${m.scope ?? ""}`;
@@ -305,8 +313,8 @@ function stepFormula(step: PricingStepResult): string | null {
           ? baseLabel.replace(")", " estimado)") : baseLabel;
         // Formato unificado: "Base: $X × Y% = −$Z"
         if (valueType === "PERCENTAGE" && m.discountBase != null)
-          return `Base: $${parseFloat(String(m.discountBase)).toFixed(2)}${applyLbl} × ${m.value}% = −$${discAmt.toFixed(2)}`;
-        return `−$${discAmt.toFixed(2)}${applyLbl}`;
+          return `Base: $${formatDecimal(parseFloat(String(m.discountBase)), 2)}${applyLbl} × ${m.value}% = −$${formatDecimal(discAmt, 2)}`;
+        return `−$${formatDecimal(discAmt, 2)}${applyLbl}`;
       }
       if (ruleType === "SURCHARGE") {
         const surAmt   = parseFloat(String(m.surchargeAmount ?? 0));
@@ -314,8 +322,8 @@ function stepFormula(step: PricingStepResult): string | null {
           ? baseLabel.replace(")", " estimado)") : baseLabel;
         // Formato unificado: "Base: $X × Y% = +$Z"
         if (valueType === "PERCENTAGE" && m.surchargeBase != null)
-          return `Base: $${parseFloat(String(m.surchargeBase)).toFixed(2)}${applyLbl} × ${m.value}% = +$${surAmt.toFixed(2)}`;
-        return `+$${surAmt.toFixed(2)}${applyLbl}`;
+          return `Base: $${formatDecimal(parseFloat(String(m.surchargeBase)), 2)}${applyLbl} × ${m.value}% = +$${formatDecimal(surAmt, 2)}`;
+        return `+$${formatDecimal(surAmt, 2)}${applyLbl}`;
       }
       return null;
     }
@@ -390,7 +398,7 @@ function StepRow({ step, sym, superseded, rate = 1, dsym }: { step: PricingStepR
           ? fmtMoney(competingVal / rate, _sym)
           : valueOk
             ? step.key === "MARGIN"
-              ? `${parseFloat(step.value!).toFixed(1)}%`
+              ? `${formatDecimal(parseFloat(step.value!), 1)}%`
               : fmtMoney(parseFloat(step.value!) / rate, _sym)
             : "—"
         }
@@ -542,7 +550,7 @@ function PricingBreakdown({
       <div className="grid grid-cols-[16px_1fr_auto] gap-x-2 px-3 pb-1.5 text-[10px] opacity-60">
         <span />
         <span className="text-muted font-mono">
-          sin merma: {fm(baseCost)} · merma {merma.toLocaleString("es-AR", { minimumFractionDigits: 3, maximumFractionDigits: 3 })}%: +{fm(mermaCost)}
+          sin merma: {fm(baseCost)} · merma {formatDecimal(merma, 3)}%: +{fm(mermaCost)}
         </span>
         <span />
       </div>
@@ -594,13 +602,13 @@ function PricingBreakdown({
         const conv = step.value ? parseFloat(step.value) : null;
 
         // MULTIPLIER: recuperar qty/value del siguiente paso MULTIPLIER
-        let originLine = `${cid} ${orig.toFixed(2)}`;
+        let originLine = `${cid} ${formatDecimal(orig, 2)}`;
         if (step.key === "MULTIPLIER_CURRENCY" && nextStep?.key === "MULTIPLIER" && nextStep.status === "ok") {
           const nm  = nextStep.meta ?? {};
           const qty = nm.qty   ? parseFloat(String(nm.qty))   : null;
           const val = nm.value ? parseFloat(String(nm.value)) : null;
           if (qty != null && val != null) {
-            originLine = `${qty} × ${cid} ${val.toFixed(2)} = ${cid} ${orig.toFixed(2)}`;
+            originLine = `${qty} × ${cid} ${formatDecimal(val, 2)} = ${cid} ${formatDecimal(orig, 2)}`;
           }
           skipIndices.add(i + 1);
         }
@@ -634,10 +642,10 @@ function PricingBreakdown({
               </div>
               <div className="grid grid-cols-[1fr_auto] gap-x-3 font-mono text-[11px]">
                 <span className="text-text">{originLine}</span>
-                <span className="tabular-nums text-muted text-right">{cid} {orig.toFixed(2)}</span>
+                <span className="tabular-nums text-muted text-right">{cid} {formatDecimal(orig, 2)}</span>
               </div>
               <div className="text-[10px] text-muted/70 font-mono mt-0.5">
-                Tasa: 1 {cid} = {sym}{rate.toFixed(2)}
+                Tasa: 1 {cid} = {sym}{formatDecimal(rate, 2)}
               </div>
             </div>
             {/* Valor convertido */}
@@ -806,7 +814,7 @@ function PricingBreakdown({
         const purity             = m.purity             != null ? parseFloat(String(m.purity))             : null;
         const gramsFineEquivalent = m.gramsFineEquivalent != null ? parseFloat(String(m.gramsFineEquivalent)) : null;
         if (gramsOriginal != null && gramsFineEquivalent != null) {
-          const f2 = (n: number) => n.toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+          const f2 = (n: number) => formatDecimal(n, 2);
           // Pureza efectiva = gramsFineEquivalent / gramsOriginal
           // Incluye merma cuando aplica (p.ej. 0,750 × 1,10 = 0,825)
           const effectivePurity = gramsOriginal > 0 ? gramsFineEquivalent / gramsOriginal : (purity ?? null);
@@ -960,8 +968,8 @@ function PricingBreakdown({
                         <span className="font-medium text-text">Metal</span>
                         <div className="text-[10px] text-muted/60 font-mono mt-0.5">
                           {mhb.metalGramsBase != null
-                            ? <>{(mhb.metalGramsSale ?? 0).toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} gr × {fm(mhb.metalPricePerGram ?? 0)}/gr (lista {fbM.grossText ?? `+${mhb.metalMarginPct}%`})</>
-                            : <>costo {fm(mhb.metalCost)} × {(1 + mhb.metalMarginPct / 100).toFixed(2)} (lista {fbM.grossText ?? `+${mhb.metalMarginPct}%`})</>
+                            ? <>{formatGrams(mhb.metalGramsSale ?? 0, 2)} gr × {fm(mhb.metalPricePerGram ?? 0)}/gr (lista {fbM.grossText ?? `+${mhb.metalMarginPct}%`})</>
+                            : <>costo {fm(mhb.metalCost)} × {formatDecimal(1 + mhb.metalMarginPct / 100, 2)} (lista {fbM.grossText ?? `+${mhb.metalMarginPct}%`})</>
                           }
                         </div>
                         <FactorBreakdownHint
@@ -989,7 +997,7 @@ function PricingBreakdown({
                       <div className="min-w-0">
                         <span className="font-medium text-text">Hechura / Mano de obra</span>
                         <div className="text-[10px] text-muted/60 font-mono mt-0.5">
-                          costo {fm(mhb.hechuraCost)} × {(1 + mhb.hechuraMarginPct / 100).toFixed(2)} (lista {fb.grossText ?? `+${mhb.hechuraMarginPct}%`})
+                          costo {fm(mhb.hechuraCost)} × {formatDecimal(1 + mhb.hechuraMarginPct / 100, 2)} (lista {fb.grossText ?? `+${mhb.hechuraMarginPct}%`})
                         </div>
                         <FactorBreakdownHint
                           hasDivergence={fb.hasDivergence}
@@ -1024,7 +1032,7 @@ function PricingBreakdown({
                     <div className="grid grid-cols-[16px_1fr] gap-x-2 px-4 py-1">
                       <span />
                       <span className="text-[10px] text-muted/60 font-mono tracking-tight">
-                        ajuste ({markup > 0 ? "+" : ""}{markupPct.toFixed(1)}% s/costo)
+                        ajuste ({markup > 0 ? "+" : ""}{formatDecimal(markupPct, 1)}% s/costo)
                       </span>
                     </div>
                   </React.Fragment>
@@ -1074,7 +1082,7 @@ function PricingBreakdown({
               return (
                 <div key={i} className="grid grid-cols-[1fr_auto] gap-x-4 px-4 py-2 border-t border-border/20 bg-primary/3">
                   <span className="text-xs text-muted">Margen resultante</span>
-                  <span className="tabular-nums font-bold text-sm text-right text-primary">{pct.toFixed(1)}%</span>
+                  <span className="tabular-nums font-bold text-sm text-right text-primary">{formatDecimal(pct, 1)}%</span>
                 </div>
               );
             }
@@ -1495,7 +1503,7 @@ function PricingBreakdown({
                   </p>
                   {data.unitCost != null && parseFloat(data.unitCost) > 0 && gain != null && (
                     <p className="text-[10px] text-muted/60 mt-0.5 tabular-nums">
-                      {((gain / parseFloat(data.unitCost)) * 100).toFixed(1)}% s/costo
+                      {formatDecimal((gain / parseFloat(data.unitCost)) * 100, 1)}% s/costo
                     </p>
                   )}
                 </div>
@@ -1510,7 +1518,7 @@ function PricingBreakdown({
                       : "bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300"
                   )}>
                     <TrendingUp size={12} />
-                    {mPct.toFixed(1)}%
+                    {formatDecimal(mPct, 1)}%
                   </div>
                   <p className="text-[10px] text-muted/60 mt-1.5">sobre precio de venta</p>
                 </div>
@@ -1876,13 +1884,9 @@ function SummaryGrid({
     return "Costo simple";
   })();
 
-  // Markup = ganancia / costo × 100
-  const markupPercent = (() => {
-    if (!data.unitCost || !data.unitPrice) return null;
-    const cost = parseFloat(data.unitCost);
-    if (cost <= 0) return null;
-    return (parseFloat(data.unitPrice) - cost) / cost * 100;
-  })();
+  // Markup = ganancia / costo × 100. Viene del motor (pricing-engine.sale.ts:2329)
+  // — el frontend NO lo recalcula. POLICY R6 (frontend lector puro).
+  const markupPercent = data.markupPercent != null ? parseFloat(data.markupPercent) : null;
 
   // Ganancia monetaria por unidad
   const gainAmount = data.unitCost != null && data.unitPrice != null
@@ -1944,7 +1948,7 @@ function SummaryGrid({
             </p>
             {markupPercent != null && (
               <p className="text-[10px] text-muted mt-0.5 tabular-nums">
-                {markupPercent.toFixed(1)}% s/costo
+                {formatDecimal(markupPercent, 1)}% s/costo
               </p>
             )}
           </div>
@@ -1964,7 +1968,7 @@ function SummaryGrid({
                 {mVal != null ? (
                   <div className={cn("inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-base font-bold tabular-nums", badgeMCls)}>
                     <TrendingUp size={13} />
-                    {mVal.toFixed(1)}%
+                    {formatDecimal(mVal, 1)}%
                   </div>
                 ) : (
                   <p className="text-lg font-bold tabular-nums truncate text-muted">—</p>
@@ -2034,8 +2038,8 @@ function SummaryGrid({
                     </div>
                     <div className="text-[10px] text-muted/60 font-mono mt-0.5">
                       {mhb.metalGramsBase != null
-                        ? <>{(mhb.metalGramsSale ?? 0).toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} gr × {fm(mhb.metalPricePerGram ?? 0)}/gr (lista {fbDM.grossText ?? `+${mhb.metalMarginPct}%`})</>
-                        : <>costo {fm(mhb.metalCost)} × {(1 + mhb.metalMarginPct / 100).toFixed(2)} (lista {fbDM.grossText ?? `+${mhb.metalMarginPct}%`})</>
+                        ? <>{formatGrams(mhb.metalGramsSale ?? 0, 2)} gr × {fm(mhb.metalPricePerGram ?? 0)}/gr (lista {fbDM.grossText ?? `+${mhb.metalMarginPct}%`})</>
+                        : <>costo {fm(mhb.metalCost)} × {formatDecimal(1 + mhb.metalMarginPct / 100, 2)} (lista {fbDM.grossText ?? `+${mhb.metalMarginPct}%`})</>
                       }
                     </div>
                     <FactorBreakdownHint
@@ -2087,7 +2091,7 @@ function SummaryGrid({
                       <span className="text-xs font-bold text-text">{fm(hechuraShown)}</span>
                     </div>
                     <div className="text-[10px] text-muted/60 font-mono mt-0.5">
-                      costo {fm(mhb.hechuraCost)} × {(1 + mhb.hechuraMarginPct / 100).toFixed(2)} (lista {fbDH.grossText ?? `+${mhb.hechuraMarginPct}%`})
+                      costo {fm(mhb.hechuraCost)} × {formatDecimal(1 + mhb.hechuraMarginPct / 100, 2)} (lista {fbDH.grossText ?? `+${mhb.hechuraMarginPct}%`})
                     </div>
                     <FactorBreakdownHint
                       hasDivergence={fbDH.hasDivergence}
@@ -2146,7 +2150,7 @@ function SummaryGrid({
                       <span className="font-medium">{adjLabel}</span>
                       {Math.abs(adjPct) >= 0.01 && (
                         <span className="opacity-70 font-mono text-[10px]">
-                          ({adjPct > 0 ? "+" : ""}{adjPct.toFixed(1)}%)
+                          ({adjPct > 0 ? "+" : ""}{formatDecimal(adjPct, 1)}%)
                         </span>
                       )}
                     </div>
@@ -2361,6 +2365,32 @@ export default function PricingSimulator() {
     if (isPriceCompositionKey(key))      { setPriceCompositionExpanded(p => !p); return; }
                                            setCostCompositionExpanded(p => !p);
   };
+
+  // Adaptador entre el estado legacy (3 booleans) y el contrato del nuevo
+  // CostCompositionBlock (Record<string, boolean>). Preserva la semántica
+  // actual: TODOS los cards de "Composición del costo" (metalCost-N + hechuraCost)
+  // comparten un único toggle (`costCompositionExpanded`). El bump a expansión
+  // independiente por card es UX que dejamos para más adelante (no es FASE 1.2).
+  const costCompositionExpansionAdapter = useMemo<Record<string, boolean>>(() => {
+    return new Proxy({} as Record<string, boolean>, {
+      get(_, key: string) {
+        if (key === "costUnit") return costUnitExpanded;
+        // Cualquier otro key (hechuraCost, metalCost-N) → flag global
+        return costCompositionExpanded;
+      },
+    });
+  }, [costUnitExpanded, costCompositionExpanded]);
+
+  // Adaptador análogo para <PriceCompositionCards>. TODOS los cards de
+  // "Composición del precio" (metalPrice-N + hechura) comparten un único
+  // toggle (`priceCompositionExpanded`) — preserva la semántica legacy.
+  const priceCompositionExpansionAdapter = useMemo<Record<string, boolean>>(() => {
+    return new Proxy({} as Record<string, boolean>, {
+      get() {
+        return priceCompositionExpanded;
+      },
+    });
+  }, [priceCompositionExpanded]);
 
   // Reset visual al cambiar de vista — mantiene la regla determinística
   // (UNIFICADO arranca colapsado, DESGLOSADO arranca con secciones visibles
@@ -2666,6 +2696,19 @@ export default function PricingSimulator() {
 
   // Comisión del vendedor (solo informativa, no modifica el precio)
   const selectedSeller = sellers.find(s => s.id === sellerId) ?? null;
+  // ⚠️ DEUDA TÉCNICA — Cálculo de comisión en frontend.
+  //
+  // Esta lógica viola "Si no sale del pricing-engine, está mal" (POLICY R6).
+  // El motor todavía no tiene capa de comisión; cuando se agregue:
+  //   1. Implementar `pricing-engine.commission.ts` + capa post-redondeo.
+  //   2. Bumpear snapshot version y exponer `commission` en el response.
+  //   3. Reemplazar este useMemo por lectura del response.
+  //   4. Recién entonces extraer un componente compartido `CommissionBreakdown`.
+  //
+  // Hasta entonces, `commissionResult` queda ENCAPSULADO acá:
+  //   - NO copiar a Factura ni Comparador.
+  //   - NO mover a `src/components/pricing/`.
+  //   - Solo el Simulador lo muestra (informativo, no se persiste).
   const commissionResult = useMemo(() => {
     if (!selectedSeller || !result) return null;
     const { commissionType, commissionValue, commissionBase } = selectedSeller;
@@ -2790,7 +2833,7 @@ export default function PricingSimulator() {
       // Peso del artículo en kg: backend devuelve gramos en variant.weightOverride o article.weight
       const grams = (article as any)?.weight != null ? parseFloat(String((article as any).weight)) : 1000;
       const kg = grams / 1000;
-      return { mode: "BY_WEIGHT", value: ppk, weight: kg, detail: `${rateLabel} · ${kg.toFixed(2)} kg × ${ppk.toFixed(2)}/kg` };
+      return { mode: "BY_WEIGHT", value: ppk, weight: kg, detail: `${rateLabel} · ${formatDecimal(kg, 2)} kg × ${formatDecimal(ppk, 2)}/kg` };
     }
     // BY_ZONE no soportado en simulador
     return { mode: "FREE", value: null, weight: null, detail: `${rateLabel} (tarifa zonificada — el simulador no aplica)` };
@@ -3743,7 +3786,7 @@ export default function PricingSimulator() {
                         <TPNumberInput
                           value={whatIfCost}
                           onChange={setWhatIfCost}
-                          placeholder={whatIfResult?.origCost != null ? String(whatIfResult.origCost.toFixed(2)) : "Costo actual"}
+                          placeholder={whatIfResult?.origCost != null ? formatDecimal(whatIfResult.origCost, 2) : "Costo actual"}
                         />
                         {whatIfCost != null && whatIfResult?.origCost != null && (
                           <p className="text-[10px] text-muted mt-1">
@@ -3751,7 +3794,7 @@ export default function PricingSimulator() {
                             {" · "}
                             <span className={whatIfCost > whatIfResult.origCost ? "text-amber-500" : "text-emerald-500"}>
                               {whatIfCost > whatIfResult.origCost ? "+" : ""}
-                              {(((whatIfCost - whatIfResult.origCost) / whatIfResult.origCost) * 100).toFixed(1)}%
+                              {formatDecimal(((whatIfCost - whatIfResult.origCost) / whatIfResult.origCost) * 100, 1)}%
                             </span>
                           </p>
                         )}
@@ -3763,7 +3806,7 @@ export default function PricingSimulator() {
                           <TPNumberInput
                             value={whatIfMargin}
                             onChange={setWhatIfMargin}
-                            placeholder={whatIfResult?.origMargin != null ? String(whatIfResult.origMargin.toFixed(1)) : "Margen actual"}
+                            placeholder={whatIfResult?.origMargin != null ? formatDecimal(whatIfResult.origMargin, 1) : "Margen actual"}
                           />
                           <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[11px] text-muted pointer-events-none">%</span>
                         </div>
@@ -3784,7 +3827,7 @@ export default function PricingSimulator() {
                         <TPNumberInput
                           value={whatIfPrice}
                           onChange={setWhatIfPrice}
-                          placeholder={whatIfResult?.origPrice != null ? String(whatIfResult.origPrice.toFixed(2)) : "Precio actual"}
+                          placeholder={whatIfResult?.origPrice != null ? formatDecimal(whatIfResult.origPrice, 2) : "Precio actual"}
                         />
                         {whatIfPrice != null && whatIfResult?.origPrice != null && (
                           <p className="text-[10px] text-muted mt-1">
@@ -3792,7 +3835,7 @@ export default function PricingSimulator() {
                             {" · "}
                             <span className={whatIfPrice > whatIfResult.origPrice ? "text-emerald-500" : "text-amber-500"}>
                               {whatIfPrice > whatIfResult.origPrice ? "+" : ""}
-                              {(((whatIfPrice - whatIfResult.origPrice) / whatIfResult.origPrice) * 100).toFixed(1)}%
+                              {formatDecimal(((whatIfPrice - whatIfResult.origPrice) / whatIfResult.origPrice) * 100, 1)}%
                             </span>
                           </p>
                         )}
@@ -3851,7 +3894,7 @@ export default function PricingSimulator() {
                                     <span className="font-medium text-text">Sin impuestos</span>
                                     {changed && (
                                       <span className={cn("ml-1.5 text-[10px] font-semibold", up ? "text-emerald-600 dark:text-emerald-400" : "text-red-500 dark:text-red-400")}>
-                                        {up ? "↑" : "↓"} {Math.abs(deltaPct).toFixed(1)}%
+                                        {up ? "↑" : "↓"} {formatDecimal(Math.abs(deltaPct), 1)}%
                                       </span>
                                     )}
                                   </div>
@@ -3910,17 +3953,17 @@ export default function PricingSimulator() {
                                     <span className="font-medium text-text">Margen</span>
                                     {changed && (
                                       <span className={cn("ml-1.5 text-[10px] font-semibold", up ? "text-emerald-600 dark:text-emerald-400" : "text-red-500 dark:text-red-400")}>
-                                        {up ? "↑" : "↓"} {up ? "+" : ""}{delta.toFixed(1)} pp
+                                        {up ? "↑" : "↓"} {up ? "+" : ""}{formatDecimal(delta, 1)} pp
                                       </span>
                                     )}
                                   </div>
                                   <span className={cn("tabular-nums text-right", changed ? "text-muted/60" : "text-text font-semibold")}>
-                                    {origM.toFixed(1)}%
+                                    {formatDecimal(origM, 1)}%
                                   </span>
                                   <div className="flex justify-end">
                                     <span className={cn("inline-flex items-center gap-1 px-2 py-0.5 rounded-full font-bold tabular-nums", mc)}>
                                       <TrendingUp size={10} />
-                                      {m.toFixed(1)}%
+                                      {formatDecimal(m, 1)}%
                                     </span>
                                   </div>
                                 </div>
@@ -4056,7 +4099,7 @@ export default function PricingSimulator() {
                         <>
                           <div className={cn("inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-lg font-extrabold tabular-nums", mBadgeCls)}>
                             <TrendingUp size={14} />
-                            {mVal.toFixed(1)}%
+                            {formatDecimal(mVal, 1)}%
                           </div>
                           {gainAmtD != null && (
                             <p className={cn("text-[10px] mt-1.5 tabular-nums", gainColor)}>
@@ -4123,7 +4166,7 @@ export default function PricingSimulator() {
                             <p className="text-[10px] text-muted mt-1">
                               Original: {fmtMoney(origFinalD, displaySym)}
                               <span className={heroPriceD > origFinalD ? " text-emerald-500" : " text-red-400"}>
-                                {" "}({heroPriceD > origFinalD ? "+" : ""}{(((heroPriceD - origFinalD) / origFinalD) * 100).toFixed(1)}%)
+                                {" "}({heroPriceD > origFinalD ? "+" : ""}{formatDecimal(((heroPriceD - origFinalD) / origFinalD) * 100, 1)}%)
                               </span>
                             </p>
                           )}
@@ -4154,7 +4197,7 @@ export default function PricingSimulator() {
                                     <p className="tabular-nums">
                                       <span className={isR ? "text-amber-600 dark:text-amber-400" : "text-emerald-600 dark:text-emerald-400"}>
                                         {name}: {fmtMoney(ch.channelAmount / displayRate, displaySym)}
-                                        {Math.abs(pct) >= 0.01 && <span className="opacity-75"> ({pct.toFixed(1)}%)</span>}
+                                        {Math.abs(pct) >= 0.01 && <span className="opacity-75"> ({formatDecimal(pct, 1)}%)</span>}
                                       </span>
                                     </p>
                                   );
@@ -4203,7 +4246,7 @@ export default function PricingSimulator() {
                                   <p className="tabular-nums">
                                     <span className={isRecg ? "text-amber-600 dark:text-amber-400" : "text-emerald-600 dark:text-emerald-400"}>
                                       {chName}: {fmtMoney(ch.channelAmount / displayRate, displaySym)}
-                                      {Math.abs(pct) >= 0.01 && <span className="opacity-75"> ({pct.toFixed(1)}%)</span>}
+                                      {Math.abs(pct) >= 0.01 && <span className="opacity-75"> ({formatDecimal(pct, 1)}%)</span>}
                                     </span>
                                   </p>
                                 );
@@ -4312,7 +4355,7 @@ export default function PricingSimulator() {
 
                 function fm2(v: number) { return fmtMoney(v / displayRate, displaySym); }
                 /** Formatea gramos con exactamente 2 decimales (visualización comercial). */
-                function fmGr(v: number) { return v.toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
+                function fmGr(v: number) { return formatGrams(v, 2); }
 
                 const netP    = normLine?.unitPrice ?? null;
                 // Siempre preferir totalWithTax para el precio final: cuando hay impuestos es el
@@ -4389,995 +4432,28 @@ export default function PricingSimulator() {
                   <div className="space-y-4">
 
                     {/* ─ Costo ─────────────────────────────────────────── */}
-                    {hasCostComposition && unitCostVal != null && (() => {
-                      // ── helpers locales ───────────────────────────────────────────────────
-                      const LINE_TYPE_NAMES: Record<string, string> = {
-                        COST_LINES_METAL:     "Metal",
-                        COST_LINES_HECHURA:   "Hechura",
-                        COST_LINES_PRODUCT:   "Producto",
-                        COST_LINES_SERVICE:   "Servicio",
-                        COST_LINES_MANUAL:    "Manual",
-                        COST_LINES_LOGISTICS: "Envío",
-                      };
-
-                      // Render del ajuste por línea — formato compacto: −10% → −$3.500 / $31.500
-                      // renderLineAdj eliminado — renderOtherRow usa formato inline
-
-                      // ── 1. Líneas individuales ────────────────────────────────────────────
-                      const allLineSteps = stepsNorm.filter((s: any) =>
-                        Object.keys(LINE_TYPE_NAMES).includes(s.key)
-                        && s.status === "ok" && s.value != null
-                      );
-                      const metalOnlySteps = stepsNorm.filter((s: any) =>
-                        s.key === "METAL_QUOTE" && s.status === "ok" && s.value != null
-                      );
-                      const hechuraMMHStep = stepsNorm.find((s: any) =>
-                        s.key === "HECHURA" && s.status === "ok" && s.value != null
-                      );
-
-                      const lineRows: React.ReactNode[] = [];
-                      let hechuraLineSteps: any[] = [];
-
-                      // ── helper: fila de metal ─────────────────────────────────────────────
-                      // Formato 4 líneas:
-                      //   L1: nombre del metal padre        (ej: "Oro")
-                      //   L2: código · nombre variante      (ej: "AU18K · Oro 18 Kilates")
-                      //   L3: cálculo                       (ej: "1,00 gr × $202.500,00/gr")
-                      //   L4: merma X,XXX%
-                      const renderMetalRow = (key: string, variantName: string, cost: number, grams: number | null, price: number | null, mermaVal: number, _symbol?: string | null, sku?: string | null, metalParentName?: string | null) => {
-                        const grStr = grams != null ? fmGr(grams) : null;
-                        const priceWithMerma = price != null ? price * (1 + mermaVal / 100) : null;
-                        // L1: nombre padre si existe, si no el nombre de variante
-                        const headLabel = metalParentName ?? variantName;
-                        // L2: "AU18K · Oro 18 Kilates" / "AU18K" / nombre variante (solo si hay metalParentName o sku)
-                        const variantDesc = metalParentName
-                          ? (sku && variantName ? `${sku} · ${variantName}` : sku ?? (variantName !== headLabel ? variantName : null))
-                          : sku ?? null;
-                        return (
-                          <div key={key} className="space-y-0 pb-0.5">
-                            {/* L1: nombre del metal padre (con total a la derecha) */}
-                            <div className="flex justify-between items-baseline gap-2">
-                              <span className="font-medium text-text/80 leading-snug">{headLabel}</span>
-                              <span className="font-bold tabular-nums shrink-0">{fm2(cost)}</span>
-                            </div>
-                            {/* L2: código · nombre variante */}
-                            {variantDesc && (
-                              <p className="text-[9px] text-muted/70 font-mono font-semibold">{variantDesc}</p>
-                            )}
-                            {/* L3: cálculo (gramos × precio/gr con merma incluida) */}
-                            {grStr != null && priceWithMerma != null && (
-                              <p className="text-[9px] text-muted/55 tabular-nums font-mono">
-                                {grStr} gr × {fm2(priceWithMerma)}/gr
-                              </p>
-                            )}
-                            {/* L4: merma */}
-                            {mermaVal > 0 && grStr != null && (
-                              <p className="text-[9px] text-muted/40 font-mono">
-                                merma {mermaVal.toLocaleString("es-AR", { minimumFractionDigits: 3, maximumFractionDigits: 3 })}%
-                              </p>
-                            )}
-                          </div>
-                        );
-                      };
-
-                      // ── helper: fila de hechura / otros — formato inline ──────────────────
-                      const GENERIC_TYPE_LABELS = new Set(Object.values(LINE_TYPE_NAMES));
-                      const renderOtherRow = (key: string, step: any) => {
-                        const m       = step.meta ?? {};
-                        const postAdj = parseFloat(step.value);
-                        const adjKind = String(m.lineAdjKind  ?? "");
-                        const adjType = String(m.lineAdjType  ?? "");
-                        const adjVal  = m.lineAdjValue != null ? parseFloat(String(m.lineAdjValue)) : null;
-                        const hasAdj  = adjKind !== "" && adjType !== "" && adjVal != null;
-                        let preAdj = postAdj;
-                        if (hasAdj) {
-                          preAdj = (m.originalAmount != null && m.rate != null)
-                            ? parseFloat(String(m.originalAmount)) * parseFloat(String(m.rate))
-                            : reverseLineAdj(postAdj, adjKind, adjType, adjVal!);
-                        }
-                        const rawLabel    = String(m.lineLabel ?? m.lineCode ?? "");
-                        const customLabel = rawLabel && !GENERIC_TYPE_LABELS.has(rawLabel) ? rawLabel : null;
-
-                        // Prefijo de conversión de moneda: "USD 10 × 1.600"
-                        let convPrefix: string | null = null;
-                        let convAmt:    number | null = null;
-                        if (m.originalAmount != null && m.rate != null && m.currencyCode) {
-                          const origAmt  = parseFloat(String(m.originalAmount));
-                          const convRate = parseFloat(String(m.rate));
-                          const code     = String(m.currencyCode);
-                          const rateStr  = convRate.toLocaleString("es-AR", { minimumFractionDigits: 0, maximumFractionDigits: 2 });
-                          convPrefix = `${code} ${fmtMoney(origAmt, "").trim()} × ${rateStr}`;
-                          convAmt    = origAmt * convRate;
-                        }
-
-                        // Monto intermedio (antes del ajuste, post-conversión)
-                        const midAmt = convAmt ?? (hasAdj ? preAdj : postAdj);
-
-                        const isBonif  = adjKind === "BONUS";
-                        const adjLabel = hasAdj
-                          ? adjType === "PERCENTAGE" && adjVal != null
-                            ? `${isBonif ? "−" : "+"}${adjVal.toLocaleString("es-AR", { maximumFractionDigits: 2 })}%`
-                            : `${isBonif ? "−" : "+"} fijo`
-                          : null;
-
-                        // Layout: fórmula izquierda / valor final derecha
-                        // Sin adj:   customLabel? | $35.000
-                        // Con adj:   $35.000 → −10% =  |  $31.500
-                        // Conv+adj:  USD 10 × 1.600 → $16.000 → −10% =  |  $14.400
-                        const leftContent = hasAdj ? (
-                          <span className="text-[11px] tabular-nums text-muted/60 leading-snug flex flex-wrap items-baseline gap-x-0.5">
-                            {convPrefix && (
-                              <>
-                                <span>{convPrefix}</span>
-                                <span className="text-muted/35"> →</span>
-                                <span>{fm2(convAmt!)}</span>
-                                <span className="text-muted/35"> →</span>
-                              </>
-                            )}
-                            {!convPrefix && <span>{fm2(preAdj)}</span>}
-                            {!convPrefix && <span className="text-muted/35"> →</span>}
-                            <span className={cn(
-                              "font-medium",
-                              isBonif ? "text-emerald-600/70 dark:text-emerald-400/70"
-                                      : "text-amber-600/70 dark:text-amber-400/70"
-                            )}>
-                              {adjLabel}
-                            </span>
-                            <span className="text-muted/35"> =</span>
-                          </span>
-                        ) : convPrefix ? (
-                          <span className="text-[11px] tabular-nums text-muted/60 leading-snug flex flex-wrap items-baseline gap-x-0.5">
-                            <span>{convPrefix}</span>
-                            <span className="text-muted/35"> →</span>
-                          </span>
-                        ) : (
-                          // Origen: customLabel si existe, sino el tipo del step (Hechura / Producto / etc.)
-                          // Evita "valores huérfanos" sin contexto.
-                          <span className="text-xs text-muted font-medium">
-                            {customLabel ?? LINE_TYPE_NAMES[String(step.key)] ?? "Componente"}
-                          </span>
-                        );
-
-                        const rightValue = (
-                          <span className={cn(
-                            "text-[11px] tabular-nums font-bold shrink-0",
-                            hasAdj
-                              ? isBonif ? "text-emerald-600 dark:text-emerald-400"
-                                        : "text-amber-600 dark:text-amber-400"
-                              : "text-foreground/80"
-                          )}>
-                            {fm2(postAdj)}
-                          </span>
-                        );
-
-                        // Cálculo simple: qty × unitValue = value (cuando no hay conversión ni ajuste)
-                        const qtyMeta  = m.qty       != null ? parseFloat(String(m.qty))       : null;
-                        const unitMeta = m.unitValue != null ? parseFloat(String(m.unitValue)) : null;
-                        const showSimpleCalc = !hasAdj && !convPrefix
-                          && qtyMeta != null && unitMeta != null
-                          && qtyMeta > 0.0001 && unitMeta > 0.0001;
-
-                        return (
-                          <div key={key}>
-                            {/* Label personalizado sobre la fila (solo cuando hay conv o adj que ya ocupa el left) */}
-                            {customLabel && (hasAdj || convPrefix) && (
-                              <p className="text-xs text-muted/70 font-medium mb-0.5">{customLabel}</p>
-                            )}
-                            <div className="flex items-baseline justify-between gap-2">
-                              {leftContent}
-                              {rightValue}
-                            </div>
-                            {/* Cálculo: cantidad × unitario = total (solo en líneas simples sin conv/adj) */}
-                            {showSimpleCalc && (
-                              <p className="text-[11px] text-muted tabular-nums font-mono leading-tight mt-0.5">
-                                {qtyMeta!.toLocaleString("es-AR", { maximumFractionDigits: 3 })} × {fm2(unitMeta!)} = {fm2(postAdj)}
-                              </p>
-                            )}
-                          </div>
-                        );
-                      };
-
-                      if (allLineSteps.length > 0) {
-                        // COST_LINES mode
-                        const metalSteps = allLineSteps.filter((s: any) => s.key === "COST_LINES_METAL");
-                        const otherSteps = allLineSteps.filter((s: any) => s.key !== "COST_LINES_METAL");
-                        hechuraLineSteps = otherSteps;
-                        const hasBoth    = metalSteps.length > 0 && otherSteps.length > 0;
-
-                        if (hasBoth) {
-                          lineRows.push(
-                            <div key="group-metal" className="space-y-1.5">
-                              <p className="text-[9px] font-semibold uppercase tracking-widest text-muted/60">Metales</p>
-                              {metalSteps.map((step: any, i: number) => {
-                                const m  = step.meta ?? {};
-                                const nm = (m.variantName as string | null | undefined) ?? "Metal";
-                                const q  = m.qty        != null ? parseFloat(String(m.qty))        : null;
-                                const p  = m.quotePrice != null ? parseFloat(String(m.quotePrice)) : null;
-                                return renderMetalRow(`cl-m-${i}`, nm, parseFloat(step.value), q, p, m.merma ? Number(m.merma) : 0, m.metalSymbol as string | null, m.variantSku as string | null, m.metalName as string | null);
-                              })}
-                            </div>
-                          );
-                          lineRows.push(
-                            <div key="group-other" className="space-y-1.5 border-t border-border/20 pt-1.5">
-                              <p className="text-[9px] font-semibold uppercase tracking-widest text-muted/60">Hechura / Otros</p>
-                              <div className="space-y-1">
-                                {otherSteps.map((step: any, i: number) => {
-                                  const isArticle = step.key === "COST_LINES_PRODUCT" || step.key === "COST_LINES_SERVICE";
-                                  const prevIsHechura = i > 0 && (otherSteps[i - 1].key === "COST_LINES_HECHURA");
-                                  const showDivider = isArticle && prevIsHechura;
-                                  return (
-                                    <React.Fragment key={`cl-o-wrap-${i}`}>
-                                      {showDivider && <div className="border-t border-border/30 my-0.5" />}
-                                      {renderOtherRow(`cl-o-${i}`, step)}
-                                    </React.Fragment>
-                                  );
-                                })}
-                              </div>
-                            </div>
-                          );
-                        } else {
-                          metalSteps.forEach((step: any, i: number) => {
-                            const m  = step.meta ?? {};
-                            const nm = (m.variantName as string | null | undefined) ?? "Metal";
-                            const q  = m.qty        != null ? parseFloat(String(m.qty))        : null;
-                            const p  = m.quotePrice != null ? parseFloat(String(m.quotePrice)) : null;
-                            lineRows.push(renderMetalRow(`cl-m-${i}`, nm, parseFloat(step.value), q, p, m.merma ? Number(m.merma) : 0, m.metalSymbol as string | null, m.variantSku as string | null, m.metalName as string | null));
-                          });
-                          otherSteps.forEach((step: any, i: number) => lineRows.push(renderOtherRow(`cl-o-${i}`, step)));
-                        }
-
-                      } else if (metalOnlySteps.length > 0 || hechuraMMHStep) {
-                        // METAL_MERMA_HECHURA mode
-                        const hasBoth = metalOnlySteps.length > 0 && hechuraMMHStep != null;
-
-                        if (hasBoth) {
-                          lineRows.push(
-                            <div key="group-metal-mmh" className="space-y-1.5">
-                              <p className="text-[9px] font-semibold uppercase tracking-widest text-muted/60">Metales</p>
-                              {metalOnlySteps.map((step: any, qi: number) => {
-                                const qm = step.meta ?? {};
-                                const nm = (qm.variantName as string | null | undefined) ?? `Variante ${qi + 1}`;
-                                const gr = qm.grams != null ? parseFloat(String(qm.grams)) : qm.qty != null ? parseFloat(String(qm.qty)) : null;
-                                const pr = qm.price != null ? parseFloat(String(qm.price)) : qm.quotePrice != null ? parseFloat(String(qm.quotePrice)) : null;
-                                return renderMetalRow(`mq-${qi}`, nm, parseFloat(String(step.value)), gr, pr, qm.merma ? Number(qm.merma) : 0, qm.metalSymbol as string | null, qm.variantSku as string | null, qm.metalName as string | null);
-                              })}
-                            </div>
-                          );
-                        } else {
-                          metalOnlySteps.forEach((step: any, qi: number) => {
-                            const qm = step.meta ?? {};
-                            const nm = (qm.variantName as string | null | undefined) ?? `Variante ${qi + 1}`;
-                            const gr = qm.grams != null ? parseFloat(String(qm.grams)) : qm.qty != null ? parseFloat(String(qm.qty)) : null;
-                            const pr = qm.price != null ? parseFloat(String(qm.price)) : qm.quotePrice != null ? parseFloat(String(qm.quotePrice)) : null;
-                            lineRows.push(renderMetalRow(`mq-${qi}`, nm, parseFloat(String(step.value)), gr, pr, qm.merma ? Number(qm.merma) : 0, qm.metalSymbol as string | null, qm.variantSku as string | null, qm.metalName as string | null));
-                          });
-                        }
-
-                        if (hechuraMMHStep) {
-                          const hm    = (hechuraMMHStep.meta ?? {}) as any;
-                          const hCost = parseFloat(String(hechuraMMHStep.value));
-                          const hFmt  = hm.mode === "PER_GRAM" && hm.price && hm.gramsWithMerma
-                            ? `${fm2(parseFloat(String(hm.price)))} × ${fmGr(parseFloat(String(hm.gramsWithMerma)))} gr`
-                            : hm.price ? `Fijo: ${fm2(parseFloat(String(hm.price)))}` : null;
-                          const hNode = (
-                            <div key="hechura-mmh" className="space-y-0.5">
-                              <div className="flex justify-between items-baseline">
-                                <span className="font-medium text-text/80">Hechura / Mano de obra</span>
-                                <span className="font-bold tabular-nums">{fm2(hCost)}</span>
-                              </div>
-                              {hFmt && <p className="text-[9px] text-muted/55 tabular-nums mt-0.5">{hFmt}</p>}
-                            </div>
-                          );
-                          if (hasBoth) {
-                            lineRows.push(
-                              <div key="group-other-mmh" className="space-y-1.5 border-t border-border/20 pt-1.5">
-                                <p className="text-[9px] font-semibold uppercase tracking-widest text-muted/60">Hechura / Otros</p>
-                                <div className="space-y-1">
-                                  {hNode}
-                                </div>
-                              </div>
-                            );
-                          } else {
-                            lineRows.push(hNode);
-                          }
-                        }
-
-                      } else {
-                        // MANUAL / MULTIPLIER — fila única con sub-texto
-                        const multStep   = stepsNorm.find((s: any) => s.key === "MULTIPLIER"       && s.status === "ok");
-                        const manualStep = stepsNorm.find((s: any) => s.key === "MANUAL_BASE_COST"  && s.status === "ok");
-                        const currStep   = stepsNorm.find((s: any) =>
-                          (s.key === "MULTIPLIER_CURRENCY" || s.key === "MANUAL_CURRENCY") && s.status === "ok"
-                        );
-                        let preAdjBase: number | null = null;
-                        let adjustKind: string | null = null;
-                        let adjustAmt:  number | null = null;
-                        if (manualStep) {
-                          const mm = (manualStep.meta ?? {}) as any;
-                          if (mm.adjustmentKind && mm.adjustmentKind !== "") {
-                            adjustKind = mm.adjustmentKind;
-                            const cm = currStep ? (currStep.meta ?? {}) as any : null;
-                            preAdjBase = cm?.convertedAmount != null ? parseFloat(String(cm.convertedAmount))
-                              : mm.manualBaseCost != null ? parseFloat(String(mm.manualBaseCost)) : null;
-                            if (preAdjBase != null) adjustAmt = unitCostVal - preAdjBase;
-                          }
-                        }
-                        let costSub: string | null = null;
-                        if (currStep) {
-                          const cm = (currStep.meta ?? {}) as any;
-                          const origAmt  = cm.originalAmount  != null ? parseFloat(String(cm.originalAmount))  : null;
-                          const convRate = cm.rate             != null ? parseFloat(String(cm.rate))             : null;
-                          const convAmt  = cm.convertedAmount  != null ? parseFloat(String(cm.convertedAmount))  : null;
-                          const code     = String(cm.currencyCode ?? cm.fromCurrencyId ?? "");
-                          if (origAmt != null && convRate != null && code) {
-                            const rateStr  = convRate.toLocaleString("es-AR", { minimumFractionDigits: 0, maximumFractionDigits: 2 });
-                            const baseDisp = preAdjBase ?? convAmt ?? unitCostVal;
-                            costSub = `${code} ${fmtMoney(origAmt, "").trim()} × ${rateStr} = ${fm2(baseDisp)}`;
-                          }
-                        } else if (multStep) {
-                          const partial = stepFormula(multStep as any);
-                          costSub = partial ? `${partial} = ${fm2(unitCostVal)}` : `Cantidad × valor unitario = ${fm2(unitCostVal)}`;
-                        } else if (!manualStep) {
-                          const mode = String(result.costMode ?? "");
-                          costSub = mode === "MULTIPLIER" ? `Cantidad × valor unitario = ${fm2(unitCostVal)}`
-                            : mode === "METAL_MERMA_HECHURA" ? "Metal + merma + hechura"
-                            : mode === "MANUAL" ? "Costo manual del artículo"
-                            : "Costo del artículo";
-                        }
-                        const displayBase = preAdjBase ?? unitCostVal;
-                        lineRows.push(
-                          <React.Fragment key="manual-base">
-                            <div>
-                              <div className="flex justify-between items-baseline">
-                                <span className="text-muted">Costo base</span>
-                                <span className="tabular-nums">{fm2(displayBase)}</span>
-                              </div>
-                              {costSub && sub(costSub)}
-                            </div>
-                            {adjustKind != null && adjustAmt != null && (
-                              <div>
-                                <div className="flex justify-between items-baseline text-muted">
-                                  <span>{adjustKind === "BONUS" ? "Bonificación" : "Recargo"}</span>
-                                  <span className="tabular-nums">
-                                    {adjustKind === "BONUS" ? "−" : "+"}{fm2(Math.abs(adjustAmt))}
-                                  </span>
-                                </div>
-                                {preAdjBase != null && Math.abs(preAdjBase) > 0.001 && (() => {
-                                  const pct = Math.abs(adjustAmt! / preAdjBase!) * 100;
-                                  return sub(`${fm2(preAdjBase)} × ${pct.toLocaleString("es-AR", { minimumFractionDigits: 0, maximumFractionDigits: 2 })}% = ${fm2(Math.abs(adjustAmt!))}`);
-                                })()}
-                              </div>
-                            )}
-                          </React.Fragment>
-                        );
-                      }
-
-                      // ── 2. Ajuste global (COST_LINES_FINAL) ──────────────────────────────
-                      let globalAdjEl: React.ReactNode = null;
-                      const finalStep = stepsNorm.find((s: any) => s.key === "COST_LINES_FINAL" && s.status === "ok" && s.value != null);
-                      if (finalStep) {
-                        const sumLines = stepsNorm
-                          .filter((s: any) => Object.keys(LINE_TYPE_NAMES).includes(s.key) && s.status === "ok" && s.value != null)
-                          .reduce((acc: number, s: any) => acc + parseFloat(s.value), 0);
-                        const finalVal  = parseFloat(String(finalStep.value));
-                        const globalAdj = finalVal - sumLines;
-                        if (Math.abs(globalAdj) >= 0.01) {
-                          const isBonif  = globalAdj < 0;
-                          const gm       = (finalStep.meta ?? {}) as any;
-                          const adjType  = String(gm.adjustmentType  ?? "");
-                          const adjValue = gm.adjustmentValue != null ? parseFloat(String(gm.adjustmentValue)) : null;
-                          const adjBase  = gm.sumLines != null ? parseFloat(String(gm.sumLines)) : sumLines;
-                          const suffix   = adjType === "PERCENTAGE" && adjValue != null
-                            ? ` ${adjValue.toLocaleString("es-AR", { maximumFractionDigits: 2 })}%`
-                            : adjType === "FIXED_AMOUNT" && adjValue != null
-                              ? ` (fijo ${fm2(adjValue)})` : "";
-                          const formula  = adjType === "PERCENTAGE" && adjValue != null && adjBase > 0
-                            ? `${fm2(adjBase)} × ${adjValue}% = ${isBonif ? "−" : "+"}${fm2(Math.abs(globalAdj))}`
-                            : `${fm2(adjBase)} ${isBonif ? "−" : "+"} ${fm2(Math.abs(globalAdj))} = ${fm2(finalVal)}`;
-                          globalAdjEl = (
-                            <div className="border-t border-border/30 pt-1.5 mt-0.5">
-                              <div className="flex justify-between items-baseline text-muted">
-                                <span>{isBonif ? "Bonif. global" : "Recargo global"}{suffix}</span>
-                                <span className={cn("tabular-nums", isBonif ? "text-emerald-600 dark:text-emerald-400" : "text-amber-600 dark:text-amber-400")}>
-                                  {isBonif ? "−" : "+"}{fm2(Math.abs(globalAdj))}
-                                </span>
-                              </div>
-                              {sub(formula)}
-                            </div>
-                          );
-                        }
-                      }
-
-                      // ── 3. Impuestos de compra ────────────────────────────────────────────
-                      const taxItems    = (result as any).costTaxBreakdown as any[] | undefined ?? [];
-                      const hasCostTax  = taxItems.length > 0 && costTaxAmt != null && costTaxAmt > 0.001;
-                      const taxEls: React.ReactNode[] = hasCostTax ? taxItems.map((t: any, i: number) => {
-                        const taxAmt   = parseFloat(String(t.taxAmount ?? 0));
-                        const hasFormula = t.rate != null && unitCostVal != null;
-                        const leftLabel  = t.rate != null
-                          ? <><span className="text-muted/70">{t.name}</span><span className="ml-1 text-[9px] text-muted/45 font-mono">{unitCostVal != null ? `${fm2(unitCostVal)} × ${t.rate}%` : `${t.rate}%`}</span></>
-                          : <span className="text-muted/70">{t.name}</span>;
-                        return (
-                          <div key={`ctax-${i}`} className="flex items-baseline justify-between gap-2">
-                            <span className="text-[11px]">{leftLabel}</span>
-                            <span className="tabular-nums text-[11px] text-muted shrink-0">+{fm2(taxAmt)}</span>
-                          </div>
-                        );
-                      }) : [];
-
-                      // ── 4. Total ──────────────────────────────────────────────────────────
-                      // Fase 2.1 — leído del normalizado (number directo).
-                      const totalCostVal = normLine?.costWithTax ?? unitCostVal;
-
-                      // ── Equivalente por variante metálica (purity × (1−merma)) ────────────
-                      // Agrupa por variante metálica final (variantId → variantName).
-                      // factor = purity × (1 − merma/100)
-                      // equivGr = qty × factor
-                      // Se guarda quotePrice y effectiveGrams para mostrar la valorización.
-                      type MetalVariantEquiv = {
-                        qty: number; factor: number; equivGr: number; rawValue: number;
-                        purity: number | null; merma: number | null;
-                        quotePrice: number | null; sku: string | null; variantName: string | null;
-                      };
-                      type MetalPadreAccum = {
-                        displayName: string;
-                        symbol: string | null;
-                        variants: MetalVariantEquiv[];
-                        totalEquivGr: number;
-                        totalRawValue: number;
-                        quotePrice: number | null;   // cotización compartida de la variante
-                      };
-                      const metalPadreMap = new Map<string, MetalPadreAccum>();
-
-                      const metalStepsForEquiv = allLineSteps.length > 0
-                        ? allLineSteps.filter((s: any) => s.key === "COST_LINES_METAL")
-                        : metalOnlySteps;
-
-                      metalStepsForEquiv.forEach((step: any) => {
-                        const m     = step.meta ?? {};
-                        const isMMH = step.key !== "COST_LINES_METAL";
-                        const qty   = isMMH
-                          ? (m.grams != null ? parseFloat(String(m.grams)) : m.qty   != null ? parseFloat(String(m.qty))   : null)
-                          : (m.qty   != null ? parseFloat(String(m.qty))   : m.grams != null ? parseFloat(String(m.grams)) : null);
-                        if (qty == null || qty <= 0.0001) return;
-
-                        const purityVal     = m.purity     != null ? parseFloat(String(m.purity))     : null;
-                        const mermaVal      = m.merma      != null ? parseFloat(String(m.merma))      : null;
-                        const quotePriceVal = m.quotePrice != null ? parseFloat(String(m.quotePrice))
-                                           : m.price      != null ? parseFloat(String(m.price))       : null;
-
-                        let factor: number;
-                        let equivGr: number;
-                        if (purityVal != null) {
-                          const mermaMul = mermaVal != null && mermaVal !== 0 ? (1 + mermaVal / 100) : 1;
-                          factor  = purityVal * mermaMul;
-                          equivGr = qty * factor;
-                        } else {
-                          const merma = mermaVal ?? 0;
-                          factor  = 1 + merma / 100;
-                          equivGr = qty * factor;
-                        }
-
-                        const rawVal = step.value != null ? parseFloat(String(step.value)) : 0;
-
-                        // Agrupar por metal padre (metalId o metalName): Oro, Plata, Platino, etc.
-                        const groupKey = (m.metalId   as string | null | undefined)
-                                      ?? (m.metalName as string | null | undefined)
-                                      ?? (m.variantName as string | null | undefined)
-                                      ?? "Metal";
-                        const displayName = (m.metalName  as string | null | undefined)
-                                         ?? (m.variantName as string | null | undefined)
-                                         ?? "Metal";
-                        const metalSymbol = (m.metalSymbol as string | null | undefined) ?? null;
-
-                        const prev = metalPadreMap.get(groupKey) ?? {
-                          displayName,
-                          symbol: metalSymbol,
-                          variants: [],
-                          totalEquivGr: 0,
-                          totalRawValue: 0,
-                          quotePrice: quotePriceVal,
-                        };
-                        const variantSku = (m.variantSku as string | null | undefined) ?? null;
-                        const variantNm  = (m.variantName as string | null | undefined) ?? null;
-                        prev.variants.push({ qty, factor, equivGr, rawValue: rawVal, purity: purityVal, merma: mermaVal, quotePrice: quotePriceVal, sku: variantSku, variantName: variantNm });
-                        prev.totalEquivGr  += equivGr;
-                        prev.totalRawValue += rawVal;
-                        metalPadreMap.set(groupKey, prev);
-                      });
-
-                      // ── Factor de ajuste global y hechura equivalente ─────────────────────
-                      let adjFactorMetal   = 1;
-                      let hechuraEquiv: number | null = null;
-
-                      if (metalHechuraBreakdownNorm && unitCostVal != null) {
-                        const mhb = metalHechuraBreakdownNorm;
-                        if (mhb.hechuraCost > 0.001) hechuraEquiv = mhb.hechuraCost;
-                        const totalRawMetal = Array.from(metalPadreMap.values())
-                          .reduce((a, v) => a + v.totalRawValue, 0);
-                        if (totalRawMetal > 0.001 && mhb.metalCost > 0.001)
-                          adjFactorMetal = mhb.metalCost / totalRawMetal;
-                      } else if (allLineSteps.length > 0 && unitCostVal != null) {
-                        const mSum = allLineSteps
-                          .filter((s: any) => s.key === "COST_LINES_METAL")
-                          .reduce((a: number, s: any) => a + parseFloat(s.value), 0);
-                        const hSum = allLineSteps
-                          .filter((s: any) => s.key !== "COST_LINES_METAL")
-                          .reduce((a: number, s: any) => a + parseFloat(s.value), 0);
-                        const linesTotal = mSum + hSum;
-                        const adjFactor  = linesTotal > 0.001 ? unitCostVal / linesTotal : 1;
-                        adjFactorMetal   = adjFactor;
-                        if (hSum > 0.001) hechuraEquiv = hSum * adjFactor;
-                      } else if (hechuraMMHStep && unitCostVal != null) {
-                        const hSum = parseFloat(String(hechuraMMHStep.value));
-                        if (hSum > 0.001) hechuraEquiv = hSum;
-                      }
-
-                      const metalPadreEntries = Array.from(metalPadreMap.entries());
-                      const hasEquivBlock = metalPadreEntries.length > 0 || hechuraEquiv != null;
-                      /* Cards de costo (Composición del costo): solo en DESGLOSADO.
-                         · DESGLOSADO → cards visibles (comportamiento esperado de la vista desglosada).
-                         · UNIFICADO  → ocultos: la vista unificada solo muestra header y total. */
-                      const showCostEquivCards = simViewMode === "DESGLOSADO" && hasEquivBlock;
-
-                      // ── costClosingEl — solo cierre del costo (Costo sin imp + Total costo).
-                      // Va DENTRO del body de "Costo unitario" para colapsar/expandir junto al detalle.
-                      const costClosingEl = (
-                        <div className="pt-2 mt-1.5 border-t border-border/40 space-y-1">
-                          {/* ── Cierre del costo ── */}
-                          {hasCostTax && unitCostVal != null ? (
-                            <>
-                              {/* Subtotal solo cuando hay múltiples componentes que agregar */}
-                              {(lineRows.length > 1 || globalAdjEl != null) && (
-                                <div className="flex justify-between items-baseline text-muted">
-                                  <span>Costo sin imp.</span>
-                                  <span className="tabular-nums">{fm2(unitCostVal)}</span>
-                                </div>
-                              )}
-                              <div className={cn(
-                                "flex justify-between items-center font-bold text-sm",
-                                (lineRows.length > 1 || globalAdjEl != null) && "border-t border-border/30 pt-1 mt-0.5"
-                              )}>
-                                <span>Total costo</span>
-                                <span className="tabular-nums">{fm2(totalCostVal)}</span>
-                              </div>
-                            </>
-                          ) : (lineRows.length > 1 || globalAdjEl != null) ? (
-                            /* Mostrar "Costo total" solo cuando agrupa múltiples componentes */
-                            <div className="flex justify-between items-center font-bold text-sm">
-                              <span>Costo total</span>
-                              <span className="tabular-nums">{fm2(totalCostVal)}</span>
-                            </div>
-                          ) : null}
-                        </div>
-                      );
-
-                      // ── equivCardsEl — Composición del costo (cards de metales + hechura).
-                      // Render INDEPENDIENTE del estado colapsado de "Costo unitario": en DESGLOSADO
-                      // se muestra siempre; en UNIFICADO no aparece (showCostEquivCards = false).
-                      const equivCardsEl = showCostEquivCards ? (
-                            /* ── DESGLOSADO: cards de equivalentes por componente.
-                                La sección siempre visible; cada card maneja su propio estado de expansión
-                                (sincronizado a través del flag global). */
-                            <div className="pb-1 space-y-3 border-t border-border/20 pt-3 mt-3 mb-4">
-                              <p className="text-[9px] font-semibold uppercase tracking-widest text-muted/70">
-                                Composición del costo
-                              </p>
-
-                              {/* ── Grid de cards (siempre visible) ── */}
-                              <div className="grid grid-cols-2 gap-4">
-                                {/* Cards por metal padre */}
-                                {metalPadreEntries.map(([padreKey, padre], pi) => {
-                                  const totalValue = padre.totalRawValue * adjFactorMetal;
-                                  const totalGrStr = fmGr(padre.totalEquivGr);
-                                  const sampleV    = padre.variants.find(v => v.quotePrice != null && v.purity != null && v.purity > 0.0001);
-                                  const purePrice  = sampleV != null ? sampleV.quotePrice! / sampleV.purity! : null;
-
-                                  const hasAdj       = Math.abs(adjFactorMetal - 1) > 0.001;
-                                  const adjAmt       = totalValue - padre.totalRawValue;
-                                  const adjPct       = (adjFactorMetal - 1) * 100;
-                                  const isAdjBonif   = adjFactorMetal < 1;
-
-                                  return (
-                                    <div key={`equiv-padre-${pi}`}
-                                      className="rounded-lg border border-border/40 bg-muted/15 px-4 py-3 space-y-2 shadow-sm">
-
-                                      {/* ── Cabecera: clickeable, colapsa el bloque "Origen" ── */}
-                                      {(() => {
-                                        const cKey = `metalCost-${pi}`;
-                                        const cOpen = isExpanded(cKey);
-                                        const firstSku = padre.variants[0]?.sku ?? null;
-                                        const collapsedSummary = padre.variants.length > 0
-                                          ? `${padre.variants.length} ${padre.variants.length === 1 ? "origen" : "orígenes"}${firstSku ? ` · ${firstSku}` : ""}`
-                                          : null;
-                                        return (
-                                          <button
-                                            type="button"
-                                            onClick={() => toggleSection(cKey)}
-                                            className="w-full flex items-start justify-between gap-2 cursor-pointer"
-                                          >
-                                            <div className="min-w-0 text-left">
-                                              <p className="text-base font-bold uppercase tracking-wider text-foreground/60 leading-none mt-0.5 truncate">
-                                                {padre.displayName}
-                                                {padre.symbol && <span className="text-[10px] font-normal text-foreground/35 ml-1">({padre.symbol})</span>}
-                                              </p>
-                                              {!cOpen && collapsedSummary && (
-                                                <p className="text-[11px] text-muted/70 italic leading-none pt-1 truncate">{collapsedSummary}</p>
-                                              )}
-                                            </div>
-                                            <div className="flex items-center gap-1.5 shrink-0">
-                                              <p className="text-base tabular-nums font-bold text-foreground/90 leading-tight text-right">
-                                                {padre.symbol && <span className="text-[11px] font-semibold text-muted/70 mr-1">{padre.symbol}</span>}{totalGrStr} gr
-                                              </p>
-                                              <ChevronDown size={14} className={cn("text-muted/60 transition-transform mt-0.5", cOpen && "rotate-180")} />
-                                            </div>
-                                          </button>
-                                        );
-                                      })()}
-
-                                      {/* ── Origen + cálculo de gramos + cálculo monetario — colapsable ── */}
-                                      {isExpanded(`metalCost-${pi}`) && (
-                                      <div className="border-t border-border/20 pt-1.5">
-                                        <p className="text-xs font-semibold uppercase tracking-widest text-muted/60 mb-1">Origen</p>
-                                        <div className="space-y-1">
-                                          {padre.variants.map((v, vi) => {
-                                            const fmtM3 = (n: number) => n.toLocaleString("es-AR", { minimumFractionDigits: 3, maximumFractionDigits: 3 });
-                                            const qStr  = fmGr(v.qty);
-                                            const fStr  = fmtM3(v.factor);
-                                            const gStr  = fmGr(v.equivGr);
-                                            const originLabel = v.variantName ?? padre.displayName;
-
-                                            // Descripción del factor (pureza × merma) para acompañar el cálculo de gramos
-                                            let factorDesc = "";
-                                            if (v.purity != null && v.merma != null && v.merma !== 0) {
-                                              const pPct = (v.purity * 100).toLocaleString("es-AR", { maximumFractionDigits: 2 });
-                                              factorDesc = `pureza ${pPct}% × merma ${fmtM3(v.merma)}%`;
-                                            } else if (v.purity != null) {
-                                              const pPct = (v.purity * 100).toLocaleString("es-AR", { maximumFractionDigits: 2 });
-                                              factorDesc = `pureza ${pPct}%`;
-                                            } else if (v.merma != null && v.merma !== 0) {
-                                              factorDesc = `merma ${fmtM3(v.merma)}%`;
-                                            }
-
-                                            // Precio por gramo coherente con la transformación equivGr × precio/gr = rawValue:
-                                            //   - con purity: precio "puro" = quotePrice / purity
-                                            //   - sin purity: quotePrice ya es por gramo
-                                            const purePricePerGr = v.quotePrice != null
-                                              ? (v.purity != null && v.purity > 0.0001 ? v.quotePrice / v.purity : v.quotePrice)
-                                              : null;
-
-                                            const showGramsCalc = Math.abs(v.factor - 1) > 0.001 && v.qty > 0.0001;
-                                            const showMoneyCalc = purePricePerGr != null && v.equivGr > 0.0001;
-
-                                            return (
-                                              <div key={vi} className="cursor-default leading-snug space-y-px">
-                                                {/* L1 — Origen + gramos finales */}
-                                                <div className="flex items-baseline justify-between gap-2 text-[11px] tabular-nums">
-                                                  <span className="min-w-0 truncate text-muted">
-                                                    <span className="font-medium">{originLabel}</span>
-                                                    {v.sku && <span className="ml-1 font-mono text-muted/70">· {v.sku}</span>}
-                                                  </span>
-                                                  <span className="shrink-0 text-muted/70">{gStr} gr</span>
-                                                </div>
-                                                {/* L2 — Cálculo de gramos: qty × factor = equivGr */}
-                                                {showGramsCalc && (
-                                                  <p className="text-[11px] text-muted tabular-nums font-mono leading-tight mt-0.5">
-                                                    {qStr} gr × {fStr} = {gStr} gr
-                                                    {factorDesc && <span className="ml-1 text-muted/35">({factorDesc})</span>}
-                                                  </p>
-                                                )}
-                                                {/* L3 — Cálculo monetario: equivGr × precio/gr = rawValue */}
-                                                {showMoneyCalc && (
-                                                  <p className="text-[11px] text-muted tabular-nums font-mono leading-tight mt-0.5">
-                                                    {gStr} gr × {fm2(purePricePerGr!)}/gr = {fm2(v.rawValue)}
-                                                  </p>
-                                                )}
-                                              </div>
-                                            );
-                                          })}
-                                        </div>
-                                      </div>
-                                      )}
-
-                                      {/* ── Resumen: subtotal — solo cuando aporta info nueva
-                                            · con ajuste: muestra Base / Ajuste / Subtotal (transformación)
-                                            · varias variantes sin ajuste: muestra suma
-                                            · 1 variante sin ajuste: el cálculo monetario ya muestra el total → se omite */}
-                                      {(hasAdj || padre.variants.length > 1) && (
-                                      <div className="border-t border-border/20 pt-1.5 space-y-0.5">
-                                        {hasAdj ? (
-                                          <>
-                                            {purePrice != null && (
-                                              <div className="flex items-baseline justify-between gap-2"
-                                                title={`${totalGrStr} gr × ${fm2(purePrice)}/gr = ${fm2(padre.totalRawValue)}`}>
-                                                <span className="text-xs text-muted/70">Base</span>
-                                                <span className="text-xs tabular-nums text-foreground/70">{fm2(padre.totalRawValue)}</span>
-                                              </div>
-                                            )}
-                                            <div className="flex items-baseline justify-between gap-2"
-                                              title={`${isAdjBonif ? "−" : "+"}${Math.abs(adjPct).toFixed(2)}%`}>
-                                              <span className="text-xs text-muted/70">
-                                                Ajuste ({isAdjBonif ? "−" : "+"}{Math.abs(adjPct).toFixed(1)}%)
-                                              </span>
-                                              <span className={cn("text-xs tabular-nums shrink-0",
-                                                isAdjBonif ? "text-emerald-600/80 dark:text-emerald-400/80"
-                                                           : "text-amber-600/80 dark:text-amber-400/80"
-                                              )}>
-                                                {isAdjBonif ? "−" : "+"}{fm2(Math.abs(adjAmt))}
-                                              </span>
-                                            </div>
-                                            <div className="flex items-baseline justify-between gap-2 bg-muted/20 px-2 py-1 rounded mt-1">
-                                              <span className="text-xs font-bold text-muted/70">Subtotal</span>
-                                              <span className="text-xs tabular-nums font-bold text-foreground/70">{fm2(totalValue)}</span>
-                                            </div>
-                                          </>
-                                        ) : (
-                                          <div className="flex items-baseline justify-between gap-2 bg-muted/20 px-2 py-1 rounded"
-                                            title={purePrice != null ? `${totalGrStr} gr × ${fm2(purePrice)}/gr = ${fm2(totalValue)}` : undefined}>
-                                            <span className="text-xs font-bold text-muted/70">Subtotal</span>
-                                            <span className="text-xs tabular-nums font-bold text-foreground/70">{fm2(totalValue)}</span>
-                                          </div>
-                                        )}
-                                      </div>
-                                      )}
-                                    </div>
-                                  );
-                                })}
-
-                                {/* Card Hechura */}
-                                {hechuraEquiv != null && (() => {
-                                  // Costo total de metal (suma de todos los padres × adjFactor)
-                                  const totalMetalCostForTax = metalPadreEntries.reduce(
-                                    (acc: number, [, p]: [string, any]) => acc + (p.totalRawValue as number) * adjFactorMetal,
-                                    0
-                                  );
-                                  const hasMetalCost = totalMetalCostForTax > 0.001;
-
-                                  // ── Bonificación / Recargo global proporcional a hechura ──
-                                  // hechuraEquiv ya viene con el ajuste aplicado. Para mostrarlo
-                                  // explícito sin doble-contar, calculamos:
-                                  //   hSumBruto = suma de hechuraLineSteps sin ajuste
-                                  //   hechuraGlobalAdj = hechuraEquiv − hSumBruto
-                                  // Si hay diferencia significativa, mostramos la línea
-                                  // "Bonif./Recargo global" entre Subtotal e Impuestos.
-                                  const hSumBruto = hechuraLineSteps.reduce(
-                                    (acc: number, s: any) => acc + (s.value != null ? parseFloat(String(s.value)) : 0),
-                                    0,
-                                  );
-                                  const hechuraGlobalAdj = hechuraEquiv! - hSumBruto;
-                                  const hasGlobalAdj = Math.abs(hechuraGlobalAdj) > 0.005;
-                                  const isHechuraBonif = hechuraGlobalAdj < 0;
-                                  // Etiqueta del ajuste (% o monto) — leída del meta del COST_LINES_FINAL
-                                  // si está disponible, así el usuario ve "5%" coherente con el bloque superior.
-                                  const finalStep = stepsNorm.find((s: any) => s.key === "COST_LINES_FINAL" && s.status === "ok");
-                                  const adjType = String(finalStep?.meta?.adjustmentType ?? "");
-                                  const adjValue = finalStep?.meta?.adjustmentValue != null
-                                    ? parseFloat(String(finalStep.meta.adjustmentValue)) : null;
-                                  const adjSuffix = adjType === "PERCENTAGE" && adjValue != null
-                                    ? ` ${adjValue.toLocaleString("es-AR", { maximumFractionDigits: 2 })}%`
-                                    : "";
-
-                                  // Desglose por impuesto: metalPart + hechuraPart = totalTax
-                                  const hechuraTaxLines = taxItems
-                                    .filter((t: any) => t.rate != null && parseFloat(String(t.rate)) > 0)
-                                    .map((t: any) => {
-                                      const rate       = parseFloat(String(t.rate));
-                                      const metalPart  = hasMetalCost ? totalMetalCostForTax * rate / 100 : 0;
-                                      const hechuraPart = hechuraEquiv! * rate / 100;
-                                      const totalTax   = metalPart + hechuraPart;
-                                      return { name: String(t.name), rate, metalPart, hechuraPart, totalTax };
-                                    })
-                                    .filter(t => t.totalTax > 0.001);
-
-                                  const allTaxTotal    = hechuraTaxLines.reduce((a, t) => a + t.totalTax, 0);
-                                  // El card de hechura muestra hechura + TODOS los impuestos (es el contenedor de impuestos)
-                                  const displayTotal   = hechuraTaxLines.length > 0 ? hechuraEquiv! + allTaxTotal : hechuraEquiv!;
-
-                                  return (
-                                    <div className="rounded-lg border border-border/40 bg-muted/15 px-4 py-3 space-y-2 shadow-sm">
-
-                                      {/* ── Cabecera: clickeable, colapsa Origen + impuestos.
-                                          Forma parte del grupo "COSTO": sincronizada con los demás cards de costo. */}
-                                      {(() => {
-                                        const hcOpen = isExpanded("hechuraCost");
-                                        // Resumen colapsado: cantidad de líneas + impuestos si los hay
-                                        const summaryParts: string[] = [];
-                                        if (hechuraLineSteps.length > 0) summaryParts.push(`${hechuraLineSteps.length} línea${hechuraLineSteps.length === 1 ? "" : "s"}`);
-                                        if (hechuraTaxLines.length > 0) summaryParts.push("impuestos");
-                                        const collapsedSummary = summaryParts.length > 0
-                                          ? `Incluye ${summaryParts.join(" · ")}`
-                                          : null;
-                                        return (
-                                          <>
-                                            <button
-                                              type="button"
-                                              onClick={() => toggleSection("hechuraCost")}
-                                              className="w-full flex items-start justify-between gap-2 cursor-pointer"
-                                            >
-                                              <p className="text-base font-bold uppercase tracking-wider text-foreground/60 leading-none mt-0.5 shrink-0">
-                                                Hechura
-                                              </p>
-                                              <div className="flex items-center gap-1.5 shrink-0">
-                                                <p className="text-base tabular-nums font-bold text-foreground/90 leading-none text-right">
-                                                  {fm2(displayTotal)}
-                                                </p>
-                                                <ChevronDown size={14} className={cn("text-muted/60 transition-transform mt-0.5", hcOpen && "rotate-180")} />
-                                              </div>
-                                            </button>
-                                            {!hcOpen && collapsedSummary && (
-                                              <p className="text-[11px] text-muted/70 italic leading-none pt-0.5">
-                                                {collapsedSummary}
-                                              </p>
-                                            )}
-                                          </>
-                                        );
-                                      })()}
-
-                                      {/* ── DETALLE TÉCNICO — colapsable. Origen + impuestos. ── */}
-                                      {isExpanded("hechuraCost") && (
-                                      <>
-
-                                      {/* ── Origen — cada línea muestra su componente y monto ── */}
-                                      {hechuraLineSteps.length > 0 && (
-                                        <div className="border-t border-border/20 pt-1.5 space-y-0">
-                                          <p className="text-xs font-semibold uppercase tracking-widest text-muted/60 mb-1">Origen</p>
-                                          <div className="space-y-1 text-xs">
-                                            {hechuraLineSteps.map((step: any, i: number) => (
-                                              <div key={`heq-${i}`}>
-                                                {renderOtherRow(`heq-row-${i}`, step)}
-                                              </div>
-                                            ))}
-                                          </div>
-                                        </div>
-                                      )}
-
-                                      {/* ── Bonificación / Recargo global proporcional a hechura ──
-                                          Se muestra entre Origen e Impuestos para que el desglose de la card
-                                          coincida con el resumen superior de "Costo unitario". */}
-                                      {hasGlobalAdj && (
-                                        <div className="space-y-0.5 border-t border-border/20 pt-1.5">
-                                          <div className="flex items-baseline justify-between gap-2">
-                                            <span className="text-xs text-muted/70">Subtotal hechura</span>
-                                            <span className="text-xs tabular-nums text-foreground/70">{fm2(hSumBruto)}</span>
-                                          </div>
-                                          <div className="flex items-baseline justify-between gap-2">
-                                            <span className="text-xs text-muted/70">
-                                              {isHechuraBonif ? "Bonif. global" : "Recargo global"}{adjSuffix}
-                                            </span>
-                                            <span className={cn("text-xs tabular-nums",
-                                              isHechuraBonif ? "text-emerald-600 dark:text-emerald-400"
-                                                             : "text-amber-600 dark:text-amber-400"
-                                            )}>
-                                              {isHechuraBonif ? "−" : "+"}{fm2(Math.abs(hechuraGlobalAdj))}
-                                            </span>
-                                          </div>
-                                          <div className="flex items-baseline justify-between gap-2 bg-muted/20 px-2 py-1 rounded mt-1">
-                                            <span className="text-xs font-bold text-muted/70">Subtotal hechura ajustado</span>
-                                            <span className="text-xs tabular-nums font-bold text-foreground/70">{fm2(hechuraEquiv!)}</span>
-                                          </div>
-                                        </div>
-                                      )}
-
-                                      {/* ── Desglose de impuestos — formato unificado: nombre + contexto / Base × % = resultado ── */}
-                                      {hechuraTaxLines.length > 0 && (
-                                        <div className="space-y-1">
-                                          {/* Subtotal — solo cuando hay >1 línea de origen Y NO hubo ajuste global
-                                              (cuando hay ajuste, el "Subtotal hechura ajustado" de arriba ya cumple). */}
-                                          {hechuraLineSteps.length > 1 && !hasGlobalAdj && (
-                                            <div className="flex items-baseline justify-between gap-2 bg-muted/20 px-2 py-1 rounded">
-                                              <span className="text-xs font-bold text-muted/70">Subtotal</span>
-                                              <span className="text-xs tabular-nums font-bold text-foreground/70">{fm2(hechuraEquiv!)}</span>
-                                            </div>
-                                          )}
-                                          {hechuraTaxLines.map((t, ti) => (
-                                            <div key={`htax-sum-${ti}`} className="space-y-0.5 mt-1 pt-1 border-t border-border/30">
-                                              {hasMetalCost && (
-                                                <div className="space-y-px">
-                                                  <div className="flex items-baseline justify-between gap-2">
-                                                    <span className="text-xs font-medium text-muted">{t.name} {t.rate}% (Compra · metal)</span>
-                                                    <span className="text-xs tabular-nums text-muted shrink-0">+{fm2(t.metalPart)}</span>
-                                                  </div>
-                                                  <p className="text-[11px] text-muted tabular-nums font-mono leading-tight mt-0.5">
-                                                    Base: {fm2(totalMetalCostForTax)} × {t.rate}% = +{fm2(t.metalPart)}
-                                                  </p>
-                                                </div>
-                                              )}
-                                              <div className="space-y-px">
-                                                <div className="flex items-baseline justify-between gap-2">
-                                                  <span className="text-xs font-medium text-muted">{t.name} {t.rate}% (Compra · hechura)</span>
-                                                  <span className="text-xs tabular-nums text-muted shrink-0">+{fm2(t.hechuraPart)}</span>
-                                                </div>
-                                                <p className="text-[11px] text-muted tabular-nums font-mono leading-tight mt-0.5">
-                                                  Base: {fm2(hechuraEquiv!)} × {t.rate}% = +{fm2(t.hechuraPart)}
-                                                </p>
-                                              </div>
-                                              {hasMetalCost && (
-                                                <div className="flex items-baseline justify-between gap-2 border-t border-border/30 pt-0.5">
-                                                  <span className="text-xs text-muted font-medium">Total {t.name} {t.rate}%</span>
-                                                  <span className="text-xs tabular-nums text-foreground/70 font-bold shrink-0">+{fm2(t.totalTax)}</span>
-                                                </div>
-                                              )}
-                                            </div>
-                                          ))}
-                                        </div>
-                                      )}
-
-                                      </>
-                                      )}
-                                    </div>
-                                  );
-                                })()}
-                              </div>
-                            </div>
-                      ) : null;
-
-                      // Total por cantidad — cálculo derivado en frontend (no toca pricing).
-                      // Se muestra solo cuando hay >1 unidad para evitar redundancia visual.
-                      const qtyForTotal = Math.max(quantity ?? 1, 1);
-                      const showQtyTotal = qtyForTotal > 1 && totalCostVal != null;
-                      const qtyTotalCost = showQtyTotal ? totalCostVal! * qtyForTotal : null;
-
-                      const cuOpen = isExpanded("costUnit");
-                      return (
-                        <div className="rounded-xl border border-border bg-card px-4 py-3">
-                          {/* ── Header — clickeable: total siempre visible; cuerpo colapsable ── */}
-                          <button
-                            type="button"
-                            onClick={() => toggleSection("costUnit")}
-                            className="w-full flex items-center justify-between gap-2 mb-2.5 cursor-pointer"
-                          >
-                            <p className="text-[11px] font-semibold uppercase tracking-wider">Costo unitario</p>
-                            <div className="flex items-center gap-1.5">
-                              {totalCostVal != null && (
-                                <span className="text-sm tabular-nums font-bold text-text">{fm2(totalCostVal)}</span>
-                              )}
-                              <ChevronDown size={14} className={cn("text-muted/60 transition-transform", cuOpen && "rotate-180")} />
-                            </div>
-                          </button>
-
-                          {/* ── Resumen colapsado: una línea con qty si aplica ── */}
-                          {!cuOpen && showQtyTotal && (
-                            <p className="text-[11px] text-muted/70 italic mb-1">
-                              {qtyForTotal} {qtyForTotal === 1 ? "unidad" : "unidades"} · Total {fm2(qtyTotalCost!)}
-                            </p>
-                          )}
-
-                          {/* ── Body — detalle técnico (líneas + ajuste + impuestos + qty) colapsable ── */}
-                          {cuOpen && (
-                          <div className="space-y-2 text-xs">
-                            {lineRows}
-                            {globalAdjEl}
-                            {taxEls.length > 0 && (
-                              <div className="border-t border-border/30 pt-2 mt-1 space-y-1.5">
-                                {taxEls}
-                              </div>
-                            )}
-                            {/* Cierre del costo (Costo sin imp + Total costo) — DENTRO del body,
-                                colapsa junto al detalle. Aplica en ambas vistas cuando el bloque está expandido. */}
-                            {costClosingEl}
-                            {/* Total según cantidad — cálculo derivado, solo cuando qty > 1. */}
-                            {showQtyTotal && (
-                              <div className="flex justify-between items-baseline pt-1.5 mt-1 border-t border-border/30">
-                                <span className="text-[11px] text-muted">Total ({qtyForTotal} {qtyForTotal === 1 ? "unidad" : "unidades"})</span>
-                                <span className="text-xs tabular-nums font-bold text-text">{fm2(qtyTotalCost!)}</span>
-                              </div>
-                            )}
-                          </div>
-                          )}
-
-                          {/* ── Composición del costo (cards) FUERA del body.
-                              SIEMPRE visible en DESGLOSADO (aunque "Costo unitario" esté colapsado).
-                              En UNIFICADO equivCardsEl es null → no aparece. */}
-                          {equivCardsEl}
-                        </div>
-                      );
-                    })()}
+                    {/* Migrado a <CostCompositionBlock> en FASE 1.2.
+                        Origen: IIFE in-scope que vivía acá (1046 líneas).
+                        Helpers/agregaciones: src/components/pricing/CostCompositionBlock/helpers.ts
+                        Sub-componentes: src/components/pricing/CostCompositionBlock/parts/ */}
+                    <CostCompositionBlock
+                      steps={stepsNorm}
+                      line={normLine}
+                      result={result}
+                      display={{ rate: displayRate, symbol: displaySym }}
+                      variant="full"
+                      detailMode={simViewMode}
+                      expanded={costCompositionExpansionAdapter}
+                      onToggle={toggleSection}
+                    />
 
                     {/* ── COMBO COMERCIAL — bloque informativo "Componentes del combo" ──
                         Solo aparece cuando el step COMBO_COST está presente (= article es combo).
                         NO participa del cálculo: el precio del combo se resuelve por el flujo
                         normal (lista/manual). Este bloque transparenta de qué componentes y
-                        costos sale el costo derivado del combo. */}
+                        costos sale el costo derivado del combo.
+                        Restaurado tras regresión de FASE 1.2 — vivirá acá hasta extraerse a
+                        <ComboInfoBlock /> en una fase futura. */}
                     {comboCostStep && Array.isArray(comboCostStep.meta?.components) && (() => {
                       const components = (comboCostStep.meta.components as any[]);
                       const totalCost = comboCostStep.value != null
@@ -5413,13 +4489,12 @@ export default function PricingSimulator() {
                                     </div>
                                     {cost != null && (
                                       <p className="text-[11px] text-muted tabular-nums font-mono leading-tight mt-0.5">
-                                        {qty.toLocaleString("es-AR", { maximumFractionDigits: 4 })} × {fm2(cost)} = {fm2(lineCost)}
+                                        {formatDecimal(qty, 2)} × {fm2(cost)} = {fm2(lineCost)}
                                       </p>
                                     )}
                                   </div>
                                 );
                               })}
-                              {/* Subtotal del combo (suma de costos) */}
                               <div className="flex items-baseline justify-between gap-2 bg-muted/20 px-2 py-1 rounded mt-1">
                                 <span className="text-xs font-bold text-muted/70">Costo total del combo</span>
                                 <span className="text-xs tabular-nums font-bold text-foreground/70">{fm2(totalCost)}</span>
@@ -5463,1634 +4538,58 @@ export default function PricingSimulator() {
                           {/* ── DETALLE TÉCNICO COLAPSABLE — todo el flujo del cálculo del precio
                               (precio base, canal, ajustado, pago, envío + total a pagar).
                               "Composición del precio" queda fuera (controlada por su propio estado). */}
-                          {pcOpen && (<>
-
-                          {/* Precio base — desglosado por componentes */}
-                          {(() => {
-                            const mhb = metalHechuraBreakdownNorm;
-                            // Factor global costo → precio (para metales)
-                            const gSaleFactor: number | null = mhb
-                              ? (metalCostRaw && metalCostRaw > 0.001 ? mhb.metalSale / metalCostRaw : 1)
-                              : (unitCostVal && unitCostVal > 0.001 && basePriceVal && basePriceVal > 0.001
-                                  ? basePriceVal / unitCostVal : null);
-                            // @deprecated Fase 2 — `gHechuraSaleFactor` duplica la lógica del bloque
-                            //  IIFE @~6245 (`gHSF`). Mantenido por ahora como fallback retrocompat
-                            //  para snapshots pre v7 (sin `composition.{type}[i].lineSale`). Cuando
-                            //  toda la flota esté en v7, este cálculo y sus 4 usos abajo pueden
-                            //  remplazarse por lectura directa de `composition.hechuras[i].lineSale`.
-                            //  Factor específico para hechura (puede diferir en METAL_HECHURA).
-                            const gHechuraSaleFactor: number | null = mhb && mhb.hechuraCost > 0.001
-                              ? mhb.hechuraSale / mhb.hechuraCost
-                              : gSaleFactor;
-                            const metalMarginPct = mhb
-                              ? parseFloat(String(mhb.metalMarginPct ?? 0))
-                              : (gSaleFactor != null ? (gSaleFactor - 1) * 100 : 0);
-                            const hechuraMarginPct = mhb
-                              ? parseFloat(String(mhb.hechuraMarginPct ?? 0))
-                              : (gHechuraSaleFactor != null ? (gHechuraSaleFactor - 1) * 100 : 0);
-
-                            const isManualSource  = baseStep?.key === "MANUAL_OVERRIDE" || baseStep?.key === "MANUAL_FALLBACK";
-                            const isVariantSource = baseStep?.key === "VARIANT_OVERRIDE";
-                            const isListSource    = baseStep?.key === "PRICE_LIST";
-
-                            // Mismos pasos de metal que usa el bloque de Costo (disponible en scope externo)
-                            const priceMetalSteps = metalQuoteSteps;
-                            // Pasos de hechura/otros — calculados localmente (el array del Costo está en otro scope)
-                            const priceHechSteps = (stepsNorm as any[]).filter((s: any) =>
-                              ["COST_LINES_HECHURA", "COST_LINES_PRODUCT", "COST_LINES_SERVICE", "COST_LINES_MANUAL"].includes(s.key)
-                              && s.status === "ok" && s.value != null
-                            );
-                            // Etiquetas genéricas para detectar líneas sin nombre custom
-                            const PRICE_GENERIC_LABELS = new Set(["Metal", "Hechura", "Producto", "Servicio", "Manual"]);
-                            const hasSingleHechura = priceHechSteps.length === 0 && (hechuraCostRaw ?? 0) > 0.001;
-
-                            const hasMetals  = priceMetalSteps.length > 0;
-                            const hasHechura = priceHechSteps.length > 0 || hasSingleHechura;
-                            const hasBothSections = hasMetals && hasHechura;
-                            const hasDiscPromo = discStep?.value != null || promoStep?.value != null;
-                            // F1.5 #A+/#A++ — mapa canónico `costLineId → lineSale` desde
-                            // `composition.{metals,hechuras,products,services}[]`. Es la
-                            // fuente de verdad del pricing-engine (cierre POLICY R4.1).
-                            // Cada step con `meta.costLineId` mapeado lee su sale-side
-                            // desde acá; si no está, fallback al multiplicador global legacy.
-                            const lineSaleByCostLineId = new Map<string, number>();
-                            const compNormP: any = normLine?.composition ?? null;
-                            for (const arr of [
-                              compNormP?.metals, compNormP?.hechuras,
-                              compNormP?.products, compNormP?.services,
-                            ]) {
-                              if (!Array.isArray(arr)) continue;
-                              for (const it of arr) {
-                                if (it?.costLineId && it?.lineSale != null
-                                    && Number.isFinite(Number(it.lineSale))) {
-                                  lineSaleByCostLineId.set(String(it.costLineId), Number(it.lineSale));
-                                }
-                              }
-                            }
-
-                            // Formato simple: precio manual/variante o sin composición metal/hechura.
-                            // Para combos: pasa por aquí cuando tiene precio resuelto (lista o manual).
-                            // El desglose informativo de componentes se muestra en el bloque
-                            // "Componentes del combo" debajo de "Composición del costo" (no acá).
-                            if ((isManualSource || isVariantSource) || (!hasMetals && !hasHechura)) {
-                              const priceLabel = isVariantSource ? "Precio de variante"
-                                : isManualSource ? "Precio fijo manual"
-                                : `Precio de lista${baseStep?.meta?.priceListName ? ` · ${String(baseStep.meta.priceListName)}` : ""}`;
-                              return (
-                                <div>
-                                  <div className="flex justify-between items-baseline">
-                                    <span>{priceLabel}</span>
-                                    <span className={cn("font-bold tabular-nums", hasDiscPromo && "text-muted/60")}>
-                                      {fm2(basePriceVal!)}
-                                    </span>
-                                  </div>
-                                  {isListSource && gSaleFactor != null && unitCostVal != null && sub(`costo ${fm2(unitCostVal)} × ${gSaleFactor.toFixed(2)}`)}
-                                </div>
-                              );
-                            }
-
-                            return (
-                              <>
-                                {/* Etiqueta de lista con margen — dinámica según modo de la lista */}
-                                {isListSource && (() => {
-                                  const mode     = String(baseStep?.meta?.mode ?? "");
-                                  const listName = baseStep?.meta?.priceListName ? ` · ${String(baseStep.meta.priceListName)}` : "";
-
-                                  // Descripción del margen según el modo de la lista
-                                  let marginDesc: string | null = null;
-                                  if (mode === "MARGIN_TOTAL") {
-                                    const unifiedPct = gSaleFactor != null ? (gSaleFactor - 1) * 100 : 0;
-                                    marginDesc = `Margen unificado: ${unifiedPct.toFixed(1)}%`;
-                                  } else if (mode === "METAL_HECHURA") {
-                                    marginDesc = `Metal (${metalMarginPct.toFixed(1)}%) + Hechura (${hechuraMarginPct.toFixed(1)}%)`;
-                                  } else if (mode) {
-                                    marginDesc = PRICE_LIST_MODE_SHORT[mode] ?? null;
-                                  }
-
-                                  const parts: string[] = [];
-                                  if (marginDesc) parts.push(marginDesc);
-                                  if (listName) parts.push(`lista${listName}`);
-                                  if (parts.length === 0) return null;
-                                  return (
-                                    <p className="text-xs text-muted font-medium leading-snug">
-                                      {parts.join(" · ")}
-                                    </p>
-                                  );
-                                })()}
-
-                                {/* ── Metales ── */}
-                                {hasMetals && (
-                                  <div className="space-y-1.5">
-                                    {hasBothSections && (
-                                      <p className="text-[9px] font-semibold uppercase tracking-widest text-muted/60">Metales</p>
-                                    )}
-                                    {priceMetalSteps.map((step: any, qi: number) => {
-                                      const m        = step.meta ?? {};
-                                      const qCost    = step.value != null ? parseFloat(String(step.value)) : 0;
-                                      // qty = gramos base originales (sin merma, sin margen)
-                                      const qty      = step.key !== "COST_LINES_METAL"
-                                        ? (m.grams != null ? parseFloat(String(m.grams)) : m.qty   != null ? parseFloat(String(m.qty))   : 0)
-                                        : (m.qty   != null ? parseFloat(String(m.qty))   : m.grams != null ? parseFloat(String(m.grams)) : 0);
-                                      // En el bloque de PRECIO: usar merma de entidad si hay override
-                                      const variantId = String(m.variantId ?? "");
-                                      const entityMerma = saleEntityMermaMap.get(variantId);
-                                      const mer      = entityMerma != null ? entityMerma
-                                        : (m.merma != null ? parseFloat(String(m.merma)) : 0);
-                                      // F1.5 #A++ — fuente primaria del sale-side por línea METAL:
-                                      // `composition.metals[i].lineSale` emitido por el pricing-engine.
-                                      // Fallback retrocompat al multiplicador global legacy
-                                      // `qCost × gSaleFactor` para snapshots pre v7 sin lineSale.
-                                      const cliMS = m.costLineId != null ? String(m.costLineId) : null;
-                                      const canonicalSaleMS = cliMS ? lineSaleByCostLineId.get(cliMS) : undefined;
-                                      if (canonicalSaleMS == null) {
-                                        trackLegacyPricingPath("PRE_V7_LINE_SALE_FALLBACK_METAL", {
-                                          context: "PricingSimulator: Cálculo del precio → Metales",
-                                        });
-                                      }
-                                      const saleLine = canonicalSaleMS != null
-                                        ? canonicalSaleMS
-                                        : qCost * (gSaleFactor ?? 1);
-                                      const metalParentNm   = (m.metalName    as string | null) ?? null;
-                                      const variantFullNm   = (m.variantName  as string | null) ?? null;
-                                      const variantSkuSale  = (m.variantSku   as string | null) ?? null;
-                                      // L1: nombre del metal padre ("Oro"), fallback a variante o "Metal"
-                                      const headLabel       = metalParentNm ?? variantFullNm ?? "Metal";
-                                      // L2: "AU18K · Oro 18 Kilates" / "AU18K" / nombre variante
-                                      const variantDesc     = variantSkuSale && variantFullNm
-                                        ? `${variantSkuSale} · ${variantFullNm}`
-                                        : variantSkuSale ?? (variantFullNm !== headLabel ? variantFullNm : null);
-                                      // L3: precio/gr = saleLine / qty (gramos base originales, merma + margen incluidos)
-                                      const pricePerGrSale = qty > 0.0001 ? saleLine / qty : null;
-                                      return (
-                                        <div key={`sale-m-${qi}`} className="space-y-0 pb-0.5">
-                                          {/* L1: nombre del metal padre (con total a la derecha) */}
-                                          <div className="flex justify-between items-baseline">
-                                            <span className="font-medium text-text/80">{headLabel}</span>
-                                            <span className="font-bold tabular-nums">{fm2(saleLine)}</span>
-                                          </div>
-                                          {/* L2: código · nombre variante */}
-                                          {variantDesc && (
-                                            <p className="text-[9px] text-muted/70 font-mono font-semibold">{variantDesc}</p>
-                                          )}
-                                          {/* L3: cálculo (gramos base × precio/gr con merma + margen) */}
-                                          {pricePerGrSale != null && (
-                                            <p className="text-[9px] text-muted/55 tabular-nums font-mono">
-                                              {fmGr(qty)} gr × {fm2(pricePerGrSale)}/gr
-                                            </p>
-                                          )}
-                                          {/* L4: merma [· margen] */}
-                                          {(mer > 0 || metalMarginPct > 0.01) && pricePerGrSale != null && (
-                                            <p className="text-[9px] text-muted/40 font-mono">
-                                              {mer > 0 ? `merma ${mer.toLocaleString("es-AR", { minimumFractionDigits: 3, maximumFractionDigits: 3 })}%` : ""}
-                                              {mer > 0 && metalMarginPct > 0.01 ? " · " : ""}
-                                              {metalMarginPct > 0.01 ? `margen ${metalMarginPct.toFixed(1)}%` : ""}
-                                            </p>
-                                          )}
-                                        </div>
-                                      );
-                                    })}
-                                  </div>
-                                )}
-
-                                {/* ── Hechura / Otros ── */}
-                                {hasHechura && (
-                                  <div className={cn("space-y-1.5", hasBothSections && "border-t border-border/20 pt-1.5")}>
-                                    {hasBothSections && (
-                                      <p className="text-[9px] font-semibold uppercase tracking-widest text-muted/60">Hechura / Otros</p>
-                                    )}
-                                    <div className="space-y-1">
-                                      {/* Render normal: líneas COST_LINES con costo × factor de margen.
-                                          Combos ya no tienen render especial acá; sus componentes se muestran
-                                          en el bloque informativo "Componentes del combo" (debajo del costo). */}
-                                      {(
-                                      /* Render normal: líneas COST_LINES con costo × factor de margen */
-                                      priceHechSteps.map((step: any, hi: number) => {
-                                        const m         = step.meta ?? {};
-                                        const lineCost  = parseFloat(String(step.value));
-                                        // F1.5 #A+ — fuente primaria: `composition.{hechuras,products,services}[i].lineSale`
-                                        // (passthrough motor). Fallback retrocompat al multiplicador global
-                                        // `gHechuraSaleFactor` para snapshots pre v7.
-                                        const cliHS = m.costLineId != null ? String(m.costLineId) : null;
-                                        const canonicalSaleHS = cliHS ? lineSaleByCostLineId.get(cliHS) : undefined;
-                                        if (canonicalSaleHS == null) {
-                                          trackLegacyPricingPath("PRE_V7_LINE_SALE_FALLBACK_HECHURA", {
-                                            context: "PricingSimulator: Cálculo del precio → Hechura/Otros",
-                                          });
-                                        }
-                                        const lineSale = canonicalSaleHS != null
-                                          ? canonicalSaleHS
-                                          : lineCost * (gHechuraSaleFactor ?? 1);
-                                        // Factor visible en la fórmula: ratio exacto cuando hay canonical,
-                                        // sino el factor global. Mantiene "lineCost × factor = lineSale" cierto.
-                                        const factor = canonicalSaleHS != null && lineCost > 0.0001
-                                          ? canonicalSaleHS / lineCost
-                                          : (gHechuraSaleFactor ?? 1);
-                                        const rawLabel  = String(m.lineLabel ?? m.lineCode ?? "");
-                                        const customLabel = rawLabel && !PRICE_GENERIC_LABELS.has(rawLabel) ? rawLabel : null;
-                                        const showTransform = Math.abs(factor - 1) > 0.005;
-                                        // Fase 2 — breakdown visual unificado (lista bruta · ajuste · efectivo).
-                                        // Reemplaza la lógica de hint manual previa; misma UX, lógica
-                                        // centralizada en `buildFactorBreakdown`. POLICY R4.1: cero matemática.
-                                        const fbH = buildFactorBreakdown({
-                                          grossMarginPct: hechuraMarginPct,
-                                          effectiveFactor: factor,
-                                          costAdjustment: extractCostAdjustmentFromSteps(stepsNorm),
-                                        });
-                                        return (
-                                          <div key={`sale-h-${hi}`}>
-                                            {customLabel && (
-                                              <p className="text-xs text-muted/70 font-medium mb-0.5">{customLabel}</p>
-                                            )}
-                                            <div className="flex items-baseline justify-between gap-2">
-                                              {showTransform ? (
-                                                <span className="text-[11px] tabular-nums text-muted/60 leading-snug flex flex-wrap items-baseline gap-x-0.5"
-                                                  title={fbH.hasDivergence && fbH.compactLine
-                                                    ? `Factor efectivo: ${fbH.compactLine}`
-                                                    : undefined}>
-                                                  <span>{fm2(lineCost)}</span>
-                                                  <span className="text-muted/35"> ×</span>
-                                                  <span>{fbH.hasDivergence ? "factor efectivo " : "× "}{factor.toFixed(2)}</span>
-                                                  <span className="text-muted/35"> =</span>
-                                                </span>
-                                              ) : <span />}
-                                              <span className="text-[11px] tabular-nums font-bold text-foreground/80 shrink-0">{fm2(lineSale)}</span>
-                                            </div>
-                                            <FactorBreakdownHint
-                                              hasDivergence={fbH.hasDivergence}
-                                              compactLine={fbH.compactLine}
-                                              className="leading-tight mt-0.5"
-                                            />
-                                          </div>
-                                        );
-                                      })
-                                      )}
-                                      {/* Resumen de hechura (METAL_MERMA_HECHURA mode: un solo total) */}
-                                      {hasSingleHechura && (() => {
-                                        // Fase 4.1 quick win — extraer cálculo repetido (`hechuraCostRaw × gHechuraSaleFactor`)
-                                        // que aparecía 2 veces (cierre del card + fórmula visible debajo).
-                                        const hechSaleVal = (hechuraCostRaw ?? 0) * (gHechuraSaleFactor ?? 1);
-                                        return (
-                                        <div className="space-y-0.5">
-                                          <div className="flex justify-between items-baseline">
-                                            <span className="font-medium text-text/80">
-                                              Hechura / Mano de obra
-                                              {hechuraMarginPct > 0.01 && (
-                                                <span className="ml-1.5 text-[9px] text-muted/55 font-mono font-normal">
-                                                  (+{hechuraMarginPct.toFixed(1)}% margen)
-                                                </span>
-                                              )}
-                                            </span>
-                                            <span className="font-bold tabular-nums">
-                                              {fm2(hechSaleVal)}
-                                            </span>
-                                          </div>
-                                          {gHechuraSaleFactor != null && Math.abs(gHechuraSaleFactor - 1) > 0.005 && (
-                                            <p className="text-[9px] text-muted/55 tabular-nums mt-0.5">
-                                              {fm2(hechuraCostRaw!)} × {gHechuraSaleFactor.toFixed(2)}
-                                            </p>
-                                          )}
-                                        </div>
-                                        );
-                                      })()}
-                                    </div>
-                                  </div>
-                                )}
-
-                                {/* Subtotal antes de descuentos/promos.
-                                    Solo se muestra si AGRUPA múltiples líneas visibles (metales + hechuras).
-                                    Si solo hay 1 línea, su valor ya = basePriceVal → omitir para evitar duplicación. */}
-                                {hasDiscPromo && basePriceVal != null && (() => {
-                                  const firstReductionVal = discStep?.value != null ? parseFloat(discStep.value)
-                                    : promoStep?.value != null ? parseFloat(promoStep.value) : null;
-                                  // Si el primer descuento no cambia el valor, no aporta info.
-                                  if (firstReductionVal == null || Math.abs(firstReductionVal - basePriceVal) < 0.005) return null;
-                                  // Cantidad de líneas visibles arriba (cada una ya muestra su propio total).
-                                  const visibleLines = priceMetalSteps.length
-                                    + (priceHechSteps.length > 0 ? priceHechSteps.length : (hasSingleHechura ? 1 : 0));
-                                  // Con 1 sola línea, basePriceVal = ese único monto → repetiría el valor visible.
-                                  if (visibleLines <= 1) return null;
-                                  return (
-                                    <div className="flex justify-between items-baseline">
-                                      <span className="text-muted text-[10px]">Subtotal</span>
-                                      <span className="font-bold tabular-nums text-muted/60">{fm2(basePriceVal)}</span>
-                                    </div>
-                                  );
-                                })()}
-                              </>
-                            );
-                          })()}
-
-                          {/* ── AJUSTES COMERCIALES ──────────────────────────────────────
-                              Sin subtotales intermedios. Cada ajuste muestra:
-                                · label + porcentaje
-                                · monto descontado/agregado a la derecha
-                                · fórmula "Base: $X × Y% = ±$Z" debajo (origen del valor)
-                              Al final, un único "Subtotal ajustado" antes de impuestos. */}
-                          {(() => {
-                            // Helper visual: fórmula de origen (mismo estilo en todos los ajustes)
-                            const formulaCls = "text-[10px] text-muted/70 font-mono tabular-nums leading-tight mt-0.5";
-                            return (
-                              <>
-                                {/* Descuento por cantidad */}
-                                {discStep?.value != null && (() => {
-                                  const m       = (discStep as any).meta ?? {};
-                                  const priceAfter = parseFloat(discStep.value);
-                                  const discAmt = m.discountAmount != null ? parseFloat(String(m.discountAmount)) : (basePriceVal != null ? basePriceVal - priceAfter : 0);
-                                  const base    = m.discountBase != null ? parseFloat(String(m.discountBase)) : basePriceVal;
-                                  const scopeSuffix = (() => {
-                                    if (!m.scopeType || m.scopeType === "ARTICLE" || m.scopeType === "VARIANT") return "";
-                                    const SL: Record<string, string> = { CATEGORY: "cat.", BRAND: "marca", GROUP: "grupo", GENERAL: "general" };
-                                    const prefix = SL[String(m.scopeType)] ?? String(m.scopeType).toLowerCase();
-                                    return m.scopeLabel ? ` · ${prefix}: ${m.scopeLabel}` : ` · ${prefix}`;
-                                  })();
-                                  const pctLabel = m.type === "PERCENTAGE" && m.value != null ? ` (−${m.value}%)` : "";
-                                  const formula  = m.type === "PERCENTAGE" && m.value != null && base != null
-                                    ? `Base: ${fm2(base)} × ${m.value}% = −${fm2(discAmt)}`
-                                    : `−${fm2(discAmt)}`;
-                                  return (
-                                    <div>
-                                      <div className="flex justify-between items-baseline">
-                                        <span className="text-red-500 dark:text-red-400">Desc. por cantidad{scopeSuffix}{pctLabel}</span>
-                                        <span className="font-bold tabular-nums shrink-0 ml-2 text-red-500 dark:text-red-400">−{fm2(discAmt)}</span>
-                                      </div>
-                                      <p className={formulaCls}>{formula}</p>
-                                    </div>
-                                  );
-                                })()}
-
-                                {/* Promoción */}
-                                {promoStep?.value != null && (() => {
-                                  const m       = (promoStep as any).meta ?? {};
-                                  const priceAfter = parseFloat(promoStep.value);
-                                  const discAmt = m.discountAmount != null ? parseFloat(String(m.discountAmount)) : null;
-                                  const qdPrice = discStep?.value != null ? parseFloat(discStep.value) : null;
-                                  const priceBefore = qdPrice ?? basePriceVal;
-                                  const amtOff  = discAmt ?? (priceBefore != null ? priceBefore - priceAfter : 0);
-                                  const base    = m.discountBase != null ? parseFloat(String(m.discountBase)) : priceBefore;
-                                  const scopeSuffix = (() => {
-                                    if (!m.scope || m.scope === "ALL" || m.scope === "ARTICLE" || m.scope === "VARIANT") return "";
-                                    const SL: Record<string, string> = { CATEGORY: "categoría", BRAND: "marca", GROUP: "grupo" };
-                                    return ` · ${SL[String(m.scope)] ?? String(m.scope).toLowerCase()}`;
-                                  })();
-                                  const pctLabel = m.type === "PERCENTAGE" && m.value != null ? ` (−${m.value}%)` : "";
-                                  const formula  = m.type === "PERCENTAGE" && m.value != null && base != null
-                                    ? `Base: ${fm2(base)} × ${m.value}% = −${fm2(amtOff)}`
-                                    : `−${fm2(amtOff)}`;
-                                  return (
-                                    <div>
-                                      <div className="flex justify-between items-baseline">
-                                        <span className="text-red-500 dark:text-red-400">Promoción{scopeSuffix}{pctLabel}</span>
-                                        <span className="font-bold tabular-nums shrink-0 ml-2 text-red-500 dark:text-red-400">−{fm2(amtOff)}</span>
-                                      </div>
-                                      <p className={formulaCls}>{formula}</p>
-                                    </div>
-                                  );
-                                })()}
-
-                                {/* Ajuste comercial del cliente — formato compacto, mismo patrón */}
-                                {ruleStep?.value != null && (() => {
-                                  const m          = (ruleStep as any).meta ?? {};
-                                  const ruleType   = String(m.ruleType ?? "");
-                                  const isDiscount = ruleType === "DISCOUNT" || ruleType === "BONUS";
-                                  const amt        = parseFloat(ruleStep.value);
-                                  const vt         = String(m.valueType ?? "");
-                                  const ruleLabel  = isDiscount ? "Descuento cliente" : "Recargo cliente";
-                                  const priceBeforeRule = promoStep?.value != null ? parseFloat(promoStep.value)
-                                    : discStep?.value != null ? parseFloat(discStep.value)
-                                    : basePriceVal;
-                                  const base = m.discountBase != null ? parseFloat(String(m.discountBase))
-                                             : m.surchargeBase != null ? parseFloat(String(m.surchargeBase))
-                                             : priceBeforeRule;
-                                  const sign = isDiscount ? "−" : "+";
-                                  const colorCls = isDiscount ? "text-red-500 dark:text-red-400" : "text-emerald-600 dark:text-emerald-400";
-                                  const pctLabel = vt === "PERCENTAGE" && m.value != null ? ` (${sign}${m.value}%)` : "";
-                                  const formula  = vt === "PERCENTAGE" && m.value != null && base != null
-                                    ? `Base: ${fm2(base)} × ${m.value}% = ${sign}${fm2(amt)}`
-                                    : `${sign}${fm2(amt)}`;
-                                  return (
-                                    <div>
-                                      <div className="flex justify-between items-baseline">
-                                        <span className={colorCls}>{ruleLabel}{pctLabel}</span>
-                                        <span className={cn("font-bold tabular-nums shrink-0 ml-2", colorCls)}>{sign}{fm2(amt)}</span>
-                                      </div>
-                                      <p className={formulaCls}>{formula}</p>
-                                    </div>
-                                  );
-                                })()}
-
-                                {/* Subtotal ajustado — único, después del último ajuste comercial.
-                                    Usa el último valor disponible: rule > promo > qty > base. */}
-                                {(discStep?.value != null || promoStep?.value != null || ruleStep?.value != null) && (() => {
-                                  const lastVal = ruleStep?.value != null ? (() => {
-                                    const m = (ruleStep as any).meta ?? {};
-                                    const isDisc = String(m.ruleType ?? "") === "DISCOUNT" || String(m.ruleType ?? "") === "BONUS";
-                                    const amt = parseFloat(ruleStep.value);
-                                    const before = promoStep?.value != null ? parseFloat(promoStep.value)
-                                                 : discStep?.value != null ? parseFloat(discStep.value)
-                                                 : basePriceVal ?? 0;
-                                    return isDisc ? before - amt : before + amt;
-                                  })()
-                                    : promoStep?.value != null ? parseFloat(promoStep.value)
-                                    : discStep?.value != null ? parseFloat(discStep.value)
-                                    : basePriceVal;
-                                  if (lastVal == null) return null;
-                                  return (
-                                    <div className="flex justify-between items-baseline border-t border-border/30 pt-1 mt-0.5">
-                                      <span className="text-xs font-bold text-text">Subtotal ajustado</span>
-                                      <span className="text-xs tabular-nums font-bold text-text">{fm2(lastVal)}</span>
-                                    </div>
-                                  );
-                                })()}
-                              </>
-                            );
-                          })()}
-
-                          {/* Redondeo PRICE / NET — antes de impuestos */}
-                          {rndStep?.value != null && rndStep.meta?.preRounding != null && String(rndStep.meta?.applyOn ?? "PRICE") !== "TOTAL" && (() => {
-                            const pre     = parseFloat(String(rndStep.meta.preRounding));
-                            const rounded = parseFloat(rndStep.value);
-                            const diff    = rounded - pre;
-                            if (Math.abs(diff) < 0.001) return null;
-                            const dirSym  = ROUNDING_DIR_SYMBOLS[String(rndStep.meta?.direction ?? "")] ?? "";
-                            const modeLbl = ROUNDING_MODE_LABELS[String(rndStep.meta?.mode ?? "")] ?? String(rndStep.meta?.mode ?? "");
-                            const applyOnMeta = String(rndStep.meta?.applyOn ?? "PRICE");
-                            const applyOnLbl  = applyOnMeta === "NET" ? "sobre precio sin impuestos" : "sobre precio de lista";
-                            const ctxLine     = [`${dirSym} ${modeLbl}`.trim(), applyOnLbl].filter(Boolean).join(" · ");
-                            return (
-                              <div>
-                                <div className="flex justify-between items-baseline">
-                                  <span>Redondeo</span>
-                                  <span className="font-bold tabular-nums">{diff > 0 ? "+" : ""}{fm2(diff)}</span>
-                                </div>
-                                {ctxLine && sub(ctxLine)}
-                                {sub(`${fm2(pre)} → ${fm2(rounded)}`)}
-                              </div>
-                            );
-                          })()}
-
-                          {/* Bloque informativo "Redondeo por artículo / lista".
-                              Tres ramas:
-                                1) `appliedRounding` populado → el motor aplicó el
-                                   redondeo y se muestran los 4 datos.
-                                2) `appliedRoundingSuppressedByDocPolicy=true` →
-                                   la lista tenía NET/TOTAL configurado pero la
-                                   política doc lo suprimió (anti doble redondeo).
-                                   Se muestra nota explícita.
-                                3) Ninguno de los dos → la lista no tiene redondeo
-                                   activo, no se muestra nada.
-                              NO refleja el redondeo por comprobante (TENANT_POLICY).
-                              Pasa-through puro del backend; cero matemática. */}
-                          {(result.appliedRounding || result.appliedRoundingSuppressedByDocPolicy) && (() => {
-                            // Rama 2: redondeo de lista omitido por política doc.
-                            if (result.appliedRoundingSuppressedByDocPolicy && !result.appliedRounding) {
-                              const meta = result.listRoundingMeta;
-                              return (
-                                <div className="rounded-lg border border-primary/25 bg-primary/5 px-3 py-2 space-y-1 mt-1">
-                                  <div className="text-[10px] font-semibold uppercase tracking-wider text-muted">
-                                    Redondeo por artículo / lista
-                                  </div>
-                                  <p className="text-[11px] italic text-muted/85">
-                                    Omitido por redondeo de comprobante activo.
-                                  </p>
-                                  {meta && (
-                                    <p className="text-[10px] text-muted/65">
-                                      Configuración de la lista: {APPLIED_ROUNDING_MODE_LABEL[meta.mode] ?? meta.mode}
-                                      {" · "}{APPLIED_ROUNDING_DIRECTION_LABEL[meta.direction] ?? meta.direction}
-                                      {" · sobre "}{(APPLIED_ROUNDING_APPLY_ON_LABEL[meta.applyOn] ?? meta.applyOn).toLowerCase()}.
-                                    </p>
-                                  )}
-                                </div>
-                              );
-                            }
-                            // Rama 1: redondeo aplicado.
-                            const ar  = result.appliedRounding!;
-                            const adj = Number(ar.unitAdjustment ?? 0);
-                            const adjAbs = Math.abs(adj);
-                            const noAdjustment = adjAbs < 0.005;
-                            return (
-                              <div className="rounded-lg border border-primary/25 bg-primary/5 px-3 py-2 space-y-1 mt-1">
-                                <div className="text-[10px] font-semibold uppercase tracking-wider text-muted">
-                                  Redondeo por artículo / lista
-                                </div>
-                                <div className="space-y-0.5 text-[11px]">
-                                  <div className="flex justify-between gap-2">
-                                    <span className="text-muted">Aplicado sobre</span>
-                                    <span className="font-medium text-text">
-                                      {APPLIED_ROUNDING_APPLY_ON_LABEL[ar.applyOn] ?? ar.applyOn}
-                                    </span>
-                                  </div>
-                                  <div className="flex justify-between gap-2">
-                                    <span className="text-muted">Modo</span>
-                                    <span className="font-medium text-text">
-                                      {APPLIED_ROUNDING_MODE_LABEL[ar.mode] ?? ar.mode}
-                                    </span>
-                                  </div>
-                                  <div className="flex justify-between gap-2">
-                                    <span className="text-muted">Dirección</span>
-                                    <span className="font-medium text-text">
-                                      {APPLIED_ROUNDING_DIRECTION_LABEL[ar.direction] ?? ar.direction}
-                                    </span>
-                                  </div>
-                                  <div className="flex justify-between gap-2">
-                                    <span className="text-muted">Ajuste unitario</span>
-                                    <span className={cn(
-                                      "tabular-nums font-medium",
-                                      noAdjustment
-                                        ? "italic text-muted/70"
-                                        : adj > 0
-                                          ? "text-emerald-500"
-                                          : "text-amber-500",
-                                    )}>
-                                      {noAdjustment
-                                        ? "Sin ajuste por redondeo"
-                                        : (adj > 0 ? "+" : "") + fm2(adj)}
-                                    </span>
-                                  </div>
-                                </div>
-                              </div>
-                            );
-                          })()}
-
-                          {/* Impuestos — uno por impuesto con fórmula */}
-                          {hasTaxesL && (
-                            <div className="border-t border-border/30 pt-2 mt-0.5 space-y-1.5">
-                              {(result.taxBreakdown ?? []).map((t: any, i: number) => {
-                                const applyLbl = t.applyOn !== "TOTAL" ? (TAX_APPLY_ON_LABELS[t.applyOn] ?? "") : "";
-                                let formulaLeft: string | null = null;
-                                if (t.calculationType === "PERCENTAGE" && t.rate != null)
-                                  formulaLeft = `${fm2(t.base)} × ${t.rate}%${applyLbl ? ` (${applyLbl})` : ""}`;
-                                else if (t.calculationType === "FIXED_AMOUNT")
-                                  formulaLeft = "fijo";
-                                else if (t.calculationType === "PERCENTAGE_PLUS_FIXED" && t.rate != null)
-                                  formulaLeft = `${fm2(t.base)} × ${t.rate}% + fijo${applyLbl ? ` (${applyLbl})` : ""}`;
-                                return (
-                                  <div key={i} className="flex items-baseline justify-between gap-2">
-                                    <span className="text-[11px]">
-                                      <span className="text-foreground/75">{t.name}</span>
-                                      {formulaLeft && <span className="ml-1 text-[9px] text-muted/45 tabular-nums">{formulaLeft}</span>}
-                                    </span>
-                                    <span className="font-bold tabular-nums text-muted shrink-0">+{fm2(t.taxAmount)}</span>
-                                  </div>
-                                );
-                              })}
-                            </div>
+                          {/* DETALLE COLAPSABLE — migrado a <PricingStepsBreakdown variant="compact"> en FASE 2.2.
+                              El wrapper card y el header siguen en este archivo; el componente nuevo
+                              encapsula el flujo (PriceBaseSection + CommercialAdjustmentsSection +
+                              RoundingTaxSection + FinalAdjustmentsSection). Las cards de
+                              "Composición del precio" (5306+) quedan inline como sibling. */}
+                          {pcOpen && (
+                            <PricingStepsBreakdown
+                              variant="compact"
+                              steps={stepsNorm}
+                              line={normLine}
+                              result={result}
+                              quantity={quantity ?? 1}
+                              channel={{
+                                channelId,
+                                channelName: salesChannels.find(c => c.id === channelId)?.name ?? null,
+                              }}
+                              payment={{
+                                paymentMethodName: selectedPM?.name ?? null,
+                                installmentsQty: null,
+                              }}
+                              whatIfActive={whatIfActive}
+                              display={{ rate: displayRate, symbol: displaySym }}
+                              showListRoundingCard={false}
+                            />
                           )}
-
-                          {/* Redondeo TOTAL — después de impuestos */}
-                          {rndStep?.value != null && rndStep.meta?.preRounding != null && String(rndStep.meta?.applyOn ?? "PRICE") === "TOTAL" && (() => {
-                            const pre     = parseFloat(String(rndStep.meta.preRounding));
-                            const rounded = parseFloat(rndStep.value);
-                            const diff    = rounded - pre;
-                            if (Math.abs(diff) < 0.001) return null;
-                            const dirSym  = ROUNDING_DIR_SYMBOLS[String(rndStep.meta?.direction ?? "")] ?? "";
-                            const modeLbl = ROUNDING_MODE_LABELS[String(rndStep.meta?.mode ?? "")] ?? String(rndStep.meta?.mode ?? "");
-                            const roundTarget = hasTaxesL ? "sobre total con impuestos" : "sobre precio final";
-                            const ctxLine = [`${dirSym} ${modeLbl}`.trim(), roundTarget].filter(Boolean).join(" · ");
-                            return (
-                              <div>
-                                <div className="flex justify-between items-baseline">
-                                  <span>Redondeo</span>
-                                  <span className="font-bold tabular-nums">{diff > 0 ? "+" : ""}{fm2(diff)}</span>
-                                </div>
-                                {ctxLine && sub(ctxLine)}
-                                {sub(`${fm2(pre)} → ${fm2(rounded)}`)}
-                              </div>
-                            );
-                          })()}
-
-                          {/* Total final / Neto antes de pago */}
-                          {finalP != null && (() => {
-                            const taxTotal = appliedTaxes.reduce((s, t) => s + t.amount, 0);
-                            const baseForTotal = netP ?? basePriceVal;
-                            const formulaTotal = hasTaxesL && taxTotal > 0 && baseForTotal != null
-                              ? `${fm2(baseForTotal)} + ${fm2(taxTotal)} = ${fm2(finalP)}`
-                              : null;
-                            const cr = result.checkoutResult;
-                            const hasAdj = cr != null && cr.paymentAdjustment !== 0;
-                            const hasCommercialAdj = !whatIfActive && (
-                              (result.channelResult != null && result.channelResult.channelAmount !== 0) ||
-                              (result.couponResult?.applied === true && (result.couponResult?.discountAmount ?? 0) > 0)
-                            );
-                            // Etiqueta unificada: "Total producto" cuando hay impuestos; mantener "Sin impuestos" en exento.
-                            const finalLabel = hasTaxesL ? "Total producto" : "Sin impuestos";
-                            // Ocultar fila final cuando no agrega info: mismo valor que el precio base,
-                            // sin transformación (sin impuestos, sin ajustes de pago/canal/cupón).
-                            const showFinalRow =
-                              hasTaxesL || hasAdj || hasCommercialAdj ||
-                              basePriceVal == null || Math.abs(finalP - basePriceVal) > 0.005;
-                            return (
-                              <>
-                                {/* Costo sin imp. — mismo estilo que en el card "Costo" (label + valor en text-xs muted) */}
-                                {hasTaxesL && netP != null && Math.abs(finalP - netP) > 0.005 && (
-                                  <div className="flex justify-between items-baseline text-muted">
-                                    <span>Costo sin imp.</span>
-                                    <span className="tabular-nums">{fm2(netP)}</span>
-                                  </div>
-                                )}
-
-                                {/* Total final del producto (sin envío) — el envío se agrega al final del flujo,
-                                    después de canal/cupón/pago. Esto preserva la regla: cupón solo afecta producto. */}
-                                {showFinalRow && (
-                                <div className={cn(
-                                  "flex justify-between items-center font-bold text-sm",
-                                  hasTaxesL && netP != null && Math.abs(finalP - netP) > 0.005 && "border-t border-border/30 pt-1 mt-0.5"
-                                )}>
-                                  <span>{finalLabel}</span>
-                                  <span className="tabular-nums">{fm2(finalP)}</span>
-                                </div>
-                                )}
-
-                                {/* Cupón — orden unificado: ANTES del canal (1. producto, 2. cupón, 3. canal, 4. pago, 5. envío, 6. total) */}
-                                {!whatIfActive && result.couponResult != null && result.couponResult.applied && result.couponResult.discountAmount > 0 && (() => {
-                                  const cp = result.couponResult!;
-                                  const pctLabel = cp.discountType === "PERCENTAGE" ? ` (${cp.discountValue}%)` : "";
-                                  return (
-                                    <div className="pt-1.5 mt-0.5 border-t border-border/40">
-                                      <div className="flex justify-between items-baseline">
-                                        <span className="text-red-500 dark:text-red-400">
-                                          Cupón {cp.couponCode}{pctLabel}
-                                        </span>
-                                        <span className="tabular-nums font-bold text-red-500 dark:text-red-400">
-                                          −{fm2(cp.discountAmount)}
-                                        </span>
-                                      </div>
-                                    </div>
-                                  );
-                                })()}
-
-                                {/* Canal de venta — orden unificado: DESPUÉS del cupón, antes de la forma de pago */}
-                                {!whatIfActive && result.channelResult != null && result.channelResult.channelAmount !== 0 && (() => {
-                                  const ch       = result.channelResult!;
-                                  const adjUnit  = ch.channelAmount;
-                                  const isRecarg = adjUnit > 0;
-                                  const selectedCh = salesChannels.find(c => c.id === channelId);
-                                  const chName = selectedCh?.name ?? ch.channelName ?? "Canal";
-                                  const pct = ch.baseAmount > 0 ? ch.channelAmount / ch.baseAmount * 100 : 0;
-                                  return (
-                                    <div className="pt-1.5 mt-0.5 border-t border-border/40">
-                                      <div className="flex justify-between items-baseline">
-                                        <span className={isRecarg ? "" : "text-red-500 dark:text-red-400"}>
-                                          {chName}{isRecarg ? " (recargo)" : " (descuento)"}
-                                          {Math.abs(pct) >= 0.01 && (
-                                            <span className="opacity-60 ml-1 font-mono text-[10px]">
-                                              ({pct.toFixed(1)}%)
-                                            </span>
-                                          )}
-                                        </span>
-                                        <span className={cn("tabular-nums font-bold", isRecarg ? "" : "text-red-500 dark:text-red-400")}>
-                                          {fm2(adjUnit)}
-                                        </span>
-                                      </div>
-                                    </div>
-                                  );
-                                })()}
-
-                                {/* Precio ajustado — solo cuando hay canal/cupón y NO hay ajuste de pago */}
-                                {!whatIfActive && !hasAdj && hasCommercialAdj && grandTotal != null && (
-                                  <div className="pt-1.5 mt-0.5 border-t border-border/40">
-                                    <div className="flex justify-between items-center font-bold text-[15px]">
-                                      <span>Precio ajustado</span>
-                                      <span className="tabular-nums">{fm2(grandTotal)}</span>
-                                    </div>
-                                  </div>
-                                )}
-
-                                {/* Subtotal antes de pago (solo cuando hay canal/cupón + ajuste de pago) */}
-                                {!whatIfActive && hasAdj && cr != null && grandTotal != null &&
-                                  (result.channelResult?.channelAmount !== 0 || result.couponResult?.applied) && (
-                                  <div className="pt-1.5 mt-0.5 border-t border-border/40">
-                                    <div className="flex justify-between items-center font-semibold text-[13px]">
-                                      <span className="text-muted">Subtotal antes de pago</span>
-                                      <span className="tabular-nums">{fm2(grandTotal)}</span>
-                                    </div>
-                                  </div>
-                                )}
-
-                                {/* Forma de pago — integrado en el flujo del precio */}
-                                {/* El backend devuelve montos totales (× cantidad); dividimos por qty para mantener la vista unitaria */}
-                                {hasAdj && cr != null && (() => {
-                                  const qty         = Math.max(quantity ?? 1, 1);
-                                  const adjUnit     = cr.paymentAdjustment / qty;
-                                  const finalUnit   = cr.finalAmount / qty;
-                                  const installUnit = cr.installmentAmount != null ? cr.installmentAmount / qty : null;
-                                  const isRecarg    = adjUnit > 0;
-                                  const pmStep      = cr.steps.find((s: any) => s.code === "PAYMENT_ADJUSTMENT");
-                                  // Reconstruir fórmula en base unitaria
-                                  const baseUnit = cr.baseAmount / qty;
-                                  let unitFormula: string | null = null;
-                                  if (pmStep) {
-                                    const rateMatch = pmStep.formula.match(/×\s*([\d.,]+)%/);
-                                    if (rateMatch) {
-                                      unitFormula = `${fm2(baseUnit)} × ${rateMatch[1]}% = ${fm2(adjUnit)}`;
-                                    } else {
-                                      unitFormula = `${fm2(Math.abs(adjUnit))} (fijo)`;
-                                    }
-                                  }
-                                  return (
-                                    <>
-                                      <div className="pt-1.5 mt-0.5 border-t border-border/40">
-                                        <div className="flex justify-between items-baseline">
-                                          <span className={isRecarg ? "" : "text-red-500 dark:text-red-400"}>
-                                            {selectedPM?.name ?? "Forma de pago"}{isRecarg ? " (recargo)" : " (descuento)"}
-                                          </span>
-                                          <span className={cn("tabular-nums font-bold", isRecarg ? "" : "text-red-500 dark:text-red-400")}>
-                                            {fm2(adjUnit)}
-                                          </span>
-                                        </div>
-                                        {unitFormula && sub(unitFormula)}
-                                      </div>
-                                      <div>
-                                        <div className="flex justify-between items-center font-bold text-[15px]">
-                                          <span>Total con pago</span>
-                                          <span className="tabular-nums">{fm2(finalUnit)}</span>
-                                        </div>
-                                      </div>
-                                      {cr.installments != null && installUnit != null && (
-                                        <div className="pt-1 border-t border-border/20">
-                                          <div className="flex justify-between items-baseline text-muted">
-                                            <span>{cr.installments} {cr.installments === 1 ? "cuota" : "cuotas"}</span>
-                                            <span className="tabular-nums font-bold text-primary">{fm2(installUnit)} c/u</span>
-                                          </div>
-                                        </div>
-                                      )}
-                                    </>
-                                  );
-                                })()}
-                              </>
-                            );
-                          })()}
-
-                          {/* ── Envío (step final independiente, después de cupón/canal/pago) + Total a pagar ──
-                              Mismas clases que la vista UNIFICADA para consistencia visual total. */}
-                          {result.shippingResult && (() => {
-                            const ship = result.shippingResult;
-                            // SSOT: grandTotal del scope superior ya combina canal+cupón+pago.
-                            const productWithAdj = (grandTotal != null) ? grandTotal : finalP;
-                            const totalAPagar = (productWithAdj ?? 0) + (ship?.amount ?? 0);
-                            return (
-                              <>
-                                {/* Envío — text-sm text-muted, border-top tenue */}
-                                <div className="flex justify-between items-center text-sm text-muted border-t border-border/30 pt-1 mt-1">
-                                  <span>{ship.label}</span>
-                                  <span className="tabular-nums">+{fm2(ship.amount)}</span>
-                                </div>
-                                {/* Total a pagar — font-extrabold text-base, fondo primary */}
-                                <div className="flex justify-between items-center px-2 py-1 rounded bg-primary/5 border-t-2 border-primary/20 mt-1">
-                                  <span className="text-base font-extrabold text-text">Total a pagar</span>
-                                  <span className="tabular-nums text-base font-extrabold text-primary">{fm2(totalAPagar)}</span>
-                                </div>
-                              </>
-                            );
-                          })()}
-
-                          </>)}
                           {/* ── Fin del DETALLE COLAPSABLE — lo que sigue es independiente ── */}
 
-                          {/* ── Composición del precio (cards) — solo en Valor Desglosado ──
-                              FASE 3 — sin derivación frontend. Los factores de venta
-                              por componente (gSF / gHSF) salen DIRECTOS del backend
-                              vía `metalSale / metalCost` y `hechuraSale / hechuraCost`.
-                              Si el motor no expone los valores (caso `source = "NONE"`
-                              o componente con costo 0), el factor cae a null y las
-                              fórmulas que dependen de él se ocultan. */}
-                          {simViewMode === "DESGLOSADO" && basePriceVal != null && (() => {
-                            const mhbC = metalHechuraBreakdownNorm;
-                            // Factor metal: ratio exacto backend metalSale/metalCost.
-                            // F1.5 #A++ — el factor sigue acá como FALLBACK retrocompat;
-                            // la fuente primaria de sale-side per línea es `composition.metals[i].lineSale`
-                            // (emitido por el motor backend). Snapshots viejos pre v7 caen al factor.
-                            const gSF: number | null = mhbC
-                              && mhbC.metalCost != null && mhbC.metalCost > 0.001
-                              && mhbC.metalSale != null
-                              ? mhbC.metalSale / mhbC.metalCost
-                              : null;
-                            // Factor hechura: ratio exacto backend hechuraSale/hechuraCost.
-                            // F1.5 #A+ — idem: fuente primaria es `composition.hechuras[i].lineSale`
-                            // (+ products[].lineSale + services[].lineSale). Factor como fallback.
-                            const gHSF: number | null = mhbC
-                              && mhbC.hechuraCost != null && mhbC.hechuraCost > 0.001
-                              && mhbC.hechuraSale != null
-                              ? mhbC.hechuraSale / mhbC.hechuraCost
-                              : null;
-                            // F1.5 #A+/#A++ — mapa canónico `costLineId → lineSale` desde
-                            // `composition.{metals,hechuras,products,services}[]`. Es la
-                            // fuente de verdad emitida por el pricing-engine (cierre POLICY R4.1).
-                            // Cuando un step tiene `meta.costLineId`, buscamos su lineSale acá
-                            // antes de caer al cálculo `qCost × factor`.
-                            const lineSaleByCostLineId = new Map<string, number>();
-                            const compNorm: any = normLine?.composition ?? null;
-                            for (const arr of [
-                              compNorm?.metals, compNorm?.hechuras,
-                              compNorm?.products, compNorm?.services,
-                            ]) {
-                              if (!Array.isArray(arr)) continue;
-                              for (const it of arr) {
-                                if (it?.costLineId && it?.lineSale != null
-                                    && Number.isFinite(Number(it.lineSale))) {
-                                  lineSaleByCostLineId.set(String(it.costLineId), Number(it.lineSale));
-                                }
-                              }
-                            }
-                            const mMarginPct = mhbC
-                              ? parseFloat(String(mhbC.metalMarginPct ?? 0))
-                              : 0;
-                            const hMarginPct = mhbC
-                              ? parseFloat(String(mhbC.hechuraMarginPct ?? 0))
-                              : 0;
-                            const pMetalSteps = metalQuoteSteps;
-                            const pHechSteps = (stepsNorm as any[]).filter((s: any) =>
-                              ["COST_LINES_HECHURA", "COST_LINES_PRODUCT", "COST_LINES_SERVICE", "COST_LINES_MANUAL"].includes(s.key)
-                              && s.status === "ok" && s.value != null
-                            );
-                            const PGENLABELS = new Set(["Metal", "Hechura", "Producto", "Servicio", "Manual"]);
-                            const hasSingleH = pHechSteps.length === 0 && (hechuraCostRaw ?? 0) > 0.001;
-                            const hasMet = pMetalSteps.length > 0;
-                            const hasHech = pHechSteps.length > 0 || hasSingleH;
-                            if (!hasMet && !hasHech) return null;
-
-                            type PPV = { qty: number; factor: number; equivGr: number; purity: number | null; merma: number | null; saleFactor: number | null; sku: string | null; variantName: string | null; quotePrice: number | null; saleLine: number };
-                            type PPA = { displayName: string; symbol: string | null; totalCost: number; totalEquivGr: number; variants: PPV[] };
-                            const ppMap = new Map<string, PPA>();
-                            for (const step of pMetalSteps) {
-                              const m     = (step as any).meta ?? {};
-                              const qCost = (step as any).value != null ? parseFloat(String((step as any).value)) : 0;
-                              const isMMHP = (step as any).key !== "COST_LINES_METAL";
-                              const qty   = isMMHP
-                                ? (m.grams != null ? parseFloat(String(m.grams)) : m.qty != null ? parseFloat(String(m.qty)) : 0)
-                                : (m.qty   != null ? parseFloat(String(m.qty))   : m.grams != null ? parseFloat(String(m.grams)) : 0);
-                              const pur   = m.purity != null ? parseFloat(String(m.purity)) : null;
-                              // En el bloque de PRECIO: usar merma de entidad si hay override
-                              const vidP  = String(m.variantId ?? "");
-                              const entMerP = saleEntityMermaMap.get(vidP);
-                              const mer   = entMerP != null ? entMerP : (m.merma != null ? parseFloat(String(m.merma)) : 0);
-                              const mermaMulP = mer !== 0 ? (1 + mer / 100) : 1;
-                              // Para METAL_QUOTE (METAL_MERMA_HECHURA): quotePrice incluye saleFactor,
-                              // gramos_venta = qty × purity × saleFactor × mermaFactor.
-                              // Para COST_LINES_METAL: saleFactor excluido del costo → no aplicar aquí.
-                              const sfValP = isMMHP && m.saleFactor != null ? parseFloat(String(m.saleFactor)) : 1;
-                              const equivGr = pur != null ? qty * pur * sfValP * mermaMulP : qty * sfValP * mermaMulP;
-                              const factor = qty > 0.0001 ? equivGr / qty : (pur != null ? pur * sfValP * mermaMulP : sfValP * mermaMulP);
-                              // F1.5 #A++ — fuente primaria: `composition.metals[i].lineSale`
-                              // (passthrough exacto del motor: lineCost × metalSale/metalCost).
-                              // Fallback retrocompat: `qCost × gSF` (cálculo legacy para
-                              // snapshots pre v7). Numéricamente equivalentes mientras
-                              // el factor sea uniforme — el motor lo garantiza hoy.
-                              const cliId = m.costLineId != null ? String(m.costLineId) : null;
-                              const canonicalSale = cliId ? lineSaleByCostLineId.get(cliId) : undefined;
-                              if (canonicalSale == null) {
-                                trackLegacyPricingPath("PRE_V7_LINE_SALE_FALLBACK_METAL", {
-                                  context: "PricingSimulator: Composición del precio (desglosado) → Metales",
-                                });
-                              }
-                              const saleLine = canonicalSale != null
-                                ? canonicalSale
-                                : qCost * (gSF ?? 1);
-                              const gKey = (m.metalId as string | null) ?? (m.metalName as string | null) ?? "Metal";
-                              const prev = ppMap.get(gKey) ?? {
-                                displayName: String(m.metalName ?? "Metal"),
-                                symbol: (m.metalSymbol ?? null) as string | null,
-                                totalCost: 0, totalEquivGr: 0, variants: [],
-                              };
-                              prev.totalCost    += saleLine;
-                              prev.totalEquivGr += equivGr;
-                              const quotePr = m.quotePrice != null ? parseFloat(String(m.quotePrice))
-                                            : m.price      != null ? parseFloat(String(m.price))
-                                            : null;
-                              prev.variants.push({ qty, factor, equivGr, purity: pur, merma: mer > 0 ? mer : null, saleFactor: sfValP !== 1 ? sfValP : null, sku: (m.variantSku as string | null | undefined) ?? null, variantName: (m.variantName as string | null | undefined) ?? null, quotePrice: quotePr, saleLine });
-                              ppMap.set(gKey, prev);
-                            }
-                            const ppEntries = Array.from(ppMap.values());
-                            // F1.5 #A+ — preferimos `lineSale` per step (canónico del motor)
-                            // sobre el prorrateo `step.value × gHSF`. Cae al fallback solo
-                            // cuando el step no tiene `costLineId` mapeado (snapshot legacy).
-                            const hechSaleTotal = pHechSteps.length > 0
-                              ? pHechSteps.reduce((s: number, step: any) => {
-                                  const cli = step?.meta?.costLineId != null ? String(step.meta.costLineId) : null;
-                                  const ls = cli ? lineSaleByCostLineId.get(cli) : undefined;
-                                  const stepVal = parseFloat(String(step.value));
-                                  return s + (ls != null ? ls : stepVal * (gHSF ?? 1));
-                                }, 0)
-                              : hasSingleH ? (hechuraCostRaw ?? 0) * (gHSF ?? 1) : null;
-                            if (ppEntries.length === 0 && hechSaleTotal == null) return null;
-
-                            return (
-                              <div className="pb-1 space-y-3 border-t border-border/20 pt-3 mt-3 mb-4">
-                                {/* La sección siempre visible; cada card maneja su propio estado
-                                    de expansión (sincronizado a través del flag global). */}
-                                <p className="text-[9px] font-semibold uppercase tracking-widest text-muted/70">
-                                  Composición del precio
-                                </p>
-                                <div className="grid grid-cols-2 gap-4">
-                                  {ppEntries.map((padre, pi) => {
-                                    // saleGrams = gramos base × factor de margen (el margen se ve como gramos extras)
-                                    const saleGramsTotal = gSF != null && padre.totalEquivGr > 0.0001 ? padre.totalEquivGr * gSF : null;
-                                    // basePricePerGr = precio real por gramo (sin inflar por margen)
-                                    const basePricePerGr = saleGramsTotal != null && saleGramsTotal > 0.0001 ? padre.totalCost / saleGramsTotal : null;
-                                    const saleGrStr = saleGramsTotal != null ? fmGr(saleGramsTotal) : null;
-                                    // Fallback: formato antiguo (precio/gr inflado)
-                                    const totalGrStr = fmGr(padre.totalEquivGr);
-                                    const spg = padre.totalEquivGr > 0.0001 ? padre.totalCost / padre.totalEquivGr : null;
-                                    // El número grande del card: mostrar gramos de venta (con margen)
-                                    const displayGrStr = saleGrStr ?? totalGrStr;
-                                    return (
-                                      <div key={`pc-metal-${pi}`} className="rounded-lg border border-border/40 bg-muted/15 px-4 py-3 space-y-2 shadow-sm">
-                                        {(() => {
-                                          const mKey = `metalPrice-${pi}`;
-                                          const mOpen = isExpanded(mKey);
-                                          // Resumen colapsado: cantidad de variantes + primer SKU si existe
-                                          const firstSku = padre.variants[0]?.sku ?? null;
-                                          const collapsedSummary = padre.variants.length > 0
-                                            ? `${padre.variants.length} ${padre.variants.length === 1 ? "origen" : "orígenes"}${firstSku ? ` · ${firstSku}` : ""}`
-                                            : null;
-                                          return (
-                                            <button
-                                              type="button"
-                                              onClick={() => toggleSection(mKey)}
-                                              className="w-full flex items-start justify-between gap-2 cursor-pointer"
-                                            >
-                                              <div className="min-w-0 text-left">
-                                                <p className="text-base font-bold uppercase tracking-wider text-foreground/60 leading-none mt-0.5 truncate">
-                                                  {padre.displayName}
-                                                  {padre.symbol && <span className="text-[10px] font-normal text-foreground/35 ml-1">({padre.symbol})</span>}
-                                                </p>
-                                                {!mOpen && collapsedSummary && (
-                                                  <p className="text-[11px] text-muted/70 italic leading-none pt-1 truncate">{collapsedSummary}</p>
-                                                )}
-                                              </div>
-                                              <div className="flex items-center gap-1.5 shrink-0">
-                                                <p className="text-base tabular-nums font-bold text-foreground/90 leading-tight text-right">
-                                                  {padre.symbol && <span className="text-[11px] font-semibold text-muted/70 mr-1">{padre.symbol}</span>}{displayGrStr} gr
-                                                </p>
-                                                <ChevronDown size={14} className={cn("text-muted/60 transition-transform mt-0.5", mOpen && "rotate-180")} />
-                                              </div>
-                                            </button>
-                                          );
-                                        })()}
-                                        {isExpanded(`metalPrice-${pi}`) && padre.variants.length > 0 && (
-                                          <div className="border-t border-border/20 pt-1.5">
-                                            <p className="text-xs font-semibold uppercase tracking-widest text-muted/60 mb-1">Origen</p>
-                                            <div className="space-y-1">
-                                              {padre.variants.map((v, vi) => {
-                                                const fmtM3v = (n: number) => n.toLocaleString("es-AR", { minimumFractionDigits: 3, maximumFractionDigits: 3 });
-                                                const qStr = fmGr(v.qty);
-                                                const fStr = fmtM3v(v.factor);
-                                                const gStr = fmGr(v.equivGr);
-                                                const originLabel = v.variantName ?? padre.displayName;
-
-                                                // Descripción del factor — mismo formato que en COSTO
-                                                let factorDesc = "";
-                                                if (v.purity != null) {
-                                                  const pPct    = (v.purity * 100).toLocaleString("es-AR", { maximumFractionDigits: 2 });
-                                                  const sfPct   = v.saleFactor != null ? ((v.saleFactor - 1) * 100).toLocaleString("es-AR", { maximumFractionDigits: 2 }) : null;
-                                                  const hasSF   = sfPct != null && parseFloat(sfPct) > 0.01;
-                                                  const hasMerma = v.merma != null && v.merma > 0;
-                                                  if (hasSF && hasMerma)       factorDesc = `pureza ${pPct}% × merma venta ${sfPct}% × merma artículo ${fmtM3v(v.merma!)}%`;
-                                                  else if (hasSF)              factorDesc = `pureza ${pPct}% × merma venta ${sfPct}%`;
-                                                  else if (hasMerma)           factorDesc = `pureza ${pPct}% × merma ${fmtM3v(v.merma!)}%`;
-                                                  else                         factorDesc = `pureza ${pPct}%`;
-                                                } else if (v.merma != null && v.merma > 0) {
-                                                  factorDesc = `merma ${fmtM3v(v.merma)}%`;
-                                                }
-
-                                                // Cálculo monetario: equivGr × precio/gr = saleLine (mismo patrón que COSTO)
-                                                const pricePerGrSale = v.equivGr > 0.0001 ? v.saleLine / v.equivGr : null;
-                                                const showGramsCalc = Math.abs(v.factor - 1) > 0.001 && v.qty > 0.0001;
-                                                const showMoneyCalc = pricePerGrSale != null && v.equivGr > 0.0001;
-
-                                                // Gramos de venta por variante = base × factor de margen (visual derecho)
-                                                const vSaleGr  = gSF != null && mMarginPct > 0.01 ? v.equivGr * gSF : null;
-                                                const vSaleStr = vSaleGr != null ? fmGr(vSaleGr) : null;
-
-                                                return (
-                                                  <div key={vi} className="cursor-default leading-snug space-y-px">
-                                                    {/* L1 — Origen + gramos finales */}
-                                                    <div className="flex items-baseline justify-between gap-2 text-[11px] tabular-nums">
-                                                      <span className="min-w-0 truncate text-muted">
-                                                        <span className="font-medium">{originLabel}</span>
-                                                        {v.sku && <span className="ml-1 font-mono text-muted/70">· {v.sku}</span>}
-                                                      </span>
-                                                      <span className="shrink-0 text-muted/70">{vSaleStr ?? gStr} gr</span>
-                                                    </div>
-                                                    {/* L2 — Cálculo de gramos: qty × factor = equivGr */}
-                                                    {showGramsCalc && (
-                                                      <p className="text-[11px] text-muted tabular-nums font-mono leading-tight mt-0.5">
-                                                        {qStr} gr × {fStr} = {gStr} gr
-                                                        {factorDesc && <span className="ml-1 text-muted/35">({factorDesc})</span>}
-                                                      </p>
-                                                    )}
-                                                    {/* L3 — Cálculo monetario: equivGr × precio/gr = saleLine */}
-                                                    {showMoneyCalc && (
-                                                      <p className="text-[11px] text-muted tabular-nums font-mono leading-tight mt-0.5">
-                                                        {gStr} gr × {fm2(pricePerGrSale!)}/gr = {fm2(v.saleLine)}
-                                                      </p>
-                                                    )}
-                                                  </div>
-                                                );
-                                              })}
-                                            </div>
-                                          </div>
-                                        )}
-                                        {/* ── Subtotal — mismas reglas que COSTO: solo cuando aporta info ── */}
-                                        {padre.variants.length > 1 && (
-                                          <div className="border-t border-border/20 pt-1.5">
-                                            <div className="flex items-baseline justify-between gap-2 bg-muted/20 px-2 py-1 rounded"
-                                              title={
-                                                saleGrStr != null && basePricePerGr != null
-                                                  ? `${saleGrStr} gr${mMarginPct > 0.01 ? ` (incl. +${mMarginPct.toFixed(1)}%)` : ""} × ${fm2(basePricePerGr)}/gr = ${fm2(padre.totalCost)}`
-                                                  : spg != null
-                                                    ? `${totalGrStr} gr × ${fm2(spg)}/gr = ${fm2(padre.totalCost)}`
-                                                    : undefined
-                                              }>
-                                              <span className="text-xs font-bold text-muted/70">Subtotal</span>
-                                              <span className="text-xs tabular-nums font-bold text-foreground/70">{fm2(padre.totalCost)}</span>
-                                            </div>
-                                          </div>
-                                        )}
-                                      </div>
-                                    );
-                                  })}
-
-                                  {hechSaleTotal != null && (() => {
-                                    // Total metal de venta (suma de todos los padres)
-                                    const totalMetalSaleForTax = ppEntries.reduce((acc: number, p: any) => acc + p.totalCost, 0);
-                                    const hasMetalSale = totalMetalSaleForTax > 0.001;
-
-                                    // ── Ajustes que se muestran sobre HECHURA ─────────────────────────
-                                    // Combina dos fuentes:
-                                    //   1) `componentSaleBreakdown.hechura.adjustments` — ajustes que el
-                                    //      motor IMPUTÓ al componente HECHURA (applyOn=HECHURA: entity
-                                    //      rule, qty/promo cuando aplican al componente). Passthrough
-                                    //      puro: NO reconstruimos el objeto para no perder campos
-                                    //      adicionales que el backend agregue en el futuro.
-                                    //   2) `result.quantityDiscountAmount` / `result.promotionDiscountAmount`
-                                    //      — descuentos qty/promo aplicados a nivel TOTAL. Se enriquecen
-                                    //      con `base` + `percentage` desde `discStep.meta` / `promoStep.meta`
-                                    //      para poder mostrar la fórmula (Base × % = −monto).
-                                    //
-                                    // Dedupe por `kind`: si el mismo kind ya viene en csb (porque el
-                                    // motor lo imputó al componente), no lo duplicamos desde meta.
-                                    type Adj = {
-                                      kind:        string;
-                                      label:       string;
-                                      amount:      number;
-                                      base?:       number | null;
-                                      percentage?: number | null;
-                                      valueType?:  string | null;
-                                      [key: string]: any;
-                                    };
-                                    const csbHechura = (result as any).componentSaleBreakdown?.hechura ?? null;
-                                    // Passthrough: preservamos todos los campos del backend, solo
-                                    // sobrescribimos el `label` con el resolver y aseguramos `amount`
-                                    // como Number.
-                                    const csbAdjustments: Adj[] = Array.isArray(csbHechura?.adjustments)
-                                      ? csbHechura.adjustments.map((a: any) => ({
-                                          ...a,
-                                          label:  resolveAdjustmentLabel(a),
-                                          amount: Number(a.amount ?? 0),
-                                        }))
-                                      : [];
-                                    const csbKinds = new Set(csbAdjustments.map(a => a.kind));
-                                    const metaAdjustments: Adj[] = [];
-                                    const qtyDiscAmt = (result as any).quantityDiscountAmount != null
-                                      ? parseFloat(String((result as any).quantityDiscountAmount)) : 0;
-                                    if (Number.isFinite(qtyDiscAmt) && qtyDiscAmt > 0
-                                        && !csbKinds.has("QUANTITY_DISCOUNT")) {
-                                      const dm = (discStep as any)?.meta ?? {};
-                                      const dBase = dm.discountBase != null ? parseFloat(String(dm.discountBase)) : null;
-                                      const dPct  = dm.type === "PERCENTAGE" && dm.value != null
-                                        ? parseFloat(String(dm.value)) : null;
-                                      metaAdjustments.push({
-                                        kind:       "QUANTITY_DISCOUNT",
-                                        label:      resolveAdjustmentLabel({ kind: "QUANTITY_DISCOUNT" }),
-                                        amount:     qtyDiscAmt,
-                                        base:       Number.isFinite(dBase as number) ? dBase : null,
-                                        percentage: Number.isFinite(dPct  as number) ? dPct  : null,
-                                        valueType:  typeof dm.type === "string" ? dm.type : null,
-                                      });
-                                    }
-                                    const promoAmt = (result as any).promotionDiscountAmount != null
-                                      ? parseFloat(String((result as any).promotionDiscountAmount)) : 0;
-                                    if (Number.isFinite(promoAmt) && promoAmt > 0
-                                        && !csbKinds.has("PROMOTION")) {
-                                      const pm = (promoStep as any)?.meta ?? {};
-                                      const promoName = (result as any).appliedPromotionName;
-                                      const pBase = pm.discountBase != null ? parseFloat(String(pm.discountBase)) : null;
-                                      const pPct  = pm.type === "PERCENTAGE" && pm.value != null
-                                        ? parseFloat(String(pm.value)) : null;
-                                      metaAdjustments.push({
-                                        kind:       "PROMOTION",
-                                        label:      promoName ? `Promoción: ${promoName}` : resolveAdjustmentLabel({ kind: "PROMOTION" }),
-                                        amount:     promoAmt,
-                                        base:       Number.isFinite(pBase as number) ? pBase : null,
-                                        percentage: Number.isFinite(pPct  as number) ? pPct  : null,
-                                        valueType:  typeof pm.type === "string" ? pm.type : null,
-                                      });
-                                    }
-                                    // Orden final: meta primero (qty + promo), luego csb (entity rule, etc.).
-                                    const adjustments: Adj[] = [...metaAdjustments, ...csbAdjustments]
-                                      .filter(a => Math.abs(a.amount) > 0.005);
-                                    const totalAdjustments = adjustments.reduce((s, a) => s + a.amount, 0);
-                                    const hasAdjustments = adjustments.length > 0;
-                                    // Subtotal ajustado de hechura = base − descuentos visibles. Mantiene
-                                    // consistencia con el render: lo que muestra el card cuadra con la
-                                    // suma. El IVA de hechura abajo se calcula sobre esto.
-                                    const hechSaleAdjusted = hechSaleTotal! - totalAdjustments;
-
-                                    // Desglose por impuesto: IVA sobre subtotal ajustado (no sobre la base original).
-                                    // Esto sincroniza el IVA visual con el del bloque "Cálculo del precio".
-                                    const saleTaxLines = (result.taxBreakdown as any[])
-                                      .filter((t: any) => t.rate != null && parseFloat(String(t.rate)) > 0)
-                                      .map((t: any) => {
-                                        const rate       = parseFloat(String(t.rate));
-                                        const metalPart  = hasMetalSale ? totalMetalSaleForTax * rate / 100 : 0;
-                                        const hechuraPart = hechSaleAdjusted * rate / 100;
-                                        const totalTax   = metalPart + hechuraPart;
-                                        return { name: String(t.name), rate, metalPart, hechuraPart, totalTax };
-                                      })
-                                      .filter((t: any) => t.totalTax > 0.001);
-                                    const allSaleTaxTotal  = saleTaxLines.reduce((a: number, t: any) => a + t.totalTax, 0);
-                                    // Redondeo: no es metálico → pertenece al card de Hechura
-                                    const rndDiff = rndStep?.value != null && rndStep.meta?.preRounding != null
-                                      ? parseFloat(rndStep.value) - parseFloat(String(rndStep.meta.preRounding))
-                                      : 0;
-                                    const hasRounding = Math.abs(rndDiff) > 0.001;
-
-                                    // SSOT: el header del card Hechura = Total producto − Σ Metales.
-                                    // Garantiza por construcción que: Σ Metales + Hechura = Total producto.
-                                    // El desglose interno (origen + ajustes + impuestos + redondeo) sigue siendo
-                                    // informativo, pero el cierre del card NO se recalcula desde sus partes.
-                                    const productTotalRawAll = result.totalWithTax != null
-                                      ? parseFloat(String(result.totalWithTax))
-                                      : null;
-                                    const displaySaleTotal = productTotalRawAll != null
-                                      ? productTotalRawAll - totalMetalSaleForTax
-                                      : hechSaleAdjusted + allSaleTaxTotal + rndDiff;
-
-                                    // ── Pre-cómputo del cierre — usado tanto en el header como en el bloque inferior.
-                                    //    El header muestra el valor FINAL del card (Hechura ± ajustes post-producto).
-                                    //    Esto evita dos números grandes compitiendo en el mismo card.
-                                    const couponDiscRaw = !whatIfActive && result.couponResult?.applied
-                                      ? (result.couponResult.discountAmount ?? 0)
-                                      : 0;
-                                    const channelRaw    = !whatIfActive ? (result.channelResult?.channelAmount ?? 0) : 0;
-                                    const qtyHC         = Math.max(quantity ?? 1, 1);
-                                    const crHC          = result.checkoutResult;
-                                    const hasPayHC      = !whatIfActive && crHC != null && crHC.paymentAdjustment != null && crHC.paymentAdjustment !== 0;
-                                    const paymentRaw    = hasPayHC ? crHC!.paymentAdjustment / qtyHC : 0;
-                                    const shippingRaw   = result.shippingResult?.amount ?? 0;
-                                    const hasAnyFinalAdj = couponDiscRaw > 0.005
-                                                          || Math.abs(channelRaw) > 0.005
-                                                          || Math.abs(paymentRaw) > 0.005
-                                                          || result.shippingResult != null;
-                                    const finalCardTotal = displaySaleTotal + channelRaw - couponDiscRaw + paymentRaw + shippingRaw;
-
-                                    return (
-                                      <div className="rounded-lg border border-border/40 bg-muted/15 px-4 py-3 space-y-2 shadow-sm">
-
-                                        {/* ── Cabecera — clickeable para colapsar/expandir el detalle técnico.
-                                            Único valor protagonista del card (cierre final). */}
-                                        {(() => {
-                                          const open = isExpanded("hechura");
-                                          // Resumen para estado colapsado (qué se está ocultando, en una línea)
-                                          const summaryParts: string[] = [];
-                                          if (pHechSteps.length > 0)    summaryParts.push(`${pHechSteps.length} línea${pHechSteps.length === 1 ? "" : "s"}`);
-                                          if (hasAdjustments)           summaryParts.push("ajustes");
-                                          if (saleTaxLines.length > 0)  summaryParts.push("impuestos");
-                                          if (hasRounding)              summaryParts.push("redondeo");
-                                          const collapsedSummary = summaryParts.length > 0
-                                            ? `Incluye ${summaryParts.join(" · ")}`
-                                            : null;
-                                          return (
-                                            <>
-                                              <button
-                                                type="button"
-                                                onClick={() => toggleSection("hechura")}
-                                                className="w-full flex items-start justify-between gap-2 group cursor-pointer"
-                                              >
-                                                <p className="text-base font-bold uppercase tracking-wider text-foreground/60 leading-none mt-0.5 shrink-0">
-                                                  Hechura
-                                                </p>
-                                                <div className="flex items-center gap-1.5 shrink-0">
-                                                  <p className="text-base tabular-nums font-bold text-foreground/90 leading-none text-right">
-                                                    {fm2(finalCardTotal)}
-                                                  </p>
-                                                  <ChevronDown size={14} className={cn("text-muted/60 transition-transform mt-0.5", open && "rotate-180")} />
-                                                </div>
-                                              </button>
-                                              {!open && collapsedSummary && (
-                                                <p className="text-[11px] text-muted/70 italic leading-none pt-0.5">
-                                                  {collapsedSummary}
-                                                </p>
-                                              )}
-                                            </>
-                                          );
-                                        })()}
-
-                                        {/* ── DETALLE TÉCNICO — colapsable. NO afecta cálculo.
-                                            Incluye: Origen + Ajustes motor + Impuestos + Redondeo + Total componente. */}
-                                        {isExpanded("hechura") && (
-                                        <>
-
-                                        {/* ── Origen — alineado con renderOtherRow de COSTO: text-[10px]/[11px] ──
-                                            Para combos: render directo desde baseStep.meta.components (sin factor),
-                                            cada componente trae unitPrice + quantity ya resueltos por el motor. */}
-                                        {(baseStep?.key === "COMBO_BASE" && Array.isArray(baseStep?.meta?.components) && (baseStep.meta.components as any[]).length > 0) ? (
-                                          <div className="border-t border-border/20 pt-1.5 space-y-0">
-                                            <p className="text-xs font-semibold uppercase tracking-widest text-muted/60 mb-1">
-                                              Componentes del combo
-                                            </p>
-                                            <div className="space-y-1 text-xs">
-                                              {(baseStep.meta.components as any[]).map((c, ci) => {
-                                                const hasDiscount = c.unitPriceGross != null && c.discountAmount > 0;
-                                                return (
-                                                  <div key={`combo-card-c-${ci}`} className="leading-snug">
-                                                    <div className="flex items-baseline justify-between gap-2">
-                                                      <span className="text-xs text-muted font-medium min-w-0 truncate">
-                                                        {c.name ?? "Componente"}
-                                                        {c.code && <span className="ml-1 text-[10px] text-muted/55 font-mono">· {c.code}</span>}
-                                                      </span>
-                                                      <span className="text-[11px] tabular-nums font-bold text-foreground/80 shrink-0">
-                                                        {fm2(Number(c.lineTotal ?? 0))}
-                                                      </span>
-                                                    </div>
-                                                    {/* Desglose con descuento del componente cuando aplica */}
-                                                    {hasDiscount ? (
-                                                      <p className="text-[11px] text-muted tabular-nums font-mono leading-tight mt-0.5">
-                                                        {Number(c.quantity).toLocaleString("es-AR", { maximumFractionDigits: 4 })} ×{" "}
-                                                        <span className="line-through text-muted/50">{fm2(Number(c.unitPriceGross))}</span>{" "}
-                                                        →{" "}
-                                                        <span className="text-emerald-600 dark:text-emerald-400">
-                                                          −{c.discountPercent != null ? `${Number(c.discountPercent).toFixed(c.discountPercent % 1 === 0 ? 0 : 2)}%` : fm2(Number(c.discountAmount))}
-                                                        </span>{" "}
-                                                        = {fm2(Number(c.unitPrice))}
-                                                      </p>
-                                                    ) : c.unitPrice != null && (
-                                                      <p className="text-[11px] text-muted tabular-nums font-mono leading-tight mt-0.5">
-                                                        {Number(c.quantity).toLocaleString("es-AR", { maximumFractionDigits: 4 })} × {fm2(Number(c.unitPrice))} = {fm2(Number(c.lineTotal ?? 0))}
-                                                      </p>
-                                                    )}
-                                                  </div>
-                                                );
-                                              })}
-                                            </div>
-                                          </div>
-                                        ) : pHechSteps.length > 0 && (
-                                          <div className="border-t border-border/20 pt-1.5 space-y-0">
-                                            <p className="text-xs font-semibold uppercase tracking-widest text-muted/60 mb-1">Origen</p>
-                                            <div className="space-y-1 text-xs">
-                                              {pHechSteps.map((step: any, hi: number) => {
-                                                const m = step.meta ?? {};
-                                                const lineCost = parseFloat(String(step.value));
-                                                // F1.5 #A+ — fuente primaria: `composition.{hechuras,products,services}[i].lineSale`
-                                                // (passthrough motor). Fallback retrocompat al multiplicador global
-                                                // `gHSF` cuando el step no tiene `costLineId` mapeado (snapshot pre v7).
-                                                // El "factor visible" en la fórmula se deriva del lineSale canónico
-                                                // (`lineSale/lineCost`) cuando éste está disponible — esto refleja el
-                                                // ratio exacto que aplicó el motor a la línea, no el promedio
-                                                // agregado del bucket.
-                                                const cli = m.costLineId != null ? String(m.costLineId) : null;
-                                                const canonicalSale = cli ? lineSaleByCostLineId.get(cli) : undefined;
-                                                if (canonicalSale == null) {
-                                                  trackLegacyPricingPath("PRE_V7_LINE_SALE_FALLBACK_HECHURA", {
-                                                    context: "PricingSimulator: Card Hechura expandido → Origen",
-                                                  });
-                                                }
-                                                const lineSale = canonicalSale != null
-                                                  ? canonicalSale
-                                                  : lineCost * (gHSF ?? 1);
-                                                const factor = canonicalSale != null && lineCost > 0.0001
-                                                  ? canonicalSale / lineCost
-                                                  : (gHSF ?? 1);
-                                                const rawLabel = String(m.lineLabel ?? m.lineCode ?? "");
-                                                const customLabel = rawLabel && !PGENLABELS.has(rawLabel) ? rawLabel : null;
-                                                // Fallback al tipo del step → nunca dejar el origen vacío
-                                                const STEP_TYPE_LABEL: Record<string, string> = {
-                                                  COST_LINES_HECHURA:   "Hechura",
-                                                  COST_LINES_PRODUCT:   "Producto",
-                                                  COST_LINES_SERVICE:   "Servicio",
-                                                  COST_LINES_MANUAL:    "Manual",
-                                                  COST_LINES_LOGISTICS: "Envío",
-                                                };
-                                                const originLabel = customLabel ?? STEP_TYPE_LABEL[String(step.key)] ?? "Componente";
-                                                // Cálculo del precio: costo × factor margen = venta
-                                                const showFactorCalc = Math.abs(factor - 1) > 0.005 && lineCost > 0.0001;
-                                                // Fase 2 — breakdown visual unificado (lista bruta · ajuste · efectivo).
-                                                const fbH2 = buildFactorBreakdown({
-                                                  grossMarginPct: hMarginPct,
-                                                  effectiveFactor: factor,
-                                                  costAdjustment: extractCostAdjustmentFromSteps(stepsNorm),
-                                                });
-                                                return (
-                                                  <div key={`hcard-d-${hi}`} className="leading-snug">
-                                                    {/* Origen + resultado venta — mismas clases que COSTO renderOtherRow */}
-                                                    <div className="flex items-baseline justify-between gap-2">
-                                                      <span className="text-xs text-muted font-medium min-w-0 truncate">{originLabel}</span>
-                                                      <span className="text-[11px] tabular-nums font-bold text-foreground/80 shrink-0">{fm2(lineSale)}</span>
-                                                    </div>
-                                                    {/* Cálculo: costo × factor efectivo = venta (cuando hay margen) */}
-                                                    {showFactorCalc && (
-                                                      <p className="text-[11px] text-muted tabular-nums font-mono leading-tight mt-0.5"
-                                                        title={fbH2.hasDivergence && fbH2.compactLine
-                                                          ? `Factor efectivo: ${fbH2.compactLine}`
-                                                          : undefined}>
-                                                        {fm2(lineCost)} × {fbH2.hasDivergence ? "factor efectivo " : ""}{factor.toFixed(2)} = {fm2(lineSale)}
-                                                      </p>
-                                                    )}
-                                                    <FactorBreakdownHint
-                                                      hasDivergence={fbH2.hasDivergence}
-                                                      compactLine={fbH2.compactLine}
-                                                      className="leading-tight mt-0.5"
-                                                    />
-                                                  </div>
-                                                );
-                                              })}
-                                            </div>
-                                          </div>
-                                        )}
-                                        {/* ── Ajustes del motor que aplican al producto: PROMO + DESC. CANTIDAD ──
-                                            Cupón / canal / regla cliente NO se renderizan acá (son globales/capa-2). */}
-                                        {hasAdjustments && (
-                                          <div className="space-y-1">
-                                            {/* Subtotal hechura (base antes de ajustes) */}
-                                            <div className="flex items-baseline justify-between gap-2 bg-muted/20 px-2 py-1 rounded">
-                                              <span className="text-xs font-bold text-muted/70">Subtotal hechura</span>
-                                              <span className="text-xs tabular-nums font-bold text-foreground/70">{fm2(hechSaleTotal!)}</span>
-                                            </div>
-                                            {adjustments.map((adj, ai) => {
-                                              // Convención: amount > 0 reduce el precio (descuento /
-                                              // bonificación) → render en rojo con signo "−".
-                                              // amount < 0 lo aumenta (recargo) → render en ámbar con "+".
-                                              const reduces = adj.amount > 0;
-                                              const sign     = reduces ? "−" : "+";
-                                              const colorCls = reduces
-                                                ? "text-red-500 dark:text-red-400"
-                                                : "text-amber-600 dark:text-amber-400";
-                                              // Línea secundaria: "Base: $X × Y% = −$Z" cuando el ajuste
-                                              // tiene base y porcentaje (qty/promo PERCENTAGE). Para
-                                              // ENTITY_RULE / MANUAL_DISCOUNT el backend no expone base
-                                              // todavía → se omite la línea secundaria.
-                                              const showFormula = adj.base != null
-                                                              && adj.percentage != null
-                                                              && adj.base > 0;
-                                              const showPctTag  = !showFormula
-                                                              && adj.percentage != null;
-                                              return (
-                                                <div key={`hadj-${ai}-${adj.kind}`} className="space-y-px">
-                                                  <div className="flex items-baseline justify-between gap-2">
-                                                    <span className={cn("text-xs font-medium", colorCls)}>
-                                                      {adj.label}
-                                                      {showPctTag && (
-                                                        <span className="ml-1 text-[10px] text-muted/70 font-mono">
-                                                          ({sign}{adj.percentage}%)
-                                                        </span>
-                                                      )}
-                                                    </span>
-                                                    <span className={cn("text-xs tabular-nums font-bold shrink-0", colorCls)}>
-                                                      {sign}{fm2(Math.abs(adj.amount))}
-                                                    </span>
-                                                  </div>
-                                                  {showFormula && (
-                                                    <p className="text-[11px] text-muted tabular-nums font-mono leading-tight mt-0.5">
-                                                      Base: {fm2(adj.base!)} × {adj.percentage}% = {sign}{fm2(Math.abs(adj.amount))}
-                                                    </p>
-                                                  )}
-                                                </div>
-                                              );
-                                            })}
-                                            {/* Subtotal ajustado — cierre del bloque de ajustes */}
-                                            <div className="flex items-baseline justify-between gap-2 border-t border-border/30 pt-1 mt-0.5">
-                                              <span className="text-xs font-bold text-text">Subtotal ajustado</span>
-                                              <span className="text-xs tabular-nums font-bold text-text">{fm2(hechSaleAdjusted)}</span>
-                                            </div>
-                                          </div>
-                                        )}
-
-                                        {/* ── Desglose de impuestos — formato unificado ── */}
-                                        {saleTaxLines.length > 0 && (
-                                          <div className="space-y-1">
-                                            {/* Subtotal hechura — cuando hay >1 línea Y NO hubo ajustes (sino el "Subtotal ajustado" ya cumple) */}
-                                            {pHechSteps.length > 1 && !hasAdjustments && (
-                                              <div className="flex items-baseline justify-between gap-2 bg-muted/20 px-2 py-1 rounded">
-                                                <span className="text-xs font-bold text-muted/70">Subtotal</span>
-                                                <span className="text-xs tabular-nums font-bold text-foreground/70">{fm2(hechSaleTotal!)}</span>
-                                              </div>
-                                            )}
-                                            {saleTaxLines.map((t: any, ti: number) => (
-                                              <div key={`stax-${ti}`} className="space-y-0.5 mt-1 pt-1 border-t border-border/30">
-                                                {hasMetalSale && (
-                                                  <div className="space-y-px">
-                                                    <div className="flex items-baseline justify-between gap-2">
-                                                      <span className="text-xs font-medium text-muted">{t.name} {t.rate}% (Venta · metal)</span>
-                                                      <span className="text-xs tabular-nums text-muted shrink-0">+{fm2(t.metalPart)}</span>
-                                                    </div>
-                                                    <p className="text-[11px] text-muted tabular-nums font-mono leading-tight mt-0.5">
-                                                      Base: {fm2(totalMetalSaleForTax)} × {t.rate}% = +{fm2(t.metalPart)}
-                                                    </p>
-                                                  </div>
-                                                )}
-                                                <div className="space-y-px">
-                                                  <div className="flex items-baseline justify-between gap-2">
-                                                    <span className="text-xs font-medium text-muted">{t.name} {t.rate}% (Venta · hechura)</span>
-                                                    <span className="text-xs tabular-nums text-muted shrink-0">+{fm2(t.hechuraPart)}</span>
-                                                  </div>
-                                                  <p className="text-[11px] text-muted tabular-nums font-mono leading-tight mt-0.5">
-                                                    Base: {fm2(hechSaleAdjusted)} × {t.rate}% = +{fm2(t.hechuraPart)}
-                                                  </p>
-                                                </div>
-                                                {hasMetalSale && (
-                                                  <div className="flex items-baseline justify-between gap-2 border-t border-border/30 pt-0.5">
-                                                    <span className="text-xs text-muted font-medium">Total {t.name} {t.rate}%</span>
-                                                    <span className="text-xs tabular-nums text-foreground/70 font-bold shrink-0">+{fm2(t.totalTax)}</span>
-                                                  </div>
-                                                )}
-                                              </div>
-                                            ))}
-                                          </div>
-                                        )}
-
-                                        {/* ── Redondeo — componente no metálico ── */}
-                                        {hasRounding && (
-                                          <div className="flex items-baseline justify-between gap-2">
-                                            <span className="text-xs text-muted/70">
-                                              Redondeo
-                                              {rndStep?.meta?.direction
-                                                ? ` ${ROUNDING_DIR_SYMBOLS[String(rndStep.meta.direction)] ?? ""}`.trimEnd()
-                                                : ""}
-                                            </span>
-                                            <span className="text-xs tabular-nums text-foreground/70 shrink-0">
-                                              {rndDiff > 0 ? "+" : ""}{fm2(rndDiff)}
-                                            </span>
-                                          </div>
-                                        )}
-
-                                        {/* ── Total componente — línea INFORMATIVA (no protagonista).
-                                            El valor protagonista del card vive en el header.
-                                            Esta línea solo cierra el flujo intermedio: hechura − ajustes motor + impuestos + redondeo. */}
-                                        {(saleTaxLines.length > 0 || hasRounding || hasAdjustments) && (
-                                          <div className="flex items-baseline justify-between gap-2 border-t border-border/20 pt-1">
-                                            <span className="text-xs text-muted/70">Total componente</span>
-                                            <span className="text-xs tabular-nums text-muted/70 shrink-0">{fm2(displaySaleTotal)}</span>
-                                          </div>
-                                        )}
-
-                                        </>
-                                        )}
-
-                                        {/* ── Cierre del producto — desglose de los ajustes post-producto.
-                                            SSOT: usa las mismas variables pre-computadas que el header.
-                                            "Total a cobrar" se mantiene como línea de cierre pero discreta:
-                                            el número grande ya está en el header del card. */}
-                                        {hasAnyFinalAdj && (() => {
-                                          const channelName = result.channelResult?.channelName
-                                            ? (salesChannels.find(c => c.id === channelId)?.name ?? result.channelResult.channelName)
-                                            : "Canal";
-                                          const payLabel  = selectedPM?.name ?? "Pago";
-                                          const shipLabel = result.shippingResult?.label ?? "Envío";
-
-                                          // ── Trazabilidad: base + % derivado de los amounts del backend (no recalcula pricing) ──
-                                          // Cupón: discountType/discountValue del backend dan el %, baseAmount es el monto sobre el que se aplica.
-                                          const cR = result.couponResult;
-                                          const couponBase  = cR?.baseAmount ?? null;
-                                          const couponPct   = cR?.discountType === "PERCENTAGE" && cR?.discountValue != null
-                                            ? cR.discountValue
-                                            : (cR && couponBase != null && couponBase > 0.005 ? (cR.discountAmount / couponBase) * 100 : null);
-                                          const couponIsFixed = cR?.discountType === "FIXED";
-
-                                          // Canal: % derivado del backend (channelAmount / baseAmount).
-                                          const chR        = result.channelResult;
-                                          const channelBase = chR?.baseAmount ?? null;
-                                          const channelPct  = chR && channelBase != null && channelBase > 0.005
-                                            ? (chR.channelAmount / channelBase) * 100
-                                            : null;
-
-                                          // Pago: % derivado (paymentAdjustment total / baseAmount total).
-                                          //       Mostramos la base por-unidad para que cierre con el resto del card.
-                                          const ckR        = result.checkoutResult;
-                                          const paymentBaseUnit = ckR?.baseAmount != null ? ckR.baseAmount / qtyHC : null;
-                                          const paymentPct      = ckR && ckR.baseAmount > 0.005
-                                            ? (ckR.paymentAdjustment / ckR.baseAmount) * 100
-                                            : null;
-
-                                          // Envío: descripción del modo, sin %.
-                                          const shipModeDesc = result.shippingResult?.mode === "FIXED"     ? "Tarifa fija configurada"
-                                                              : result.shippingResult?.mode === "BY_WEIGHT" ? "Calculado por peso"
-                                                              : result.shippingResult?.mode === "FREE"      ? "Sin cargo"
-                                                              : null;
-
-                                          // Helper: formato breve de %
-                                          const pctStr = (p: number) => `${p > 0 ? "+" : ""}${p.toFixed(p % 1 === 0 ? 0 : 2)}%`;
-
-                                          return (
-                                            <div className="pt-1.5 mt-0.5 border-t border-border/30 space-y-1">
-                                              <p className="text-[8px] font-semibold uppercase tracking-widest text-muted/40 mb-0.5">
-                                                Cierre del producto
-                                              </p>
-
-                                              {/* Total producto (= base Hechura, mismo valor que header sin ajustes) */}
-                                              <div className="flex items-baseline justify-between gap-2">
-                                                <span className="text-[11px] text-muted">Total producto</span>
-                                                <span className="text-[11px] tabular-nums font-semibold text-text">{fm2(displaySaleTotal)}</span>
-                                              </div>
-
-                                              {/* Cupón — con código, % y base */}
-                                              {couponDiscRaw > 0.005 && cR && (
-                                                <div className="space-y-px">
-                                                  <div className="flex items-baseline justify-between gap-2">
-                                                    <span className="text-[11px] text-red-500 dark:text-red-400">
-                                                      Cupón {cR.couponCode}
-                                                      {couponPct != null && !couponIsFixed && (
-                                                        <span className="ml-1 text-[10px] text-muted/70 font-mono">(−{couponPct.toFixed(couponPct % 1 === 0 ? 0 : 2)}%)</span>
-                                                      )}
-                                                      {couponIsFixed && cR.discountValue != null && (
-                                                        <span className="ml-1 text-[10px] text-muted/70 font-mono">(monto fijo)</span>
-                                                      )}
-                                                    </span>
-                                                    <span className="text-[11px] tabular-nums font-semibold text-red-500 dark:text-red-400">−{fm2(couponDiscRaw)}</span>
-                                                  </div>
-                                                  {couponBase != null && couponBase > 0.005 && (
-                                                    <p className="text-[10px] text-muted/60 tabular-nums font-mono leading-tight ml-2">
-                                                      Base: {fm2(couponBase)}
-                                                      {couponPct != null && !couponIsFixed
-                                                        ? ` × ${couponPct.toFixed(couponPct % 1 === 0 ? 0 : 2)}% = −${fm2(couponDiscRaw)}`
-                                                        : ` − ${fm2(couponDiscRaw)} (fijo)`}
-                                                    </p>
-                                                  )}
-                                                </div>
-                                              )}
-
-                                              {/* Canal — con % y base (signo según recargo/descuento) */}
-                                              {Math.abs(channelRaw) > 0.005 && (
-                                                <div className="space-y-px">
-                                                  <div className="flex items-baseline justify-between gap-2">
-                                                    <span className={cn("text-[11px]", channelRaw > 0 ? "text-emerald-600/80 dark:text-emerald-400/70" : "text-red-500 dark:text-red-400")}>
-                                                      {channelName}
-                                                      {channelPct != null && Math.abs(channelPct) > 0.01 && (
-                                                        <span className="ml-1 text-[10px] text-muted/70 font-mono">({pctStr(channelPct)})</span>
-                                                      )}
-                                                    </span>
-                                                    <span className={cn("text-[11px] tabular-nums font-semibold", channelRaw > 0 ? "text-emerald-600/80 dark:text-emerald-400/70" : "text-red-500 dark:text-red-400")}>
-                                                      {channelRaw > 0 ? "+" : "−"}{fm2(Math.abs(channelRaw))}
-                                                    </span>
-                                                  </div>
-                                                  {channelBase != null && channelBase > 0.005 && channelPct != null && (
-                                                    <p className="text-[10px] text-muted/60 tabular-nums font-mono leading-tight ml-2">
-                                                      Base: {fm2(channelBase)} × {pctStr(channelPct)} = {channelRaw > 0 ? "+" : "−"}{fm2(Math.abs(channelRaw))}
-                                                    </p>
-                                                  )}
-                                                </div>
-                                              )}
-
-                                              {/* Forma de pago — con % y base (por unidad para coincidir con el card) */}
-                                              {Math.abs(paymentRaw) > 0.005 && (
-                                                <div className="space-y-px">
-                                                  <div className="flex items-baseline justify-between gap-2">
-                                                    <span className={cn("text-[11px]", paymentRaw > 0 ? "text-emerald-600/80 dark:text-emerald-400/70" : "text-red-500 dark:text-red-400")}>
-                                                      {payLabel}
-                                                      {paymentPct != null && Math.abs(paymentPct) > 0.01 && (
-                                                        <span className="ml-1 text-[10px] text-muted/70 font-mono">({pctStr(paymentPct)})</span>
-                                                      )}
-                                                    </span>
-                                                    <span className={cn("text-[11px] tabular-nums font-semibold", paymentRaw > 0 ? "text-emerald-600/80 dark:text-emerald-400/70" : "text-red-500 dark:text-red-400")}>
-                                                      {paymentRaw > 0 ? "+" : "−"}{fm2(Math.abs(paymentRaw))}
-                                                    </span>
-                                                  </div>
-                                                  {paymentBaseUnit != null && paymentBaseUnit > 0.005 && paymentPct != null && (
-                                                    <p className="text-[10px] text-muted/60 tabular-nums font-mono leading-tight ml-2">
-                                                      Base: {fm2(paymentBaseUnit)} × {pctStr(paymentPct)} = {paymentRaw > 0 ? "+" : "−"}{fm2(Math.abs(paymentRaw))}
-                                                    </p>
-                                                  )}
-                                                </div>
-                                              )}
-
-                                              {/* Envío — con descripción del modo */}
-                                              {result.shippingResult != null && (
-                                                <div className="space-y-px">
-                                                  <div className="flex items-baseline justify-between gap-2">
-                                                    <span className="text-[11px] text-muted">{shipLabel}</span>
-                                                    <span className="text-[11px] tabular-nums font-semibold text-text">+{fm2(shippingRaw)}</span>
-                                                  </div>
-                                                  {shipModeDesc && (
-                                                    <p className="text-[10px] text-muted/60 italic leading-tight ml-2">{shipModeDesc}</p>
-                                                  )}
-                                                </div>
-                                              )}
-
-                                              {/* Total a cobrar — línea informativa (el header del card ya tiene el valor protagonista) */}
-                                              <div className="flex items-baseline justify-between gap-2 border-t border-border/30 pt-1 mt-0.5">
-                                                <span className="text-[11px] text-muted/70">Total a cobrar</span>
-                                                <span className="text-[11px] tabular-nums text-muted/70 shrink-0">{fm2(finalCardTotal)}</span>
-                                              </div>
-                                            </div>
-                                          );
-                                        })()}
-                                      </div>
-                                    );
-                                  })()}
-                                </div>
-
-                              </div>
-                            );
-                          })()}
+                          {/* ── Composición del precio (cards) — migrada a <PriceCompositionCards> en FASE 7.
+                              Renderiza grid 2-col con MetalSaleCard (1 por metal padre) + HechuraSaleCard
+                              (con detalle técnico + cierre del producto). Solo visible en DESGLOSADO.
+                              Helpers/agregaciones: src/components/pricing/PriceCompositionCards/helpers.ts */}
+                          {simViewMode === "DESGLOSADO" && basePriceVal != null && (
+                            <PriceCompositionCards
+                              steps={stepsNorm}
+                              line={normLine}
+                              result={result}
+                              quantity={quantity ?? 1}
+                              channel={{
+                                channelId,
+                                channelName: salesChannels.find(c => c.id === channelId)?.name ?? null,
+                              }}
+                              payment={{
+                                paymentMethodName: selectedPM?.name ?? null,
+                                installmentsQty: null,
+                              }}
+                              whatIfActive={whatIfActive}
+                              hechuraCostRaw={hechuraCostRaw}
+                              display={{ rate: displayRate, symbol: displaySym }}
+                              expanded={priceCompositionExpansionAdapter}
+                              onToggle={toggleSection}
+                            />
+                          )}
 
                         </div>
                       </div>

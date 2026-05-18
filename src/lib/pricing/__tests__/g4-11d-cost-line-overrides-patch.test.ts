@@ -110,6 +110,39 @@ describe("F1.4 #11-D — múltiples entries: caso crítico 2 metales", () => {
     expect(arr[0].quantityOverride).toBe(99);
     expect(arr[1].costLineId).toBe("cl-m2");
   });
+
+  // REGRESIÓN — unidades mezcladas en HECHURAS: 3 overrides previos
+  // (2 "Unidad" + 1 "Kilogramo"); patchear el 3ro NO debe resetear ni
+  // alterar los 2 primeros, y no debe perder campos no relacionados.
+  it("regresión mixed-unit: 3 entries, patch al 3ro → primeros 2 byte-iguales", () => {
+    const init: CostLineOverride[] = [
+      { costLineId: "h1", type: "HECHURA", quantityOverride: 1 },     // Unidad
+      { costLineId: "h2", type: "HECHURA", quantityOverride: 1 },     // Unidad
+      { costLineId: "h3", type: "HECHURA", quantityOverride: 2 },     // Kilogramo
+    ];
+    const r = patchCostLineOverride(init, "h3", "HECHURA", { quantityOverride: 3 });
+    expect(r).toHaveLength(3);
+    // Primeros 2 IDÉNTICOS (mismo objeto-valor, sin reseteo).
+    expect(r[0]).toEqual({ costLineId: "h1", type: "HECHURA", quantityOverride: 1 });
+    expect(r[1]).toEqual({ costLineId: "h2", type: "HECHURA", quantityOverride: 1 });
+    // 3ro actualizado.
+    expect(r[2]).toEqual({ costLineId: "h3", type: "HECHURA", quantityOverride: 3 });
+    // Input no mutado (cero side-effects).
+    expect(init[2].quantityOverride).toBe(2);
+  });
+
+  it("regresión mixed-unit: patch al 3ro preserva campos no relacionados de las otras", () => {
+    const init: CostLineOverride[] = [
+      { costLineId: "h1", type: "HECHURA", quantityOverride: 1, adjustmentKind: "BONUS", adjustmentType: "PERCENTAGE", adjustmentValue: 10 },
+      { costLineId: "h2", type: "HECHURA", unitValueOverride: 555 },
+      { costLineId: "h3", type: "HECHURA", quantityOverride: 2 },
+    ];
+    const r = patchCostLineOverride(init, "h3", "HECHURA", { quantityOverride: 3 });
+    // h1 conserva su ajuste; h2 conserva su unitValueOverride.
+    expect(r.find(o => o.costLineId === "h1")).toEqual(init[0]);
+    expect(r.find(o => o.costLineId === "h2")).toEqual(init[1]);
+    expect(r.find(o => o.costLineId === "h3")?.quantityOverride).toBe(3);
+  });
 });
 
 // =============================================================================

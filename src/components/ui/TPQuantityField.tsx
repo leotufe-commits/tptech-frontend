@@ -24,6 +24,7 @@ import { cn } from "./tp";
 import TPNumberInput from "./TPNumberInput";
 import { TPBadge } from "./TPBadges";
 import { fmtQty } from "../../lib/document-helpers";
+import type { NumberFormatType } from "../../lib/number-format";
 
 export type TPQuantityFieldProps = {
   value: number | null;
@@ -46,6 +47,12 @@ export type TPQuantityFieldProps = {
 
   disabled?: boolean;
 
+  /** Limpiar/restablecer — habilita la "X" interna del TPNumberInput, MISMO
+   *  patrón/visual que Bonificación e Impuestos (es el mismo componente).
+   *  El caller decide qué hace (típico Cantidad: volver al default/min).
+   *  Si es `undefined` la "X" no se muestra. */
+  onClear?: () => void;
+
   /** Tamaño visual. Default "md". */
   size?: "sm" | "md";
   className?: string;
@@ -63,6 +70,14 @@ export type TPQuantityFieldProps = {
    * Órdenes / Compras) mantienen el layout original sin tocar nada.
    */
   compactInline?: boolean;
+
+  /**
+   * Opt-in: tipo del motor central de formato para el input interno (ej.
+   * "QUANTITY" en Factura → respeta región/decimales del tenant). Sin esto,
+   * el comportamiento histórico (0/2 decimales según `step`). Scoped: solo
+   * lo pasa quien lo necesita; otras pantallas quedan intactas.
+   */
+  formatType?: NumberFormatType;
 };
 
 export function TPQuantityField({
@@ -75,9 +90,11 @@ export function TPQuantityField({
   hasQuantityDiscount,
   partial,
   disabled,
+  onClear,
   size = "md",
   className,
   compactInline = false,
+  formatType,
 }: TPQuantityFieldProps) {
   const fallback =
     typeof constraints.default === "number" && constraints.default > 0
@@ -105,12 +122,18 @@ export function TPQuantityField({
   const showPromoChip   = !partial && !!hasPromotion;
   const showQtyDiscChip = !partial && !!hasQuantityDiscount;
 
-  // Sidecar "×" — solo visible bajo `compactInline=true` (sale view en
-  // Factura). Replica idéntico el sidecar %/$ de Bonificación / Impuestos
-  // para uniformidad visual entre TPNumber financieros.
-  // NO clickeable (es indicador semántico de multiplicador, no toggle).
-  // Pantallas legacy (Compras/Presupuestos/Órdenes) NO lo muestran —
-  // preservan layout original. */
+  // Paso 1 — el rango Mín/Máx deja de ocupar 2 líneas fijas: pasa a `title`
+  // (hover) del campo. En ERROR el límite ya se comunica vía `errorText`
+  // dentro del TPNumberInput, así que no se pierde información.
+  const rangeTitle =
+    minRaw != null || maxRaw != null
+      ? `Cantidad permitida:${
+          minRaw != null ? ` mín ${fmtQty(minRaw)}${unit ? ` ${unit}` : ""}` : ""
+        }${minRaw != null && maxRaw != null ? " ·" : ""}${
+          maxRaw != null ? ` máx ${fmtQty(maxRaw)}${unit ? ` ${unit}` : ""}` : ""
+        }`
+      : undefined;
+
   const numberInput = (
     <TPNumberInput
       value={v}
@@ -123,7 +146,10 @@ export function TPQuantityField({
         }
         onChange(next);
       }}
-      decimals={step < 1 ? 2 : 0}
+      // Con formatType, los decimales los gobierna el preset (no pisamos con
+      // el cálculo legacy). Sin formatType, comportamiento histórico.
+      decimals={formatType ? undefined : (step < 1 ? 2 : 0)}
+      formatType={formatType}
       step={step}
       // OJO: NO le pasamos `min` al TPNumberInput interno para que el
       // usuario pueda escribir 0 / valores debajo del mínimo y verlo
@@ -132,54 +158,38 @@ export function TPQuantityField({
       compact={size === "sm"}
       disabled={disabled}
       error={errorText ?? undefined}
+      // Misma "X" interna que Bonificación/Impuestos (mismo TPNumberInput).
+      // Solo se renderiza cuando el caller pasa `onClear`.
+      onClear={onClear}
       wrapClassName={compactInline ? "flex-1 min-w-0" : undefined}
     />
   );
 
   return (
-    <div className={cn("min-w-0", className)}>
-      {compactInline ? (
-        <div className="flex items-stretch gap-1">
-          {numberInput}
-          <span
-            // text-muted/50 (un nivel más sutil que Bonif/Impuestos /60)
-            // porque "×" es indicador semántico, no acción principal.
-            className="inline-flex h-[42px] shrink-0 items-center justify-center rounded-md border border-border bg-card px-1.5 text-[11px] font-semibold text-muted/50"
-            title="Multiplica por unitario"
-            aria-hidden="true"
-          >
-            ×
-          </span>
-        </div>
-      ) : (
-        numberInput
-      )}
+    <div
+      className={cn("min-w-0", className)}
+      title={compactInline ? rangeTitle : undefined}
+    >
+      {/* Cantidad = TPNumber con su "X" interna (onClear), MISMO patrón que
+          Bonificación e Impuestos. Sin sidecar externo: el campo Precio
+          queda pegado a Cantidad, sin caja intermedia que parezca "borrar". */}
+      {numberInput}
 
       {compactInline ? (
         /* ── Layout compacto inline (Factura) ─────────────────────────────
            Jerarquía visual:
              1. Label "CANTIDAD · UND" (vive en el caller, no acá).
              2. Input numérico (arriba).
-             3. Mín. venta / Máx. venta — dos líneas de texto compacto
-                (no badges, son meta-info del rango permitido).
-             4. Pills: Stock · Promo activa · Desc. x cantidad — fila
-                de TPBadges con baseline consistente.
+             3. Pills: Stock · Promo activa · Desc. x cantidad — UNA fila
+                de TPBadges (única línea de metadata). El rango Mín/Máx
+                vive en el `title` del campo (hover); en error se ve via
+                `errorText` del input.
            Cuando NO hay nada que mostrar, no se renderiza ningún wrapper. */
         <>
-          {!hasError && (minRaw != null || maxRaw != null) && (
-            <div className="mt-1 space-y-0.5 text-[10px] leading-tight text-muted tabular-nums">
-              {minRaw != null && (
-                <div>Mín. venta: <span className="font-medium text-text/80">{fmtQty(minRaw)}{unit ? ` ${unit}` : ""}</span></div>
-              )}
-              {maxRaw != null && (
-                <div>Máx. venta: <span className="font-medium text-text/80">{fmtQty(maxRaw)}{unit ? ` ${unit}` : ""}</span></div>
-              )}
-            </div>
-          )}
           {((typeof totalStock === "number" && Number.isFinite(totalStock)) ||
             showPromoChip ||
             showQtyDiscChip) && (
-            <div className="mt-1 flex flex-wrap items-center gap-1.5">
+            <div className="mt-0.5 flex flex-wrap items-center gap-1.5">
               {typeof totalStock === "number" && Number.isFinite(totalStock) && (
                 <TPBadge
                   tone={totalStock > 0 ? "success" : "danger"}
