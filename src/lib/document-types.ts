@@ -798,10 +798,24 @@ export interface DocumentShipping {
  *   · `type = "AMOUNT"`  → `value` es un monto absoluto en la moneda del doc
  *   · `reason` es opcional para dejar trazabilidad del motivo
  */
+/**
+ * Origen del valor de un campo override-capable del documento:
+ *   · `NONE`   — sin cliente / valor neutro; comportamiento legacy.
+ *   · `CLIENT` — heredado del cliente. El `pricing-engine` ya lo aplica por
+ *                `clientId`; el frontend lo MUESTRA pero NO lo reenvía como
+ *                override (evita doble aplicación).
+ *   · `MANUAL` — el operador lo editó → es un override real del comprobante
+ *                y SÍ se reenvía al preview.
+ */
+export type FieldOrigin = "NONE" | "CLIENT" | "MANUAL";
+
 export interface DocumentDiscountGlobal {
   type: "PERCENT" | "AMOUNT";
   value: number;
   reason?: string;
+  /** Ver {@link FieldOrigin}. `undefined` se trata como NONE/MANUAL (legacy):
+   *  solo `CLIENT` suprime el envío de `globalDiscount` al preview. */
+  origin?: FieldOrigin;
 }
 
 /**

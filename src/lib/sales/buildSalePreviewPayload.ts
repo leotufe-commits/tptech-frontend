@@ -157,9 +157,16 @@ export function buildSalePreviewPayload(
           ? draft.fxRate
           : null,
       // Fase 5: descuento global como objeto.
-      globalDiscount: draft.discountGlobal && draft.discountGlobal.value > 0
-        ? { type: draft.discountGlobal.type, value: draft.discountGlobal.value }
-        : null,
+      // Fase A — anti doble aplicación: si el descuento fue HEREDADO del
+      // cliente (`origin==="CLIENT"`), NO se reenvía: el `pricing-engine` ya
+      // lo aplica por `clientId`. Solo viaja cuando es manual del comprobante
+      // (origin MANUAL/NONE/undefined) y tiene valor.
+      globalDiscount:
+        draft.discountGlobal &&
+        draft.discountGlobal.value > 0 &&
+        draft.discountGlobal.origin !== "CLIENT"
+          ? { type: draft.discountGlobal.type, value: draft.discountGlobal.value }
+          : null,
     },
   };
 

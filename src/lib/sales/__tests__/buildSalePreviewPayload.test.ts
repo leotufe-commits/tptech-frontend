@@ -132,3 +132,55 @@ describe("buildSalePreviewPayload", () => {
     expect((payload.lines[0] as any).description).toBe("Servicio extra");
   });
 });
+
+describe("buildSalePreviewPayload — origin de globalDiscount (anti doble aplicación)", () => {
+  it("origin=CLIENT → NO envía globalDiscount (el motor lo aplica por clientId)", () => {
+    const { payload } = buildSalePreviewPayload(
+      makeDraft({
+        discountGlobal: { type: "PERCENT", value: 10, origin: "CLIENT" },
+        lines: [makeLine()],
+      })
+    );
+    expect(payload.globalDiscount).toBeNull();
+  });
+
+  it("origin=MANUAL → SÍ envía globalDiscount", () => {
+    const { payload } = buildSalePreviewPayload(
+      makeDraft({
+        discountGlobal: { type: "AMOUNT", value: 500, origin: "MANUAL" },
+        lines: [makeLine()],
+      })
+    );
+    expect(payload.globalDiscount).toEqual({ type: "AMOUNT", value: 500 });
+  });
+
+  it("origin=NONE → SÍ envía globalDiscount (legacy)", () => {
+    const { payload } = buildSalePreviewPayload(
+      makeDraft({
+        discountGlobal: { type: "PERCENT", value: 7, origin: "NONE" },
+        lines: [makeLine()],
+      })
+    );
+    expect(payload.globalDiscount).toEqual({ type: "PERCENT", value: 7 });
+  });
+
+  it("sin origin (undefined) → SÍ envía globalDiscount (retrocompat)", () => {
+    const { payload } = buildSalePreviewPayload(
+      makeDraft({
+        discountGlobal: { type: "PERCENT", value: 12 } as any,
+        lines: [makeLine()],
+      })
+    );
+    expect(payload.globalDiscount).toEqual({ type: "PERCENT", value: 12 });
+  });
+
+  it("origin=CLIENT con value=0 → null igual", () => {
+    const { payload } = buildSalePreviewPayload(
+      makeDraft({
+        discountGlobal: { type: "PERCENT", value: 0, origin: "CLIENT" },
+        lines: [makeLine()],
+      })
+    );
+    expect(payload.globalDiscount).toBeNull();
+  });
+});

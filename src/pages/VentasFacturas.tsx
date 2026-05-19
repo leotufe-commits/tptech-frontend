@@ -75,6 +75,7 @@ import { isPreviewableLine, matchPreviewLines } from "../lib/sales/matchPreviewL
 import { sortLinesPreservingHeaders, articleSkuSortKey } from "../lib/sales/sortLines";
 import type { SalesInvoice, SalesInvoiceStatus, ClientSnapshot } from "../lib/sales/types";
 import { buildClientSnapshot } from "../lib/sales/buildClientSnapshot";
+import { resolveClientInheritedDiscount } from "../lib/sales/resolveClientInheritedDiscount";
 import { buildSalePreviewPayload } from "../lib/sales/buildSalePreviewPayload";
 import { applySalePreviewToDraft } from "../lib/sales/applySalePreviewToDraft";
 import { useCardCollapse } from "../lib/sales/useCardCollapse";
@@ -3368,7 +3369,10 @@ function InvoiceEditorModal(props: {
 
   function patchDiscountGlobal(p: Partial<DocumentDiscountGlobal>) {
     const current = draft.discountGlobal ?? { type: "PERCENT" as const, value: 0 };
-    const nextDiscount: DocumentDiscountGlobal = { ...current, ...p };
+    // Toda edición desde la DiscountCard es acción del operador → el descuento
+    // pasa a ser MANUAL del comprobante y, a partir de acá, SÍ se reenvía al
+    // preview (deja de estar suprimido por origin CLIENT).
+    const nextDiscount: DocumentDiscountGlobal = { ...current, ...p, origin: "MANUAL" };
     patch("discountGlobal", nextDiscount);
   }
 
@@ -3963,11 +3967,18 @@ function InvoiceEditorModal(props: {
       lastPickedClientIdRef.current = null;
       setSelectedClient(null);
       setClientDetail(null);
+      // Si la bonificación vigente era heredada del cliente, al quitar el
+      // cliente deja de tener sentido → se limpia. Si era MANUAL, se conserva.
+      const dgCleared: Partial<SalesInvoice> =
+        draft.discountGlobal?.origin === "CLIENT"
+          ? { discountGlobal: { type: "PERCENT", value: 0, reason: "", origin: "NONE" } }
+          : {};
       onChange({
         ...draft,
         client: "",
         clientId: undefined,
         clientSnapshot: undefined,
+        ...dgCleared,
       });
       return;
     }
@@ -4049,10 +4060,30 @@ function InvoiceEditorModal(props: {
           fullSnap.address   = composeAddressLine(addr);
           fullSnap.addressId = addr.id;
         }
+
+        // Fase A — bonificación heredada del cliente (solo representable:
+        // DISCOUNT + applyOn=TOTAL). El motor ya la aplica por clientId; acá
+        // solo se REFLEJA en el control con origin="CLIENT" (no se reenvía).
+        //   · origin actual MANUAL → se conserva (no pisar edición del operador).
+        //   · resto (CLIENT/NONE/undefined) → reemplazar por la del cliente
+        //     nuevo; si el cliente no tiene una representable, limpiar la
+        //     heredada previa (evita leak entre clientes).
+        const curDG = optimisticDraft.discountGlobal;
+        let nextDG: DocumentDiscountGlobal | undefined = curDG;
+        if (curDG?.origin !== "MANUAL") {
+          const inherited = resolveClientInheritedDiscount(d);
+          if (inherited) {
+            nextDG = inherited;
+          } else if (curDG?.origin === "CLIENT") {
+            nextDG = { type: "PERCENT", value: 0, reason: "", origin: "NONE" };
+          }
+        }
+
         // Mergeamos sobre `optimisticDraft` (capturado en closure) — incluye
         // los campos que ya seteamos en el paso 1, sin riesgo de stale state.
         onChange({
           ...optimisticDraft,
+          ...(nextDG !== curDG ? { discountGlobal: nextDG } : {}),
           clientSnapshot: { ...optimisticDraft.clientSnapshot, ...fullSnap },
         });
       })
