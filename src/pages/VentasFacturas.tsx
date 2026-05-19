@@ -29,7 +29,6 @@ import {
   Wallet,
   X,
   Printer,
-  Paperclip,
   Coins,
   ChevronDown,
   Link2,
@@ -118,7 +117,9 @@ import { ADDRESS_TYPE_LABELS } from "../services/commercial-entities";
 import { sellersApi, type SellerRow } from "../services/sellers";
 import { listCurrencies, addCurrencyRate, type CurrencyRow } from "../services/valuation";
 import { useCatalog } from "../hooks/useCatalog";
+import { usePermissions } from "../hooks/usePermissions";
 import { receiptsApi, type CreateReceiptDraftPayload } from "../services/receipts";
+import { documentTemplatesApi } from "../services/document-templates";
 import {
   articlesApi,
   type ArticleRow,
@@ -141,6 +142,7 @@ import { CouponCard } from "./ventas-facturas/CouponCard";
 import {
   DiscountCard, ShippingCard, TotalsHeroSection, LinesEditorSection,
   AddressPickerPopover, CurrencyFXModal, PaymentCard, InvoiceHeaderForm,
+  ObservationsTermsAttachmentsCard,
 } from "./ventas-facturas/InvoiceEditorModal";
 import LabelPrintModal, { type LabelItem } from "./article-detail/LabelPrintModal";
 import type { WarehouseRow } from "./InventarioAlmacenes/types";
@@ -683,6 +685,10 @@ export default function VentasFacturas() {
 
   const [editorOpen, setEditorOpen] = useState(false);
   const [draft, setDraft]           = useState<SalesInvoice | null>(null);
+  // footerTerms de la plantilla FACTURA — fuente de verdad de la precarga de
+  // Términos. Se resuelve en `openNew()` (junto al resto de defaults) y se
+  // refresca si el usuario "Guarda como predeterminado". NO afecta cálculos.
+  const [templateTerms, setTemplateTerms] = useState<string>("");
 
   // Fix Bug 2a — Catálogos comerciales cargados al MONTAR la página (no al
   // abrir el modal). Esto permite que `openNew()` resuelva favoritos antes
@@ -832,11 +838,25 @@ export default function VentasFacturas() {
   ];
 
   // ── Acciones globales ────────────────────────────────────────────────────
-  function openNew() {
-    // Fix Bug 2b — Resolver favoritos contra los catálogos del padre (que se
+  async function openNew() {
+    // Fix Bug 2b — Resolver defaults contra los catálogos del padre (que se
     // cargan al montar la página). Si los catálogos aún no llegaron, los
     // campos quedan vacíos y el useEffect coordinado del modal los aplica
     // cuando el catálogo correspondiente llegue. Red de seguridad doble.
+    +
+    // Precarga de Términos desde la plantilla FACTURA (DocumentTemplate.
+    // footerTerms = fuente de verdad). Nunca pisa lo que el usuario escriba:
+    // como en creación `terms` arranca vacío, se aplica el footerTerms tal
+    // cual. Si la llamada falla, seguimos con términos vacíos (no bloquea).
+    let tplTerms = "";
+    try {
+      const tpl = await documentTemplatesApi.get("FACTURA");
+      tplTerms = (tpl?.footerTerms ?? "").trim();
+    } catch {
+      tplTerms = "";
+    }
+    setTemplateTerms(tplTerms);
+
     const favList    = parentPriceLists.find((p) => p.isFavorite && p.isActive && !p.deletedAt);
     const favChannel = parentSalesChannels.find((c) => c.isFavorite && c.isActive);
     const favWh      =
@@ -1127,6 +1147,8 @@ export default function VentasFacturas() {
           onChange={setDraft}
           onSave={saveDraft}
           onClose={requestCloseEditor}
+          templateTerms={templateTerms}
+          onTemplateTermsChange={setTemplateTerms}
         />
       )}
 
@@ -1165,8 +1187,21 @@ function InvoiceEditorModal(props: {
   onChange: (next: SalesInvoice) => void;
   onSave: () => void;
   onClose: () => void;
+  /** footerTerms de la plantilla FACTURA (resuelto en la página). */
+  templateTerms: string;
+  /** Refresca el footerTerms cacheado tras "Guardar como predeterminado". */
+  onTemplateTermsChange: (v: string) => void;
 }) {
-  const { open, draft, isNew, onChange, onSave, onClose } = props;
+  const { open, draft, isNew, onChange, onSave, onClose, templateTerms, onTemplateTermsChange } = props;
+
+  const { can } = usePermissions();
+
+  // Id del Receipt persistido (borrador guardado en backend). Habilita
+  // adjuntos. Se resetea cuando se abre un comprobante distinto.
+  const [savedReceiptId, setSavedReceiptId] = useState<string | null>(null);
+  useEffect(() => {
+    setSavedReceiptId(null);
+  }, [draft.id]);
 
   // Almacén favorito del usuario (con fallback al favorito del tenant si el
   // backend lo agregara más adelante). Lo usamos para inicializar
@@ -1820,11 +1855,29 @@ function InvoiceEditorModal(props: {
     setDraftSaving(true);
     try {
       const saved = await receiptsApi.createDraft(built.payload);
+      setSavedReceiptId(saved.id);
       toast.success(`Borrador guardado (id ${saved.id.slice(0, 8)}…).`);
     } catch (e: any) {
       toast.error(e?.message || "No se pudo guardar el borrador.");
     } finally {
       setDraftSaving(false);
+    }
+  }
+
+  /**
+   * "Guardar como predeterminado": persiste los Términos actuales como
+   * `footerTerms` de la plantilla FACTURA (tenant-wide). El backend exige
+   * sesión; el botón ya está gateado por permiso COMPANY_SETTINGS:EDIT en
+   * el card. No recalcula nada — sólo guarda texto. Errores → toast (no
+   * relanza; el diálogo de confirmación cierra igual).
+   */
+  async function handleSaveTermsAsDefault() {
+    try {
+      await documentTemplatesApi.save("FACTURA", { footerTerms: draft.terms ?? "" });
+      onTemplateTermsChange((draft.terms ?? "").trim());
+      toast.success("Términos guardados como predeterminados de la plantilla.");
+    } catch (e: unknown) {
+      toast.error(e instanceof Error ? e.message : "No se pudo guardar la plantilla.");
     }
   }
 
@@ -4678,29 +4731,16 @@ function InvoiceEditorModal(props: {
             title="Observaciones, términos y adjuntos"
             description="Contenido extendido del comprobante — opcional"
           >
-            <div className="space-y-3 rounded-lg border border-border bg-surface/40 p-3">
-              <TPField label="Observaciones">
-                <TPInput
-                  value={draft.notes}
-                  onChange={(v: string) => patch("notes", v)}
-                  placeholder="Notas internas o para el cliente"
-                />
-              </TPField>
-              <TPField label="Términos y condiciones">
-                <TPInput
-                  value={draft.terms}
-                  onChange={(v: string) => patch("terms", v)}
-                  placeholder="Condiciones comerciales, políticas de devolución, etc."
-                />
-              </TPField>
-              <div>
-                <div className="mb-1 text-xs font-medium text-text">Adjuntar archivos</div>
-                <div className="flex items-center gap-2 rounded-md border border-dashed border-border bg-surface2/30 px-3 py-4 text-xs text-muted">
-                  <Paperclip size={14} />
-                  <span>Arrastrá archivos o hacé click — próximamente</span>
-                </div>
-              </div>
-            </div>
+            <ObservationsTermsAttachmentsCard
+              notes={draft.notes}
+              onNotesChange={(v) => patch("notes", v)}
+              terms={draft.terms}
+              onTermsChange={(v) => patch("terms", v)}
+              templateTerms={templateTerms}
+              canSaveAsDefault={can("COMPANY_SETTINGS:EDIT")}
+              onSaveAsDefault={handleSaveTermsAsDefault}
+              receiptId={savedReceiptId}
+            />
           </TPCollapse>
 
           {/* Aside derecho: Descuento global → Envío → Cupón → Totales */}

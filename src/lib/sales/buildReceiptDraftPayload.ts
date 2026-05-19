@@ -126,7 +126,8 @@ export function buildReceiptDraftPayload(args: {
     totalBase:      round2((draft.total ?? 0) * fxRate),
     issueDate:      draft.date || undefined,
     dueDate:        draft.dueDate || undefined,
-    notes:          [draft.notes, draft.terms].filter(Boolean).join("\n\n").trim(),
+    notes:          (draft.notes ?? "").trim(),
+    terms:          (draft.terms ?? "").trim(),
 
     pricingSnapshot: {
       version:        1,

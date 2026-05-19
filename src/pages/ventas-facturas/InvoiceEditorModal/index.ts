@@ -44,3 +44,9 @@ export type { PaymentCardProps, PaymentRow } from "./PaymentCard";
 
 export { InvoiceHeaderForm, default as InvoiceHeaderFormDefault } from "./InvoiceHeaderForm";
 export type { InvoiceHeaderFormProps } from "./InvoiceHeaderForm";
+
+export {
+  ObservationsTermsAttachmentsCard,
+  default as ObservationsTermsAttachmentsCardDefault,
+} from "./ObservationsTermsAttachmentsCard";
+export type { ObservationsTermsAttachmentsCardProps } from "./ObservationsTermsAttachmentsCard";

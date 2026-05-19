@@ -146,20 +146,24 @@ describe("buildReceiptDraftPayload", () => {
     }
   });
 
-  it("compone notes uniendo notes + terms con doble línea", () => {
+  it("manda notes y terms como campos separados (sin fusionar)", () => {
     const draft = makeDraft({ notes: "Sin manchar", terms: "30 días" });
     const r = buildReceiptDraftPayload({ draft, currencies: [ars], predicates });
     expect(r.ok).toBe(true);
     if (r.ok) {
-      expect(r.payload.notes).toBe("Sin manchar\n\n30 días");
+      expect(r.payload.notes).toBe("Sin manchar");
+      expect(r.payload.terms).toBe("30 días");
     }
   });
 
-  it("omite notes vacíos al armar la concatenación", () => {
+  it("notes vacío no contamina terms", () => {
     const draft = makeDraft({ notes: "", terms: "Solo términos" });
     const r = buildReceiptDraftPayload({ draft, currencies: [ars], predicates });
     expect(r.ok).toBe(true);
-    if (r.ok) expect(r.payload.notes).toBe("Solo términos");
+    if (r.ok) {
+      expect(r.payload.notes).toBe("");
+      expect(r.payload.terms).toBe("Solo términos");
+    }
   });
 
   it("pricingSnapshot.version = 1 y resolvedAt es ISO", () => {
