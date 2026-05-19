@@ -2153,6 +2153,10 @@ export function TPDocumentLineAdvancedEditor({
                   // HECHURA → chip-only (sin número engañoso).
                   (meta.inheritedDiscount.applyOn == null ||
                     meta.inheritedDiscount.applyOn === "TOTAL") &&
+                  // FIXED_AMOUNT en moneda base con documento convertido NO
+                  // es representable como número → chip-only (no inventar
+                  // equivalencia). PERCENTAGE y FIXED_AMOUNT con doc==base sí.
+                  meta.inheritedDiscount.fixedAmountInBaseOnly !== true &&
                   typeof meta.inheritedDiscount.value === "number" &&
                   meta.inheritedDiscount.value > 0
                 ) {
@@ -2616,17 +2620,22 @@ export function TPDocumentLineAdvancedEditor({
                 // Modo del selector %/$ — toggle persistido localmente igual
                 // que en Bonificación (`getTaxType`).
                 const isPct = getTaxType(l.id) === "percent";
-                // Si hay override → mostramos el value del override; sino →
-                // mostramos el rate estable (PERCENT) o el unit estable (AMOUNT).
-                // Cliente exento → el input SIEMPRE muestra 0 (no el 21%
-                // cacheado ni un override viejo). Es fix VISUAL: el motor ya
-                // devolvió impuesto 0 por exención; no se reenvía nada.
-                const displayValue = exempt
-                  ? 0
-                  : override
-                    ? override.value
+                // Prioridad de display:
+                //   1) override MANUAL — decisión explícita del operador,
+                //      gana INCLUSO si el cliente es exento (la exención es
+                //      un default, no un candado: el motor ya respeta el
+                //      override sobre la exención).
+                //   2) exento sin override → 0 (default de hidratación).
+                //   3) rate/unit estable del motor.
+                const displayValue = override
+                  ? override.value
+                  : exempt
+                    ? 0
                     : (isPct ? taxRateStable : taxUnitStable);
-                const canEdit = !exempt && (!!l.articleId || l.isManual === true) && !!onSetLineTaxOverride;
+                // La exención NO bloquea el input: el operador puede cargar
+                // impuesto manual sobre un cliente exento (queda en 0 hasta
+                // que escriba). Editable mientras haya artículo/manual + handler.
+                const canEdit = (!!l.articleId || l.isManual === true) && !!onSetLineTaxOverride;
 
                 return (
                   <div>

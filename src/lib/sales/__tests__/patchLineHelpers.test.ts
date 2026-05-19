@@ -13,6 +13,7 @@ import {
   applyTransientManualPrice,
   applyManualTaxRate,
   buildPatchedLine,
+  clearLineTaxOverrideForClientChange,
 } from "../patchLineHelpers";
 import type { DocumentLine } from "../../document-types";
 
@@ -266,5 +267,59 @@ describe("buildPatchedLine", () => {
       isManualPriceEdit: false, flagDeltas: {},
     });
     expect(out.manualOverrides).toEqual({ quantity: true });
+  });
+});
+
+// ─── clearLineTaxOverrideForClientChange ───────────────────────────────────
+
+describe("clearLineTaxOverrideForClientChange", () => {
+  it("limpia manualOverrides.tax + pricingMeta.taxOverride + manualTaxAppliesTo", () => {
+    const line = makeLine({
+      manualOverrides: { price: true, discount: true, tax: true } as any,
+      pricingMeta: {
+        taxOverride: { mode: "PERCENT", value: 21, appliesTo: "TOTAL" },
+        manualTaxAppliesTo: "METAL",
+        taxExemptByEntity: true,
+      } as any,
+    });
+    const out = clearLineTaxOverrideForClientChange(line);
+    // Tax limpiado.
+    expect(out.manualOverrides?.tax).toBeUndefined();
+    expect(out.pricingMeta?.taxOverride ?? null).toBeNull();
+    expect((out.pricingMeta as any)?.manualTaxAppliesTo ?? null).toBeNull();
+    // Precio/bonificación manual NO se tocan.
+    expect(out.manualOverrides?.price).toBe(true);
+    expect(out.manualOverrides?.discount).toBe(true);
+    // No muta el original.
+    expect(line.manualOverrides?.tax).toBe(true);
+    expect(out).not.toBe(line);
+  });
+
+  it("preserva manualPrice / manualDiscount (solo limpia impuesto)", () => {
+    const line = makeLine({
+      manualOverrides: { tax: true, price: true } as any,
+      pricingMeta: {
+        taxOverride: { mode: "AMOUNT", value: 50 },
+        manualPrice: 999,
+        manualDiscount: { mode: "PERCENT", value: 5 },
+      } as any,
+    });
+    const out = clearLineTaxOverrideForClientChange(line);
+    expect(out.pricingMeta?.taxOverride ?? null).toBeNull();
+    expect(out.pricingMeta?.manualPrice).toBe(999);
+    expect(out.pricingMeta?.manualDiscount).toEqual({ mode: "PERCENT", value: 5 });
+  });
+
+  it("no-op (misma referencia) cuando la línea no tiene estado de impuesto manual", () => {
+    const line = makeLine({
+      manualOverrides: { price: true } as any,
+      pricingMeta: { manualPrice: 100 } as any,
+    });
+    expect(clearLineTaxOverrideForClientChange(line)).toBe(line);
+  });
+
+  it("no-op cuando no hay manualOverrides ni pricingMeta", () => {
+    const line = makeLine();
+    expect(clearLineTaxOverrideForClientChange(line)).toBe(line);
   });
 });

@@ -83,6 +83,7 @@ import {
   detectManualEdit,
   buildPatchedLine,
   computeManualTax as computeManualTaxLib,
+  clearLineTaxOverrideForClientChange,
 } from "../lib/sales/patchLineHelpers";
 import {
   normalizeEntityCurrency,
@@ -4267,10 +4268,16 @@ function InvoiceEditorModal(props: {
     setPreviewClientId(undefined);
     if (fxWarning) toast.warning(fxWarning);
 
+    const cur = draftRef.current;
     const base: SalesInvoice = {
-      ...draftRef.current,
+      ...cur,
       ...clientDataPatch,
       ...pricingPatch,
+      // "Recalcular" = el cliente nuevo es AUTORITATIVO: limpiamos el
+      // override manual de impuesto del cliente anterior para que no quede
+      // pegado y gane sobre la rehidratación (exención/impuesto del nuevo
+      // cliente). Precio/bonificación manual NO se tocan.
+      lines: cur.lines.map(clearLineTaxOverrideForClientChange),
     };
     const pend = pendingClientDetailRef.current;
     if (pend && pend.clientId === nextClient.id) {

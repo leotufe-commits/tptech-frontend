@@ -224,3 +224,46 @@ export function buildPatchedLine(args: {
 
   return out;
 }
+
+// ─── clearLineTaxOverrideForClientChange ───────────────────────────────────
+
+/**
+ * Limpia SOLO el override manual de IMPUESTO de una línea, para que al
+ * "Recalcular precios" con un cliente nuevo la hidratación de impuesto/
+ * exención del cliente nuevo sea AUTORITATIVA y no quede pegado el
+ * `taxOverride` del cliente anterior.
+ *
+ * Limpia exactamente:
+ *   - `manualOverrides.tax` (el flag que hace que `buildSalePreviewPayload`
+ *     reenvíe el override → ganaba sobre la nueva hidratación).
+ *   - `pricingMeta.taxOverride` (valor del override).
+ *   - `pricingMeta.manualTaxAppliesTo` (override de SOLO la base del impuesto).
+ *
+ * NO toca: precio/bonificación manual (`price`/`discount` overrides,
+ * `manualPrice`, `manualDiscount*`), cantidad, ni `taxExemptByEntity`
+ * (lo rehidrata el preview del cliente nuevo). Pure — clona, no muta.
+ */
+export function clearLineTaxOverrideForClientChange(line: DocumentLine): DocumentLine {
+  const mo = line.manualOverrides;
+  const meta = line.pricingMeta;
+  const hadTaxState =
+    mo?.tax === true ||
+    (meta?.taxOverride ?? null) !== null ||
+    (meta as { manualTaxAppliesTo?: unknown } | undefined)?.manualTaxAppliesTo != null;
+  if (!hadTaxState) return line;
+
+  const nextManualOverrides = mo ? { ...mo } : undefined;
+  if (nextManualOverrides) delete nextManualOverrides.tax;
+
+  const nextMeta = meta ? { ...meta } : undefined;
+  if (nextMeta) {
+    nextMeta.taxOverride = null;
+    (nextMeta as { manualTaxAppliesTo?: unknown }).manualTaxAppliesTo = null;
+  }
+
+  return {
+    ...line,
+    ...(nextManualOverrides ? { manualOverrides: nextManualOverrides } : {}),
+    ...(nextMeta ? { pricingMeta: nextMeta } : {}),
+  };
+}
