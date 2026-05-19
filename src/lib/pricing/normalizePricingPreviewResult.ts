@@ -1016,6 +1016,13 @@ export function normalizeSalesLine(l: SalePreviewLine): NormalizedPricingLine {
     taxBreakdown:    normalizeTaxBreakdown(l.taxBreakdown as any),
     appliedRounding: normalizeAppliedRounding(l.appliedRounding),
 
+    // Exención por entidad — passthrough del motor (per-línea, autoritativo).
+    // Sin esto el normalizado quedaba sin el flag → `selectInvoiceLineView`
+    // lo leía `undefined`==`true`→false aunque el cliente fuese exento, y el
+    // editor no purgaba su cache de tasa → quedaba el IVA del cliente
+    // anterior pegado al volver a un cliente exento.
+    taxExemptByEntity: (l as any).taxExemptByEntity === true,
+
     partial: false,
 
     // Fase 2.1 — campos que sales/preview empezó a exponer en Fase 2A.7.

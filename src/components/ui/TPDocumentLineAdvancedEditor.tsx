@@ -2577,7 +2577,22 @@ export function TPDocumentLineAdvancedEditor({
                 // El cache se ignora si el artículo cambió (no filtramos
                 // la rate del artículo viejo a uno nuevo).
                 if (!rateFromBackend) {
-                  const cached = lastTaxRateByLine.current.get(l.id);
+                  // Guard anti-stale: si la línea tiene impuesto CERO explícito
+                  // (sin override, sin breakdown, taxAmount 0) el cache NO debe
+                  // resucitar una tasa de otro cliente/contexto (ej.: volver a
+                  // un cliente exento dejaba el 21% del cliente anterior vía
+                  // cache). Una tasa cacheada nunca pisa un impuesto 0 real.
+                  const explicitZeroTax =
+                    !override &&
+                    items.length === 0 &&
+                    typeof l.taxAmount === "number" &&
+                    l.taxAmount === 0;
+                  if (explicitZeroTax) {
+                    lastTaxRateByLine.current.delete(l.id);
+                  }
+                  const cached = explicitZeroTax
+                    ? undefined
+                    : lastTaxRateByLine.current.get(l.id);
                   if (cached && cached.articleId === l.articleId && cached.rate > 0) {
                     taxRateStable = cached.rate;
                   }

@@ -13,7 +13,7 @@ import {
   applyTransientManualPrice,
   applyManualTaxRate,
   buildPatchedLine,
-  clearLineTaxOverrideForClientChange,
+  resetLineTaxForClientChange,
 } from "../patchLineHelpers";
 import type { DocumentLine } from "../../document-types";
 
@@ -270,33 +270,63 @@ describe("buildPatchedLine", () => {
   });
 });
 
-// ─── clearLineTaxOverrideForClientChange ───────────────────────────────────
+// ─── resetLineTaxForClientChange ───────────────────────────────────────────
 
-describe("clearLineTaxOverrideForClientChange", () => {
-  it("limpia manualOverrides.tax + pricingMeta.taxOverride + manualTaxAppliesTo", () => {
+describe("resetLineTaxForClientChange", () => {
+  it("resetea override + taxAmount + taxBreakdown + exención + total c/imp.", () => {
     const line = makeLine({
+      taxAmount: 21,
+      lineTotal: 100,
+      lineTotalWithTax: 121,
       manualOverrides: { price: true, discount: true, tax: true } as any,
       pricingMeta: {
         taxOverride: { mode: "PERCENT", value: 21, appliesTo: "TOTAL" },
         manualTaxAppliesTo: "METAL",
-        taxExemptByEntity: true,
+        taxExemptByEntity: false,
+        taxBreakdown: [{ name: "IVA", rate: 21, taxAmount: 21 }],
       } as any,
     });
-    const out = clearLineTaxOverrideForClientChange(line);
-    // Tax limpiado.
+    const out = resetLineTaxForClientChange(line);
     expect(out.manualOverrides?.tax).toBeUndefined();
     expect(out.pricingMeta?.taxOverride ?? null).toBeNull();
     expect((out.pricingMeta as any)?.manualTaxAppliesTo ?? null).toBeNull();
+    expect(out.pricingMeta?.taxBreakdown).toEqual([]);
+    expect(out.pricingMeta?.taxExemptByEntity).toBeUndefined();
+    expect(out.taxAmount).toBe(0);
+    expect(out.lineTotalWithTax).toBe(100); // = lineTotal (neto, sin IVA viejo)
     // Precio/bonificación manual NO se tocan.
     expect(out.manualOverrides?.price).toBe(true);
     expect(out.manualOverrides?.discount).toBe(true);
     // No muta el original.
-    expect(line.manualOverrides?.tax).toBe(true);
+    expect(line.taxAmount).toBe(21);
     expect(out).not.toBe(line);
   });
 
-  it("preserva manualPrice / manualDiscount (solo limpia impuesto)", () => {
+  it("escenario B(IVA 21%) → A(exento) Recalcular: no queda 21 pegado", () => {
+    // Estado que dejó el cliente B (normal, 21%) hidratado en la línea.
+    const lineFromClientB = makeLine({
+      taxAmount: 21,
+      lineTotal: 100,
+      lineTotalWithTax: 121,
+      pricingMeta: {
+        taxExemptByEntity: false,
+        taxBreakdown: [{ name: "IVA 21%", rate: 21, taxAmount: 21 }],
+      } as any,
+    });
+    // Al "Recalcular" volviendo al cliente A (exento) la línea queda SIN
+    // rastro del 21% — el preview de A (exento) la rehidrata a 0 autoritativo.
+    const out = resetLineTaxForClientChange(lineFromClientB);
+    expect(out.taxAmount).toBe(0);
+    expect(out.pricingMeta?.taxBreakdown).toEqual([]);
+    expect(out.pricingMeta?.taxExemptByEntity).toBeUndefined();
+    expect(out.lineTotalWithTax).toBe(100);
+  });
+
+  it("preserva manualPrice / manualDiscount / unitPrice / lineTotal", () => {
     const line = makeLine({
+      taxAmount: 50,
+      unitPrice: 200,
+      lineTotal: 200,
       manualOverrides: { tax: true, price: true } as any,
       pricingMeta: {
         taxOverride: { mode: "AMOUNT", value: 50 },
@@ -304,22 +334,20 @@ describe("clearLineTaxOverrideForClientChange", () => {
         manualDiscount: { mode: "PERCENT", value: 5 },
       } as any,
     });
-    const out = clearLineTaxOverrideForClientChange(line);
+    const out = resetLineTaxForClientChange(line);
     expect(out.pricingMeta?.taxOverride ?? null).toBeNull();
     expect(out.pricingMeta?.manualPrice).toBe(999);
     expect(out.pricingMeta?.manualDiscount).toEqual({ mode: "PERCENT", value: 5 });
+    expect(out.unitPrice).toBe(200);
+    expect(out.lineTotal).toBe(200);
   });
 
-  it("no-op (misma referencia) cuando la línea no tiene estado de impuesto manual", () => {
+  it("no-op (misma referencia) cuando la línea no tiene NADA de impuesto", () => {
     const line = makeLine({
+      taxAmount: 0,
       manualOverrides: { price: true } as any,
       pricingMeta: { manualPrice: 100 } as any,
     });
-    expect(clearLineTaxOverrideForClientChange(line)).toBe(line);
-  });
-
-  it("no-op cuando no hay manualOverrides ni pricingMeta", () => {
-    const line = makeLine();
-    expect(clearLineTaxOverrideForClientChange(line)).toBe(line);
+    expect(resetLineTaxForClientChange(line)).toBe(line);
   });
 });

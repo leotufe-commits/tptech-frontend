@@ -225,31 +225,45 @@ export function buildPatchedLine(args: {
   return out;
 }
 
-// ─── clearLineTaxOverrideForClientChange ───────────────────────────────────
+// ─── resetLineTaxForClientChange ───────────────────────────────────────────
 
 /**
- * Limpia SOLO el override manual de IMPUESTO de una línea, para que al
- * "Recalcular precios" con un cliente nuevo la hidratación de impuesto/
- * exención del cliente nuevo sea AUTORITATIVA y no quede pegado el
- * `taxOverride` del cliente anterior.
+ * "Recalcular precios" con un cliente nuevo: el cliente nuevo es 100%
+ * AUTORITATIVO. Esta función deja la línea SIN ningún estado de impuesto del
+ * cliente anterior, para que la rehidratación del preview del cliente nuevo
+ * sea la única fuente (si es exento → 0/badge; si no → su impuesto).
  *
- * Limpia exactamente:
- *   - `manualOverrides.tax` (el flag que hace que `buildSalePreviewPayload`
- *     reenvíe el override → ganaba sobre la nueva hidratación).
- *   - `pricingMeta.taxOverride` (valor del override).
- *   - `pricingMeta.manualTaxAppliesTo` (override de SOLO la base del impuesto).
+ * Limpia / resetea (todo lo que podía sobrevivir y "pegarse"):
+ *   - `manualOverrides.tax`        → el flag que hacía que
+ *     `buildSalePreviewPayload` reenviara el override del cliente anterior.
+ *   - `pricingMeta.taxOverride`    → valor del override manual.
+ *   - `pricingMeta.manualTaxAppliesTo` → override de SOLO la base del impuesto.
+ *   - `pricingMeta.taxBreakdown`   → []  (fuente de la tasa visual: sin esto
+ *     el editor podía servir la tasa 21% cacheada del cliente anterior).
+ *   - `pricingMeta.taxExemptByEntity` → undefined (pendiente: lo fija el
+ *     preview del cliente nuevo de forma autoritativa).
+ *   - `taxAmount`                  → 0  (importe stale del cliente anterior).
+ *   - `lineTotalWithTax`           → `lineTotal` (neto, sin el impuesto viejo;
+ *     NO es recálculo de pricing — es quitar el impuesto stale hasta que el
+ *     preview re-hidrate). El motor backend sigue siendo la fuente real.
  *
  * NO toca: precio/bonificación manual (`price`/`discount` overrides,
- * `manualPrice`, `manualDiscount*`), cantidad, ni `taxExemptByEntity`
- * (lo rehidrata el preview del cliente nuevo). Pure — clona, no muta.
+ * `manualPrice`, `manualDiscount*`), cantidad, `unitPrice`, `lineTotal`.
+ * Pure — clona, no muta. Si la línea no tiene NADA de impuesto, devuelve la
+ * misma referencia (identidad estable para líneas sin tocar).
  */
-export function clearLineTaxOverrideForClientChange(line: DocumentLine): DocumentLine {
+export function resetLineTaxForClientChange(line: DocumentLine): DocumentLine {
   const mo = line.manualOverrides;
-  const meta = line.pricingMeta;
+  const meta = line.pricingMeta as
+    | (NonNullable<DocumentLine["pricingMeta"]> & { manualTaxAppliesTo?: unknown })
+    | undefined;
   const hadTaxState =
     mo?.tax === true ||
     (meta?.taxOverride ?? null) !== null ||
-    (meta as { manualTaxAppliesTo?: unknown } | undefined)?.manualTaxAppliesTo != null;
+    meta?.manualTaxAppliesTo != null ||
+    (meta?.taxBreakdown?.length ?? 0) > 0 ||
+    meta?.taxExemptByEntity != null ||
+    (typeof line.taxAmount === "number" && line.taxAmount !== 0);
   if (!hadTaxState) return line;
 
   const nextManualOverrides = mo ? { ...mo } : undefined;
@@ -259,10 +273,16 @@ export function clearLineTaxOverrideForClientChange(line: DocumentLine): Documen
   if (nextMeta) {
     nextMeta.taxOverride = null;
     (nextMeta as { manualTaxAppliesTo?: unknown }).manualTaxAppliesTo = null;
+    nextMeta.taxBreakdown = [];
+    nextMeta.taxExemptByEntity = undefined;
   }
 
   return {
     ...line,
+    taxAmount: 0,
+    ...(typeof line.lineTotal === "number"
+      ? { lineTotalWithTax: line.lineTotal }
+      : {}),
     ...(nextManualOverrides ? { manualOverrides: nextManualOverrides } : {}),
     ...(nextMeta ? { pricingMeta: nextMeta } : {}),
   };
