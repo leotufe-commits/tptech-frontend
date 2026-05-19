@@ -21,7 +21,7 @@
 // ============================================================================
 
 import React, { useCallback, useEffect, useRef, useState } from "react";
-import { FileText, ScrollText, Paperclip, RotateCcw, Save, Lock } from "lucide-react";
+import { FileText, ScrollText, RotateCcw, Save, Lock } from "lucide-react";
 
 import { TPTabs } from "../../../components/ui/TPTabs";
 import TPTextarea from "../../../components/ui/TPTextarea";
@@ -53,8 +53,14 @@ export type ObservationsTermsAttachmentsCardProps = {
    */
   onSaveAsDefault: () => Promise<void>;
 
-  /** Id del Receipt persistido. null → adjuntos deshabilitados. */
+  /** Id del Receipt persistido. null → todavía no se guardó el borrador. */
   receiptId: string | null;
+  /**
+   * Garantiza un Receipt persistido y devuelve su id (auto-guarda el
+   * borrador con el flujo existente si hace falta). Idempotente: no
+   * duplica si ya existe. Devuelve `null` si no se pudo (el padre toastea).
+   */
+  onEnsureReceiptId: () => Promise<string | null>;
 };
 
 type TabValue = "notes" | "terms" | "attachments";
@@ -81,7 +87,7 @@ export function ObservationsTermsAttachmentsCard(
     terms, onTermsChange,
     templateTerms,
     canSaveAsDefault, onSaveAsDefault,
-    receiptId,
+    receiptId, onEnsureReceiptId,
   } = props;
 
   const [tab, setTab] = useState<TabValue>("notes");
@@ -111,6 +117,8 @@ export function ObservationsTermsAttachmentsCard(
   const [items, setItems] = useState<TPAttachmentItem[]>([]);
   const [listLoading, setListLoading] = useState(false);
   const [uploading, setUploading] = useState(false);
+  // Auto-guardado del borrador en curso (disparado al adjuntar sin Receipt).
+  const [ensuringDraft, setEnsuringDraft] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const loadedForRef = useRef<string | null>(null);
 
@@ -144,13 +152,28 @@ export function ObservationsTermsAttachmentsCard(
   }, [receiptId]);
 
   async function handleUpload(files: File[]) {
-    if (!receiptId || files.length === 0 || uploading) return;
+    if (files.length === 0 || uploading || ensuringDraft) return;
+
+    // Si todavía no hay Receipt persistido, auto-guardar el borrador con
+    // el flujo existente y continuar con la subida. Idempotente: si ya
+    // existe, `onEnsureReceiptId` devuelve el id sin re-crear (no duplica).
+    let id = receiptId;
+    if (!id) {
+      setEnsuringDraft(true);
+      try {
+        id = await onEnsureReceiptId();
+      } finally {
+        setEnsuringDraft(false);
+      }
+      if (!id) return; // el padre ya mostró el toast del error
+    }
+
     setUploading(true);
     try {
       for (const f of files) {
-        await receiptsApi.addAttachment(receiptId, f);
+        await receiptsApi.addAttachment(id, f);
       }
-      await reloadAttachments(receiptId);
+      await reloadAttachments(id);
       toast.success(files.length === 1 ? "Adjunto subido." : `${files.length} adjuntos subidos.`);
     } catch (e: unknown) {
       toast.error(errMsg(e, "No se pudo subir el adjunto."));
@@ -266,26 +289,23 @@ export function ObservationsTermsAttachmentsCard(
 
       {/* ── Adjuntos ──────────────────────────────────────────────────────── */}
       {tab === "attachments" && (
-        receiptId ? (
-          <TPAttachmentManager
-            items={items}
-            onUpload={handleUpload}
-            onDelete={handleDelete}
-            deletingId={deletingId}
-            loading={listLoading || uploading}
-            disabled={uploading}
-            emptyText={listLoading ? "Cargando adjuntos…" : "Todavía no hay adjuntos."}
-          />
-        ) : (
-          <div className="flex flex-col items-center justify-center gap-2 rounded-md border border-dashed border-border bg-surface2/30 px-4 py-8 text-center">
-            <Paperclip size={20} className="text-muted" />
-            <div className="text-sm font-medium text-text">Guardá el borrador primero</div>
-            <div className="max-w-xs text-xs text-muted">
-              Los archivos se adjuntan al comprobante. Usá “Guardar borrador”
-              para crearlo y después vas a poder subir adjuntos acá.
-            </div>
-          </div>
-        )
+        <TPAttachmentManager
+          items={items}
+          onUpload={handleUpload}
+          onDelete={receiptId ? handleDelete : undefined}
+          deletingId={deletingId}
+          loading={listLoading || uploading || ensuringDraft}
+          disabled={uploading || ensuringDraft}
+          emptyText={
+            ensuringDraft
+              ? "Guardando borrador…"
+              : listLoading
+                ? "Cargando adjuntos…"
+                : receiptId
+                  ? "Todavía no hay adjuntos."
+                  : "Arrastrá archivos o hacé click para adjuntar. Si la factura aún no fue guardada, se guardará automáticamente como borrador."
+          }
+        />
       )}
 
       <ConfirmDeleteDialog

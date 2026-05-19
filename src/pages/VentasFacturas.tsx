@@ -1242,8 +1242,12 @@ function InvoiceEditorModal(props: {
   // Id del Receipt persistido (borrador guardado en backend). Habilita
   // adjuntos. Se resetea cuando se abre un comprobante distinto.
   const [savedReceiptId, setSavedReceiptId] = useState<string | null>(null);
+  // Dedupe de guardado en vuelo: evita crear 2 borradores si el usuario
+  // dispara guardado manual y auto-guardado por adjunto casi simultáneos.
+  const ensureReceiptPromiseRef = useRef<Promise<string | null> | null>(null);
   useEffect(() => {
     setSavedReceiptId(null);
+    ensureReceiptPromiseRef.current = null;
   }, [draft.id]);
 
   // Almacén favorito del usuario (con fallback al favorito del tenant si el
@@ -1869,21 +1873,20 @@ function InvoiceEditorModal(props: {
 
   /**
    * Persiste el draft contra el backend (`POST /receipts`) en estado DRAFT.
-   * No dispara efectos colaterales (stock, cuenta corriente). El frontend
-   * mantiene su estado local — el backend devuelve el receipt con su id y
-   * code (placeholder DRAFT-...).
-   */
-  /**
-   * FASE 8.2.5c — Orchestrator DELGADO de `saveDraftToBackend`.
-   *
-   * Toda la lógica pura (filtro de líneas reales + assembly del payload +
-   * line transformation + snapshot versionado) vive en
+   * No dispara efectos colaterales (stock, cuenta corriente). La lógica pura
+   * (filtro de líneas + assembly del payload + snapshot) vive en
    * `src/lib/sales/buildReceiptDraftPayload.ts` con tests unitarios.
    *
-   * Acá queda lo NO-puro: guard `draftSaving`, toasts, setState, async POST.
+   * Idempotente: garantiza un Receipt persistido y devuelve su id.
+   *   · Si ya hay `savedReceiptId` → lo devuelve sin re-crear (no duplica).
+   *   · Si hay un guardado en vuelo → reusa esa promesa (dedupe).
+   *   · Si no → arma el payload con el flujo existente y crea el borrador.
+   * Devuelve `null` (con toast) si no se pudo (sin líneas / error backend).
+   * No recalcula nada: el payload sale de `buildReceiptDraftPayload`.
    */
-  async function saveDraftToBackend() {
-    if (draftSaving) return;
+  async function ensureSavedReceiptId(): Promise<string | null> {
+    if (savedReceiptId) return savedReceiptId;
+    if (ensureReceiptPromiseRef.current) return ensureReceiptPromiseRef.current;
 
     const built = buildReceiptDraftPayload({
       draft,
@@ -1892,19 +1895,36 @@ function InvoiceEditorModal(props: {
     });
     if (!built.ok) {
       toast.error("Agregá al menos una línea para guardar el borrador.");
-      return;
+      return null;
     }
 
-    setDraftSaving(true);
-    try {
-      const saved = await receiptsApi.createDraft(built.payload);
-      setSavedReceiptId(saved.id);
-      toast.success(`Borrador guardado (id ${saved.id.slice(0, 8)}…).`);
-    } catch (e: any) {
-      toast.error(e?.message || "No se pudo guardar el borrador.");
-    } finally {
-      setDraftSaving(false);
-    }
+    const p = (async (): Promise<string | null> => {
+      setDraftSaving(true);
+      try {
+        const saved = await receiptsApi.createDraft(built.payload);
+        setSavedReceiptId(saved.id);
+        toast.success(`Borrador guardado (id ${saved.id.slice(0, 8)}…).`);
+        return saved.id;
+      } catch (e: unknown) {
+        toast.error(e instanceof Error ? e.message : "No se pudo guardar el borrador.");
+        return null;
+      } finally {
+        setDraftSaving(false);
+        ensureReceiptPromiseRef.current = null;
+      }
+    })();
+    ensureReceiptPromiseRef.current = p;
+    return p;
+  }
+
+  /**
+   * FASE 8.2.5c — Orchestrator DELGADO de `saveDraftToBackend`.
+   * Delega en `ensureSavedReceiptId` para no duplicar borradores si ya
+   * existe uno (botón "Guardar borrador" + auto-guardado por adjunto).
+   */
+  async function saveDraftToBackend() {
+    if (draftSaving) return;
+    await ensureSavedReceiptId();
   }
 
   /**
@@ -4783,6 +4803,7 @@ function InvoiceEditorModal(props: {
               canSaveAsDefault={can("COMPANY_SETTINGS:EDIT")}
               onSaveAsDefault={handleSaveTermsAsDefault}
               receiptId={savedReceiptId}
+              onEnsureReceiptId={ensureSavedReceiptId}
             />
           </TPCollapse>
 
