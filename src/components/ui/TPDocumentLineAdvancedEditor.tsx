@@ -2267,6 +2267,20 @@ export function TPDocumentLineAdvancedEditor({
 
                 const displayValue = discIsPct ? pctEff : unitEff;
 
+                // Bonificación EFECTIVA aplicada por el motor (`l.discountAmount`,
+                // hidratado desde `pl.lineDiscount`). El label verde y el badge
+                // "Cliente"/"Aplicada por el sistema" SOLO deben renderizarse si
+                // hay un descuento realmente aplicado (> 0). Sin esto, al pasar
+                // de un cliente con bonificación a uno SIN bonificación quedaba
+                // el badge "Cliente" + un monto residual ("−US$ 0.01") aunque
+                // el descuento efectivo fuese 0. El valor lo gobierna el
+                // backend; acá solo se decide si mostrar (cero recálculo).
+                const appliedDiscount =
+                  typeof l.discountAmount === "number" && Number.isFinite(l.discountAmount)
+                    ? l.discountAmount
+                    : 0;
+                const hasAppliedDiscount = appliedDiscount > 0;
+
                 // Fase 2 — Opción A: el input de bonificación es siempre
                 // editable mientras el caller proporcione `onApplyLineOverrides`
                 // (Factura). Cuando el usuario edita, automáticamente pasa a
@@ -2435,7 +2449,7 @@ export function TPDocumentLineAdvancedEditor({
                             <TPBadge tone="warning" size="sm">Bonificación manual</TPBadge>
                           </div>
                         )}
-                        {(isClientBonif || inhChipOnly) && (
+                        {(isClientBonif || inhChipOnly) && hasAppliedDiscount && (
                           <div className="mt-0.5 flex items-center gap-1">
                             <TPBadge tone="info" size="sm">Cliente</TPBadge>
                             {inhChipOnly && (
@@ -2453,18 +2467,11 @@ export function TPDocumentLineAdvancedEditor({
                             mostraba `bonifLineTotal` (= md.value% ×
                             basePrice, recálculo local) que ignoraba el
                             appliesTo → el label no cambiaba. */}
-                        {(() => {
-                          const eng = typeof l.discountAmount === "number"
-                            && Number.isFinite(l.discountAmount)
-                            ? l.discountAmount
-                            : 0;
-                          if (eng <= 0) return null;
-                          return (
-                            <div className="mt-0.5 text-[11px] font-semibold tabular-nums text-emerald-500">
-                              −{mFmt(eng)}
-                            </div>
-                          );
-                        })()}
+                        {hasAppliedDiscount && (
+                          <div className="mt-0.5 text-[11px] font-semibold tabular-nums text-emerald-500">
+                            −{mFmt(appliedDiscount)}
+                          </div>
+                        )}
                         {/* Paso 1 — descuento automático (promo / desc.
                             cantidad) sin manual fijado: chip compacto `Auto`
                             + monto efectivo. La aclaración ("si editás

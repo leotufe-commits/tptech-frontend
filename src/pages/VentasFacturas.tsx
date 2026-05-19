@@ -83,7 +83,7 @@ import {
   detectManualEdit,
   buildPatchedLine,
   computeManualTax as computeManualTaxLib,
-  resetLineTaxForClientChange,
+  resetLineForClientChange,
 } from "../lib/sales/patchLineHelpers";
 import {
   normalizeEntityCurrency,
@@ -4273,12 +4273,13 @@ function InvoiceEditorModal(props: {
       ...cur,
       ...clientDataPatch,
       ...pricingPatch,
-      // "Recalcular" = el cliente nuevo es AUTORITATIVO: reseteamos TODO el
-      // estado de impuesto del cliente anterior (override + taxAmount +
-      // taxBreakdown + exención + total c/imp.) para que no quede pegado
-      // (ej. IVA 21% al volver a un cliente exento). El preview del cliente
-      // nuevo es la única fuente. Precio/bonificación manual NO se tocan.
-      lines: cur.lines.map(resetLineTaxForClientChange),
+      // "Recalcular" = el cliente nuevo es AUTORITATIVO: reseteamos el
+      // estado de IMPUESTO y de BONIFICACIÓN HEREDADA del cliente anterior
+      // (override/taxAmount/taxBreakdown/exención + inheritedDiscount/
+      // discountAmount) para que no quede pegado (ej. IVA 21% al volver a un
+      // cliente exento, o "Cliente −US$ 0.01" stale). El preview del cliente
+      // nuevo es la única fuente. Precio/bonificación MANUAL NO se tocan.
+      lines: cur.lines.map(resetLineForClientChange),
     };
     const pend = pendingClientDetailRef.current;
     if (pend && pend.clientId === nextClient.id) {

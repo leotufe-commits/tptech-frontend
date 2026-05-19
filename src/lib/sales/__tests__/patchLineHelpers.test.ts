@@ -13,7 +13,7 @@ import {
   applyTransientManualPrice,
   applyManualTaxRate,
   buildPatchedLine,
-  resetLineTaxForClientChange,
+  resetLineForClientChange,
 } from "../patchLineHelpers";
 import type { DocumentLine } from "../../document-types";
 
@@ -270,10 +270,10 @@ describe("buildPatchedLine", () => {
   });
 });
 
-// ─── resetLineTaxForClientChange ───────────────────────────────────────────
+// ─── resetLineForClientChange ──────────────────────────────────────────────
 
-describe("resetLineTaxForClientChange", () => {
-  it("resetea override + taxAmount + taxBreakdown + exención + total c/imp.", () => {
+describe("resetLineForClientChange", () => {
+  it("resetea impuesto (override + taxAmount + breakdown + exención + total c/imp.)", () => {
     const line = makeLine({
       taxAmount: 21,
       lineTotal: 100,
@@ -286,40 +286,52 @@ describe("resetLineTaxForClientChange", () => {
         taxBreakdown: [{ name: "IVA", rate: 21, taxAmount: 21 }],
       } as any,
     });
-    const out = resetLineTaxForClientChange(line);
+    const out = resetLineForClientChange(line);
     expect(out.manualOverrides?.tax).toBeUndefined();
     expect(out.pricingMeta?.taxOverride ?? null).toBeNull();
     expect((out.pricingMeta as any)?.manualTaxAppliesTo ?? null).toBeNull();
     expect(out.pricingMeta?.taxBreakdown).toEqual([]);
     expect(out.pricingMeta?.taxExemptByEntity).toBeUndefined();
     expect(out.taxAmount).toBe(0);
-    expect(out.lineTotalWithTax).toBe(100); // = lineTotal (neto, sin IVA viejo)
+    expect(out.lineTotalWithTax).toBe(100);
     // Precio/bonificación manual NO se tocan.
     expect(out.manualOverrides?.price).toBe(true);
     expect(out.manualOverrides?.discount).toBe(true);
-    // No muta el original.
-    expect(line.taxAmount).toBe(21);
+    expect(line.taxAmount).toBe(21); // no muta el original
     expect(out).not.toBe(line);
   });
 
-  it("escenario B(IVA 21%) → A(exento) Recalcular: no queda 21 pegado", () => {
-    // Estado que dejó el cliente B (normal, 21%) hidratado en la línea.
-    const lineFromClientB = makeLine({
-      taxAmount: 21,
-      lineTotal: 100,
-      lineTotalWithTax: 121,
+  it("resetea bonificación HEREDADA (inheritedDiscount + appliesTo + discountAmount)", () => {
+    // Estado que dejó el cliente A (13% heredado) hidratado en la línea.
+    const lineFromClientA = makeLine({
+      discountAmount: 13,
       pricingMeta: {
-        taxExemptByEntity: false,
-        taxBreakdown: [{ name: "IVA 21%", rate: 21, taxAmount: 21 }],
+        inheritedDiscount: {
+          ruleType: "DISCOUNT", valueType: "PERCENTAGE", value: 13,
+          applyOn: "TOTAL", origin: "CLIENT",
+        },
+        inheritedDiscountAppliesTo: "TOTAL",
       } as any,
     });
-    // Al "Recalcular" volviendo al cliente A (exento) la línea queda SIN
-    // rastro del 21% — el preview de A (exento) la rehidrata a 0 autoritativo.
-    const out = resetLineTaxForClientChange(lineFromClientB);
-    expect(out.taxAmount).toBe(0);
-    expect(out.pricingMeta?.taxBreakdown).toEqual([]);
-    expect(out.pricingMeta?.taxExemptByEntity).toBeUndefined();
-    expect(out.lineTotalWithTax).toBe(100);
+    // Recalcular al cliente B (sin descuento) → SIN rastro del 13%/"Cliente":
+    // ni badge ni "−US$ 0.01". El preview de B lo re-hidrata a 0 autoritativo.
+    const out = resetLineForClientChange(lineFromClientA);
+    expect(out.discountAmount).toBe(0);
+    expect((out.pricingMeta as any)?.inheritedDiscount ?? null).toBeNull();
+    expect((out.pricingMeta as any)?.inheritedDiscountAppliesTo ?? null).toBeNull();
+  });
+
+  it("escenario A(13%) → B(0) Recalcular: no queda 'Cliente −US$ 0.01' pegado", () => {
+    const lineFromClientA = makeLine({
+      discountAmount: 0.01, // residual stale del cliente anterior
+      pricingMeta: {
+        inheritedDiscount: { ruleType: "DISCOUNT", valueType: "PERCENTAGE", value: 13, applyOn: "TOTAL", origin: "CLIENT" },
+        inheritedDiscountAppliesTo: "TOTAL",
+      } as any,
+    });
+    const out = resetLineForClientChange(lineFromClientA);
+    expect(out.discountAmount).toBe(0);
+    expect((out.pricingMeta as any)?.inheritedDiscount ?? null).toBeNull();
   });
 
   it("preserva manualPrice / manualDiscount / unitPrice / lineTotal", () => {
@@ -334,7 +346,7 @@ describe("resetLineTaxForClientChange", () => {
         manualDiscount: { mode: "PERCENT", value: 5 },
       } as any,
     });
-    const out = resetLineTaxForClientChange(line);
+    const out = resetLineForClientChange(line);
     expect(out.pricingMeta?.taxOverride ?? null).toBeNull();
     expect(out.pricingMeta?.manualPrice).toBe(999);
     expect(out.pricingMeta?.manualDiscount).toEqual({ mode: "PERCENT", value: 5 });
@@ -342,12 +354,13 @@ describe("resetLineTaxForClientChange", () => {
     expect(out.lineTotal).toBe(200);
   });
 
-  it("no-op (misma referencia) cuando la línea no tiene NADA de impuesto", () => {
+  it("no-op (misma referencia) cuando no hay NADA reseteable", () => {
     const line = makeLine({
       taxAmount: 0,
+      discountAmount: 0,
       manualOverrides: { price: true } as any,
       pricingMeta: { manualPrice: 100 } as any,
     });
-    expect(resetLineTaxForClientChange(line)).toBe(line);
+    expect(resetLineForClientChange(line)).toBe(line);
   });
 });
