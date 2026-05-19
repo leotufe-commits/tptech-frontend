@@ -134,6 +134,13 @@ import {
 } from "../lib/sales/generateLineHeaders";
 import { priceListsApi, type PriceListRow } from "../services/price-lists";
 import { salesChannelsApi, type SalesChannelRow } from "../services/sales-channels";
+import {
+  resolveDefaultWarehouseId,
+  resolveDefaultId,
+  resolveDefaultCurrencyCode,
+  resolveCurrencyRate,
+  userPreferencesApi,
+} from "../services/user-preferences";
 import { listUnits, type Unit as UnitRow } from "../services/units";
 import { couponsApi, type ValidateCouponResult } from "../services/coupons";
 import { salesApi, type SaleDocumentTotals, type SalePreviewResult, type SalePreviewLine } from "../services/sales";
@@ -698,6 +705,8 @@ export default function VentasFacturas() {
   const [parentPriceLists,    setParentPriceLists]    = useState<PriceListRow[]>([]);
   const [parentWarehouses,    setParentWarehouses]    = useState<WarehouseRow[]>([]);
   const [parentSalesChannels, setParentSalesChannels] = useState<SalesChannelRow[]>([]);
+  const [parentSellers,       setParentSellers]       = useState<SellerRow[]>([]);
+  const [parentCurrencies,    setParentCurrencies]    = useState<CurrencyRow[]>([]);
   const { favoriteWarehouseId: parentFavoriteWarehouseId } = useInventory();
 
   useEffect(() => {
@@ -722,6 +731,22 @@ export default function VentasFacturas() {
         setParentSalesChannels((rows ?? []).filter((c) => c.isActive && !c.deletedAt));
       })
       .catch(() => { if (!cancelled) setParentSalesChannels([]); });
+
+    sellersApi.list()
+      .then((rows) => {
+        if (cancelled) return;
+        setParentSellers((rows ?? []).filter((s) => s.isActive && !s.deletedAt));
+      })
+      .catch(() => { if (!cancelled) setParentSellers([]); });
+
+    listCurrencies()
+      .then((resp: any) => {
+        if (cancelled) return;
+        const list: CurrencyRow[] = resp?.rows ?? resp ?? [];
+        setParentCurrencies(list.filter((c) => c.isActive));
+      })
+      .catch(() => { if (!cancelled) setParentCurrencies([]); });
+
     return () => { cancelled = true; };
   }, []);
 
@@ -843,7 +868,17 @@ export default function VentasFacturas() {
     // cargan al montar la página). Si los catálogos aún no llegaron, los
     // campos quedan vacíos y el useEffect coordinado del modal los aplica
     // cuando el catálogo correspondiente llegue. Red de seguridad doble.
-    +
+    //
+    // Cadena de prioridad (en creación el cliente aún no está elegido, así
+    // que el paso "default comercial del cliente" no aplica todavía):
+    //   UserPreference → favorito de la joyería → primer activo.
+    //
+    // ⚠️ La preferencia se trae FRESCA acá (una sola fuente, sin cache de
+    // montaje): refleja lo recién guardado en "Mis preferencias" y al usuario
+    // actual tras un quick-switch. `userPreferencesApi.get()` nunca tira
+    // (devuelve preferencia vacía si falla).
+    const pref = await userPreferencesApi.get();
+
     // Precarga de Términos desde la plantilla FACTURA (DocumentTemplate.
     // footerTerms = fuente de verdad). Nunca pisa lo que el usuario escriba:
     // como en creación `terms` arranca vacío, se aplica el footerTerms tal
@@ -858,11 +893,18 @@ export default function VentasFacturas() {
     setTemplateTerms(tplTerms);
 
     const favList    = parentPriceLists.find((p) => p.isFavorite && p.isActive && !p.deletedAt);
-    const favChannel = parentSalesChannels.find((c) => c.isFavorite && c.isActive);
-    const favWh      =
-      parentFavoriteWarehouseId && parentWarehouses.some((w) => w.id === parentFavoriteWarehouseId)
-        ? parentFavoriteWarehouseId
-        : "";
+    const favChannel = parentSalesChannels.find((c) => c.isFavorite && c.isActive && !c.deletedAt);
+    const favSeller  = parentSellers.find((sx) => sx.isFavorite && sx.isActive && !sx.deletedAt);
+
+    const favWh        = resolveDefaultWarehouseId(parentFavoriteWarehouseId, parentWarehouses);
+    const sellerId     = resolveDefaultId(pref?.defaultSellerId, favSeller?.id, parentSellers);
+    const listId       = resolveDefaultId(pref?.defaultPriceListId, favList?.id, parentPriceLists);
+    const channelId    = resolveDefaultId(pref?.defaultChannelId, favChannel?.id, parentSalesChannels);
+    // Moneda como CÓDIGO (no id): UserPreference → moneda base → "ARS".
+    const currencyCode = resolveDefaultCurrencyCode(pref?.defaultCurrencyId, parentCurrencies, "ARS");
+    // Cotización vigente para esa moneda (mismo flujo que el cambio manual
+    // en el modal de FX): base → 1; no base → latestRate del catálogo.
+    const currencyRate = resolveCurrencyRate(currencyCode, parentCurrencies);
 
     const blank: SalesInvoice = {
       id:               uid(),
@@ -872,15 +914,15 @@ export default function VentasFacturas() {
       client:           "",
       salesOrderNumber: "",
       deliveryNumber:   "",
-      currency:         "ARS",
-      fxRate:           1,
+      currency:         currencyCode,
+      fxRate:           currencyRate,
       taxPercent:       0,
-      seller:           "",
+      seller:           sellerId,
       warehouse:        favWh,
       paymentTerm:      "",
       referenceNumber:  "",
       notes:            "",
-      terms:            "",
+      terms:            tplTerms,
       subtotal:         0,
       discountAmount:   0,
       taxAmount:        0,
@@ -888,12 +930,13 @@ export default function VentasFacturas() {
       paidAmount:       0,
       lines:            [],
       status:           "DRAFT",
-      priceListId:      favList?.id,
-      channelId:        favChannel?.id,
+      priceListId:      listId || undefined,
+      channelId:        channelId || undefined,
       couponCode:       undefined,
       shipping:         { methodId: "pickup", cost: 0, address: "", carrier: "" },
       discountGlobal:   { type: "PERCENT", value: 0, reason: "" },
     };
+
     setDraft(blank);
     setIsNew(true);
     setEditorOpen(true);
