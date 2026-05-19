@@ -99,18 +99,21 @@ export function DiscountCard(props: DiscountCardProps): React.ReactElement {
 
       {isClientInherited && (
         <div className="mt-2 flex flex-col gap-2 rounded-md border border-border bg-surface2/30 p-2">
-          <div className="flex items-center gap-1.5 text-[11px] font-medium text-muted">
-            <span className="rounded-full border border-border bg-card px-1.5 py-0.5 text-[10px]">
+          <div className="flex items-start gap-1.5 text-[11px] font-medium text-muted">
+            <span className="shrink-0 rounded-full border border-border bg-card px-1.5 py-0.5 text-[10px]">
               Heredado del cliente
             </span>
-            <span>La aplica el sistema automáticamente.</span>
+            <span>
+              La bonificación del cliente ya se aplica automáticamente. Este
+              descuento se sumará como ajuste manual del comprobante.
+            </span>
           </div>
           <TPButton
             variant="secondary"
             className="h-8 self-start text-xs"
             onClick={handleReplaceClientDiscount}
           >
-            Reemplazar bonificación del cliente
+            Agregar descuento manual adicional
           </TPButton>
         </div>
       )}
