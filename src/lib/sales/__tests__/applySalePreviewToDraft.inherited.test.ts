@@ -52,7 +52,8 @@ describe("applySalePreviewToDraft — bonificación heredada (origin CLIENT)", (
     );
     const m = res.lines[0].pricingMeta!;
     expect(m.inheritedDiscount).toEqual({
-      ruleType: "DISCOUNT", valueType: "PERCENTAGE", value: 13, applyOn: "TOTAL", origin: "CLIENT",
+      ruleType: "DISCOUNT", valueType: "PERCENTAGE", value: 13, applyOn: "TOTAL",
+      origin: "CLIENT", fixedAmountInBaseOnly: false,
     });
     expect(m.inheritedDiscountAppliesTo).toBe("TOTAL");
     // Anti doble aplicación: NO se materializa como override manual.
@@ -81,7 +82,8 @@ describe("applySalePreviewToDraft — bonificación heredada (origin CLIENT)", (
       }),
     );
     expect(res.lines[0].pricingMeta!.inheritedDiscount).toEqual({
-      ruleType: "DISCOUNT", valueType: "PERCENTAGE", value: 13, applyOn: "TOTAL", origin: "CLIENT",
+      ruleType: "DISCOUNT", valueType: "PERCENTAGE", value: 13, applyOn: "TOTAL",
+      origin: "CLIENT", fixedAmountInBaseOnly: false,
     });
   });
 
@@ -98,7 +100,50 @@ describe("applySalePreviewToDraft — bonificación heredada (origin CLIENT)", (
       }),
     );
     const inh = res.lines[0].pricingMeta!.inheritedDiscount!;
-    expect(inh).toEqual({ ruleType: "SURCHARGE", valueType: "PERCENTAGE", value: 5, applyOn: "METAL", origin: "CLIENT" });
+    expect(inh).toEqual({
+      ruleType: "SURCHARGE", valueType: "PERCENTAGE", value: 5, applyOn: "METAL",
+      origin: "CLIENT", fixedAmountInBaseOnly: false,
+    });
+  });
+
+  it("FIXED_AMOUNT + documento CONVERTIDO → fixedAmountInBaseOnly=true (chip-only en editor)", () => {
+    const res = applySalePreviewToDraft(
+      draft(),
+      preview({
+        clientCommercialRules: { ruleType: "DISCOUNT", valueType: "FIXED_AMOUNT", value: 20, applyOn: "TOTAL" },
+        currencyConverted: true,
+      }),
+    );
+    expect(res.lines[0].pricingMeta!.inheritedDiscount).toMatchObject({
+      valueType: "FIXED_AMOUNT", value: 20, fixedAmountInBaseOnly: true,
+    });
+  });
+
+  it("FIXED_AMOUNT + documento EN BASE (sin conversión) → fixedAmountInBaseOnly=false (muestra monto)", () => {
+    const res = applySalePreviewToDraft(
+      draft(),
+      preview({
+        clientCommercialRules: { ruleType: "DISCOUNT", valueType: "FIXED_AMOUNT", value: 20, applyOn: "TOTAL" },
+        currencyConverted: false,
+        currencyRate: 1,
+      }),
+    );
+    expect(res.lines[0].pricingMeta!.inheritedDiscount).toMatchObject({
+      valueType: "FIXED_AMOUNT", value: 20, fixedAmountInBaseOnly: false,
+    });
+  });
+
+  it("FIXED_AMOUNT + currencyRate != 1 (convertido sin flag explícito) → fixedAmountInBaseOnly=true", () => {
+    const res = applySalePreviewToDraft(
+      draft(),
+      preview({
+        clientCommercialRules: { ruleType: "DISCOUNT", valueType: "FIXED_AMOUNT", value: 20, applyOn: "TOTAL" },
+        currencyRate: 0.00058,
+      }),
+    );
+    expect(res.lines[0].pricingMeta!.inheritedDiscount).toMatchObject({
+      fixedAmountInBaseOnly: true,
+    });
   });
 });
 
@@ -111,5 +156,74 @@ describe("applySalePreviewToDraft — exención fiscal del cliente", () => {
   it("clientTaxExempt ausente/false → taxExemptByEntity falsy", () => {
     const res = applySalePreviewToDraft(draft(), preview({}));
     expect(res.lines[0].pricingMeta!.taxExemptByEntity === true).toBe(false);
+  });
+
+  // Cambio cliente exento → NO exento: el preview del cliente nuevo es
+  // AUTORITATIVO. Antes el OR `|| line.pricingMeta?.taxExemptByEntity`
+  // dejaba la exención pegada y el impuesto bloqueado en 0.
+  it("cliente exento → NO exento: NO arrastra la exención previa del draft", () => {
+    const exemptLine = {
+      ...line,
+      pricingMeta: { taxExemptByEntity: true }, // estado del cliente ANTERIOR
+    } as any;
+    const res = applySalePreviewToDraft(
+      draft({ lines: [exemptLine] }),
+      preview({ clientTaxExempt: false }), // cliente NUEVO no exento
+    );
+    expect(res.lines[0].pricingMeta!.taxExemptByEntity).toBe(false);
+  });
+
+  it("cliente NO exento → exento: el preview nuevo activa la exención", () => {
+    const res = applySalePreviewToDraft(
+      draft(),
+      preview({ clientTaxExempt: true }),
+    );
+    expect(res.lines[0].pricingMeta!.taxExemptByEntity).toBe(true);
+  });
+
+  it("flag PER-LÍNEA del motor manda aunque el doc-level diga false", () => {
+    const res = applySalePreviewToDraft(
+      draft(),
+      preview({
+        clientTaxExempt: false,
+        lines: [{
+          unitPrice: 100, lineDiscount: 0, lineTaxAmount: 0, lineSubtotal: 100,
+          lineTotal: 100, lineTotalWithTax: 100, unitTotalWithTax: 100,
+          priceSource: "PRICE_LIST", taxBreakdown: [], pricingSnapshot: {},
+          taxExemptByEntity: true,
+        } as any],
+      }),
+    );
+    expect(res.lines[0].pricingMeta!.taxExemptByEntity).toBe(true);
+  });
+});
+
+describe("applySalePreviewToDraft — bonificación fija: monto del motor sin recálculo", () => {
+  // Bug del print: bonif. fija AMOUNT 50,01 mostraba "-US$ 0.03". El draft
+  // hidratado debe llevar EXACTAMENTE `pl.lineDiscount` (lo aplicado por el
+  // motor), sin dividir por displayRate/fxRate/cantidad. La división visual
+  // (doble conversión) era el bug — acá fijamos la fuente de verdad.
+  it("discountAmount === pl.lineDiscount EXACTO (AMOUNT fijo, sin dividir)", () => {
+    const res = applySalePreviewToDraft(
+      draft(),
+      preview({
+        lines: [{
+          unitPrice: 250.04, lineDiscount: 50.01, lineTaxAmount: 0,
+          lineSubtotal: 250.04, lineTotal: 200.03, lineTotalWithTax: 200.03,
+          unitTotalWithTax: 200.03, priceSource: "PRICE_LIST",
+          taxBreakdown: [], pricingSnapshot: {},
+        } as any],
+        clientCommercialRules: {
+          ruleType: "DISCOUNT", valueType: "FIXED_AMOUNT", value: 50.01, applyOn: "TOTAL",
+        },
+        documentTotals: {
+          subtotalAfterLineDiscounts: 200.03, lineDiscountAmount: 50.01,
+          couponDiscountAmount: 0, globalDiscountAmount: 0, taxAmount: 0, total: 200.03,
+        },
+      }),
+    );
+    // El label verde lee `l.discountAmount`: debe ser 50.01, NO 0.03.
+    expect(res.lines[0].discountAmount).toBe(50.01);
+    expect(res.lines[0].discountAmount).not.toBeCloseTo(0.03, 2);
   });
 });

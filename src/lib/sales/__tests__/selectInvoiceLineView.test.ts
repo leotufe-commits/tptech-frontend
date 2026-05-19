@@ -120,6 +120,42 @@ describe("selectInvoiceLineView — invariante de fuente única", () => {
     expect(out).toBe(draft);
   });
 
+  it("exención AUTORITATIVA: con firma OK, normalized manda y NO arrastra el meta stale del draft", () => {
+    // Cliente anterior exento dejó `pricingMeta.taxExemptByEntity=true` en el
+    // draft. El cliente nuevo (normalized, firma OK) NO es exento → el
+    // impuesto debe desbloquearse (antes el OR lo dejaba pegado en 0).
+    const draft = makeDraftLine({
+      taxAmount: 0,
+      lineTotal: 900,
+      pricingMeta: { taxExemptByEntity: true } as any,
+    });
+    const norm = makeNormalized({
+      taxExemptByEntity: false,
+      lineTaxAmount: 189,
+      lineTotalWithTax: 1089,
+    });
+    const out = selectInvoiceLineView(draft, norm, true);
+
+    expect(out.pricingMeta?.taxExemptByEntity).toBe(false);
+    expect(out.taxAmount).toBe(189);
+    expect(out.lineTotalWithTax).toBe(1089);
+  });
+
+  it("exención AUTORITATIVA: normalized exento ⇒ impuesto 0 aunque el draft no lo estuviera", () => {
+    const draft = makeDraftLine({ taxAmount: 88, lineTotal: 900 });
+    const norm  = makeNormalized({
+      taxExemptByEntity: true,
+      lineTaxAmount: 189,        // el motor lo reporta pero exención lo anula
+      lineTotalWithTax: 1089,
+      lineTotal: 900,
+    });
+    const out = selectInvoiceLineView(draft, norm, true);
+
+    expect(out.pricingMeta?.taxExemptByEntity).toBe(true);
+    expect(out.taxAmount).toBe(0);
+    expect(out.lineTotalWithTax).toBe(900); // = neto, sin impuesto
+  });
+
   it("preserva el resto del shape del draft (id, articleId, pricingMeta, etc.)", () => {
     const draft = makeDraftLine({
       id:        "line-XYZ",

@@ -48,14 +48,14 @@ export function selectInvoiceLineView(
   // la Factura lo lea directo del backend sin recomputar.
   const lineTotal = normalizedLine.lineTotal ?? draftLine.lineTotal;
 
-  // Exención por entidad (per-línea, fuente única real del motor — más
-  // confiable que la metadata doc-level que mapea `applySalePreviewToDraft`).
-  // Si la línea es exenta, el impuesto efectivo es 0 y el total c/imp. = neto:
-  // NO arrastramos `draftLine.taxAmount/lineTotalWithTax` (pueden venir stale
-  // del estado PRE-cliente con 21%). Display passthrough, sin recálculo.
-  const exempt =
-    normalizedLine.taxExemptByEntity === true ||
-    draftLine.pricingMeta?.taxExemptByEntity === true;
+  // Exención por entidad (per-línea, fuente única real del motor). Acá la
+  // firma YA coincide (`signatureMatches`), así que `normalizedLine` refleja
+  // al cliente vigente y es AUTORITATIVO. NO se hace OR con
+  // `draftLine.pricingMeta?.taxExemptByEntity`: ese valor podía ser del
+  // cliente anterior (exento) y, al cambiar a un cliente NO exento, dejaba
+  // el impuesto pegado en 0. Si la línea es exenta, el impuesto efectivo es
+  // 0 y el total c/imp. = neto. Display passthrough, sin recálculo.
+  const exempt = normalizedLine.taxExemptByEntity === true;
 
   return {
     ...draftLine,

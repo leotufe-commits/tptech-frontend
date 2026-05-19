@@ -24,6 +24,7 @@
 
 import type { TPEntityLite } from "../../components/ui/TPEntitySearchSelect";
 import type { CurrencyRow } from "../../services/valuation";
+import type { SalesInvoice, ClientSnapshot } from "./types";
 
 // ─── 1. normalizeEntityCurrency ───────────────────────────────────────────
 
@@ -126,4 +127,53 @@ export function computeDueDateFromTerm(args: {
   const days = getTermDays(canonicalTerm);
   if (days === null) return "";
   return addDaysISO(draftDate, days);
+}
+
+// ─── 4. buildClientPatches ─────────────────────────────────────────────────
+
+/**
+ * Parte el cambio de cliente en DOS patches disjuntos. Es la fuente única
+ * del contrato del modal "Cambiar cliente":
+ *
+ *   - `clientDataPatch` → identidad / snapshot / vendedor / término /
+ *     vencimiento. SIEMPRE se aplica (ambas ramas del modal). NO contiene
+ *     NINGÚN campo que mueva el `previewSignature` → "Mantener precios
+ *     actuales" no recalcula líneas.
+ *   - `pricingPatch`    → SOLO `priceListId` / `currency` / `fxRate` (lo que
+ *     mueve el `previewSignature`). Se aplica únicamente en "Recalcular
+ *     precios", y recién ahí se dispara `salesApi.preview`.
+ *
+ * Invariante testeada: `pricingPatch` ⊆ {priceListId, currency, fxRate} y
+ * `clientDataPatch` NUNCA incluye ninguno de esos tres. Pure.
+ */
+export function buildClientPatches(input: {
+  clientId:        string;
+  clientName:      string;
+  clientSnapshot:  ClientSnapshot;
+  sellerId:        string;
+  canonicalTerm:   string;
+  dueDate:         string;
+  autoPriceListId?: string | null;
+  autoCurrency?:    string | null;
+  fxRate?:          number;
+}): {
+  clientDataPatch: Partial<SalesInvoice>;
+  pricingPatch:    Partial<SalesInvoice>;
+} {
+  const clientDataPatch: Partial<SalesInvoice> = {
+    client:         input.clientName,
+    clientId:       input.clientId,
+    clientSnapshot: input.clientSnapshot,
+    seller:         input.sellerId,
+    paymentTerm:    input.canonicalTerm,
+    dueDate:        input.dueDate,
+  };
+
+  const pricingPatch: Partial<SalesInvoice> = {
+    ...(input.autoPriceListId ? { priceListId: input.autoPriceListId } : {}),
+    ...(input.autoCurrency    ? { currency:    input.autoCurrency }    : {}),
+    ...(input.fxRate !== undefined ? { fxRate: input.fxRate } : {}),
+  };
+
+  return { clientDataPatch, pricingPatch };
 }

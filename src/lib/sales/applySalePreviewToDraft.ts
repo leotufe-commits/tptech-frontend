@@ -62,12 +62,23 @@ export function applySalePreviewToDraft(
   // en todas las líneas). Display-only `origin:"CLIENT"`: el motor ya la
   // aplicó por clientId; NO se reenvía. Solo se setea si el preview la trae.
   const ccr = (preview as any)?.clientCommercialRules ?? null;
+  // FIXED_AMOUNT está en moneda BASE; si el documento NO está en base
+  // (preview convertido), el valor configurado NO es representable en la
+  // moneda del documento → el editor lo trata como chip-only (no muestra
+  // número engañoso). Mapeo PURO de la metadata que el preview ya expone.
+  const docCurrencyConverted =
+    (preview as any)?.currencyConverted === true ||
+    (typeof (preview as any)?.currencyRate === "number" &&
+      (preview as any).currencyRate !== 1);
   const inheritedDiscount =
     ccr && (ccr.ruleType != null || ccr.value != null)
       ? {
           ruleType:  ccr.ruleType  ?? null,
           valueType: ccr.valueType ?? null,
           value:     typeof ccr.value === "number" ? ccr.value : null,
+          fixedAmountInBaseOnly:
+            (ccr.valueType === "FIXED_AMOUNT" || ccr.valueType === "AMOUNT") &&
+            docCurrencyConverted,
           // El motor trata `applyOn` ausente como TOTAL
           // (pricing-engine.sale.ts: `?? "TOTAL"`). Reflejamos esa MISMA
           // semántica para que el render de la bonificación heredada coincida
@@ -82,14 +93,6 @@ export function applySalePreviewToDraft(
   // ya consume `pricingMeta.taxExemptByEntity` (badge "Exento" + deshabilita).
   const clientTaxExempt = (preview as any)?.clientTaxExempt === true;
 
-  // [BONIF_DEBUG] instrumentación temporal — remover tras diagnóstico.
-  const BDBG = import.meta.env.DEV;
-  if (BDBG) {
-    // eslint-disable-next-line no-console
-    console.groupCollapsed(
-      `[BONIF_DEBUG] applySalePreviewToDraft — preview trae ${preview.lines.length} línea(s)`,
-    );
-  }
   let realIdx = 0;
   const previewLines = preview.lines;
   const updatedLines: DocumentLine[] = draft.lines.map((line) => {
@@ -98,22 +101,6 @@ export function applySalePreviewToDraft(
     if (!isPreviewableLine(line)) return line;
     const pl: SalePreviewLine | undefined = previewLines[realIdx++];
     if (!pl) return line;
-    if (BDBG) {
-      // eslint-disable-next-line no-console
-      console.log("[BONIF_DEBUG] hidratando", {
-        lineId:                 line.id,
-        articleId:              line.articleId,
-        manualDiscountAppliesTo: (line.pricingMeta as any)?.manualDiscountAppliesTo ?? null,
-        meta_manualDiscount:    line.pricingMeta?.manualDiscount ?? null,
-        pl_basePrice:           pl.basePrice,
-        pl_unitPrice:           pl.unitPrice,
-        pl_lineDiscount:        (pl as any).lineDiscount,
-        pl_lineTotal:           pl.lineTotal,
-        pl_lineTaxAmount:       (pl as any).lineTaxAmount,
-        pl_lineTotalWithTax:    pl.lineTotalWithTax,
-        pl_manualOverridesApplied: (pl as any).manualOverridesApplied ?? null,
-      });
-    }
 
     // `pl.lineTotal` es el NETO sin tax YA REDONDEADO por el motor (es
     // `lineTotalWithTax − lineTaxAmount`, preservando el redondeo de
@@ -209,22 +196,17 @@ export function applySalePreviewToDraft(
         // Bonificación heredada del cliente (passthrough; display-only,
         // origin=CLIENT; NO se reenvía como override).
         inheritedDiscount,
-        // Exención fiscal por cliente. Prioridad: flag PER-LÍNEA del motor
-        // (fuente única real) → metadata doc-level → valor previo. El editor
-        // muestra "Exento cliente" y fuerza Impuestos 0,00 / total = neto.
+        // Exención fiscal por cliente. AUTORITATIVO: solo el preview del
+        // cliente vigente decide. Prioridad: flag PER-LÍNEA del motor
+        // (fuente única real) → metadata doc-level del MISMO preview. NO se
+        // arrastra `line.pricingMeta?.taxExemptByEntity` previo: al pasar de
+        // cliente exento → no exento ese OR mantenía la exención pegada y el
+        // impuesto bloqueado en 0. El backend del cliente nuevo es la verdad.
         taxExemptByEntity:
-          (pl as any)?.taxExemptByEntity === true ||
-          clientTaxExempt ||
-          line.pricingMeta?.taxExemptByEntity === true,
+          (pl as any)?.taxExemptByEntity === true || clientTaxExempt,
       },
     };
   });
-
-  // [BONIF_DEBUG] instrumentación temporal — remover tras diagnóstico.
-  if (BDBG) {
-    // eslint-disable-next-line no-console
-    console.groupEnd();
-  }
 
   const dt = preview.documentTotals;
   return {

@@ -88,6 +88,7 @@ import {
   normalizeEntityCurrency,
   resolveClientFxRate,
   computeDueDateFromTerm,
+  buildClientPatches,
 } from "../lib/sales/clientPickHelpers";
 import { buildReceiptDraftPayload } from "../lib/sales/buildReceiptDraftPayload";
 import { usePreviewFlow } from "../lib/sales/usePreviewFlow";
@@ -1320,9 +1321,34 @@ function InvoiceEditorModal(props: {
     return cur?.id ?? null;
   }, [currencies, draft.currency]);
 
+  // Cliente usado SOLO para cotizar/preview. Cuando el operador elige
+  // "Mantener precios actuales", el documento adopta el cliente nuevo pero el
+  // motor sigue cotizando con el cliente PREVIO (precios/impuestos/bonif.
+  // congelados) hasta que se pida "Recalcular".
+  //   · `undefined` → passthrough: cotizar con `draft.clientId` (normal).
+  //   · `string`    → forzar ese clientId al cotizar (cliente previo).
+  //   · `null`      → forzar SIN cliente (cuando no había cliente previo).
+  const [previewClientId, setPreviewClientId] =
+    useState<string | null | undefined>(undefined);
+
+  // Draft que se usa SOLO para cotizar (signature + executePreview). Difiere
+  // de `draft` únicamente en el `clientId` cuando el operador eligió
+  // "Mantener precios actuales": el documento ya adoptó el cliente nuevo,
+  // pero el motor sigue cotizando con el cliente previo (precios congelados).
+  // El resto de inputs de pricing (lista/moneda/fx/descuento) no se aplican
+  // en ese caso, así que `draft` ya los conserva. Persistencia y snapshot
+  // usan `draft` (cliente real del documento), nunca este derivado.
+  const pricingDraft = useMemo<SalesInvoice>(
+    () =>
+      previewClientId === undefined
+        ? draft
+        : { ...draft, clientId: previewClientId ?? undefined },
+    [draft, previewClientId],
+  );
+
   /** Firma reproducible de los inputs que afectan el cálculo. */
   const previewSignature = useMemo<string | null>(() => {
-    const { hasRealLines, payload } = buildSalePreviewPayload(draft, documentCurrencyId);
+    const { hasRealLines, payload } = buildSalePreviewPayload(pricingDraft, documentCurrencyId);
     if (!hasRealLines) return null;
     // `draft.fxRate` se incluye en la firma (aunque el payload no lo lleve)
     // para que cambiar la cotización manual dispare un re-preview. El
@@ -1331,20 +1357,11 @@ function InvoiceEditorModal(props: {
     // útil porque mantiene la firma sincronizada con el estado visible y
     // deja la puerta abierta a Fase MM cuando el backend acepte `fxRate`.
     return JSON.stringify({ ...payload, _fxRate: draft.fxRate });
-  }, [
-    draft.lines,
-    draft.clientId,
-    draft.channelId,
-    draft.couponCode,
-    draft.shipping,
-    draft.discountGlobal,
-    // Lista global del documento — sin esto cambiar la lista en el header
-    // no dispara el preview (las líneas siguen mostrando el precio viejo).
-    draft.priceListId,
-    // Moneda del documento (resuelto a id) y cotización activa.
-    documentCurrencyId,
-    draft.fxRate,
-  ]);
+    // `pricingDraft` cambia de identidad ante cualquier cambio de `draft` o
+    // de `previewClientId`, así que cubre lines/clientId/channel/coupon/
+    // shipping/discountGlobal/priceListId. `documentCurrencyId` y `fxRate`
+    // van aparte (no son campos directos del payload).
+  }, [pricingDraft, documentCurrencyId, draft.fxRate]);
 
   // FASE 8.2.4b — hook reutilizable de preview flow.
   // Encapsula: debounce 200ms + anti-stale via `previewReqIdRef` (compartido
@@ -1355,7 +1372,7 @@ function InvoiceEditorModal(props: {
       enabled:   open,
       requestIdRef: previewReqIdRef,
       executePreview: async () => {
-        const { payload } = buildSalePreviewPayload(draft, documentCurrencyId);
+        const { payload } = buildSalePreviewPayload(pricingDraft, documentCurrencyId);
         const res = await salesApi.preview(payload);
         // FASE 1 — paridad Simulador ↔ Factura. Logea el snapshot normalizado
         // para que `__tptechParity.diff()` lo compare contra el del Simulador.
@@ -2376,13 +2393,19 @@ function InvoiceEditorModal(props: {
    * nunca los dos.
    */
   const displayRate = useMemo(() => {
-    // Caso ideal: preview actual con conversión aplicada por el backend.
-    // Los `documentTotals` y `lines.*` ya están en la moneda del documento.
-    if (
-      backendPreview &&
-      backendPreview.signature === previewSignature &&
-      backendPreview.result.currencyConverted === true
-    ) {
+    // Caso ideal: hay un preview convertido por el backend en cache. Sus
+    // amounts (y por ende el draft hidratado por `applySalePreviewToDraft`)
+    // YA están en la moneda del documento. NO se exige que la firma coincida
+    // con la actual: mientras el cache convertido siga vigente, los campos
+    // monetarios del draft están en moneda del documento, así que `mFmt`
+    // (÷ displayRate) NO debe re-dividir. Exigir `signature === previewSignature`
+    // hacía que, durante el thrash de un cambio de cliente / preview en
+    // vuelo, `displayRate` cayera al fxRate legacy y se dividiera DOS veces
+    // (ej: bonificación fija 50,01 → 0,03). El backend es la única fuente:
+    // si el próximo preview vuelve en base, `currencyConverted` será false y
+    // recién ahí reescalamos. Cubre bonificación, impuestos y todo label
+    // que pase por `mFmt` (auditoría de doble conversión).
+    if (backendPreview && backendPreview.result.currencyConverted === true) {
       return 1;
     }
     // Fallback legacy: backend devolvió en base (sin conversión) o todavía
@@ -2394,7 +2417,7 @@ function InvoiceEditorModal(props: {
     const r = Number(draft.fxRate);
     if (Number.isFinite(r) && r > 0) return r;
     return cur.latestRate ?? 1;
-  }, [backendPreview, previewSignature, currencies, draft.currency, draft.fxRate]);
+  }, [backendPreview, currencies, draft.currency, draft.fxRate]);
 
   /** fmtMoney con conversión visual aplicada.
    *  `displayRate` representa "unidades de moneda base por 1 unidad de la
@@ -3032,11 +3055,35 @@ function InvoiceEditorModal(props: {
 
   // Diálogo "¿Recalcular precios de las líneas con el nuevo cliente?".
   // Se dispara cuando el usuario cambia el cliente y ya hay líneas con artículo.
+  // `clientDataPatch`  → identidad/snapshot/vendedor/término/vencimiento.
+  //                       SIEMPRE se aplica (no afecta pricing).
+  // `pricingPatch`     → lista, moneda, fx (lo que mueve el `previewSignature`).
+  //                       Solo se aplica si el operador elige "Recalcular".
   const [recalcPrompt, setRecalcPrompt] = useState<{
     open: boolean;
     nextClient: TPEntityLite | null;
-    nextDraftPatch: Partial<SalesInvoice>;
-  }>({ open: false, nextClient: null, nextDraftPatch: {} });
+    clientDataPatch: Partial<SalesInvoice>;
+    pricingPatch: Partial<SalesInvoice>;
+    fxWarning: string | null;
+  }>({
+    open: false,
+    nextClient: null,
+    clientDataPatch: {},
+    pricingPatch: {},
+    fxWarning: null,
+  });
+
+  // Detalle del cliente nuevo resuelto async mientras el modal sigue abierto.
+  // No se aplica al draft hasta que el operador decide (keep / recalc).
+  const pendingClientDetailRef = useRef<{
+    reqId: number;
+    clientId: string;
+    detail: EntityDetail;
+    fullSnap: ClientSnapshot;
+    inheritedDG: DocumentDiscountGlobal | null;
+  } | null>(null);
+  // Decisión del modal: null = aún sin decidir (modal abierto / sin líneas).
+  const clientChoiceRef = useRef<"keep" | "recalc" | null>(null);
 
   // ── Editar artículo base (advertencia + acción placeholder) ──────────────
   const [editArticleId, setEditArticleId] = useState<string | null>(null);
@@ -3962,11 +4009,50 @@ function InvoiceEditorModal(props: {
    *
    * Acá queda lo NO-puro: refs, setState, onChange, async fetch, recalc prompt.
    */
+  /**
+   * Aplica el detalle async del cliente (snapshot completo + dirección +
+   * bonificación heredada) SOBRE el draft más reciente (`draftRef`, no el
+   * closure — evita stale state). La bonificación heredada SOLO se aplica
+   * cuando la decisión fue "recalc"; en "keep" no se hereda nada nuevo (el
+   * motor sigue cotizando con el cliente previo, así que la bonif. vigente
+   * es la correcta).
+   */
+  function applyResolvedClientDetail(
+    clientId: string,
+    fullSnap: ClientSnapshot,
+    inheritedDG: DocumentDiscountGlobal | null,
+    choice: "keep" | "recalc",
+  ) {
+    if (lastPickedClientIdRef.current !== clientId) return;
+    const cur = draftRef.current;
+    // El documento ya debe ser este cliente (lo aplicó la decisión).
+    if (cur.clientId !== clientId) return;
+    const curDG = cur.discountGlobal;
+    let nextDG: DocumentDiscountGlobal | undefined = curDG;
+    if (choice === "recalc" && curDG?.origin !== "MANUAL") {
+      if (inheritedDG) {
+        nextDG = inheritedDG;
+      } else if (curDG?.origin === "CLIENT") {
+        nextDG = { type: "PERCENT", value: 0, reason: "", origin: "NONE" };
+      }
+    }
+    onChange({
+      ...cur,
+      ...(nextDG !== curDG ? { discountGlobal: nextDG } : {}),
+      clientSnapshot: { ...cur.clientSnapshot, ...fullSnap },
+    });
+  }
+
   function handleClientPick(entity: TPEntityLite | null) {
     if (!entity) {
       lastPickedClientIdRef.current = null;
       setSelectedClient(null);
       setClientDetail(null);
+      // Reset del estado de cambio de cliente: sin override de pricing, sin
+      // detalle pendiente, sin decisión.
+      setPreviewClientId(undefined);
+      pendingClientDetailRef.current = null;
+      clientChoiceRef.current = null;
       // Si la bonificación vigente era heredada del cliente, al quitar el
       // cliente deja de tener sentido → se limpia. Si era MANUAL, se conserva.
       const dgCleared: Partial<SalesInvoice> =
@@ -3986,115 +4072,145 @@ function InvoiceEditorModal(props: {
     const normalizedEntity = normalizeEntityCurrency(entity, currencies);
     const autoPatch = applyClientToDraft(draft, normalizedEntity);
 
-    // Resolver cotización del cliente (puro). El warning lo emite el orchestrator.
+    // Resolver cotización del cliente (puro). El warning se EMITE recién al
+    // recalcular (en "Mantener" no aplica fx nueva → no tiene sentido el aviso).
     const { fxRate: nextFxRate, warning: fxWarning } =
       resolveClientFxRate(autoPatch.currency, currencies);
-    if (fxWarning) toast.warning(fxWarning);
 
     // Canonizar el paymentTerm contra el catálogo PAYMENT_TERM. Si el cliente
     // NO tiene paymentTerm configurado, limpiamos explícitamente el del draft
     // para que no quede el del cliente anterior. El combo cae a "— Sin definir —".
     const rawTerm = autoPatch.paymentTerm ?? normalizedEntity.paymentTerm ?? "";
     const canonicalTerm = canonicalizeTerm(rawTerm);
-    (autoPatch as any).paymentTerm = canonicalTerm;
 
     const snapshot = buildClientSnapshot(normalizedEntity);
     if (canonicalTerm) snapshot.paymentTerm = canonicalTerm;
 
-    // Vencimiento (puro). Limpieza explícita cuando no hay término o no se
-    // puede calcular — evita leak entre clientes.
-    const dueDatePatch: Partial<SalesInvoice> = {
-      dueDate: computeDueDateFromTerm({
-        canonicalTerm,
-        draftDate: draft.date,
-        getTermDays,
-        addDaysISO,
-      }),
-    };
+    const dueDate = computeDueDateFromTerm({
+      canonicalTerm,
+      draftDate: draft.date,
+      getTermDays,
+      addDaysISO,
+    });
 
-    // Vendedor: al cambiar de cliente, vaciamos el `seller` actual para que
-    // el effect re-aplique la jerarquía (cliente.sellerId → favorito → sin
-    // asignar). El ref de "explicit clear" también se resetea más abajo.
-    const sellerPatch: Partial<SalesInvoice> = { seller: entity.sellerId ?? "" };
+    // Split disjunto identidad vs. pricing — fuente única en
+    // `buildClientPatches` (pura + testeada). `clientDataPatch` NUNCA mueve
+    // el `previewSignature`; `pricingPatch` SOLO lista/moneda/fx.
+    const { clientDataPatch, pricingPatch } = buildClientPatches({
+      clientId:        entity.id,
+      clientName:      entity.name,
+      clientSnapshot:  snapshot,
+      sellerId:        entity.sellerId ?? "",
+      canonicalTerm,
+      dueDate,
+      autoPriceListId: autoPatch.priceListId ?? null,
+      autoCurrency:    autoPatch.currency ?? null,
+      fxRate:          nextFxRate,
+    });
 
-    const nextDraftPatch: Partial<SalesInvoice> = {
-      ...autoPatch,
-      ...(nextFxRate !== undefined ? { fxRate: nextFxRate } : {}),
-      ...dueDatePatch,
-      ...sellerPatch,
-      client:         entity.name,
-      clientId:       entity.id,
-      clientSnapshot: snapshot,
-    };
+    const hasRealLines = draft.lines.some(
+      (l) => !isEmptyLine(l) && !isHeaderLine(l),
+    );
 
-    // 1) Aplicamos el cambio de cliente OPTIMISTAMENTE (sin esperar a la
-    //    red). Cliente, lista, moneda, término y vencimiento quedan vivos
-    //    al instante. La dirección llega después con `getOne`.
-    setSelectedClient(entity);
-    lastPickedClientIdRef.current = entity.id;
-    // Cambiar de cliente reabre el flujo de "vendedor por defecto":
-    // si el cliente tiene sellerId, eso pisa; si no, queda libre para que
-    // entre el favorito.
-    sellerExplicitlyClearedRef.current = false;
-    const optimisticDraft: SalesInvoice = { ...draft, ...nextDraftPatch };
-    onChange(optimisticDraft);
-
-    // 2) Detail fetch (para dirección + datos completos). Usamos refs para
-    //    descartar respuestas obsoletas si el usuario eligió otro cliente
-    //    antes de que volviera la red.
+    // Captura local del pick. NO usamos refs/estado compartidos hasta que el
+    // operador decida en el modal → abrir o CANCELAR el modal no muta nada
+    // visible. `reqId` monotónico invalida fetches superados (otro pick o
+    // un aborto incrementan el ref).
+    const pickedEntity = entity;
     const reqId = ++clientDetailRequestRef.current;
-    setClientDetail(null);
+    pendingClientDetailRef.current = null;
+    clientChoiceRef.current = null;
+
+    function buildDetailResult(d: EntityDetail): {
+      fullSnap: ClientSnapshot;
+      inheritedDG: DocumentDiscountGlobal | null;
+    } {
+      const lite = entityRowToLite(d as unknown as EntityRow);
+      const fullSnap = buildClientSnapshot(lite, d);
+      // Preservamos seller del lite original (no viene en EntityDetail).
+      fullSnap.seller = snapshot.seller;
+      const addr = pickDefaultAddress(d);
+      if (addr) {
+        fullSnap.address   = composeAddressLine(addr);
+        fullSnap.addressId = addr.id;
+      }
+      const inherited = resolveClientInheritedDiscount(d);
+      return { fullSnap, inheritedDG: inherited ?? null };
+    }
+
+    if (!hasRealLines) {
+      // Sin líneas reales: no hay precios que "mantener" → aplicamos TODO
+      // directo (identidad + pricing). No hay modal.
+      setSelectedClient(pickedEntity);
+      lastPickedClientIdRef.current = pickedEntity.id;
+      sellerExplicitlyClearedRef.current = false;
+      setClientDetail(null);
+      setPreviewClientId(undefined);
+      if (fxWarning) toast.warning(fxWarning);
+      const optimisticDraft: SalesInvoice = {
+        ...draft,
+        ...clientDataPatch,
+        ...pricingPatch,
+      };
+      onChange(optimisticDraft);
+      commercialEntitiesApi
+        .getOne(pickedEntity.id)
+        .then((d) => {
+          if (clientDetailRequestRef.current !== reqId) return;
+          setClientDetail(d);
+          const { fullSnap, inheritedDG } = buildDetailResult(d);
+          const curDG = optimisticDraft.discountGlobal;
+          let nextDG: DocumentDiscountGlobal | undefined = curDG;
+          if (curDG?.origin !== "MANUAL") {
+            if (inheritedDG) {
+              nextDG = inheritedDG;
+            } else if (curDG?.origin === "CLIENT") {
+              nextDG = { type: "PERCENT", value: 0, reason: "", origin: "NONE" };
+            }
+          }
+          onChange({
+            ...optimisticDraft,
+            ...(nextDG !== curDG ? { discountGlobal: nextDG } : {}),
+            clientSnapshot: { ...optimisticDraft.clientSnapshot, ...fullSnap },
+          });
+        })
+        .catch((err) => {
+          if (clientDetailRequestRef.current !== reqId) return;
+          toast.error(
+            "No se pudo cargar toda la información del cliente. " +
+            "Verificá dirección y condición fiscal antes de confirmar.",
+          );
+          // eslint-disable-next-line no-console
+          console.warn("[VentasFacturas] commercialEntitiesApi.getOne falló:", err);
+        });
+      return;
+    }
+
+    // CON líneas reales: NO tocamos NADA visible (ni draft, ni
+    // selectedClient, ni clientDetail). El header sigue mostrando el cliente
+    // anterior y NO se dispara `salesApi.preview` hasta que el operador
+    // decida en el modal. Cancelar el modal = aborto real (cero mutación).
     commercialEntitiesApi
-      .getOne(entity.id)
+      .getOne(pickedEntity.id)
       .then((d) => {
         if (clientDetailRequestRef.current !== reqId) return;
-        if (lastPickedClientIdRef.current !== entity.id) return;
+        const { fullSnap, inheritedDG } = buildDetailResult(d);
+        const choice = clientChoiceRef.current;
+        if (choice === null) {
+          // Modal aún abierto → guardamos TODO (incluye el detail crudo).
+          // NO seteamos clientDetail acá: mutaría el panel de direcciones
+          // con el modal abierto. Lo aplicará la decisión.
+          pendingClientDetailRef.current = {
+            reqId, clientId: pickedEntity.id, detail: d, fullSnap, inheritedDG,
+          };
+          return;
+        }
+        // El operador ya decidió antes de que volviera la red → aplicar ya.
         setClientDetail(d);
-        // Reconstruimos el snapshot completo con los datos del detail.
-        const lite = entityRowToLite(d as unknown as EntityRow);
-        const fullSnap = buildClientSnapshot(lite, d);
-        // Preservamos seller del lite original (no viene en EntityDetail).
-        fullSnap.seller = snapshot.seller;
-        const addr = pickDefaultAddress(d);
-        if (addr) {
-          fullSnap.address   = composeAddressLine(addr);
-          fullSnap.addressId = addr.id;
-        }
-
-        // Fase A — bonificación heredada del cliente (solo representable:
-        // DISCOUNT + applyOn=TOTAL). El motor ya la aplica por clientId; acá
-        // solo se REFLEJA en el control con origin="CLIENT" (no se reenvía).
-        //   · origin actual MANUAL → se conserva (no pisar edición del operador).
-        //   · resto (CLIENT/NONE/undefined) → reemplazar por la del cliente
-        //     nuevo; si el cliente no tiene una representable, limpiar la
-        //     heredada previa (evita leak entre clientes).
-        const curDG = optimisticDraft.discountGlobal;
-        let nextDG: DocumentDiscountGlobal | undefined = curDG;
-        if (curDG?.origin !== "MANUAL") {
-          const inherited = resolveClientInheritedDiscount(d);
-          if (inherited) {
-            nextDG = inherited;
-          } else if (curDG?.origin === "CLIENT") {
-            nextDG = { type: "PERCENT", value: 0, reason: "", origin: "NONE" };
-          }
-        }
-
-        // Mergeamos sobre `optimisticDraft` (capturado en closure) — incluye
-        // los campos que ya seteamos en el paso 1, sin riesgo de stale state.
-        onChange({
-          ...optimisticDraft,
-          ...(nextDG !== curDG ? { discountGlobal: nextDG } : {}),
-          clientSnapshot: { ...optimisticDraft.clientSnapshot, ...fullSnap },
-        });
+        applyResolvedClientDetail(pickedEntity.id, fullSnap, inheritedDG, choice);
       })
       .catch((err) => {
-        // FASE 9 — I2: hasta ahora este catch era silencioso. Si el fetch del
-        // detail completo del cliente falla (timeout, 5xx, 404), el snapshot
-        // queda con lo optimista del paso 1 — sin dirección por defecto, sin
-        // condición fiscal extendida — y el operador no se entera. Avisamos
-        // con toast.
         if (clientDetailRequestRef.current !== reqId) return;
-        if (lastPickedClientIdRef.current !== entity.id) return;
         toast.error(
           "No se pudo cargar toda la información del cliente. " +
           "Verificá dirección y condición fiscal antes de confirmar.",
@@ -4103,44 +4219,126 @@ function InvoiceEditorModal(props: {
         console.warn("[VentasFacturas] commercialEntitiesApi.getOne falló:", err);
       });
 
-    // 3) Si hay líneas reales, preguntamos por el recálculo (no afecta la
-    //    selección — el cliente ya quedó aplicado en el paso 1).
-    const hasRealLines = draft.lines.some(
-      (l) => !isEmptyLine(l) && !isHeaderLine(l),
-    );
-    if (hasRealLines) {
-      setRecalcPrompt({
-        open: true,
-        nextClient: entity,
-        nextDraftPatch,
+    setRecalcPrompt({
+      open: true,
+      nextClient: pickedEntity,
+      clientDataPatch,
+      pricingPatch,
+      fxWarning,
+    });
+  }
+
+  /**
+   * Aborto real del cambio de cliente (Cancelar / X / Esc / backdrop del
+   * modal). NO muta NADA: ni draft, ni selectedClient, ni clientDetail, ni
+   * previewClientId. El header sigue mostrando el cliente anterior. Solo
+   * invalida el fetch de detalle en vuelo y descarta lo pendiente.
+   */
+  function abortClientChange() {
+    ++clientDetailRequestRef.current; // invalida el `.then` deferido
+    pendingClientDetailRef.current = null;
+    clientChoiceRef.current = null;
+    setRecalcPrompt({
+      open: false, nextClient: null,
+      clientDataPatch: {}, pricingPatch: {}, fxWarning: null,
+    });
+  }
+
+  /**
+   * "Recalcular precios" — rehidrata TODO desde el cliente nuevo:
+   * lista / moneda / fx (pricingPatch) + identidad/term (clientDataPatch) +
+   * bonificación heredada + exención (vía el preview del cliente nuevo, que
+   * es autoritativo). `previewClientId = undefined` → el motor cotiza con el
+   * cliente NUEVO → cambia la firma → se dispara `salesApi.preview`.
+   */
+  function confirmRecalcWithNewClient() {
+    const { nextClient, clientDataPatch, pricingPatch, fxWarning } = recalcPrompt;
+    setRecalcPrompt({
+      open: false, nextClient: null,
+      clientDataPatch: {}, pricingPatch: {}, fxWarning: null,
+    });
+    if (!nextClient) return;
+    clientChoiceRef.current = "recalc";
+    // Recién acá (decisión tomada) aplicamos el estado visible del cliente.
+    setSelectedClient(nextClient);
+    lastPickedClientIdRef.current = nextClient.id;
+    sellerExplicitlyClearedRef.current = false;
+    // Cotizar con el cliente NUEVO (sin override).
+    setPreviewClientId(undefined);
+    if (fxWarning) toast.warning(fxWarning);
+
+    const base: SalesInvoice = {
+      ...draftRef.current,
+      ...clientDataPatch,
+      ...pricingPatch,
+    };
+    const pend = pendingClientDetailRef.current;
+    if (pend && pend.clientId === nextClient.id) {
+      // El detalle ya volvió → aplicamos snapshot + bonif. heredada ahora.
+      setClientDetail(pend.detail);
+      const curDG = base.discountGlobal;
+      let nextDG: DocumentDiscountGlobal | undefined = curDG;
+      if (curDG?.origin !== "MANUAL") {
+        if (pend.inheritedDG) {
+          nextDG = pend.inheritedDG;
+        } else if (curDG?.origin === "CLIENT") {
+          nextDG = { type: "PERCENT", value: 0, reason: "", origin: "NONE" };
+        }
+      }
+      onChange({
+        ...base,
+        ...(nextDG !== curDG ? { discountGlobal: nextDG } : {}),
+        clientSnapshot: { ...base.clientSnapshot, ...pend.fullSnap },
       });
+      pendingClientDetailRef.current = null;
+    } else {
+      // El detalle aún no volvió → aplicamos pricing+identidad; el `.then`
+      // del fetch aplicará snapshot + bonif. heredada (choice = "recalc").
+      onChange(base);
     }
   }
 
   /**
-   * Confirma recálculo de líneas con el nuevo cliente. El cliente ya se
-   * aplicó optimistamente en `handleClientPick`; acá refetch contra el
-   * motor del backend para CADA línea con articleId.
-   *
-   * Las líneas con `manualOverride` se preservan y, si hay alguna, se
-   * abre el prompt secundario para que el usuario decida si también
-   * quiere recalcularlas.
+   * "Mantener precios actuales" — el documento adopta el cliente nuevo
+   * (identidad / snapshot / dirección / vendedor / término / vencimiento)
+   * pero el MOTOR sigue cotizando con el cliente PREVIO: precios, impuestos
+   * (manuales y heredados), bonificaciones, exención y moneda/fx visual
+   * quedan congelados. NO se aplica `pricingPatch`, NO se hereda nueva
+   * bonificación/impuesto y NO se dispara `salesApi.preview` (la firma no
+   * cambia porque `previewClientId` fija el cliente previo).
    */
-  function confirmRecalcWithNewClient() {
-    const { nextClient } = recalcPrompt;
-    setRecalcPrompt({ open: false, nextClient: null, nextDraftPatch: {} });
+  function keepCurrentPricesWithNewClient() {
+    const { nextClient, clientDataPatch } = recalcPrompt;
+    setRecalcPrompt({
+      open: false, nextClient: null,
+      clientDataPatch: {}, pricingPatch: {}, fxWarning: null,
+    });
     if (!nextClient) return;
-    // El cliente ya fue aplicado optimistamente vía applyClientToDraft →
-    // draft.clientId cambió → previewSignature ya está re-evaluándose.
-    // Confirmar = no-op (el preview ya está en vuelo).
-  }
+    clientChoiceRef.current = "keep";
+    // Recién acá (decisión tomada) aplicamos el estado visible del cliente.
+    setSelectedClient(nextClient);
+    lastPickedClientIdRef.current = nextClient.id;
+    sellerExplicitlyClearedRef.current = false;
 
-  /**
-   * Cancela recálculo. El cliente ya quedó aplicado optimistamente —
-   * mantenemos los precios actuales y solo cerramos el prompt.
-   */
-  function skipRecalcWithNewClient() {
-    setRecalcPrompt({ open: false, nextClient: null, nextDraftPatch: {} });
+    const cur = draftRef.current;
+    // Cliente PREVIO = el que tenía el documento antes de este cambio. El
+    // motor sigue cotizando con él (precios congelados). `null` fuerza
+    // "sin cliente" cuando no había cliente previo.
+    setPreviewClientId(cur.clientId ?? null);
+
+    const base: SalesInvoice = { ...cur, ...clientDataPatch };
+    const pend = pendingClientDetailRef.current;
+    if (pend && pend.clientId === nextClient.id) {
+      // Solo snapshot/dirección — NO bonif. heredada (no se hereda en keep).
+      setClientDetail(pend.detail);
+      onChange({
+        ...base,
+        clientSnapshot: { ...base.clientSnapshot, ...pend.fullSnap },
+      });
+      pendingClientDetailRef.current = null;
+    } else {
+      onChange(base);
+    }
   }
 
   const balance = Math.max(0, effectiveTotals.total - draft.paidAmount);
@@ -5070,21 +5268,39 @@ function InvoiceEditorModal(props: {
       </div>
     </Modal>
 
-    {/* ── Diálogo: cambio de cliente con líneas cargadas ─────────────────── */}
-    <ConfirmDeleteDialog
-      open={recalcPrompt.open}
-      title="Cambiar cliente"
-      description={
-        recalcPrompt.nextClient
-          ? `Cambiaste el cliente a "${recalcPrompt.nextClient.name}". ¿Querés recalcular los precios de las líneas con la lista, condición fiscal y términos del nuevo cliente?`
-          : "¿Recalcular precios con el nuevo cliente?"
-      }
-      confirmText="Recalcular precios"
-      cancelText="Mantener precios actuales"
-      icon={<AlertTriangle className="h-5 w-5 text-amber-500" />}
-      onClose={skipRecalcWithNewClient}
-      onConfirm={confirmRecalcWithNewClient}
-    />
+    {/* ── Modal: cambio de cliente con líneas cargadas ───────────────────── */}
+    {/* 3 acciones. Cancelar / X / Esc / backdrop = aborto real (no muta
+        nada; el header sigue mostrando el cliente anterior). */}
+    {recalcPrompt.open && (
+      <Modal
+        open={recalcPrompt.open}
+        onClose={abortClientChange}
+        title="Cambiar cliente"
+        maxWidth="md"
+        footer={
+          <div className="flex justify-end gap-2">
+            <TPButton variant="ghost" onClick={abortClientChange}>
+              Cancelar
+            </TPButton>
+            <TPButton variant="secondary" onClick={keepCurrentPricesWithNewClient}>
+              Mantener precios actuales
+            </TPButton>
+            <TPButton variant="primary" onClick={confirmRecalcWithNewClient}>
+              Recalcular precios
+            </TPButton>
+          </div>
+        }
+      >
+        <div className="flex items-start gap-3">
+          <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-amber-500" />
+          <p className="text-sm text-text">
+            {recalcPrompt.nextClient
+              ? `Cambiaste el cliente a "${recalcPrompt.nextClient.name}". ¿Querés recalcular los precios de las líneas con la lista, condición fiscal y términos del nuevo cliente?`
+              : "¿Recalcular precios con el nuevo cliente?"}
+          </p>
+        </div>
+      </Modal>
+    )}
 
     {/* ── Modal: Editar artículo base (advertencia) ──────────────────────── */}
     <Modal
