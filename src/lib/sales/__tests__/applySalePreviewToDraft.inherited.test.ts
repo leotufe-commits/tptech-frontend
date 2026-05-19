@@ -294,4 +294,38 @@ describe("applySalePreviewToDraft — 'Aplica a' (appliesTo) METAL/HECHURA", () 
     );
     expect((res.lines[0].pricingMeta as any)?.inheritedDiscountAppliesTo).toBe("HECHURA");
   });
+
+  // El TPNumber de Bonificación lee `pricingMeta.inheritedDiscount`
+  // (value/valueType/applyOn) para mostrar el % CONFIGURADO. Antes el editor
+  // solo lo representaba con applyOn TOTAL → con METAL/HECHURA el TPNumber
+  // quedaba en 0,00 aunque el label (monto aplicado) era correcto. Acá
+  // fijamos que el dato que alimenta al TPNumber viaja para METAL/HECHURA.
+  it("inheritedDiscount preserva value/valueType/applyOn para HECHURA (alimenta el TPNumber)", () => {
+    const res = applySalePreviewToDraft(
+      draft(),
+      preview({
+        clientCommercialRules: {
+          ruleType: "DISCOUNT", valueType: "PERCENTAGE", value: 5, applyOn: "HECHURA",
+        },
+      }),
+    );
+    expect(res.lines[0].pricingMeta!.inheritedDiscount).toMatchObject({
+      ruleType: "DISCOUNT", valueType: "PERCENTAGE", value: 5,
+      applyOn: "HECHURA", origin: "CLIENT", fixedAmountInBaseOnly: false,
+    });
+  });
+
+  it("inheritedDiscount preserva value/valueType/applyOn para METAL", () => {
+    const res = applySalePreviewToDraft(
+      draft(),
+      preview({
+        clientCommercialRules: {
+          ruleType: "DISCOUNT", valueType: "PERCENTAGE", value: 5, applyOn: "METAL",
+        },
+      }),
+    );
+    expect(res.lines[0].pricingMeta!.inheritedDiscount).toMatchObject({
+      value: 5, applyOn: "METAL", origin: "CLIENT",
+    });
+  });
 });

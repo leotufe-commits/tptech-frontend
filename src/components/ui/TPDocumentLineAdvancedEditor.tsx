@@ -2145,18 +2145,23 @@ export function TPDocumentLineAdvancedEditor({
                   valueFromBackend = true;
                 } else if (
                   // Bonificación HEREDADA del cliente — display-only
-                  // (origin=CLIENT). Solo representable en el TPNumber si es
-                  // DISCOUNT + applyOn=TOTAL (consistente con Fase A). El
-                  // motor ya la aplicó por clientId; mostrar el valor NO la
-                  // reenvía (eso requiere manualOverrides.discount, que solo
-                  // se setea al editar → MANUAL).
+                  // (origin=CLIENT). El motor ya la aplicó por clientId;
+                  // mostrar el valor NO la reenvía (eso requiere
+                  // manualOverrides.discount, que solo se setea al editar
+                  // → MANUAL).
                   meta?.inheritedDiscount &&
                   meta.inheritedDiscount.ruleType === "DISCOUNT" &&
-                  // applyOn ausente == TOTAL (igual que el motor). Solo
-                  // TOTAL es representable directo en el TPNumber; METAL/
-                  // HECHURA → chip-only (sin número engañoso).
+                  // Representable en el TPNumber si la base es una de las 3
+                  // simples (TOTAL/METAL/HECHURA — las que ofrece el combo
+                  // "Aplica a"). El TPNumber muestra el % / monto CONFIGURADO
+                  // (ej. 5%), no el monto aplicado (eso lo muestra el label
+                  // verde con `l.discountAmount`): son datos distintos. Bases
+                  // avanzadas (METAL_Y_HECHURA / SUBTOTAL_* / PRODUCT /
+                  // SERVICE) → chip-only (no representables en el combo).
                   (meta.inheritedDiscount.applyOn == null ||
-                    meta.inheritedDiscount.applyOn === "TOTAL") &&
+                    meta.inheritedDiscount.applyOn === "TOTAL" ||
+                    meta.inheritedDiscount.applyOn === "METAL" ||
+                    meta.inheritedDiscount.applyOn === "HECHURA") &&
                   // FIXED_AMOUNT en moneda base con documento convertido NO
                   // es representable como número → chip-only (no inventar
                   // equivalencia). PERCENTAGE y FIXED_AMOUNT con doc==base sí.
