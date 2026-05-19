@@ -2103,7 +2103,7 @@ export function TPDocumentLineAdvancedEditor({
                 //   4) NONE   — 0 (sin info)
                 type DiscSource =
                   | "MANUAL" | "PROMOTION" | "QUANTITY_DISCOUNT" | "MIXED"
-                  | "BACKEND_CACHE" | "NONE";
+                  | "CLIENT" | "BACKEND_CACHE" | "NONE";
                 const toBoth = (mode: "PERCENT" | "AMOUNT", value: number) =>
                   mode === "PERCENT"
                     ? { pct: value, unit: (basePriceForPct * value) / 100 }
@@ -2115,6 +2115,10 @@ export function TPDocumentLineAdvancedEditor({
                 let manualUnit = 0;
                 let autoUnit = 0;
                 let valueFromBackend = false;
+                // La bonificación heredada del cliente NO se cachea: si se
+                // cambia a un cliente sin bonificación, no debe quedar el %
+                // del cliente anterior pegado vía cache.
+                let cacheable = true;
 
                 // 0 ES un valor manual válido — el usuario puede explícitamente
                 // querer "sin descuento" reemplazando promo/qty discount auto.
@@ -2135,6 +2139,34 @@ export function TPDocumentLineAdvancedEditor({
                     ? Math.round((autoUnit / basePriceForPct) * 10000) / 100
                     : 0;
                   valueFromBackend = true;
+                } else if (
+                  // Bonificación HEREDADA del cliente — display-only
+                  // (origin=CLIENT). Solo representable en el TPNumber si es
+                  // DISCOUNT + applyOn=TOTAL (consistente con Fase A). El
+                  // motor ya la aplicó por clientId; mostrar el valor NO la
+                  // reenvía (eso requiere manualOverrides.discount, que solo
+                  // se setea al editar → MANUAL).
+                  meta?.inheritedDiscount &&
+                  meta.inheritedDiscount.ruleType === "DISCOUNT" &&
+                  // applyOn ausente == TOTAL (igual que el motor). Solo
+                  // TOTAL es representable directo en el TPNumber; METAL/
+                  // HECHURA → chip-only (sin número engañoso).
+                  (meta.inheritedDiscount.applyOn == null ||
+                    meta.inheritedDiscount.applyOn === "TOTAL") &&
+                  typeof meta.inheritedDiscount.value === "number" &&
+                  meta.inheritedDiscount.value > 0
+                ) {
+                  source = "CLIENT";
+                  const inhMode = meta.inheritedDiscount.valueType === "FIXED_AMOUNT"
+                    ? "AMOUNT" : "PERCENT";
+                  const both = toBoth(inhMode, meta.inheritedDiscount.value);
+                  pctEff  = both.pct;
+                  unitEff = both.unit;
+                  valueFromBackend = true;
+                  cacheable = false; // nunca cachear lo heredado del cliente
+                  // Purga defensiva: una bonificación heredada NUNCA debe
+                  // servirse desde el cache de otro cliente/estado anterior.
+                  lastDiscountByLine.current.delete(l.id);
                 }
 
                 // Cache de fallback — solo se consulta si no hay info nueva.
@@ -2146,8 +2178,9 @@ export function TPDocumentLineAdvancedEditor({
                     unitEff = cached.unit;
                   }
                 } else {
-                  // Cache solo cuando el valor es legítimo (positivo).
-                  if (pctEff > 0 || unitEff > 0) {
+                  // Cache solo cuando el valor es legítimo (positivo) y NO
+                  // es heredado del cliente (cacheable=false en ese caso).
+                  if (cacheable && (pctEff > 0 || unitEff > 0)) {
                     lastDiscountByLine.current.set(l.id, {
                       articleId: l.articleId,
                       pct:  pctEff,
@@ -2161,6 +2194,22 @@ export function TPDocumentLineAdvancedEditor({
                 // más abajo. `unitEff`/`pctEff` solo alimentan el VALOR del
                 // input (eco de lo que tipeó el operador), no el importe.
                 const isManualBonif  = source === "MANUAL";
+                // Heredado del cliente: representable (muestra número 13.00) o
+                // solo-chip (METAL/HECHURA/BONUS/SURCHARGE → sin número
+                // engañoso, consistente con Fase A).
+                const isClientBonif  = source === "CLIENT";
+                const inhRule        = meta?.inheritedDiscount ?? null;
+                const inhChipOnly    =
+                  !!inhRule && !isClientBonif && !isManualBonif &&
+                  inhRule.ruleType != null && (inhRule.value ?? 0) > 0;
+                // Fix B — cuando la bonificación es HEREDADA del cliente, el
+                // símbolo/display los gobierna `valueType` del cliente, NO el
+                // toggle local: FIXED_AMOUNT/AMOUNT → $, PERCENTAGE → %. Al
+                // editar pasa a MANUAL y el toggle local vuelve a mandar.
+                const inhVT = inhRule?.valueType;
+                const discIsPct = isClientBonif
+                  ? (inhVT !== "FIXED_AMOUNT" && inhVT !== "AMOUNT")
+                  : isPct;
 
                 // % desglosado para el detalle textual debajo (tooltip):
                 const qtyDiscPct = basePriceForPct > 0
@@ -2185,7 +2234,7 @@ export function TPDocumentLineAdvancedEditor({
                   if (onApplyLineOverrides && (l.articleId || l.isManual)) {
                     onApplyLineOverrides(l.id, {
                       manualDiscount: {
-                        mode:      isPct ? "PERCENT" : "AMOUNT",
+                        mode:      discIsPct ? "PERCENT" : "AMOUNT",
                         value:     rawValue,
                         appliesTo: discAppliesTo,
                       },
@@ -2212,7 +2261,7 @@ export function TPDocumentLineAdvancedEditor({
                         ? "Bonificación manual reemplaza el descuento por cantidad"
                         : undefined;
 
-                const displayValue = isPct ? pctEff : unitEff;
+                const displayValue = discIsPct ? pctEff : unitEff;
 
                 // Fase 2 — Opción A: el input de bonificación es siempre
                 // editable mientras el caller proporcione `onApplyLineOverrides`
@@ -2242,7 +2291,7 @@ export function TPDocumentLineAdvancedEditor({
                           <TPNumberInput
                             value={displayValue}
                             onChange={() => { /* read-only en modo bloqueado */ }}
-                            formatType={isPct ? "PERCENT" : "MONEY"}
+                            formatType={discIsPct ? "PERCENT" : "MONEY"}
                             decimals={2}
                             min={0}
                             compact
@@ -2254,7 +2303,7 @@ export function TPDocumentLineAdvancedEditor({
                             className="inline-flex h-[42px] shrink-0 items-center justify-center rounded-md border border-border bg-card px-1.5 text-[11px] font-semibold text-muted/60"
                             title="Bonificación gobernada por el backend"
                           >
-                            {isPct ? "%" : "$"}
+                            {discIsPct ? "%" : "$"}
                           </span>
                         </div>
                       {/* Paso 1 — caja persistente reemplazada por chip
@@ -2290,7 +2339,7 @@ export function TPDocumentLineAdvancedEditor({
                           <TPNumberInput
                             value={displayValue}
                             onChange={(v) => commitBonifChange(Math.max(0, v ?? 0))}
-                            formatType={isPct ? "PERCENT" : "MONEY"}
+                            formatType={discIsPct ? "PERCENT" : "MONEY"}
                             decimals={2}
                             min={0}
                             compact
@@ -2306,7 +2355,7 @@ export function TPDocumentLineAdvancedEditor({
                               canManualBonif && (displayValue ?? 0) > 0
                                 ? () => onApplyLineOverrides!(l.id, {
                                     manualDiscount: {
-                                      mode:      isPct ? "PERCENT" : "AMOUNT",
+                                      mode:      discIsPct ? "PERCENT" : "AMOUNT",
                                       value:     0,
                                       appliesTo: discAppliesTo,
                                     },
@@ -2320,7 +2369,7 @@ export function TPDocumentLineAdvancedEditor({
                             tabIndex={-1}
                             onMouseDown={(e) => e.preventDefault()}
                             onClick={() => {
-                              const nextIsPct = !isPct;
+                              const nextIsPct = !discIsPct;
                               setDiscountType(l.id, nextIsPct ? "percent" : "amount");
                               if (md && md.value > 0 && l.articleId && onApplyLineOverrides) {
                                 let newValue = md.value;
@@ -2345,7 +2394,7 @@ export function TPDocumentLineAdvancedEditor({
                               "disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-card disabled:hover:text-muted",
                             )}
                           >
-                            {isPct ? "%" : "$"}
+                            {discIsPct ? "%" : "$"}
                           </button>
                         </div>
                         {/* Paso 1 — "Aplica a" se oculta cuando scope=TOTAL
@@ -2380,6 +2429,16 @@ export function TPDocumentLineAdvancedEditor({
                         {isManualBonif && (
                           <div className="mt-0.5">
                             <TPBadge tone="warning" size="sm">Bonificación manual</TPBadge>
+                          </div>
+                        )}
+                        {(isClientBonif || inhChipOnly) && (
+                          <div className="mt-0.5 flex items-center gap-1">
+                            <TPBadge tone="info" size="sm">Cliente</TPBadge>
+                            {inhChipOnly && (
+                              <span className="text-[10px] italic text-muted">
+                                Aplicada por el sistema
+                              </span>
+                            )}
                           </div>
                         )}
                         {/* Monto de bonificación = SIEMPRE el del motor
@@ -2488,6 +2547,14 @@ export function TPDocumentLineAdvancedEditor({
                 //   5) 0 (sin info)
                 let taxRateStable: number = 0;
                 let rateFromBackend = false;
+                // Cliente exento: el impuesto efectivo es 0. Marcamos
+                // rateFromBackend para NO leer el cache (evita revivir el
+                // 21% del artículo) y dejar taxRateStable en 0.
+                if (exempt) rateFromBackend = true;
+                // Sin impuesto (exento o override borrado/0) → purgar el
+                // cache de rate de esta línea para que un cambio posterior
+                // (otro cliente / otra tasa) NUNCA reviva el 21% viejo.
+                if (exempt || taxZeroed) lastTaxRateByLine.current.delete(l.id);
                 if (override?.mode === "PERCENT") {
                   taxRateStable = override.value;
                   rateFromBackend = true;
@@ -2551,9 +2618,14 @@ export function TPDocumentLineAdvancedEditor({
                 const isPct = getTaxType(l.id) === "percent";
                 // Si hay override → mostramos el value del override; sino →
                 // mostramos el rate estable (PERCENT) o el unit estable (AMOUNT).
-                const displayValue = override
-                  ? override.value
-                  : (isPct ? taxRateStable : taxUnitStable);
+                // Cliente exento → el input SIEMPRE muestra 0 (no el 21%
+                // cacheado ni un override viejo). Es fix VISUAL: el motor ya
+                // devolvió impuesto 0 por exención; no se reenvía nada.
+                const displayValue = exempt
+                  ? 0
+                  : override
+                    ? override.value
+                    : (isPct ? taxRateStable : taxUnitStable);
                 const canEdit = !exempt && (!!l.articleId || l.isManual === true) && !!onSetLineTaxOverride;
 
                 return (
@@ -2672,7 +2744,7 @@ export function TPDocumentLineAdvancedEditor({
                       // Cuando hay >1 impuesto NO usamos badge — se muestra
                       // un desglose detallado (nombre + monto) en su lugar.
                       const taxBadge: string | null =
-                        exempt          ? "Exento"
+                        exempt          ? "Exento cliente"
                         // Tax borrado/0 → sin badge (no "Impuesto manual"
                         // ni IVA anterior). El label queda limpio.
                         : taxZeroed     ? null
@@ -2805,6 +2877,12 @@ export function TPDocumentLineAdvancedEditor({
                   // Todos los valores vienen del backend (vía
                   // `selectInvoiceLineView`); el editor no recalcula nada.
                   const lineExempt  = l.pricingMeta?.taxExemptByEntity === true;
+                  // "Sin impuesto" explícito (override manual borrado/0) —
+                  // misma semántica que el bloque del input. Gate UNIFICADO:
+                  // exento O zeroed ⇒ impuesto 0 y total = neto (no confiar
+                  // en `l.lineTotalWithTax`, que puede venir stale con 21%).
+                  const lineTaxCleared = isTaxClearedOverride(l.pricingMeta?.taxOverride ?? null);
+                  const noTax = lineExempt || lineTaxCleared;
                   // Base imponible = neto post-descuento. En este shape
                   // legacy `l.lineTotal` está asignado con `lineTotalWithTax`
                   // (con impuestos), así que el neto vive en `l.subtotal`.
@@ -2816,15 +2894,17 @@ export function TPDocumentLineAdvancedEditor({
                     : (typeof l.lineTotal === "number" && Number.isFinite(l.lineTotal)
                         ? l.lineTotal
                         : totalLine);
-                  const lineTax = !lineExempt && typeof l.taxAmount === "number" && Number.isFinite(l.taxAmount)
+                  const lineTax = !noTax && typeof l.taxAmount === "number" && Number.isFinite(l.taxAmount)
                     ? l.taxAmount
                     : 0;
-                  // Preferir el `lineTotalWithTax` provisto por el backend
-                  // (preserva redondeo del motor). Fallback: subtotal + tax
-                  // cuando el backend aún no lo expuso.
-                  const totalWithTax = typeof l.lineTotalWithTax === "number" && Number.isFinite(l.lineTotalWithTax)
-                    ? l.lineTotalWithTax
-                    : subtotalNet + lineTax;
+                  // Sin impuesto (exento/zeroed) → total = neto (passthrough,
+                  // no recálculo: el impuesto ES 0). Con impuesto → preferir
+                  // el `lineTotalWithTax` del backend (preserva redondeo).
+                  const totalWithTax = noTax
+                    ? subtotalNet
+                    : (typeof l.lineTotalWithTax === "number" && Number.isFinite(l.lineTotalWithTax)
+                        ? l.lineTotalWithTax
+                        : subtotalNet + lineTax);
                   // ── Etiquetas explicativas (passthrough del backend, no
                   // recalculamos nada) ─────────────────────────────────────
                   // Tasa del impuesto: si el `taxBreakdown` trae un único

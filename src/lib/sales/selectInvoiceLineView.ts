@@ -46,12 +46,31 @@ export function selectInvoiceLineView(
   // draft como fallback puntual de ese campo.
   // `lineTotalWithTax` se expone para que la celda "Total línea c/ imp." de
   // la Factura lo lea directo del backend sin recomputar.
+  const lineTotal = normalizedLine.lineTotal ?? draftLine.lineTotal;
+
+  // Exención por entidad (per-línea, fuente única real del motor — más
+  // confiable que la metadata doc-level que mapea `applySalePreviewToDraft`).
+  // Si la línea es exenta, el impuesto efectivo es 0 y el total c/imp. = neto:
+  // NO arrastramos `draftLine.taxAmount/lineTotalWithTax` (pueden venir stale
+  // del estado PRE-cliente con 21%). Display passthrough, sin recálculo.
+  const exempt =
+    normalizedLine.taxExemptByEntity === true ||
+    draftLine.pricingMeta?.taxExemptByEntity === true;
+
   return {
     ...draftLine,
     unitPrice:        normalizedLine.unitPrice         ?? draftLine.unitPrice,
     discountAmount:   normalizedLine.lineDiscount      ?? draftLine.discountAmount,
-    lineTotal:        normalizedLine.lineTotal         ?? draftLine.lineTotal,
-    taxAmount:        normalizedLine.lineTaxAmount     ?? draftLine.taxAmount,
-    lineTotalWithTax: normalizedLine.lineTotalWithTax  ?? draftLine.lineTotalWithTax,
+    lineTotal,
+    taxAmount:        exempt ? 0 : (normalizedLine.lineTaxAmount     ?? draftLine.taxAmount),
+    lineTotalWithTax: exempt
+      ? (lineTotal ?? normalizedLine.lineTotalWithTax ?? draftLine.lineTotalWithTax)
+      : (normalizedLine.lineTotalWithTax  ?? draftLine.lineTotalWithTax),
+    pricingMeta: {
+      ...draftLine.pricingMeta,
+      // Propagamos el flag per-línea para que la celda "Total línea c/ imp."
+      // y el input/badge usen LA MISMA fuente de exención (fix desalineación).
+      taxExemptByEntity: exempt,
+    },
   };
 }

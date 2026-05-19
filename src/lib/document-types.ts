@@ -387,6 +387,22 @@ export interface DocumentLine {
      */
     inheritedDiscountAppliesTo?: "TOTAL" | "METAL" | "HECHURA" | "METAL_Y_HECHURA" | "SUBTOTAL_AFTER_DISCOUNT" | "SUBTOTAL_BEFORE_DISCOUNT" | "PRODUCT" | "SERVICE" | null;
     /**
+     * Bonificación HEREDADA del cliente (passthrough de
+     * `SalePreviewResult.clientCommercialRules`). Display-only, `origin`
+     * siempre "CLIENT": el motor YA la aplicó por `clientId`; el frontend
+     * solo la MUESTRA en el TPNumber (cuando es representable: DISCOUNT +
+     * applyOn=TOTAL) y NO la reenvía como override. Si el operador edita el
+     * TPNumber, pasa a `manualDiscount` (MANUAL) y recién ahí viaja. El
+     * frontend NO calcula nada con esto.
+     */
+    inheritedDiscount?: {
+      ruleType:  string | null;   // DISCOUNT | BONUS | SURCHARGE
+      valueType: string | null;   // PERCENTAGE | FIXED_AMOUNT
+      value:     number | null;   // 13 → 13%
+      applyOn:   string | null;   // TOTAL | METAL | HECHURA | METAL_Y_HECHURA
+      origin:    "CLIENT";
+    } | null;
+    /**
      * Override de SOLO la base ("Aplica a"), elegido por el operador en la
      * línea, INDEPENDIENTE del %/monto. Viaja al backend como
      * `manualDiscountAppliesToOverride` / `manualTaxAppliesToOverride` aunque

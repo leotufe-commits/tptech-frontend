@@ -718,6 +718,10 @@ export type SalePreviewResult = {
   clientBalanceType?:    string | null;
   /** Reglas comerciales del cliente (descuentos/recargos automáticos). */
   clientCommercialRules?: SalePreviewClientCommercialRules | null;
+  /** true si el cliente es exento de impuestos. Metadata read-only: permite
+   *  distinguir "sin impuesto" de "exento por cliente". El motor ya aplicó la
+   *  exención por clientId; el frontend NO recalcula. */
+  clientTaxExempt?: boolean;
   /** Eco de `input.priceListId` — lo que el operador eligió a nivel doc. */
   requestedPriceListId?: string | null;
   /** Lista efectivamente aplicada consolidada. Si todas las líneas usaron la

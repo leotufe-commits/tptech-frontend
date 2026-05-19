@@ -58,6 +58,30 @@ export function applySalePreviewToDraft(
       ? rawClientApplyOn
       : null;
 
+  // Bonificación heredada del cliente (passthrough doc-level → mismo valor
+  // en todas las líneas). Display-only `origin:"CLIENT"`: el motor ya la
+  // aplicó por clientId; NO se reenvía. Solo se setea si el preview la trae.
+  const ccr = (preview as any)?.clientCommercialRules ?? null;
+  const inheritedDiscount =
+    ccr && (ccr.ruleType != null || ccr.value != null)
+      ? {
+          ruleType:  ccr.ruleType  ?? null,
+          valueType: ccr.valueType ?? null,
+          value:     typeof ccr.value === "number" ? ccr.value : null,
+          // El motor trata `applyOn` ausente como TOTAL
+          // (pricing-engine.sale.ts: `?? "TOTAL"`). Reflejamos esa MISMA
+          // semántica para que el render de la bonificación heredada coincida
+          // con lo que el motor efectivamente aplicó (sin esto, applyOn=null
+          // hacía que el TPNumber no mostrara el % heredado).
+          applyOn:   ccr.applyOn   ?? "TOTAL",
+          origin:    "CLIENT" as const,
+        }
+      : null;
+
+  // Exención fiscal por cliente (metadata read-only del preview). El editor
+  // ya consume `pricingMeta.taxExemptByEntity` (badge "Exento" + deshabilita).
+  const clientTaxExempt = (preview as any)?.clientTaxExempt === true;
+
   // [BONIF_DEBUG] instrumentación temporal — remover tras diagnóstico.
   const BDBG = import.meta.env.DEV;
   if (BDBG) {
@@ -182,6 +206,16 @@ export function applySalePreviewToDraft(
         // "Aplica a" heredado del cliente (passthrough; display-only). El
         // combo de Bonificación lo usa como default si no hay override.
         inheritedDiscountAppliesTo,
+        // Bonificación heredada del cliente (passthrough; display-only,
+        // origin=CLIENT; NO se reenvía como override).
+        inheritedDiscount,
+        // Exención fiscal por cliente. Prioridad: flag PER-LÍNEA del motor
+        // (fuente única real) → metadata doc-level → valor previo. El editor
+        // muestra "Exento cliente" y fuerza Impuestos 0,00 / total = neto.
+        taxExemptByEntity:
+          (pl as any)?.taxExemptByEntity === true ||
+          clientTaxExempt ||
+          line.pricingMeta?.taxExemptByEntity === true,
       },
     };
   });
