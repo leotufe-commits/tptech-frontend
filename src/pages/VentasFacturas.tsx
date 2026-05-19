@@ -4073,10 +4073,19 @@ function InvoiceEditorModal(props: {
     const normalizedEntity = normalizeEntityCurrency(entity, currencies);
     const autoPatch = applyClientToDraft(draft, normalizedEntity);
 
-    // Resolver cotización del cliente (puro). El warning se EMITE recién al
-    // recalcular (en "Mantener" no aplica fx nueva → no tiene sentido el aviso).
+    // Moneda TARGET del cliente nuevo: su moneda propia SI tiene, o la
+    // moneda BASE del sistema si NO tiene. Esto hace que en "Recalcular" la
+    // moneda sea autoritativa del cliente nuevo y NO quede pegada la del
+    // cliente anterior (ej. USD → cliente sin moneda → debe volver a ARS).
+    const baseCurrencyCode =
+      currencies.find((c) => c.isBase)?.code ?? "ARS";
+    const targetCurrency = autoPatch.currency || baseCurrencyCode;
+
+    // Resolver cotización contra la moneda TARGET (base → fxRate 1). El
+    // warning se EMITE recién al recalcular (en "Mantener" no aplica fx
+    // nueva → no tiene sentido el aviso).
     const { fxRate: nextFxRate, warning: fxWarning } =
-      resolveClientFxRate(autoPatch.currency, currencies);
+      resolveClientFxRate(targetCurrency, currencies);
 
     // Canonizar el paymentTerm contra el catálogo PAYMENT_TERM. Si el cliente
     // NO tiene paymentTerm configurado, limpiamos explícitamente el del draft
@@ -4105,7 +4114,9 @@ function InvoiceEditorModal(props: {
       canonicalTerm,
       dueDate,
       autoPriceListId: autoPatch.priceListId ?? null,
-      autoCurrency:    autoPatch.currency ?? null,
+      // Target resuelto (propia del cliente o base) → autoritativo en
+      // Recalcular; nunca queda la moneda del cliente anterior.
+      currency:        targetCurrency,
       fxRate:          nextFxRate,
     });
 

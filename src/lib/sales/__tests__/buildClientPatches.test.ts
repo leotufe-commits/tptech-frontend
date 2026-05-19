@@ -31,7 +31,7 @@ describe("buildClientPatches — separación identidad vs. pricing", () => {
     const { clientDataPatch } = buildClientPatches({
       clientId: "c2", clientName: "Cliente Nuevo", clientSnapshot: snap,
       sellerId: "s1", canonicalTerm: "NET_30", dueDate: "2026-06-18",
-      autoPriceListId: "pl-9", autoCurrency: "USD", fxRate: 1450,
+      autoPriceListId: "pl-9", currency: "USD", fxRate: 1450,
     });
     for (const k of PRICING_KEYS) {
       expect(k in clientDataPatch).toBe(false);
@@ -48,7 +48,7 @@ describe("buildClientPatches — separación identidad vs. pricing", () => {
     const { pricingPatch } = buildClientPatches({
       clientId: "c2", clientName: "X", clientSnapshot: snap,
       sellerId: "", canonicalTerm: "", dueDate: "",
-      autoPriceListId: "pl-9", autoCurrency: "USD", fxRate: 1450,
+      autoPriceListId: "pl-9", currency: "USD", fxRate: 1450,
     });
     expect(pricingPatch).toEqual({
       priceListId: "pl-9", currency: "USD", fxRate: 1450,
@@ -60,7 +60,7 @@ describe("buildClientPatches — separación identidad vs. pricing", () => {
     const { pricingPatch } = buildClientPatches({
       clientId: "c2", clientName: "X", clientSnapshot: snap,
       sellerId: "", canonicalTerm: "", dueDate: "",
-      autoPriceListId: null, autoCurrency: null, fxRate: undefined,
+      autoPriceListId: null, currency: null, fxRate: undefined,
     });
     expect(pricingPatch).toEqual({});
   });
@@ -72,7 +72,7 @@ describe("buildClientPatches — separación identidad vs. pricing", () => {
     const { clientDataPatch } = buildClientPatches({
       clientId: "c2", clientName: "Nuevo", clientSnapshot: snap,
       sellerId: "s1", canonicalTerm: "NET_30", dueDate: "2026-06-18",
-      autoPriceListId: "pl-NEW", autoCurrency: "USD", fxRate: 1450,
+      autoPriceListId: "pl-NEW", currency: "USD", fxRate: 1450,
     });
     const kept = { ...draft, ...clientDataPatch };
     // Pricing del documento intacto → preview NO se mueve.
@@ -90,12 +90,51 @@ describe("buildClientPatches — separación identidad vs. pricing", () => {
     const { clientDataPatch, pricingPatch } = buildClientPatches({
       clientId: "c2", clientName: "Nuevo", clientSnapshot: snap,
       sellerId: "s1", canonicalTerm: "NET_30", dueDate: "2026-06-18",
-      autoPriceListId: "pl-NEW", autoCurrency: "USD", fxRate: 1450,
+      autoPriceListId: "pl-NEW", currency: "USD", fxRate: 1450,
     });
     const recalced = { ...draft, ...clientDataPatch, ...pricingPatch };
     expect(recalced.clientId).toBe("c2");
     expect(recalced.priceListId).toBe("pl-NEW");
     expect(recalced.currency).toBe("USD");
     expect(recalced.fxRate).toBe(1450);
+  });
+
+  it("currency SIEMPRE se emite si el caller la provee (target resuelto)", () => {
+    const { pricingPatch } = buildClientPatches({
+      clientId: "c2", clientName: "X", clientSnapshot: snap,
+      sellerId: "", canonicalTerm: "", dueDate: "",
+      autoPriceListId: null, currency: "ARS", fxRate: 1,
+    });
+    // Aunque NO haya priceList, la moneda target (base ARS resuelta por el
+    // caller) viaja → Recalcular es autoritativo.
+    expect(pricingPatch).toEqual({ currency: "ARS", fxRate: 1 });
+  });
+
+  it("Recalcular USD → cliente SIN moneda propia: vuelve a la base (no queda USD pegado)", () => {
+    // Doc actual en USD (cliente A). El caller resolvió el TARGET del
+    // cliente nuevo (sin moneda propia) a la base del sistema = ARS, fx 1.
+    const draft = { clientId: "cA", currency: "USD", fxRate: 1450 };
+    const { clientDataPatch, pricingPatch } = buildClientPatches({
+      clientId: "cB", clientName: "Cliente Base", clientSnapshot: snap,
+      sellerId: "", canonicalTerm: "", dueDate: "",
+      autoPriceListId: null, currency: "ARS", fxRate: 1, // target = base
+    });
+    const recalced = { ...draft, ...clientDataPatch, ...pricingPatch };
+    expect(recalced.currency).toBe("ARS"); // NO "USD" pegado
+    expect(recalced.fxRate).toBe(1);
+    expect(recalced.clientId).toBe("cB");
+  });
+
+  it("Mantener USD → cliente base: conserva USD (no aplica pricingPatch)", () => {
+    const draft = { clientId: "cA", currency: "USD", fxRate: 1450 };
+    const { clientDataPatch } = buildClientPatches({
+      clientId: "cB", clientName: "Cliente Base", clientSnapshot: snap,
+      sellerId: "", canonicalTerm: "", dueDate: "",
+      autoPriceListId: null, currency: "ARS", fxRate: 1,
+    });
+    const kept = { ...draft, ...clientDataPatch }; // Mantener: SIN pricingPatch
+    expect(kept.currency).toBe("USD");
+    expect(kept.fxRate).toBe(1450);
+    expect(kept.clientId).toBe("cB");
   });
 });

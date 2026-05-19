@@ -143,6 +143,15 @@ export function computeDueDateFromTerm(args: {
  *     mueve el `previewSignature`). Se aplica únicamente en "Recalcular
  *     precios", y recién ahí se dispara `salesApi.preview`.
  *
+ * `currency` es el TARGET ya RESUELTO por el caller: la moneda propia del
+ * cliente nuevo SI tiene, o la moneda BASE del sistema si NO tiene. Se emite
+ * SIEMPRE (no condicionado a que el cliente tenga moneda) para que en
+ * "Recalcular" sea AUTORITATIVO: al pasar de un cliente USD a uno sin moneda
+ * propia, el documento DEBE volver a la base (antes quedaba USD pegado
+ * porque `currency` no se incluía y `{...cur, ...pricingPatch}` conservaba
+ * la del cliente anterior). `fxRate` se emite siempre que sea un número
+ * finito (el caller lo resuelve: 1 para base, cotización vigente si no).
+ *
  * Invariante testeada: `pricingPatch` ⊆ {priceListId, currency, fxRate} y
  * `clientDataPatch` NUNCA incluye ninguno de esos tres. Pure.
  */
@@ -154,8 +163,9 @@ export function buildClientPatches(input: {
   canonicalTerm:   string;
   dueDate:         string;
   autoPriceListId?: string | null;
-  autoCurrency?:    string | null;
-  fxRate?:          number;
+  /** Moneda TARGET ya resuelta (propia del cliente o base del sistema). */
+  currency?:       string | null;
+  fxRate?:         number;
 }): {
   clientDataPatch: Partial<SalesInvoice>;
   pricingPatch:    Partial<SalesInvoice>;
@@ -171,8 +181,12 @@ export function buildClientPatches(input: {
 
   const pricingPatch: Partial<SalesInvoice> = {
     ...(input.autoPriceListId ? { priceListId: input.autoPriceListId } : {}),
-    ...(input.autoCurrency    ? { currency:    input.autoCurrency }    : {}),
-    ...(input.fxRate !== undefined ? { fxRate: input.fxRate } : {}),
+    // Moneda SIEMPRE (target resuelto = propia del cliente o base) →
+    // "Recalcular" autoritativo, sin moneda stale del cliente anterior.
+    ...(input.currency ? { currency: input.currency } : {}),
+    ...(typeof input.fxRate === "number" && Number.isFinite(input.fxRate)
+      ? { fxRate: input.fxRate }
+      : {}),
   };
 
   return { clientDataPatch, pricingPatch };
