@@ -188,6 +188,10 @@ export function applySalePreviewToDraft(
           name:      tb?.name      ?? "",
           rate:      tb?.rate      ?? null,
           taxAmount: tb?.taxAmount ?? 0,
+          // Passthrough de la base que aplicó el motor (TOTAL/METAL/HECHURA).
+          // Antes se descartaba → el combo "Aplica a" de Impuestos no podía
+          // rehidratar "Solo metal"/"Solo hechura" y caía a "Total".
+          applyOn:   tb?.applyOn   ?? null,
         })),
         unitTotalWithTax,
         // "Aplica a" heredado del cliente (passthrough; display-only). El

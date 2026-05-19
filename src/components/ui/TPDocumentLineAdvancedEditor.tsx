@@ -1256,6 +1256,10 @@ export function TPDocumentLineAdvancedEditor({
     const m = lines.find((l) => l.id === id)?.pricingMeta as any;
     return asScope(m?.taxOverride?.appliesTo)
       ?? asScope(m?.manualTaxAppliesTo)
+      // Base AUTORITATIVA del motor — MISMA fuente que el label
+      // "IVA 21% sobre hechura" (`taxBreakdown[].applyOn`). Sin esto el
+      // combo caía a "Total" aunque el motor aplicó METAL/HECHURA.
+      ?? asScope(m?.taxBreakdown?.[0]?.applyOn)
       ?? asScope(m?.composition?.taxes?.[0]?.appliesTo)
       ?? "TOTAL";
   }

@@ -341,7 +341,18 @@ export interface DocumentLine {
      * Si hay un solo ítem → usar su `rate` directo; si hay varios → mostrar
      * label "Varios" y sumar montos.
      */
-    taxBreakdown?:          Array<{ name: string; rate: number | null; taxAmount: number }>;
+    taxBreakdown?:          Array<{
+      name: string;
+      rate: number | null;
+      taxAmount: number;
+      /**
+       * Base "Aplica a" que usó el motor para ESTE impuesto (passthrough
+       * del backend: TOTAL / METAL / HECHURA / …). Es la fuente autoritativa
+       * para que el combo "Aplica a" de Impuestos rehidrate exactamente lo
+       * que el motor aplicó (ej. "IVA 21% sobre hechura" → "Solo hechura").
+       */
+      applyOn?: string | null;
+    }>;
     /**
      * Total UNITARIO con impuestos resuelto por el backend
      * (`preview.totalWithTax`). Incluye el redondeo del motor (ej. 101.000 en
@@ -401,6 +412,15 @@ export interface DocumentLine {
       value:     number | null;   // 13 → 13%
       applyOn:   string | null;   // TOTAL | METAL | HECHURA | METAL_Y_HECHURA
       origin:    "CLIENT";
+      /**
+       * FIXED_AMOUNT vive en moneda BASE del tenant; el motor convierte el
+       * aplicado a la moneda del documento. `true` cuando es FIXED_AMOUNT y
+       * el documento NO está en moneda base (hubo conversión) ⇒ el valor
+       * configurado NO es representable en el TPNumber → chip-only (no
+       * inventar equivalencias). Derivado por mapeo puro de
+       * `preview.currencyConverted`; el frontend NO recalcula.
+       */
+      fixedAmountInBaseOnly?: boolean;
     } | null;
     /**
      * Override de SOLO la base ("Aplica a"), elegido por el operador en la

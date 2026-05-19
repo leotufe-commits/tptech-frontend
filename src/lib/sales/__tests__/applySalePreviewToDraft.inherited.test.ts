@@ -227,3 +227,71 @@ describe("applySalePreviewToDraft — bonificación fija: monto del motor sin re
     expect(res.lines[0].discountAmount).not.toBeCloseTo(0.03, 2);
   });
 });
+
+describe("applySalePreviewToDraft — 'Aplica a' (appliesTo) METAL/HECHURA", () => {
+  // El combo "Aplica a" de Impuestos rehidrata desde
+  // `pricingMeta.taxBreakdown[].applyOn`. Antes se descartaba al mapear →
+  // caía a "Total" aunque el motor aplicó METAL/HECHURA ("IVA 21% sobre
+  // hechura" en el print). Acá fijamos el passthrough.
+  function previewWithTax(applyOn: string) {
+    return preview({
+      lines: [{
+        unitPrice: 100, lineDiscount: 0, lineTaxAmount: 21,
+        lineSubtotal: 100, lineTotal: 100, lineTotalWithTax: 121,
+        unitTotalWithTax: 121, priceSource: "PRICE_LIST",
+        taxBreakdown: [{ name: "IVA", rate: 21, taxAmount: 21, applyOn }],
+        pricingSnapshot: {},
+      } as any],
+    });
+  }
+
+  it("taxBreakdown[].applyOn = HECHURA → passthrough (no se descarta)", () => {
+    const res = applySalePreviewToDraft(draft(), previewWithTax("HECHURA"));
+    expect((res.lines[0].pricingMeta!.taxBreakdown as any)?.[0]?.applyOn).toBe("HECHURA");
+  });
+
+  it("taxBreakdown[].applyOn = METAL → passthrough", () => {
+    const res = applySalePreviewToDraft(draft(), previewWithTax("METAL"));
+    expect((res.lines[0].pricingMeta!.taxBreakdown as any)?.[0]?.applyOn).toBe("METAL");
+  });
+
+  it("taxBreakdown sin applyOn → null (no rompe; combo cae a Total)", () => {
+    const res = applySalePreviewToDraft(
+      draft(),
+      preview({
+        lines: [{
+          unitPrice: 100, lineDiscount: 0, lineTaxAmount: 21,
+          lineSubtotal: 100, lineTotal: 100, lineTotalWithTax: 121,
+          unitTotalWithTax: 121, priceSource: "PRICE_LIST",
+          taxBreakdown: [{ name: "IVA", rate: 21, taxAmount: 21 }],
+          pricingSnapshot: {},
+        } as any],
+      }),
+    );
+    expect((res.lines[0].pricingMeta!.taxBreakdown as any)?.[0]?.applyOn ?? null).toBeNull();
+  });
+
+  it("bonificación heredada METAL → inheritedDiscountAppliesTo = METAL", () => {
+    const res = applySalePreviewToDraft(
+      draft(),
+      preview({
+        clientCommercialRules: {
+          ruleType: "DISCOUNT", valueType: "PERCENTAGE", value: 13, applyOn: "METAL",
+        },
+      }),
+    );
+    expect((res.lines[0].pricingMeta as any)?.inheritedDiscountAppliesTo).toBe("METAL");
+  });
+
+  it("bonificación heredada HECHURA → inheritedDiscountAppliesTo = HECHURA", () => {
+    const res = applySalePreviewToDraft(
+      draft(),
+      preview({
+        clientCommercialRules: {
+          ruleType: "DISCOUNT", valueType: "PERCENTAGE", value: 13, applyOn: "HECHURA",
+        },
+      }),
+    );
+    expect((res.lines[0].pricingMeta as any)?.inheritedDiscountAppliesTo).toBe("HECHURA");
+  });
+});

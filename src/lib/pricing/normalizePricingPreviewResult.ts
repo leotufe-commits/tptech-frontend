@@ -159,7 +159,9 @@ function normalizeComposition(
           name:      String(t?.name ?? "Impuesto"),
           code:      String(t?.code ?? ""),
           rate:      t?.rate != null ? Number(t.rate) : null,
-          appliesTo: String(t?.appliesTo ?? ""),
+          // El backend expone la base como `appliesTo` o `applyOn` según el
+          // origen — leer ambas para no perder METAL/HECHURA.
+          appliesTo: String(t?.appliesTo ?? t?.applyOn ?? ""),
           taxAmount: Number(t?.taxAmount ?? 0),
           manual:    Boolean(t?.manual),
         }))
