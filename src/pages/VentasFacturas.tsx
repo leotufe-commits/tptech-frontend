@@ -149,6 +149,11 @@ import {
 import { listUnits, type Unit as UnitRow } from "../services/units";
 import { couponsApi, type ValidateCouponResult } from "../services/coupons";
 import { salesApi, type SaleDocumentTotals, type SalePreviewResult, type SalePreviewLine } from "../services/sales";
+// C5-fix Opcion A — Cliente del endpoint render-only desde el draft.
+// El backend renderea EXACTAMENTE los props que mandamos (mismos que
+// pasa el `<SaleInvoicePrintable>` en window.print()) → paridad
+// Imprimir ↔ Descargar ↔ Mail sin pasar por Sale persistido.
+import { salesDraftPdfApi, type SaleDraftPdfRequest } from "../services/salesDraftPdf";
 import { taxesApi, type TaxRow } from "../services/taxes";
 import { CouponCard } from "./ventas-facturas/CouponCard";
 import {
@@ -2104,21 +2109,65 @@ function InvoiceEditorModal(props: {
     return p;
   }
 
+  /** C5-fix Opcion A — Arma el request para el endpoint render-only.
+   *  Reusa EXACTAMENTE las mismas props que se pasan al
+   *  `<SaleInvoicePrintable>` en el render de impresion. Si esto se
+   *  desincroniza con aquello, Imprimir ≠ Descargar/Mail → bug de
+   *  paridad. */
+  function buildDraftPdfRequest(): SaleDraftPdfRequest {
+    const docKey = draft.number || "VTA";
+    const filenameBase =
+      draft.status === "DRAFT"       ? `Borrador-${docKey}.pdf`
+      : draft.status === "CANCELLED" ? `Factura-ANULADA-${docKey}.pdf`
+      : `Factura-${docKey}.pdf`;
+
+    return {
+      printable: {
+        config:         printTemplate,
+        company:        printCompany,
+        documentNumber: draft.number || "",
+        documentDate:   draft.date || "",
+        clientName:     draft.clientSnapshot?.name || draft.client || "",
+        clientTaxId:    draft.clientSnapshot?.documentNumber
+          ? `${draft.clientSnapshot.documentType || "Doc"}: ${draft.clientSnapshot.documentNumber}`
+          : undefined,
+        clientAddress:  draft.clientSnapshot?.address,
+        lines:          draft.lines as unknown as SaleDraftPdfRequest["printable"]["lines"],
+        totals: {
+          subtotal:       effectiveTotals.subtotal,
+          discountAmount: effectiveTotals.discountAmount ?? 0,
+          taxAmount:      effectiveTotals.taxAmount,
+          total:          effectiveTotals.total,
+        },
+        currencyCode:    currencyDisplay,
+        fxRate:          typeof draft.fxRate === "number" ? draft.fxRate : 1,
+        notes:           draft.notes,
+        terms:           draft.terms,
+        sellerName:      undefined,
+        warehouseName:   whLabel !== "Sin almacén" ? whLabel : undefined,
+        paymentTermName: draft.paymentTerm || undefined,
+        status:          draft.status,
+      },
+      page: {
+        widthMm:     printTemplate.pageWidthMm,
+        heightMm:    printTemplate.pageHeightMm,
+        orientation: printTemplate.orientation === "landscape" ? "landscape" : "portrait",
+      },
+      filename: filenameBase,
+    };
+  }
+
   /** Descarga el PDF server-side. Disponible en cualquier estado tras el
    *  pivot funcional — el sello visual (BORRADOR/ANULADA) lo dibuja el
-   *  renderer del backend segun status.
+   *  componente `<SaleInvoicePrintable>` shared segun status.
    *
-   *  Si la factura es nueva (no persistida en backend), primero la
-   *  persiste con `ensurePersistedSaleDraft` para obtener el id real.
-   *  Sin esto, `salesApi.downloadPdf(draft.id)` usaria el UUID local
-   *  generado por `openNew` → backend responderia 404. */
+   *  C5-fix Opcion A — No requiere persistir el Sale. El backend
+   *  renderea exactamente las props que mandamos (las mismas del
+   *  print). Edits en el draft se ven inmediatamente. */
   async function handleDownloadOfficialPdf(): Promise<void> {
-    const realId = await ensurePersistedSaleDraft();
-    if (!realId) return;   // ensurePersistedSaleDraft ya mostro el toast de error.
     try {
-      const { blob, filename } = await salesApi.downloadPdf(realId);
-      // `file-saver` ya esta en deps del proyecto; import dinamico para
-      // no engordar el bundle inicial.
+      const req = buildDraftPdfRequest();
+      const { blob, filename } = await salesDraftPdfApi.downloadFromDraft(req);
       const { saveAs } = await import("file-saver");
       saveAs(blob, filename);
       toast.success("PDF descargado.");
@@ -2129,18 +2178,16 @@ function InvoiceEditorModal(props: {
     }
   }
 
-  /** Envia la factura por mail con el PDF adjunto. Disponible en
-   *  cualquier estado tras el pivot funcional.
+  /** Envia la factura por mail con el PDF adjunto.
    *
-   *  Si la factura es nueva (no persistida), primero la persiste con
-   *  `ensurePersistedSaleDraft` (mismo helper que Descargar PDF —
-   *  idempotente: 1 sola creacion por factura). */
+   *  C5-fix Opcion A — Mismo helper que el download: backend renderea
+   *  el draft tal cual lo recibe y adjunta el mismo buffer. Garantiza
+   *  que el adjunto == archivo descargado. */
   async function handleEmailSubmit(payload: { to: string; subject: string; message: string }): Promise<void> {
     setEmailSending(true);
     try {
-      const realId = await ensurePersistedSaleDraft();
-      if (!realId) return;
-      const out = await salesApi.sendEmail(realId, payload);
+      const req = buildDraftPdfRequest();
+      const out = await salesDraftPdfApi.sendDraftByEmail({ ...req, ...payload });
       toast.success(out?.message || "Factura enviada correctamente.");
       setEmailModalOpen(false);
     } catch (e: unknown) {
