@@ -38,6 +38,23 @@ const ROW_HEIGHT = GRID_ROW_HEIGHT_PX; // 32 px
 const MARGIN = GRID_MARGIN;             // [12, 12]
 const CONTAINER_PADDING = GRID_CONTAINER_PADDING; // [0, 0]
 
+// 2026-05-25 — Whitelist de cards que el operador puede ocultar via
+// "Personalizar layout". Si `renderCard(id)` devuelve null para una de
+// estas ids, la card sale del grid (no reserva slot, no toma gap) y
+// las demas se compactan ocupando su lugar.
+//
+// Cards FUERA de esta lista (header, lines, totals) NUNCA salen del
+// flujo de compactacion: son estructurales o son el card hero. Su
+// `renderCard` siempre debe devolver un nodo valido.
+const HIDEABLE_CARD_IDS: ReadonlySet<CardId> = new Set<CardId>([
+  "discount",
+  "shipping",
+  "coupon",
+  "payments",
+  "account-impact",
+  "observations",
+]);
+
 export type LayoutGridContextProps = {
   /** Layout V2 actual (incluye todas las regiones). */
   layout: LayoutV2;
@@ -109,10 +126,23 @@ function fromGridLayout(
 export function LayoutGridContext(props: LayoutGridContextProps): React.ReactElement {
   const { layout, region, regionOriginX, regionColumns, onLayoutChange, renderCard, readOnly } = props;
 
-  // Filtramos las cards del aside (ignoramos header/lines).
+  // Visibilidad por card: las hideables que devuelven null en `renderCard`
+  // se consideran ocultas (whitelist arriba). Las no-hideables son siempre
+  // visibles — no consultamos renderCard para evitar invocarlo extra.
+  const isCardVisible = useCallback(
+    (c: LayoutV2Card): boolean => {
+      if (!HIDEABLE_CARD_IDS.has(c.id)) return true;
+      return renderCard(c.id) != null;
+    },
+    [renderCard],
+  );
+
+  // Filtramos las cards del aside (ignoramos header/lines) y las ocultas
+  // de la whitelist. El layout persistido conserva las ocultas (no se
+  // pierde su geometria), simplemente no participan del grid actual.
   const asideCards = useMemo(
-    () => layout.cards.filter((c) => c.region === region),
-    [layout, region],
+    () => layout.cards.filter((c) => c.region === region && isCardVisible(c)),
+    [layout, region, isCardVisible],
   );
 
   const gridLayout = useMemo(
@@ -199,6 +229,23 @@ export function LayoutGridContext(props: LayoutGridContextProps): React.ReactEle
     observersRef.current.set(id, ro);
   }, []);
 
+  // Callbacks de ref ESTABLES por id. El JSX antes pasaba un closure
+  // inline `(el) => setContentRef(c.id, el)` que React detectaba como
+  // funcion distinta en cada render → desmontaba y volvia a montar el
+  // ResizeObserver. Eso podia perder eventos justo en el momento del
+  // colapso (TPCard.open=false), dejando el slot sobredimensionado.
+  // Con esta Map de callbacks por id, el ref es estable a lo largo de
+  // la vida del componente y el RO sobrevive entre renders.
+  const refCallbacksRef = useRef<Map<CardId, (el: HTMLDivElement | null) => void>>(new Map());
+  function getContentRef(id: CardId): (el: HTMLDivElement | null) => void {
+    let cb = refCallbacksRef.current.get(id);
+    if (!cb) {
+      cb = (el: HTMLDivElement | null) => setContentRef(id, el);
+      refCallbacksRef.current.set(id, cb);
+    }
+    return cb;
+  }
+
   // `compactVertically` movido a `./reflowLayout.ts` (SSOT del algoritmo
   // de reacomodo). Aca solo lo invocamos via `compactVerticallyByRegion`.
 
@@ -271,13 +318,44 @@ export function LayoutGridContext(props: LayoutGridContextProps): React.ReactEle
       return { ...c, h: newH };
     });
 
-    if (!changed) return;
+    // Compactacion vertical de la region — siempre, aunque `changed=false`,
+    // porque puede haber cambiado la VISIBILIDAD de cards (hideables que
+    // pasaron a null en renderCard) y eso obliga a reflowear Y aunque
+    // ningun `h` se haya tocado.
+    //
+    // Separamos en 3 grupos:
+    //   - visible-en-region: entra a la compactacion (toma slot).
+    //   - hidden-en-region:  preserva geometria persistida pero NO toma
+    //                        slot (se reincorpora al final, irrelevante
+    //                        para el grid).
+    //   - otras-regions:     passthrough sin tocar.
+    const visibleInRegion: LayoutV2Card[] = [];
+    const hiddenInRegion:  LayoutV2Card[] = [];
+    const outOfRegion:     LayoutV2Card[] = [];
+    for (const c of nextCards) {
+      if (c.region !== region) { outOfRegion.push(c); continue; }
+      if (isCardVisible(c))     visibleInRegion.push(c);
+      else                      hiddenInRegion.push(c);
+    }
+    const compacted = compactVerticallyByRegion(
+      [...visibleInRegion, ...outOfRegion],
+      region,
+    );
+    const finalCards: LayoutV2Card[] = [...compacted, ...hiddenInRegion];
 
-    // Compactacion vertical completa de la region via la SSOT central.
-    // Cualquier cambio de `h` (grow o shrink) reordena las cards
-    // inferiores sin gaps ni overlaps.
-    const compacted = compactVerticallyByRegion(nextCards, region);
-    onLayoutChangeRef.current({ version: 2, cards: compacted });
+    // Commit solo si algo (h, x, y, w) realmente cambio para evitar
+    // re-renders en cadena cuando la compactacion es idempotente.
+    const geometryChanged = changed || finalCards.some((c) => {
+      const orig = currentLayout.cards.find((o) => o.id === c.id);
+      return !orig
+        || orig.x !== c.x
+        || orig.y !== c.y
+        || orig.w !== c.w
+        || orig.h !== c.h;
+    });
+    if (!geometryChanged) return;
+
+    onLayoutChangeRef.current({ version: 2, cards: finalCards });
   }
 
   // Cleanup observers + timers + tracker al desmontar.
@@ -290,6 +368,25 @@ export function LayoutGridContext(props: LayoutGridContextProps): React.ReactEle
       if (growTimerRef.current) clearTimeout(growTimerRef.current);
     };
   }, []);
+
+  // Primer measurement en mount + re-disparo cuando cambia el SET de
+  // cards visibles (ocultar/mostrar Cobro, Cupon, etc.). Sin esto el
+  // grid arranca con los `h` default del preset aunque el contenido
+  // real sea mas chico → aire visual + gap inconsistente hasta el
+  // primer evento del ResizeObserver. Con este RAF, el shrink (y la
+  // recompactacion por visibility) ocurre en el primer frame.
+  //
+  // La firma del effect usa la lista de ids visibles como key: cualquier
+  // cambio de visibilidad fuerza un re-disparo del measurement.
+  const visibleIdsKey = useMemo(
+    () => asideCards.map((c) => c.id).join("|"),
+    [asideCards],
+  );
+  useEffect(() => {
+    const raf = requestAnimationFrame(() => maybeGrowFromContent());
+    return () => cancelAnimationFrame(raf);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visibleIdsKey]);
 
   const handleChange = useCallback(
     (next: Layout[]) => {
@@ -465,10 +562,15 @@ export function LayoutGridContext(props: LayoutGridContextProps): React.ReactEle
           // El wrapper <div> recibe las props (style, className, listeners
           // de drag/resize) que react-grid-layout inyecta a sus hijos
           // directos. `key={c.id}` debe matchear con `i` del layout.
+          //
+          // `contentRef={getContentRef(c.id)}` usa la callback ESTABLE
+          // por id (Map de refs) para que el ResizeObserver no se
+          // remonte en cada render del padre y no pierda eventos del
+          // colapso/expand.
           <div key={c.id}>
             <CardShell
               editing={!readOnly}
-              contentRef={(el) => setContentRef(c.id, el)}
+              contentRef={getContentRef(c.id)}
             >
               {renderCard(c.id)}
             </CardShell>

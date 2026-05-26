@@ -246,8 +246,15 @@ const SECONDARY_H = 7;
 const SECONDARY_MIN_H = 4;
 const OBSERVATIONS_H = 9;
 const OBSERVATIONS_MIN_H = 5;
-const TOTAL_H = 13;
-const TOTAL_MIN_H = 10;
+// 2026-05-25 — Recalibracion Total (pedido producto "cierre layout fino"):
+// con ROW=20 los valores previos (h=13 → 356 px) quedaban cortos para el
+// contenido real (header grande + total + breakdown + selector modo +
+// status). Subimos a h=17 (~460 px) y elevamos el piso a 13 (~356 px) para
+// que el operador no pueda comprimir el card principal por debajo de su
+// contenido base, manteniendo jerarquia visual estable entre los 3
+// presets (CLASSIC / COMPACT / ONE_LINE).
+const TOTAL_H = 17;
+const TOTAL_MIN_H = 13;
 
 // ─── CLASSIC ─────────────────────────────────────────────────────────────────
 // ERP tradicional. Aside derecho ancho (x=7, w=5). Tipografia mas grande

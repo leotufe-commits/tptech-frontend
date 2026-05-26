@@ -71,9 +71,12 @@ export const CARD_CONSTRAINTS: Record<CardId, CardConstraints> = {
   shipping:        { minW: 3, minH: 6 },
   // Cupón: 1 input + botón Aplicar.
   coupon:          { minW: 3, minH: 5 },
-  // ★ Total — protagonista. minH 10 garantiza espacio para balance +
-  // breakdown principal + selector de modo + estado comercial.
-  totals:          { minW: 3, minH: 10 },
+  // ★ Total — protagonista. minH 13 (~356 px con ROW=20) garantiza
+  // espacio para balance + breakdown principal + selector de modo +
+  // estado comercial sin compresion. Subido de 10 a 13 (2026-05-25)
+  // en linea con TOTAL_MIN_H en presetLayouts.ts (SSOT de altura
+  // base del Total).
+  totals:          { minW: 3, minH: 13 },
   // Cobro: header + lista de pagos. Con al menos 1 pago.
   payments:        { minW: 3, minH: 8 },
   // Impacto CC: read-only, balance previsto + nota.
