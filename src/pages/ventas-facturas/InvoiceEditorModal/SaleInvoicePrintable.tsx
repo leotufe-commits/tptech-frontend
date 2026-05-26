@@ -50,14 +50,15 @@ export type SaleInvoicePrintableProps = {
 /** Devuelve el texto del sello a renderear sobre el printable segun el
  *  estado del comprobante. Devolver null = imprimir limpio (sin sello).
  *
- *  Reglas:
+ *  Reglas (mismas que el watermark del PDF server-side):
  *    · DRAFT     → "BORRADOR"  (no es comprobante oficial todavia)
  *    · CANCELLED → "ANULADA"   (anulada — no surte efecto fiscal)
  *    · PENDING / PARTIAL / PAID → null (ya confirmado, sin sello)
  *
- *  Nota: el sello SOLO afecta a la impresion HTML operativa. El PDF
- *  oficial server-side (`GET /api/sales/:id/pdf`) no se genera para
- *  DRAFT/CANCELLED — bloqueo en backend con 409. */
+ *  Paridad HTML ↔ PDF: el `renderInvoicePdf` server-side dibuja el mismo
+ *  sello con los mismos textos (`renderInvoicePdf.ts:getStampLabelFromStatus`).
+ *  El PDF se genera para CUALQUIER estado (pivot funcional) — el sello es
+ *  la proteccion comercial, no el bloqueo del sistema. */
 function getStampLabel(status: SaleInvoicePrintableProps["status"]): string | null {
   switch (status) {
     case "DRAFT":     return "BORRADOR";

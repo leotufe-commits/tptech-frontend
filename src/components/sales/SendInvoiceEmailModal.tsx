@@ -158,12 +158,19 @@ export default function SendInvoiceEmailModal(props: SendInvoiceEmailModalProps)
     // Forzamos "touched" en submit para que cualquier error oculto se vea.
     setTouched({ to: true, subject: true, message: true });
     if (hasErrors || loading) return;
-    await onSubmit({
-      to:      to.trim(),
-      subject: subject.trim(),
-      // `message` SIN trim — preservamos saltos de linea exactos.
-      message,
-    });
+    try {
+      await onSubmit({
+        to:      to.trim(),
+        subject: subject.trim(),
+        // `message` SIN trim — preservamos saltos de linea exactos.
+        message,
+      });
+    } catch {
+      // 1.G — Cazamos para evitar `unhandled promise rejection` cuando
+      // el caller hace re-throw. El error ya lo maneja el caller con un
+      // toast usando `ApiError.data.message`; el modal NO se cierra (lo
+      // decide el caller via `open` prop).
+    }
   }
 
   return (

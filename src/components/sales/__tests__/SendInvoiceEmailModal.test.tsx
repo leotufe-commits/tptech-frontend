@@ -1,0 +1,251 @@
+// src/components/sales/__tests__/SendInvoiceEmailModal.test.tsx
+// =============================================================================
+// 1.G — Cobertura del modal "Enviar factura por mail".
+//
+// Tests de COMPORTAMIENTO (no de CSS/snapshots). Verifican:
+//   · subject default state-aware: BORRADOR / FACTURA ANULADA / Factura
+//   · body default state-aware: 3 variantes de la linea descriptiva
+//   · precarga del `to` desde customerEmail; vacio + hint si no hay
+//   · validaciones inline (email regex / asunto / mensaje requeridos)
+//   · boton deshabilitado durante loading
+//   · onSubmit recibe payload exacto, saltos de linea preservados
+//   · onClose se invoca al cancelar; bloqueado durante loading
+// =============================================================================
+
+import { describe, it, expect, vi } from "vitest";
+import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import SendInvoiceEmailModal, {
+  type SendInvoiceEmailModalProps,
+  type SendInvoiceEmailStatus,
+} from "../SendInvoiceEmailModal";
+
+function makeProps(over: Partial<SendInvoiceEmailModalProps> = {}): SendInvoiceEmailModalProps {
+  return {
+    open:           true,
+    invoiceNumber:  "A-0001-00000001",
+    status:         "PENDING",
+    customerEmail:  "cliente@example.com",
+    customerName:   "Acme SA",
+    jewelryName:    "Joyería Test",
+    onClose:        vi.fn(),
+    onSubmit:       vi.fn().mockResolvedValue(undefined),
+    ...over,
+  };
+}
+
+/** Helper — encuentra un input por label visible (TPInput renderea el label
+ *  arriba del input con `text-xs font-medium text-muted`). */
+function inputByLabel(label: string): HTMLInputElement | HTMLTextAreaElement {
+  const labelEl = screen.getByText(label);
+  // El input/textarea es el sibling del label en el wrapper.
+  const wrap = labelEl.parentElement!;
+  const el = wrap.querySelector<HTMLInputElement | HTMLTextAreaElement>("input, textarea");
+  if (!el) throw new Error(`No input under label "${label}"`);
+  return el;
+}
+
+describe("SendInvoiceEmailModal — subject state-aware", () => {
+  it("DRAFT → 'BORRADOR <N°> - <Joyería>'", () => {
+    render(<SendInvoiceEmailModal {...makeProps({ status: "DRAFT", invoiceNumber: "VTA-0001" })} />);
+    const subject = inputByLabel("Asunto") as HTMLInputElement;
+    expect(subject.value).toBe("BORRADOR VTA-0001 - Joyería Test");
+  });
+
+  it("CANCELLED → 'FACTURA ANULADA <N°> - <Joyería>'", () => {
+    render(<SendInvoiceEmailModal {...makeProps({ status: "CANCELLED" })} />);
+    const subject = inputByLabel("Asunto") as HTMLInputElement;
+    expect(subject.value).toBe("FACTURA ANULADA A-0001-00000001 - Joyería Test");
+  });
+
+  it.each(["PENDING", "PARTIAL", "PAID"] as const)(
+    "%s (estado final) → 'Factura <N°> - <Joyería>'",
+    (status) => {
+      render(<SendInvoiceEmailModal {...makeProps({ status })} />);
+      const subject = inputByLabel("Asunto") as HTMLInputElement;
+      expect(subject.value).toBe("Factura A-0001-00000001 - Joyería Test");
+    },
+  );
+
+  it("sin jewelryName → omite ' - <Joyería>'", () => {
+    render(<SendInvoiceEmailModal {...makeProps({ jewelryName: null })} />);
+    const subject = inputByLabel("Asunto") as HTMLInputElement;
+    expect(subject.value).toBe("Factura A-0001-00000001");
+  });
+});
+
+describe("SendInvoiceEmailModal — body state-aware", () => {
+  it("DRAFT → 'Te enviamos adjunto el borrador <N°>.'", () => {
+    render(<SendInvoiceEmailModal {...makeProps({ status: "DRAFT", invoiceNumber: "VTA-0001" })} />);
+    const msg = inputByLabel("Mensaje") as HTMLTextAreaElement;
+    expect(msg.value).toContain("Te enviamos adjunto el borrador VTA-0001.");
+    expect(msg.value).toContain("Hola Acme SA,");
+    expect(msg.value).toContain("Muchas gracias.");
+    expect(msg.value).toContain("Joyería Test");
+  });
+
+  it("CANCELLED → 'Te enviamos adjunta la factura anulada <N°>.'", () => {
+    render(<SendInvoiceEmailModal {...makeProps({ status: "CANCELLED" })} />);
+    const msg = inputByLabel("Mensaje") as HTMLTextAreaElement;
+    expect(msg.value).toContain("Te enviamos adjunta la factura anulada A-0001-00000001.");
+  });
+
+  it.each(["PENDING", "PARTIAL", "PAID"] as const)(
+    "%s → 'Te enviamos adjunta la factura <N°>.'",
+    (status) => {
+      render(<SendInvoiceEmailModal {...makeProps({ status })} />);
+      const msg = inputByLabel("Mensaje") as HTMLTextAreaElement;
+      expect(msg.value).toContain("Te enviamos adjunta la factura A-0001-00000001.");
+    },
+  );
+
+  it("sin customerName → greeting genérico 'Hola,'", () => {
+    render(<SendInvoiceEmailModal {...makeProps({ customerName: null })} />);
+    const msg = inputByLabel("Mensaje") as HTMLTextAreaElement;
+    expect(msg.value.split("\n")[0]).toBe("Hola,");
+  });
+});
+
+describe("SendInvoiceEmailModal — precarga email del cliente", () => {
+  it("con customerEmail → precarga el campo 'to'", () => {
+    render(<SendInvoiceEmailModal {...makeProps({ customerEmail: "x@y.com" })} />);
+    const to = inputByLabel("Destinatario") as HTMLInputElement;
+    expect(to.value).toBe("x@y.com");
+    // No debe mostrar el hint cuando hay email cargado.
+    expect(screen.queryByText(/El cliente no tiene email registrado/)).toBeNull();
+  });
+
+  it("sin customerEmail → campo vacio + hint visible", () => {
+    render(<SendInvoiceEmailModal {...makeProps({ customerEmail: null })} />);
+    const to = inputByLabel("Destinatario") as HTMLInputElement;
+    expect(to.value).toBe("");
+    expect(screen.getByText(/El cliente no tiene email registrado\. Ingresá uno manualmente\./)).toBeTruthy();
+  });
+
+  it("customerEmail vacio (string) → tratado como sin email", () => {
+    render(<SendInvoiceEmailModal {...makeProps({ customerEmail: "" })} />);
+    expect((inputByLabel("Destinatario") as HTMLInputElement).value).toBe("");
+    expect(screen.getByText(/El cliente no tiene email registrado/)).toBeTruthy();
+  });
+});
+
+describe("SendInvoiceEmailModal — validaciones inline", () => {
+  it("email invalido al editar → error visible y boton deshabilitado", () => {
+    const onSubmit = vi.fn().mockResolvedValue(undefined);
+    render(<SendInvoiceEmailModal {...makeProps({ onSubmit })} />);
+    const to = inputByLabel("Destinatario") as HTMLInputElement;
+    fireEvent.change(to, { target: { value: "no-es-un-email" } });
+    expect(screen.getByText("El email no es válido.")).toBeTruthy();
+    const sendBtn = screen.getByRole("button", { name: /Enviar/i });
+    expect((sendBtn as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("asunto vacio en submit → muestra error 'El asunto es requerido.'", async () => {
+    const onSubmit = vi.fn().mockResolvedValue(undefined);
+    render(<SendInvoiceEmailModal {...makeProps({ onSubmit })} />);
+    const subject = inputByLabel("Asunto") as HTMLInputElement;
+    fireEvent.change(subject, { target: { value: "" } });
+    fireEvent.click(screen.getByRole("button", { name: /Enviar/i }));
+    await waitFor(() => {
+      expect(screen.getByText("El asunto es requerido.")).toBeTruthy();
+    });
+    expect(onSubmit).not.toHaveBeenCalled();
+  });
+
+  it("mensaje vacio en submit → muestra error 'El mensaje es requerido.'", async () => {
+    const onSubmit = vi.fn().mockResolvedValue(undefined);
+    render(<SendInvoiceEmailModal {...makeProps({ onSubmit })} />);
+    const msg = inputByLabel("Mensaje") as HTMLTextAreaElement;
+    fireEvent.change(msg, { target: { value: "" } });
+    fireEvent.click(screen.getByRole("button", { name: /Enviar/i }));
+    await waitFor(() => {
+      expect(screen.getByText("El mensaje es requerido.")).toBeTruthy();
+    });
+    expect(onSubmit).not.toHaveBeenCalled();
+  });
+
+  it("antes del primer touch → no muestra errores (UX no irritante)", () => {
+    render(<SendInvoiceEmailModal {...makeProps({ customerEmail: null })} />);
+    // El email esta vacio → ERROR existe, pero el touched es false hasta
+    // que el operador interactua o intenta enviar.
+    expect(screen.queryByText(/Ingresá el email del destinatario\./)).toBeNull();
+  });
+});
+
+describe("SendInvoiceEmailModal — submit, loading, errores", () => {
+  it("submit happy → onSubmit recibe payload con saltos de linea preservados", async () => {
+    const onSubmit = vi.fn().mockResolvedValue(undefined);
+    render(<SendInvoiceEmailModal {...makeProps({ onSubmit })} />);
+    fireEvent.click(screen.getByRole("button", { name: /Enviar/i }));
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+    const payload = onSubmit.mock.calls[0]![0];
+    expect(payload.to).toBe("cliente@example.com");
+    expect(payload.subject).toBe("Factura A-0001-00000001 - Joyería Test");
+    // El message default tiene 6 lineas (incluido un blank), separadas por \n.
+    expect(payload.message.split("\n").length).toBe(6);
+    // No debe haber sido trimmeado.
+    expect(payload.message).toContain("\n\n");
+  });
+
+  it("loading=true → boton 'Enviando…' deshabilitado", () => {
+    render(<SendInvoiceEmailModal {...makeProps({ loading: true })} />);
+    const sendBtn = screen.getByRole("button", { name: /Enviando/i });
+    expect((sendBtn as HTMLButtonElement).disabled).toBe(true);
+    // Cancelar tambien queda deshabilitado.
+    const cancelBtn = screen.getByRole("button", { name: /Cancelar/i });
+    expect((cancelBtn as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("loading=true → onClose NO se invoca al intentar cerrar", () => {
+    const onClose = vi.fn();
+    render(<SendInvoiceEmailModal {...makeProps({ loading: true, onClose })} />);
+    fireEvent.click(screen.getByRole("button", { name: /Cancelar/i }));
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it("click Cancelar (sin loading) → onClose se invoca", () => {
+    const onClose = vi.fn();
+    render(<SendInvoiceEmailModal {...makeProps({ onClose })} />);
+    fireEvent.click(screen.getByRole("button", { name: /Cancelar/i }));
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("onSubmit que tira error → modal NO se cierra (el caller decide)", async () => {
+    // El modal no muestra el toast ni cierra — eso es responsabilidad del
+    // caller (VentasFacturas). Aca solo verificamos que el error NO rompe
+    // el modal y que onClose no se llama automaticamente.
+    const onSubmit = vi.fn().mockRejectedValue(new Error("server boom"));
+    const onClose  = vi.fn();
+    render(<SendInvoiceEmailModal {...makeProps({ onSubmit, onClose })} />);
+    fireEvent.click(screen.getByRole("button", { name: /Enviar/i }));
+    await waitFor(() => expect(onSubmit).toHaveBeenCalled());
+    // El modal sigue montado.
+    expect(screen.getByText("Enviar factura por mail")).toBeTruthy();
+    expect(onClose).not.toHaveBeenCalled();
+  });
+});
+
+describe("SendInvoiceEmailModal — open/close lifecycle", () => {
+  it("re-open con props distintas → re-hidrata defaults", () => {
+    const { rerender } = render(
+      <SendInvoiceEmailModal {...makeProps({ status: "DRAFT", invoiceNumber: "VTA-0001" })} />,
+    );
+    let subject = inputByLabel("Asunto") as HTMLInputElement;
+    expect(subject.value).toBe("BORRADOR VTA-0001 - Joyería Test");
+
+    // Cerrar.
+    rerender(<SendInvoiceEmailModal {...makeProps({ open: false, status: "DRAFT", invoiceNumber: "VTA-0001" })} />);
+
+    // Re-abrir con otro status + invoice number → defaults nuevos.
+    rerender(<SendInvoiceEmailModal {...makeProps({ open: true, status: "PAID", invoiceNumber: "A-0001-00000005" })} />);
+    subject = inputByLabel("Asunto") as HTMLInputElement;
+    expect(subject.value).toBe("Factura A-0001-00000005 - Joyería Test");
+  });
+});
+
+// Sanity types — fuerza que el enum se mantenga estable.
+function _typeFenceStatus(_s: SendInvoiceEmailStatus): void { /* compile-only */ }
+_typeFenceStatus("DRAFT");
+_typeFenceStatus("PENDING");
+_typeFenceStatus("PARTIAL");
+_typeFenceStatus("PAID");
+_typeFenceStatus("CANCELLED");
