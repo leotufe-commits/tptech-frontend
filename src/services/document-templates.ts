@@ -84,6 +84,13 @@ export type DocumentTemplateConfig = {
   sections:       SectionsConfig;
   columns:        ColumnConfig[];
   columnsVersion: number;
+
+  // Plantilla de mail tenant-wide por tipo de documento. Strings vacios =
+  // el modal SendInvoiceEmailModal usa los defaults state-aware (BORRADOR /
+  // FACTURA ANULADA / Factura). Variables soportadas al interpolar:
+  //   {{cliente}} {{numero}} {{joyeria}} {{estado}} {{fecha}}
+  emailSubjectTemplate?: string;
+  emailMessageTemplate?: string;
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -411,6 +418,10 @@ export function buildLocalDefaultConfig(kind: DocumentKind, layoutType: LayoutTy
     sections:       SECTIONS_DEFAULTS[kind] ?? {},
     columns:        DEFAULT_COLUMNS[kind]   ?? [],
     columnsVersion: 1,
+
+    // Email templates vacios → modal usa defaults state-aware.
+    emailSubjectTemplate: "",
+    emailMessageTemplate: "",
   };
 }
 

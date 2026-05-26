@@ -1967,11 +1967,55 @@ function InvoiceEditorModal(props: {
     }
   }
 
+  /** Guarda subject/message del modal de envio como plantilla de email
+   *  tenant-wide (DocumentTemplate.emailSubject/MessageTemplate). El
+   *  operador puede escribir variables {{cliente}} {{numero}} {{joyeria}}
+   *  {{estado}} {{fecha}} que se interpolan al abrir el modal en futuras
+   *  facturas. */
+  async function handleSaveEmailTemplateDefaults(payload: { subjectTemplate: string; messageTemplate: string }): Promise<void> {
+    try {
+      await documentTemplatesApi.save("FACTURA", {
+        emailSubjectTemplate: payload.subjectTemplate,
+        emailMessageTemplate: payload.messageTemplate,
+      });
+      // Actualizamos el state local: la proxima vez que el modal se abra
+      // (sin recargar pagina), los nuevos defaults ya estan en memoria.
+      setEmailTemplates({ subject: payload.subjectTemplate, message: payload.messageTemplate });
+      toast.success("Plantilla de email guardada como predeterminada.");
+    } catch (e: unknown) {
+      toast.error(e instanceof Error ? e.message : "No se pudo guardar la plantilla.");
+      throw e;   // re-throw para que el modal libere el loading del boton
+    }
+  }
+
   // ── Acciones del documento: imprimir / etiquetas / email ─────────────────
   const [labelsOpen, setLabelsOpen]         = useState(false);
   // 1.E parte 2 — Modal "Enviar por mail" (state + flag de envio en curso).
   const [emailModalOpen, setEmailModalOpen] = useState(false);
   const [emailSending,   setEmailSending]   = useState(false);
+
+  // Parte 2.2 — Plantillas de email del tenant. Se cargan al abrir el modal
+  // por primera vez. El operador puede editarlas y "Guardar como
+  // predeterminado" persiste tenant-wide. Variables soportadas en
+  // subject/message: {{cliente}} {{numero}} {{joyeria}} {{estado}} {{fecha}}.
+  const [emailTemplates, setEmailTemplates] = useState<{ subject: string; message: string }>({
+    subject: "",
+    message: "",
+  });
+  useEffect(() => {
+    if (!emailModalOpen) return;
+    let cancelled = false;
+    documentTemplatesApi.get("FACTURA")
+      .then((tpl) => {
+        if (cancelled) return;
+        setEmailTemplates({
+          subject: tpl.emailSubjectTemplate ?? "",
+          message: tpl.emailMessageTemplate ?? "",
+        });
+      })
+      .catch(() => { /* silencioso — modal cae al default state-aware */ });
+    return () => { cancelled = true; };
+  }, [emailModalOpen]);
   /**
    * Construye los `LabelItem[]` para el modal de etiquetas a partir de las
    * líneas reales de la factura. Filtra placeholders y headers; respeta la
@@ -5441,8 +5485,14 @@ function InvoiceEditorModal(props: {
       customerEmail={draft.clientSnapshot?.email ?? null}
       customerName={draft.clientSnapshot?.name ?? draft.client ?? null}
       jewelryName={null}
+      invoiceDate={draft.date ?? null}
+      // Parte 2.2 — plantillas tenant-wide persistidas en DocumentTemplate.
+      // Si estan vacias, el modal cae al default state-aware hardcoded.
+      defaultSubjectTemplate={emailTemplates.subject}
+      defaultMessageTemplate={emailTemplates.message}
       onClose={() => setEmailModalOpen(false)}
       onSubmit={handleEmailSubmit}
+      onSaveAsTemplate={handleSaveEmailTemplateDefaults}
     />
 
     {/* ── Modal: Restablecer comprobante (confirmación) ──────────────────── */}

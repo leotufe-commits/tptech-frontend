@@ -249,3 +249,107 @@ _typeFenceStatus("PENDING");
 _typeFenceStatus("PARTIAL");
 _typeFenceStatus("PAID");
 _typeFenceStatus("CANCELLED");
+
+describe("SendInvoiceEmailModal — plantilla persistida (interpolacion)", () => {
+  it("con defaultSubjectTemplate → INTERPOLA variables y reemplaza el default state-aware", () => {
+    render(<SendInvoiceEmailModal {...makeProps({
+      status:                "PENDING",
+      defaultSubjectTemplate: "{{estado}} {{numero}} para {{cliente}} de {{joyeria}}",
+    })} />);
+    const subject = inputByLabel("Asunto") as HTMLInputElement;
+    expect(subject.value).toBe("Factura A-0001-00000001 para Acme SA de Joyería Test");
+  });
+
+  it("con defaultMessageTemplate → interpola y precarga el body", () => {
+    render(<SendInvoiceEmailModal {...makeProps({
+      status:                 "DRAFT",
+      defaultMessageTemplate: "Hola {{cliente}}, adjunto {{estado}} {{numero}}.\nGracias.",
+      invoiceNumber:          "VTA-0009",
+    })} />);
+    const msg = inputByLabel("Mensaje") as HTMLTextAreaElement;
+    expect(msg.value).toBe("Hola Acme SA, adjunto BORRADOR VTA-0009.\nGracias.");
+  });
+
+  it("CANCELLED + plantilla → {{estado}} = 'FACTURA ANULADA'", () => {
+    render(<SendInvoiceEmailModal {...makeProps({
+      status:                 "CANCELLED",
+      defaultSubjectTemplate: "{{estado}} {{numero}}",
+    })} />);
+    expect((inputByLabel("Asunto") as HTMLInputElement).value).toBe("FACTURA ANULADA A-0001-00000001");
+  });
+
+  it("con invoiceDate → {{fecha}} se interpola", () => {
+    render(<SendInvoiceEmailModal {...makeProps({
+      invoiceDate:            "26/05/2026",
+      defaultSubjectTemplate: "Factura {{numero}} - {{fecha}}",
+    })} />);
+    expect((inputByLabel("Asunto") as HTMLInputElement).value).toBe("Factura A-0001-00000001 - 26/05/2026");
+  });
+
+  it("plantilla vacia → cae al default state-aware (no rompe)", () => {
+    render(<SendInvoiceEmailModal {...makeProps({
+      status:                 "PENDING",
+      defaultSubjectTemplate: "",
+      defaultMessageTemplate: "   ",   // solo whitespace = vacio
+    })} />);
+    expect((inputByLabel("Asunto") as HTMLInputElement).value).toBe("Factura A-0001-00000001 - Joyería Test");
+  });
+});
+
+describe("SendInvoiceEmailModal — boton 'Guardar como predeterminado'", () => {
+  it("sin onSaveAsTemplate → NO renderea el boton ni el hint de variables", () => {
+    render(<SendInvoiceEmailModal {...makeProps()} />);
+    expect(screen.queryByRole("button", { name: /Guardar como predeterminado/i })).toBeNull();
+    expect(screen.queryByText(/Variables disponibles/i)).toBeNull();
+  });
+
+  it("con onSaveAsTemplate → renderea boton y hint de variables", () => {
+    render(<SendInvoiceEmailModal {...makeProps({ onSaveAsTemplate: vi.fn().mockResolvedValue(undefined) })} />);
+    expect(screen.getByRole("button", { name: /Guardar como predeterminado/i })).toBeTruthy();
+    expect(screen.getByText(/Variables disponibles/i)).toBeTruthy();
+  });
+
+  it("click → llama onSaveAsTemplate con subject+message ACTUALES (con variables, sin interpolar)", async () => {
+    const onSaveAsTemplate = vi.fn().mockResolvedValue(undefined);
+    render(<SendInvoiceEmailModal {...makeProps({ onSaveAsTemplate })} />);
+    // El operador escribe una plantilla con variables.
+    const subject = inputByLabel("Asunto") as HTMLInputElement;
+    fireEvent.change(subject, { target: { value: "{{estado}} {{numero}} - {{joyeria}}" } });
+    const msg = inputByLabel("Mensaje") as HTMLTextAreaElement;
+    fireEvent.change(msg, { target: { value: "Hola {{cliente}}, va el {{numero}}." } });
+
+    fireEvent.click(screen.getByRole("button", { name: /Guardar como predeterminado/i }));
+    await waitFor(() => expect(onSaveAsTemplate).toHaveBeenCalledTimes(1));
+    expect(onSaveAsTemplate.mock.calls[0]![0]).toEqual({
+      subjectTemplate: "{{estado}} {{numero}} - {{joyeria}}",
+      messageTemplate: "Hola {{cliente}}, va el {{numero}}.",
+    });
+  });
+
+  it("NO cierra el modal tras guardar (puede seguir enviando)", async () => {
+    const onSaveAsTemplate = vi.fn().mockResolvedValue(undefined);
+    const onClose          = vi.fn();
+    render(<SendInvoiceEmailModal {...makeProps({ onSaveAsTemplate, onClose })} />);
+    fireEvent.click(screen.getByRole("button", { name: /Guardar como predeterminado/i }));
+    await waitFor(() => expect(onSaveAsTemplate).toHaveBeenCalled());
+    expect(onClose).not.toHaveBeenCalled();
+    // El modal sigue mostrando los campos.
+    expect(screen.getByText("Enviar factura por mail")).toBeTruthy();
+  });
+
+  it("error al guardar → modal sigue abierto, boton se libera del loading", async () => {
+    const onSaveAsTemplate = vi.fn().mockRejectedValue(new Error("boom"));
+    render(<SendInvoiceEmailModal {...makeProps({ onSaveAsTemplate })} />);
+    fireEvent.click(screen.getByRole("button", { name: /Guardar como predeterminado/i }));
+    await waitFor(() => expect(onSaveAsTemplate).toHaveBeenCalled());
+    // Boton vuelve a estar habilitado.
+    const btn = screen.getByRole("button", { name: /Guardar como predeterminado/i });
+    expect((btn as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it("loading del envio (Enviar) → boton 'Guardar como predeterminado' tambien deshabilitado", () => {
+    render(<SendInvoiceEmailModal {...makeProps({ loading: true, onSaveAsTemplate: vi.fn() })} />);
+    const btn = screen.getByRole("button", { name: /Guardar como predeterminado/i });
+    expect((btn as HTMLButtonElement).disabled).toBe(true);
+  });
+});
