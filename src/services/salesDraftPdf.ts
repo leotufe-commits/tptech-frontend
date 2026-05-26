@@ -95,6 +95,11 @@ export interface SaleDraftEmailRequest extends SaleDraftPdfRequest {
   to:      string;
   subject: string;
   message: string;
+  /** E2 — REQUERIDO. Anchor al Sale persistido para que el log
+   *  documental tenga trazabilidad. El caller (handler de email en
+   *  VentasFacturas) llama `ensurePersistedSaleDraft()` antes y manda
+   *  el id resultante. */
+  saleId:  string;
 }
 
 // ─── API ─────────────────────────────────────────────────────────────────────
