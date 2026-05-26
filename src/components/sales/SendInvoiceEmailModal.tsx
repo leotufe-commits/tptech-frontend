@@ -32,6 +32,12 @@ export type SendInvoiceEmailPayload = {
   message: string;
 };
 
+/** Estados que el modal sabe distinguir para componer subject/body
+ *  state-aware. Mapean al `SalesInvoiceStatus` del frontend
+ *  (`DRAFT | PENDING | PARTIAL | PAID | CANCELLED`). DRAFT y CANCELLED
+ *  prefijan el subject; resto = "final" (sin prefijo). */
+export type SendInvoiceEmailStatus = "DRAFT" | "PENDING" | "PARTIAL" | "PAID" | "CANCELLED";
+
 export interface SendInvoiceEmailModalProps {
   open:           boolean;
   loading?:       boolean;
@@ -39,6 +45,9 @@ export interface SendInvoiceEmailModalProps {
    *  del draft (Sale.code) como fallback. Aparece en el subtitulo y
    *  en los defaults de subject/message. */
   invoiceNumber:  string;
+  /** Estado del comprobante — determina si el subject/body usan el
+   *  formato BORRADOR / ANULADA / final. Default: undefined → final. */
+  status?:        SendInvoiceEmailStatus;
   /** Email del cliente — precarga el campo `to` si esta presente. */
   customerEmail?: string | null;
   /** Nombre del cliente para el "Hola <name>," del body. */
@@ -54,22 +63,48 @@ export interface SendInvoiceEmailModalProps {
 // por el server (o viceversa).
 const EMAIL_RX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-function buildDefaultSubject(invoiceNumber: string, jewelryName?: string | null): string {
-  const tenant = jewelryName?.trim();
-  return tenant ? `Factura ${invoiceNumber} - ${tenant}` : `Factura ${invoiceNumber}`;
+/** Pivot funcional — subject state-aware. Defaults pedidos por producto:
+ *    · DRAFT     → "BORRADOR <N°> - <Joyería>"
+ *    · CANCELLED → "FACTURA ANULADA <N°> - <Joyería>"
+ *    · final     → "Factura <N°> - <Joyería>" */
+function buildDefaultSubject(
+  invoiceNumber: string,
+  status:        SendInvoiceEmailStatus | undefined,
+  jewelryName?:  string | null,
+): string {
+  const tenantSuffix = jewelryName?.trim() ? ` - ${jewelryName.trim()}` : "";
+  switch (status) {
+    case "DRAFT":     return `BORRADOR ${invoiceNumber}${tenantSuffix}`;
+    case "CANCELLED": return `FACTURA ANULADA ${invoiceNumber}${tenantSuffix}`;
+    default:          return `Factura ${invoiceNumber}${tenantSuffix}`;
+  }
 }
 
+/** Pivot funcional — body state-aware. Cambia solo la linea descriptiva
+ *  del adjunto; greeting y firma quedan iguales. */
 function buildDefaultMessage(
   invoiceNumber: string,
-  customerName?:  string | null,
-  jewelryName?:   string | null,
+  status:        SendInvoiceEmailStatus | undefined,
+  customerName?: string | null,
+  jewelryName?:  string | null,
 ): string {
   const greeting = customerName?.trim() ? `Hola ${customerName.trim()},` : "Hola,";
   const firm     = jewelryName?.trim() || "";
+  let attachmentLine: string;
+  switch (status) {
+    case "DRAFT":
+      attachmentLine = `Te enviamos adjunto el borrador ${invoiceNumber}.`;
+      break;
+    case "CANCELLED":
+      attachmentLine = `Te enviamos adjunta la factura anulada ${invoiceNumber}.`;
+      break;
+    default:
+      attachmentLine = `Te enviamos adjunta la factura ${invoiceNumber}.`;
+  }
   return [
     greeting,
     "",
-    `Te enviamos adjunta la factura ${invoiceNumber}.`,
+    attachmentLine,
     "",
     "Muchas gracias.",
     firm,
@@ -77,15 +112,15 @@ function buildDefaultMessage(
 }
 
 export default function SendInvoiceEmailModal(props: SendInvoiceEmailModalProps): React.ReactElement {
-  const { open, loading, invoiceNumber, customerEmail, customerName, jewelryName, onClose, onSubmit } = props;
+  const { open, loading, invoiceNumber, status, customerEmail, customerName, jewelryName, onClose, onSubmit } = props;
 
   const defaultSubject = useMemo(
-    () => buildDefaultSubject(invoiceNumber, jewelryName),
-    [invoiceNumber, jewelryName],
+    () => buildDefaultSubject(invoiceNumber, status, jewelryName),
+    [invoiceNumber, status, jewelryName],
   );
   const defaultMessage = useMemo(
-    () => buildDefaultMessage(invoiceNumber, customerName, jewelryName),
-    [invoiceNumber, customerName, jewelryName],
+    () => buildDefaultMessage(invoiceNumber, status, customerName, jewelryName),
+    [invoiceNumber, status, customerName, jewelryName],
   );
 
   const [to,      setTo]      = useState<string>(customerEmail ?? "");

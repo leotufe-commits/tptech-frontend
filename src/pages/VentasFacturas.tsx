@@ -4485,19 +4485,19 @@ function InvoiceEditorModal(props: {
                 Imprimir
               </TPButton>
               {/* 1.E — Descarga del PDF OFICIAL server-side. Solo
-                  confirmados (PENDING/PARTIAL/PAID). DRAFT y CANCELLED
-                  quedan deshabilitados con tooltip explicativo; backend
-                  confirma con 409 si alguien llega igual. */}
+                  cualquier estado — DRAFT y CANCELLED descargan con el
+                  watermark BORRADOR / ANULADA renderado server-side por
+                  `renderInvoicePdf`. El sello visual es la proteccion
+                  comercial, no el bloqueo del sistema. */}
               <TPButton
                 variant="ghost"
                 onClick={handleDownloadOfficialPdf}
-                disabled={draft.status === "DRAFT" || draft.status === "CANCELLED"}
                 title={
                   draft.status === "DRAFT"
-                    ? "Para descargar el PDF oficial, primero confirmá la factura."
+                    ? "Descargar PDF (BORRADOR)"
                     : draft.status === "CANCELLED"
-                      ? "Esta factura está anulada. No se puede generar el PDF oficial."
-                      : "Descargar PDF oficial de la factura"
+                      ? "Descargar PDF de la factura anulada."
+                      : "Descargar PDF de la factura"
                 }
                 iconLeft={<Download size={14} />}
               >
@@ -4512,20 +4512,19 @@ function InvoiceEditorModal(props: {
               >
                 Etiquetas
               </TPButton>
-              {/* 1.E parte 2 — Envia la factura por mail con el PDF
-                  oficial adjunto. Mismos estados bloqueados que
-                  "Descargar PDF": DRAFT y CANCELLED quedan deshabilitados
-                  con tooltip explicativo. */}
+              {/* Envia el PDF por mail. Disponible en cualquier estado —
+                  el subject/body del modal cambian segun status (BORRADOR /
+                  ANULADA / final). El PDF adjunto lleva el watermark
+                  correspondiente. */}
               <TPButton
                 variant="ghost"
                 onClick={() => setEmailModalOpen(true)}
-                disabled={draft.status === "DRAFT" || draft.status === "CANCELLED"}
                 title={
                   draft.status === "DRAFT"
-                    ? "Para enviar la factura, primero confirmá el comprobante."
+                    ? "Enviar borrador por mail."
                     : draft.status === "CANCELLED"
-                      ? "Esta factura está anulada."
-                      : "Enviar la factura por mail al cliente"
+                      ? "Enviar factura anulada."
+                      : "Enviar factura por mail."
                 }
                 iconLeft={<Mail size={14} />}
               >
@@ -5377,7 +5376,15 @@ function InvoiceEditorModal(props: {
     <SendInvoiceEmailModal
       open={emailModalOpen}
       loading={emailSending}
-      invoiceNumber={draft.officialNumber ?? draft.number}
+      // DRAFT usa Sale.code (`draft.number`); confirmados usan Receipt.code
+      // (`officialNumber`). Mantiene paridad con el filename del PDF y el
+      // watermark renderizado server-side.
+      invoiceNumber={
+        draft.status === "DRAFT"
+          ? draft.number
+          : (draft.officialNumber ?? draft.number)
+      }
+      status={draft.status}
       customerEmail={draft.clientSnapshot?.email ?? null}
       customerName={draft.clientSnapshot?.name ?? draft.client ?? null}
       jewelryName={null}
