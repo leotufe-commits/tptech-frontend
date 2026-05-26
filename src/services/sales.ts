@@ -947,4 +947,16 @@ export const salesApi = {
     const filename = m?.[1] ?? `Factura-${id}.pdf`;
     return { blob, filename };
   },
+
+  /** 1.E parte 2 — Envia la factura por mail con el PDF oficial adjunto.
+   *  Backend valida estado (DRAFT/CANCELLED → 409) y Receipt.code presente
+   *  (sin recibo → 409 SALE_WITHOUT_RECEIPT_NUMBER). El caller debe
+   *  manejar errores con `ApiError.data.message` (mensaje localizado del
+   *  backend listo para toast). */
+  sendEmail: (id: string, payload: { to: string; subject: string; message: string }) =>
+    apiFetch<{ ok: boolean; message: string }>(`/sales/${id}/send-email`, {
+      method: "POST",
+      body:   payload,
+      on401:  "throw",
+    }),
 };

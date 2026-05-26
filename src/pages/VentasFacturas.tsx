@@ -156,6 +156,8 @@ import {
   ObservationsTermsAttachmentsCard,
 } from "./ventas-facturas/InvoiceEditorModal";
 import LabelPrintModal, { type LabelItem } from "./article-detail/LabelPrintModal";
+// 1.E parte 2 — Modal reutilizable para enviar la factura por mail.
+import SendInvoiceEmailModal from "../components/sales/SendInvoiceEmailModal";
 import type { WarehouseRow } from "./InventarioAlmacenes/types";
 import { TPDocumentModalFooter } from "../components/ui/TPDocumentModalFooter";
 import TPDocumentTotalsHero from "../components/ui/TPDocumentTotalsHero";
@@ -1965,7 +1967,10 @@ function InvoiceEditorModal(props: {
   }
 
   // ── Acciones del documento: imprimir / etiquetas / email ─────────────────
-  const [labelsOpen, setLabelsOpen] = useState(false);
+  const [labelsOpen, setLabelsOpen]         = useState(false);
+  // 1.E parte 2 — Modal "Enviar por mail" (state + flag de envio en curso).
+  const [emailModalOpen, setEmailModalOpen] = useState(false);
+  const [emailSending,   setEmailSending]   = useState(false);
   /**
    * Construye los `LabelItem[]` para el modal de etiquetas a partir de las
    * líneas reales de la factura. Filtra placeholders y headers; respeta la
@@ -2023,6 +2028,31 @@ function InvoiceEditorModal(props: {
       const err = e as { message?: string; data?: { code?: string; message?: string } };
       const msg = err?.data?.message || err?.message || "Error al descargar el PDF.";
       toast.error(msg);
+    }
+  }
+
+  /** 1.E parte 2 — Envia la factura por mail. Backend valida estado +
+   *  Receipt.code; aca cazamos errores (incluidos los 409 con `code`
+   *  estable) y mostramos el mensaje del server en el toast. En exito,
+   *  cerramos el modal y usamos el `message` del response (SSOT del
+   *  backend) para el toast. */
+  async function handleEmailSubmit(payload: { to: string; subject: string; message: string }): Promise<void> {
+    if (!draft?.id) {
+      toast.error("Guardá la factura antes de enviarla por mail.");
+      return;
+    }
+    setEmailSending(true);
+    try {
+      const out = await salesApi.sendEmail(draft.id, payload);
+      toast.success(out?.message || "Factura enviada correctamente.");
+      setEmailModalOpen(false);
+    } catch (e: unknown) {
+      const err = e as { message?: string; data?: { code?: string; message?: string } };
+      const msg = err?.data?.message || err?.message || "Error al enviar la factura.";
+      toast.error(msg);
+      // No cerramos el modal — el operador puede corregir y reintentar.
+    } finally {
+      setEmailSending(false);
     }
   }
 
@@ -4482,14 +4512,24 @@ function InvoiceEditorModal(props: {
               >
                 Etiquetas
               </TPButton>
+              {/* 1.E parte 2 — Envia la factura por mail con el PDF
+                  oficial adjunto. Mismos estados bloqueados que
+                  "Descargar PDF": DRAFT y CANCELLED quedan deshabilitados
+                  con tooltip explicativo. */}
               <TPButton
                 variant="ghost"
-                onClick={() => toast.info("Próximamente: envío por email del documento.")}
-                disabled
-                title="Próximamente — requiere endpoint backend POST /sales/:id/send-email"
+                onClick={() => setEmailModalOpen(true)}
+                disabled={draft.status === "DRAFT" || draft.status === "CANCELLED"}
+                title={
+                  draft.status === "DRAFT"
+                    ? "Para enviar la factura, primero confirmá el comprobante."
+                    : draft.status === "CANCELLED"
+                      ? "Esta factura está anulada."
+                      : "Enviar la factura por mail al cliente"
+                }
                 iconLeft={<Mail size={14} />}
               >
-                Enviar
+                Enviar por mail
               </TPButton>
             </>
           }
@@ -5326,6 +5366,23 @@ function InvoiceEditorModal(props: {
       open={labelsOpen}
       onClose={() => setLabelsOpen(false)}
       items={labelItems}
+    />
+
+    {/* ── 1.E parte 2 — Modal: Enviar factura por mail ──────────────────── */}
+    {/*  `jewelryName` queda en `null` por ahora — cuando este modal se
+         monte en el mismo arbol que el printable HTML (que carga
+         `fetchCompanyFullProfile()`), se va a pasar `printCompany.legalName
+         || printCompany.name`. Por ahora el subject/body simplemente
+         omiten el nombre de la joyeria sin romper. */}
+    <SendInvoiceEmailModal
+      open={emailModalOpen}
+      loading={emailSending}
+      invoiceNumber={draft.officialNumber ?? draft.number}
+      customerEmail={draft.clientSnapshot?.email ?? null}
+      customerName={draft.clientSnapshot?.name ?? draft.client ?? null}
+      jewelryName={null}
+      onClose={() => setEmailModalOpen(false)}
+      onSubmit={handleEmailSubmit}
     />
 
     {/* ── Modal: Restablecer comprobante (confirmación) ──────────────────── */}
