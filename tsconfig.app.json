@@ -22,8 +22,16 @@
     "noUnusedParameters": true,
     "erasableSyntaxOnly": true,
     "noFallthroughCasesInSwitch": true,
-    "noUncheckedSideEffectImports": true
+    "noUncheckedSideEffectImports": true,
+
+    /* Submodulo tptech-shared — alias para evitar paths relativos
+       largos como `../../../../tptech-shared/src/...`. Espejo del
+       alias en vite.config.ts. */
+    "baseUrl": ".",
+    "paths": {
+      "@tptech/shared/*": ["../tptech-shared/src/*"]
+    }
   },
-  "include": ["src"],
+  "include": ["src", "../tptech-shared/src"],
   "exclude": ["src/**/__tests__/**", "src/**/*.test.ts", "src/**/*.test.tsx"]
 }

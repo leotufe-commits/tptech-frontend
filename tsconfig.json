@@ -12,8 +12,13 @@
 
     "useDefineForClassFields": true,
     "resolveJsonModule": true,
-    "isolatedModules": true
+    "isolatedModules": true,
+
+    "baseUrl": ".",
+    "paths": {
+      "@tptech/shared/*": ["../tptech-shared/src/*"]
+    }
   },
-  "include": ["src"],
+  "include": ["src", "../tptech-shared/src"],
   "exclude": ["src/**/__tests__/**", "src/**/*.test.ts", "src/**/*.test.tsx"]
 }

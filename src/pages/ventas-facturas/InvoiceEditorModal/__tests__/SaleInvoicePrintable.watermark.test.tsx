@@ -15,7 +15,7 @@
 
 import { describe, it, expect } from "vitest";
 import { render, screen } from "@testing-library/react";
-import SaleInvoicePrintable, { type SaleInvoicePrintableProps } from "../SaleInvoicePrintable";
+import SaleInvoicePrintable, { type SaleInvoicePrintableProps } from "@tptech/shared/document-printables/SaleInvoicePrintable";
 import { buildLocalDefaultConfig } from "../../../../services/document-templates";
 import type { CompanyFullProfile } from "../../../../services/company";
 
