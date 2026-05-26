@@ -48,6 +48,13 @@ import {
 } from "../../../services/document-templates";
 import { fetchCompanyProfile } from "../../../services/company";
 import DocumentPreview from "./DocumentPreview";
+// Fase B1 — Para FACTURA, el preview del editor usa el MISMO componente
+// que el PDF / Imprimir / Mail. Garantiza paridad visual: lo que ve el
+// operador acá == lo que ve el cliente final. Para los otros 4 kinds
+// (PRESUPUESTO/REMITO/etc.) seguimos con DocumentPreview hasta que
+// cada uno tenga su printable shared.
+import SaleInvoicePrintable from "@tptech/shared/document-printables/SaleInvoicePrintable";
+import { SAMPLE_INVOICE_PRINTABLE_PROPS } from "../../../lib/document-templates/sampleInvoiceData";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Zoom
@@ -205,15 +212,33 @@ function PreviewPanel({ config, kind, zoom, onZoomIn, onZoomOut, onZoomReset, co
                 boxShadow: "0 4px 24px rgba(0,0,0,0.20), 0 1px 4px rgba(0,0,0,0.10)",
               }}
             >
-              <DocumentPreview config={config} kind={kind} companyName={companyName} logoUrl={logoUrl || undefined} />
+              {kind === "FACTURA" ? (
+                <SaleInvoicePrintable
+                  {...SAMPLE_INVOICE_PRINTABLE_PROPS}
+                  config={config}
+                  company={{
+                    name:        companyName,
+                    legalName:   companyName,
+                    logoUrl:     logoUrl || undefined,
+                    cuit:        "30-12345678-9",
+                    ivaCondition: "Responsable Inscripto",
+                    addressLine: "Av. Corrientes 1234, CABA",
+                    phone:       "(011) 1234-5678",
+                    email:       "contacto@empresa.com",
+                  }}
+                />
+              ) : (
+                <DocumentPreview
+                  config={config}
+                  kind={kind}
+                  companyName={companyName}
+                  logoUrl={logoUrl || undefined}
+                />
+              )}
             </div>
           </div>
         </div>
       </div>
-
-      <p className="text-[11px] text-muted text-center select-none opacity-60">
-        Escala aproximada — no representa el PDF final
-      </p>
     </div>
   );
 }
