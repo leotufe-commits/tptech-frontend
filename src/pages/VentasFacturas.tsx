@@ -78,6 +78,7 @@ import type { SalesInvoice, SalesInvoiceStatus, ClientSnapshot } from "../lib/sa
 import { buildClientSnapshot } from "../lib/sales/buildClientSnapshot";
 import { resolveClientInheritedDiscount } from "../lib/sales/resolveClientInheritedDiscount";
 import { buildSalePreviewPayload } from "../lib/sales/buildSalePreviewPayload";
+import { buildSaleCreatePayload } from "../lib/sales/buildSaleCreatePayload";
 import { applySalePreviewToDraft } from "../lib/sales/applySalePreviewToDraft";
 import { useCardCollapse } from "../lib/sales/useCardCollapse";
 import {
@@ -2007,18 +2008,71 @@ function InvoiceEditorModal(props: {
     if (typeof window !== "undefined") window.print();
   }
 
-  /** 1.E — Descarga el PDF OFICIAL server-side. Bloqueado para DRAFT
-   *  (backend responde 409 SALE_NOT_CONFIRMED) y CANCELLED (409
-   *  SALE_CANCELLED). El boton del footer ya se renderea deshabilitado
-   *  en esos estados; esta funcion es defensiva ante cualquier ruta
-   *  alternativa que la invoque. */
-  async function handleDownloadOfficialPdf(): Promise<void> {
-    if (!draft?.id) {
-      toast.error("Guardá la factura antes de descargar el PDF.");
-      return;
+  // ── Bug fix — id REAL del Sale persistido en backend ────────────────────
+  // Diferenciamos `draft.id` (UUID local generado por `openNew`) del id
+  // real que devuelve `salesApi.create()`. Sin esto, los endpoints
+  // documentales (`/sales/:id/pdf`, `/sales/:id/send-email`) responden
+  // 404 porque el UUID local no existe en backend.
+  //
+  // El state vive en este componente (no en el padre) porque (a) los
+  // handlers que lo consumen estan aca, (b) al cerrar el modal el padre
+  // hace `setDraft(null)` → InvoiceEditorModal se desmonta → state se
+  // borra automaticamente, sin reset explicito.
+  //
+  // Idempotencia: `ensureSalePromiseRef` dedupa creates concurrentes
+  // (operador hace doble click rapido) → 1 sola creacion por factura.
+  const [savedSaleId, setSavedSaleId] = useState<string | null>(null);
+  const ensureSalePromiseRef = useRef<Promise<string | null> | null>(null);
+
+  /** Garantiza un Sale persistido en backend y devuelve su id.
+   *   · Si ya hay `savedSaleId` → lo devuelve (no duplica).
+   *   · Si hay un create en vuelo → reusa esa promesa (dedupe — evita
+   *     que doble click cree 2 Sales).
+   *   · Si no → arma el payload con `buildSaleCreatePayload` y crea el
+   *     Sale en estado DRAFT via `salesApi.create()`.
+   *  Devuelve `null` (con toast) si no se pudo (sin lineas / error backend).
+   *  No recalcula nada — el payload sale del builder puro. */
+  async function ensurePersistedSaleDraft(): Promise<string | null> {
+    if (savedSaleId) return savedSaleId;
+    if (ensureSalePromiseRef.current) return ensureSalePromiseRef.current;
+
+    const built = buildSaleCreatePayload(draft);
+    if (!built.hasRealLines) {
+      toast.error("Agregá al menos una línea para guardar el borrador.");
+      return null;
     }
+
+    const p = (async (): Promise<string | null> => {
+      toast.info("Guardando borrador…");
+      try {
+        const saved = await salesApi.create(built.payload);
+        setSavedSaleId(saved.id);
+        return saved.id;
+      } catch (e: unknown) {
+        const err = e as { message?: string; data?: { message?: string } };
+        toast.error(err?.data?.message || err?.message || "No se pudo guardar el borrador.");
+        return null;
+      } finally {
+        ensureSalePromiseRef.current = null;
+      }
+    })();
+    ensureSalePromiseRef.current = p;
+    return p;
+  }
+
+  /** Descarga el PDF server-side. Disponible en cualquier estado tras el
+   *  pivot funcional — el sello visual (BORRADOR/ANULADA) lo dibuja el
+   *  renderer del backend segun status.
+   *
+   *  Si la factura es nueva (no persistida en backend), primero la
+   *  persiste con `ensurePersistedSaleDraft` para obtener el id real.
+   *  Sin esto, `salesApi.downloadPdf(draft.id)` usaria el UUID local
+   *  generado por `openNew` → backend responderia 404. */
+  async function handleDownloadOfficialPdf(): Promise<void> {
+    const realId = await ensurePersistedSaleDraft();
+    if (!realId) return;   // ensurePersistedSaleDraft ya mostro el toast de error.
     try {
-      const { blob, filename } = await salesApi.downloadPdf(draft.id);
+      const { blob, filename } = await salesApi.downloadPdf(realId);
       // `file-saver` ya esta en deps del proyecto; import dinamico para
       // no engordar el bundle inicial.
       const { saveAs } = await import("file-saver");
@@ -2031,19 +2085,18 @@ function InvoiceEditorModal(props: {
     }
   }
 
-  /** 1.E parte 2 — Envia la factura por mail. Backend valida estado +
-   *  Receipt.code; aca cazamos errores (incluidos los 409 con `code`
-   *  estable) y mostramos el mensaje del server en el toast. En exito,
-   *  cerramos el modal y usamos el `message` del response (SSOT del
-   *  backend) para el toast. */
+  /** Envia la factura por mail con el PDF adjunto. Disponible en
+   *  cualquier estado tras el pivot funcional.
+   *
+   *  Si la factura es nueva (no persistida), primero la persiste con
+   *  `ensurePersistedSaleDraft` (mismo helper que Descargar PDF —
+   *  idempotente: 1 sola creacion por factura). */
   async function handleEmailSubmit(payload: { to: string; subject: string; message: string }): Promise<void> {
-    if (!draft?.id) {
-      toast.error("Guardá la factura antes de enviarla por mail.");
-      return;
-    }
     setEmailSending(true);
     try {
-      const out = await salesApi.sendEmail(draft.id, payload);
+      const realId = await ensurePersistedSaleDraft();
+      if (!realId) return;
+      const out = await salesApi.sendEmail(realId, payload);
       toast.success(out?.message || "Factura enviada correctamente.");
       setEmailModalOpen(false);
     } catch (e: unknown) {
