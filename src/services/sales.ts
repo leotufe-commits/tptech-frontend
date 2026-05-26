@@ -141,6 +141,21 @@ export type SellerSnapshot = {
   commissionTotal: number | null;
 };
 
+/** 1.A — Receipt emitido por la venta al confirmarse. `code` es la
+ *  numeracion oficial del comprobante (ej. "A-0001-00000001") y la usa
+ *  el modal de Factura como "Factura N°" y el endpoint PDF como nombre
+ *  del archivo. Una venta puede tener 0 receipts (DRAFT) o 1+ tras
+ *  confirmar. */
+export type SaleReceiptRow = {
+  id:        string;
+  code:      string;
+  type:      string;     // "INVOICE" | "CREDIT_NOTE" | ...
+  direction: string;     // "OUTBOUND" | "INBOUND"
+  status:    string;     // "ISSUED" | "VOIDED" | ...
+  issueDate: string;
+  issuedAt:  string;
+};
+
 export type SaleDetail = SaleRow & {
   clientSnapshot: Record<string, unknown> | null;
   sellerSnapshot: SellerSnapshot | null;
@@ -148,6 +163,8 @@ export type SaleDetail = SaleRow & {
   lines: SaleLineRow[];
   payments: SalePaymentRow[];
   saleTotals: SaleTotals | null;
+  /** Comprobantes emitidos por la venta (vacio si esta en DRAFT). */
+  receipts?: SaleReceiptRow[];
 };
 
 // ─── Sale Preview ─────────────────────────────────────────────────────────────

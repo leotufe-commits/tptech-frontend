@@ -57,7 +57,14 @@ export type ClientSnapshot = {
 
 export type SalesInvoice = {
   id: string;
-  number: string;            // "FV-0001"
+  number: string;            // "FV-0001" — identificador interno del draft (Sale.code)
+  /** 1.A — Numeracion oficial del comprobante (Receipt.code, ej.
+   *  "A-0001-00000001") asignada por ReceiptSeries al confirmar la
+   *  venta. Solo presente en facturas CONFIRMED y solo si el backend
+   *  hidrato la respuesta con `receipts[]`. Si esta presente, el modal
+   *  muestra "Factura N° <officialNumber>"; si no, cae al `number`
+   *  interno. */
+  officialNumber?: string;
   date: string;              // ISO
   dueDate: string;           // ISO — opcional
   /** Id real del cliente (CommercialEntity). Se setea al elegir del combo. */

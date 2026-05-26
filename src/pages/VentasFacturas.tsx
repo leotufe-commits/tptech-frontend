@@ -4373,8 +4373,31 @@ function InvoiceEditorModal(props: {
     <Modal
       open={open}
       onClose={onClose}
-      title={isNew ? "Nueva factura de venta" : `Editar factura ${draft.number}`}
-      subtitle={`Número ${draft.number}`}
+      // 1.A — Titulo dinamico segun estado del comprobante.
+      //   DRAFT             → "Borrador <Sale.code>" (numero interno del draft).
+      //   Confirmado (no    → "Factura N° <Receipt.code>" si existe la
+      //   DRAFT) + receipt:    numeracion oficial.
+      //   Confirmado sin    → "Editar factura <Sale.code>" (fallback al
+      //   officialNumber:      numero interno hasta que el receipt se
+      //                        hidrate via getOne/confirm).
+      // Nota: el frontend usa `SalesInvoicesStatus` con vocabulario
+      // distinto al backend (DRAFT | PENDING | PARTIAL | PAID |
+      // CANCELLED). Aca tratamos cualquier status distinto de DRAFT
+      // como "comprobante ya confirmado al menos una vez".
+      title={
+        isNew
+          ? "Nueva factura de venta"
+          : draft.status !== "DRAFT" && draft.officialNumber
+            ? `Factura N° ${draft.officialNumber}`
+            : draft.status === "DRAFT"
+              ? `Borrador ${draft.number}`
+              : `Editar factura ${draft.number}`
+      }
+      subtitle={
+        draft.status !== "DRAFT" && draft.officialNumber
+          ? `Comprobante ${draft.officialNumber}`
+          : `Número ${draft.number}`
+      }
       maxWidth="7xl"
       className="!max-w-[1500px] w-[96vw]"
       resizable
