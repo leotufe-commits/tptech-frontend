@@ -297,59 +297,134 @@ describe("SendInvoiceEmailModal — plantilla persistida (interpolacion)", () =>
 });
 
 describe("SendInvoiceEmailModal — boton 'Guardar como predeterminado'", () => {
-  it("sin onSaveAsTemplate → NO renderea el boton ni el hint de variables", () => {
+  it("sin onSaveAsTemplate → NO renderea el boton", () => {
     render(<SendInvoiceEmailModal {...makeProps()} />);
     expect(screen.queryByRole("button", { name: /Guardar como predeterminado/i })).toBeNull();
-    expect(screen.queryByText(/Variables disponibles/i)).toBeNull();
   });
 
-  it("con onSaveAsTemplate → renderea boton y hint de variables", () => {
+  it("con onSaveAsTemplate → renderea el boton (disabled hasta que haya dirty-state)", () => {
     render(<SendInvoiceEmailModal {...makeProps({ onSaveAsTemplate: vi.fn().mockResolvedValue(undefined) })} />);
-    expect(screen.getByRole("button", { name: /Guardar como predeterminado/i })).toBeTruthy();
-    expect(screen.getByText(/Variables disponibles/i)).toBeTruthy();
+    const btn = screen.getByRole("button", { name: /Guardar como predeterminado/i });
+    expect(btn).toBeTruthy();
+    // Al abrir, subject/message coinciden con la baseline → no dirty → disabled.
+    expect((btn as HTMLButtonElement).disabled).toBe(true);
   });
 
-  it("click → llama onSaveAsTemplate con subject+message ACTUALES (con variables, sin interpolar)", async () => {
+  it("Guardar — habilita al modificar el asunto, click llama onSaveAsTemplate con valores actuales", async () => {
     const onSaveAsTemplate = vi.fn().mockResolvedValue(undefined);
     render(<SendInvoiceEmailModal {...makeProps({ onSaveAsTemplate })} />);
-    // El operador escribe una plantilla con variables.
-    const subject = inputByLabel("Asunto") as HTMLInputElement;
-    fireEvent.change(subject, { target: { value: "{{estado}} {{numero}} - {{joyeria}}" } });
-    const msg = inputByLabel("Mensaje") as HTMLTextAreaElement;
-    fireEvent.change(msg, { target: { value: "Hola {{cliente}}, va el {{numero}}." } });
+    const saveBtn = screen.getByRole("button", { name: /Guardar como predeterminado/i });
+    expect((saveBtn as HTMLButtonElement).disabled).toBe(true);
 
-    fireEvent.click(screen.getByRole("button", { name: /Guardar como predeterminado/i }));
+    fireEvent.change(inputByLabel("Asunto"), { target: { value: "{{estado}} {{numero}} - {{joyeria}}" } });
+    expect((saveBtn as HTMLButtonElement).disabled).toBe(false);
+
+    fireEvent.click(saveBtn);
     await waitFor(() => expect(onSaveAsTemplate).toHaveBeenCalledTimes(1));
-    expect(onSaveAsTemplate.mock.calls[0]![0]).toEqual({
-      subjectTemplate: "{{estado}} {{numero}} - {{joyeria}}",
-      messageTemplate: "Hola {{cliente}}, va el {{numero}}.",
-    });
+    expect(onSaveAsTemplate.mock.calls[0]![0].subjectTemplate).toBe("{{estado}} {{numero}} - {{joyeria}}");
   });
 
-  it("NO cierra el modal tras guardar (puede seguir enviando)", async () => {
+  it("Guardar — habilita al modificar el mensaje", () => {
+    render(<SendInvoiceEmailModal {...makeProps({ onSaveAsTemplate: vi.fn().mockResolvedValue(undefined) })} />);
+    const saveBtn = screen.getByRole("button", { name: /Guardar como predeterminado/i });
+    expect((saveBtn as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.change(inputByLabel("Mensaje"), { target: { value: "Hola {{cliente}}, va el {{numero}}." } });
+    expect((saveBtn as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it("Guardar — vuelve a disabled tras guardar exitosamente (re-baseline)", async () => {
+    const onSaveAsTemplate = vi.fn().mockResolvedValue(undefined);
+    render(<SendInvoiceEmailModal {...makeProps({ onSaveAsTemplate })} />);
+    fireEvent.change(inputByLabel("Asunto"), { target: { value: "Nuevo {{numero}}" } });
+    const saveBtn = screen.getByRole("button", { name: /Guardar como predeterminado/i });
+    expect((saveBtn as HTMLButtonElement).disabled).toBe(false);
+
+    fireEvent.click(saveBtn);
+    await waitFor(() => expect(onSaveAsTemplate).toHaveBeenCalled());
+    // Re-baseline: los valores recien guardados son la nueva plantilla.
+    expect((saveBtn as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("Guardar — error al guardar mantiene dirty-state (operador puede reintentar)", async () => {
+    const onSaveAsTemplate = vi.fn().mockRejectedValue(new Error("boom"));
+    render(<SendInvoiceEmailModal {...makeProps({ onSaveAsTemplate })} />);
+    fireEvent.change(inputByLabel("Asunto"), { target: { value: "Nuevo {{numero}}" } });
+    const saveBtn = screen.getByRole("button", { name: /Guardar como predeterminado/i });
+
+    fireEvent.click(saveBtn);
+    await waitFor(() => expect(onSaveAsTemplate).toHaveBeenCalled());
+    // El boton vuelve a estar HABILITADO (NO re-baseline porque hubo error).
+    expect((saveBtn as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it("Guardar — NO cierra el modal tras guardar (operador puede seguir enviando)", async () => {
     const onSaveAsTemplate = vi.fn().mockResolvedValue(undefined);
     const onClose          = vi.fn();
     render(<SendInvoiceEmailModal {...makeProps({ onSaveAsTemplate, onClose })} />);
+    fireEvent.change(inputByLabel("Asunto"), { target: { value: "Nuevo" } });
     fireEvent.click(screen.getByRole("button", { name: /Guardar como predeterminado/i }));
     await waitFor(() => expect(onSaveAsTemplate).toHaveBeenCalled());
     expect(onClose).not.toHaveBeenCalled();
-    // El modal sigue mostrando los campos.
     expect(screen.getByText("Enviar factura por mail")).toBeTruthy();
   });
 
-  it("error al guardar → modal sigue abierto, boton se libera del loading", async () => {
-    const onSaveAsTemplate = vi.fn().mockRejectedValue(new Error("boom"));
-    render(<SendInvoiceEmailModal {...makeProps({ onSaveAsTemplate })} />);
-    fireEvent.click(screen.getByRole("button", { name: /Guardar como predeterminado/i }));
-    await waitFor(() => expect(onSaveAsTemplate).toHaveBeenCalled());
-    // Boton vuelve a estar habilitado.
-    const btn = screen.getByRole("button", { name: /Guardar como predeterminado/i });
-    expect((btn as HTMLButtonElement).disabled).toBe(false);
-  });
-
-  it("loading del envio (Enviar) → boton 'Guardar como predeterminado' tambien deshabilitado", () => {
+  it("loading del envio (Enviar) → Guardar tambien deshabilitado", () => {
     render(<SendInvoiceEmailModal {...makeProps({ loading: true, onSaveAsTemplate: vi.fn() })} />);
     const btn = screen.getByRole("button", { name: /Guardar como predeterminado/i });
     expect((btn as HTMLButtonElement).disabled).toBe(true);
+  });
+});
+
+describe("SendInvoiceEmailModal — boton 'Restaurar texto'", () => {
+  it("sin onSaveAsTemplate → NO renderea el boton (es parte del bloque de plantilla)", () => {
+    render(<SendInvoiceEmailModal {...makeProps()} />);
+    expect(screen.queryByRole("button", { name: /Restaurar texto/i })).toBeNull();
+  });
+
+  it("disabled inicialmente (no hay dirty-state)", () => {
+    render(<SendInvoiceEmailModal {...makeProps({ onSaveAsTemplate: vi.fn() })} />);
+    const btn = screen.getByRole("button", { name: /Restaurar texto/i });
+    expect((btn as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("se habilita al modificar y restaura subject + message al default", () => {
+    render(<SendInvoiceEmailModal {...makeProps({ onSaveAsTemplate: vi.fn() })} />);
+    const subject = inputByLabel("Asunto")  as HTMLInputElement;
+    const msg     = inputByLabel("Mensaje") as HTMLTextAreaElement;
+    const original = { subject: subject.value, message: msg.value };
+
+    fireEvent.change(subject, { target: { value: "Hola cambiado" } });
+    fireEvent.change(msg,     { target: { value: "Mensaje cambiado" } });
+    const restoreBtn = screen.getByRole("button", { name: /Restaurar texto/i });
+    expect((restoreBtn as HTMLButtonElement).disabled).toBe(false);
+
+    fireEvent.click(restoreBtn);
+    expect((inputByLabel("Asunto")  as HTMLInputElement).value).toBe(original.subject);
+    expect((inputByLabel("Mensaje") as HTMLTextAreaElement).value).toBe(original.message);
+    // Tras restaurar, vuelve a no haber dirty-state.
+    expect((restoreBtn as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("Restaurar NO cierra el modal ni toca el destinatario", () => {
+    const onClose = vi.fn();
+    render(<SendInvoiceEmailModal {...makeProps({ onSaveAsTemplate: vi.fn(), onClose })} />);
+    fireEvent.change(inputByLabel("Asunto"), { target: { value: "Cambio" } });
+    const toValue = (inputByLabel("Destinatario") as HTMLInputElement).value;
+    fireEvent.click(screen.getByRole("button", { name: /Restaurar texto/i }));
+    expect(onClose).not.toHaveBeenCalled();
+    expect((inputByLabel("Destinatario") as HTMLInputElement).value).toBe(toValue);
+  });
+});
+
+describe("SendInvoiceEmailModal — label de variables (ajuste UX)", () => {
+  it("NUNCA se renderea (hint ocultado para simplificar el modal)", () => {
+    // Probamos con y sin onSaveAsTemplate; en ningun caso debe aparecer.
+    render(<SendInvoiceEmailModal {...makeProps()} />);
+    expect(screen.queryByText(/Variables disponibles/i)).toBeNull();
+  });
+
+  it("NUNCA se renderea con onSaveAsTemplate (el soporte de variables sigue activo, solo el label esta oculto)", () => {
+    render(<SendInvoiceEmailModal {...makeProps({ onSaveAsTemplate: vi.fn() })} />);
+    expect(screen.queryByText(/Variables disponibles/i)).toBeNull();
   });
 });

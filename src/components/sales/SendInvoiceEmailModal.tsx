@@ -19,8 +19,8 @@
 //   · Tras exito el caller cierra el modal via `onClose`.
 // ============================================================================
 
-import React, { useEffect, useMemo, useState } from "react";
-import { Mail, X, Save } from "lucide-react";
+import React, { useEffect, useMemo, useState, useRef } from "react";
+import { Mail, X, Save, RotateCcw } from "lucide-react";
 import Modal from "../ui/Modal";
 import TPInput from "../ui/TPInput";
 import TPTextarea from "../ui/TPTextarea";
@@ -191,13 +191,25 @@ export default function SendInvoiceEmailModal(props: SendInvoiceEmailModalProps)
   // no bloquear el resto del modal).
   const [savingTemplate, setSavingTemplate] = useState<boolean>(false);
 
-  // Reset al ABRIR: defaults frescos, errores limpios.
+  // Baseline de subject/message para detectar dirty-state. Se setea (a)
+  // al abrir el modal con los defaults, (b) despues de guardar exitoso
+  // (los valores guardados pasan a ser la nueva baseline).
+  // `Guardar como predeterminado` se habilita solo si subject/message
+  // difieren de la baseline. `Restaurar texto` resetea subject/message
+  // a la baseline.
+  const baselineRef = useRef<{ subject: string; message: string }>({
+    subject: defaultSubject,
+    message: defaultMessage,
+  });
+
+  // Reset al ABRIR: defaults frescos, errores limpios, baseline alineada.
   useEffect(() => {
     if (!open) return;
     setTo(customerEmail ?? "");
     setSubject(defaultSubject);
     setMessage(defaultMessage);
     setTouched({});
+    baselineRef.current = { subject: defaultSubject, message: defaultMessage };
   }, [open, customerEmail, defaultSubject, defaultMessage]);
 
   const errors = useMemo(() => {
@@ -214,6 +226,11 @@ export default function SendInvoiceEmailModal(props: SendInvoiceEmailModalProps)
   const visibleToError       = touched.to      ? errors.to      ?? null : null;
   const visibleSubjectError  = touched.subject ? errors.subject ?? null : null;
   const visibleMessageError  = touched.message ? errors.message ?? null : null;
+
+  // Dirty-state: subject o message difieren de la baseline guardada.
+  // Re-calcular en cada render — los strings son chicos, el costo es nulo.
+  const isDirty = subject !== baselineRef.current.subject
+    || message !== baselineRef.current.message;
 
   async function handleSubmitClick(): Promise<void> {
     // Forzamos "touched" en submit para que cualquier error oculto se vea.
@@ -236,7 +253,11 @@ export default function SendInvoiceEmailModal(props: SendInvoiceEmailModalProps)
 
   /** Guarda el subject + message ACTUALES (con las variables `{{...}}` que
    *  el operador haya escrito) como plantilla tenant-wide. NO cierra el
-   *  modal — el operador puede seguir enviando el mail actual. */
+   *  modal — el operador puede seguir enviando el mail actual.
+   *
+   *  Tras exito, re-baseline → el boton "Guardar como predeterminado"
+   *  queda disabled hasta que el operador vuelva a editar (los valores
+   *  recien guardados ya SON la nueva plantilla). */
   async function handleSaveAsTemplate(): Promise<void> {
     if (!onSaveAsTemplate || savingTemplate) return;
     setSavingTemplate(true);
@@ -245,11 +266,25 @@ export default function SendInvoiceEmailModal(props: SendInvoiceEmailModalProps)
         subjectTemplate: subject,
         messageTemplate: message,
       });
+      // Solo re-baseline si el guardado fue OK (sin throw).
+      baselineRef.current = { subject, message };
     } catch {
-      // El caller muestra el toast. Aca solo liberamos el loading.
+      // El caller muestra el toast. Aca solo liberamos el loading sin
+      // tocar la baseline (el dirty-state queda → operador puede reintentar).
     } finally {
       setSavingTemplate(false);
     }
+  }
+
+  /** Restaura subject + message al texto predeterminado actual (plantilla
+   *  tenant interpolada o, si no hay plantilla, el default state-aware).
+   *  NO cierra el modal y NO toca el destinatario. Limpia errores visibles
+   *  de subject/message para que el operador no vea warnings tras reset. */
+  function handleRestoreDefaults(): void {
+    setSubject(defaultSubject);
+    setMessage(defaultMessage);
+    setTouched((t) => ({ ...t, subject: false, message: false }));
+    baselineRef.current = { subject: defaultSubject, message: defaultMessage };
   }
 
   return (
@@ -261,33 +296,45 @@ export default function SendInvoiceEmailModal(props: SendInvoiceEmailModalProps)
       maxWidth="2xl"
       footer={
         <div className="flex items-center justify-between gap-2">
-          {/* Lado izquierdo: "Guardar como predeterminado" (si el caller
-              expone `onSaveAsTemplate`). Visualmente separado de las
-              acciones primarias (Cancelar/Enviar) — es accion de config,
-              no del envio actual. */}
-          <div>
+          {/* Lado izquierdo: acciones de plantilla (Guardar + Restaurar).
+              Visualmente separado de las acciones primarias (Cancelar/
+              Enviar) — son acciones de config, no del envio actual.
+              "Guardar como predeterminado" solo se habilita cuando hay
+              dirty-state (subject o message difieren de la baseline). */}
+          <div className="flex items-center gap-2">
             {onSaveAsTemplate ? (
-              <TPButton
-                variant="ghost"
-                onClick={handleSaveAsTemplate}
-                disabled={loading || savingTemplate || hasErrors}
-                loading={savingTemplate}
-                iconLeft={<Save size={14} />}
-                // Tooltip generico por tipo de comprobante: el caller (pagina
-                // madre) elige el `DocumentKind` al construir las plantillas,
-                // este modal no lo sabe. DocumentTemplate ya esta scopeado por
-                // jewelryId + kind + layoutType.
-                title="Se guardará como texto predeterminado para este tipo de comprobante."
-              >
-                {savingTemplate ? "Guardando…" : "Guardar como predeterminado"}
-              </TPButton>
+              <>
+                <TPButton
+                  variant="ghost"
+                  onClick={handleSaveAsTemplate}
+                  disabled={loading || savingTemplate || hasErrors || !isDirty}
+                  loading={savingTemplate}
+                  iconLeft={<Save size={14} />}
+                  title={
+                    !isDirty
+                      ? "El asunto y mensaje actuales coinciden con el texto predeterminado."
+                      : "Se guardará como texto predeterminado para este tipo de comprobante."
+                  }
+                >
+                  {savingTemplate ? "Guardando…" : "Guardar como predeterminado"}
+                </TPButton>
+                <TPButton
+                  variant="ghost"
+                  onClick={handleRestoreDefaults}
+                  disabled={loading || savingTemplate || !isDirty}
+                  iconLeft={<RotateCcw size={14} />}
+                  title="Restaurar el asunto y mensaje al texto predeterminado guardado."
+                >
+                  Restaurar texto
+                </TPButton>
+              </>
             ) : null}
           </div>
+          {/* Lado derecho: acciones primarias del envio. Cancelar y Enviar
+              son ambos TPButton — comparten alto y padding por defecto del
+              componente. Cancelar lleva `border` para devolverle jerarquia
+              visual contra el fondo del modal. */}
           <div className="flex items-center gap-2">
-            {/* Ajuste UX — `Cancelar` queda plano contra el fondo del modal
-                sin borde visible; agregamos `border` para devolverle
-                jerarquia de accion clickeable. Mantiene variant=ghost,
-                padding y tipografia del sistema TP. */}
             <TPButton
               variant="ghost"
               onClick={onClose}
@@ -343,17 +390,11 @@ export default function SendInvoiceEmailModal(props: SendInvoiceEmailModalProps)
           disabled={loading}
           hint="Se adjunta el PDF oficial automáticamente. Se preservan los saltos de línea."
         />
-        {onSaveAsTemplate ? (
-          <div className="text-[11px] text-muted">
-            Variables disponibles en asunto y mensaje:
-            {" "}
-            <code>{"{{cliente}}"}</code>{" "}
-            <code>{"{{numero}}"}</code>{" "}
-            <code>{"{{joyeria}}"}</code>{" "}
-            <code>{"{{estado}}"}</code>{" "}
-            <code>{"{{fecha}}"}</code>.
-          </div>
-        ) : null}
+        {/* Ajuste UX — Label de variables ocultado para simplificar el
+            modal. El soporte de interpolacion sigue 100% activo
+            (interpolateEmailTemplate corre al abrir). Si en algun momento
+            producto pide volverlo a mostrar, el bloque puede reagregarse
+            sin cambios de logica. */}
       </div>
     </Modal>
   );
