@@ -273,18 +273,27 @@ export default function SendInvoiceEmailModal(props: SendInvoiceEmailModalProps)
                 disabled={loading || savingTemplate || hasErrors}
                 loading={savingTemplate}
                 iconLeft={<Save size={14} />}
-                title="Guardar el asunto y mensaje actuales como plantilla predeterminada para futuras facturas (tenant-wide)"
+                // Tooltip generico por tipo de comprobante: el caller (pagina
+                // madre) elige el `DocumentKind` al construir las plantillas,
+                // este modal no lo sabe. DocumentTemplate ya esta scopeado por
+                // jewelryId + kind + layoutType.
+                title="Se guardará como texto predeterminado para este tipo de comprobante."
               >
                 {savingTemplate ? "Guardando…" : "Guardar como predeterminado"}
               </TPButton>
             ) : null}
           </div>
           <div className="flex items-center gap-2">
+            {/* Ajuste UX — `Cancelar` queda plano contra el fondo del modal
+                sin borde visible; agregamos `border` para devolverle
+                jerarquia de accion clickeable. Mantiene variant=ghost,
+                padding y tipografia del sistema TP. */}
             <TPButton
               variant="ghost"
               onClick={onClose}
               disabled={loading}
               iconLeft={<X size={14} />}
+              className="border border-border/60"
             >
               Cancelar
             </TPButton>
