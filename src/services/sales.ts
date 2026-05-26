@@ -1,4 +1,4 @@
-import { apiFetch } from "../lib/api";
+import { apiFetch, API_URL, ApiError } from "../lib/api";
 
 // ─── Enums ───────────────────────────────────────────────────────────────────
 export type SaleStatus =
@@ -920,4 +920,31 @@ export const salesApi = {
       body: data,
       on401: "throw",
     }),
+
+  /** 1.E — Descarga el PDF oficial de la factura. El backend valida que
+   *  el comprobante este confirmado (no DRAFT, no CANCELLED) y devuelve
+   *  `application/pdf`. Usamos `fetch` directo porque `apiFetch` parsea
+   *  el body como JSON.
+   *
+   *  Errores del servidor:
+   *    · 409 { code: "SALE_NOT_CONFIRMED" | "SALE_CANCELLED", message } →
+   *      lanzamos `ApiError` con el mensaje del backend para que el caller
+   *      pueda mostrarlo en un toast.
+   *    · 401 / 403 / 404 → ApiError con status correspondiente. */
+  downloadPdf: async (id: string): Promise<{ blob: Blob; filename: string }> => {
+    const url = `${API_URL}/sales/${id}/pdf`;
+    const res = await fetch(url, { credentials: "include" });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({} as { message?: string; code?: string }));
+      throw new ApiError(
+        (data as { message?: string }).message || `Error al generar el PDF (${res.status})`,
+        { status: res.status, data, url, method: "GET" },
+      );
+    }
+    const blob = await res.blob();
+    const cd   = res.headers.get("Content-Disposition") || "";
+    const m    = /filename="?([^";]+)"?/.exec(cd);
+    const filename = m?.[1] ?? `Factura-${id}.pdf`;
+    return { blob, filename };
+  },
 };

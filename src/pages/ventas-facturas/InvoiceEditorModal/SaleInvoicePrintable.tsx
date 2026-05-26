@@ -39,17 +39,45 @@ export type SaleInvoicePrintableProps = {
   sellerName?: string;
   warehouseName?: string;
   paymentTermName?: string;
+  /** 1.E — Estado del comprobante. Si es DRAFT/CANCELLED se renderea un
+   *  sello/marca de agua grande encima del contenido para que el operador
+   *  (o quien reciba la impresion) vea claramente que NO es un comprobante
+   *  oficial emitido. Estados confirmados (PENDING/PARTIAL/PAID) imprimen
+   *  limpio sin sello. */
+  status?: "DRAFT" | "PENDING" | "PARTIAL" | "PAID" | "CANCELLED";
 };
+
+/** Devuelve el texto del sello a renderear sobre el printable segun el
+ *  estado del comprobante. Devolver null = imprimir limpio (sin sello).
+ *
+ *  Reglas:
+ *    · DRAFT     → "BORRADOR"  (no es comprobante oficial todavia)
+ *    · CANCELLED → "ANULADA"   (anulada — no surte efecto fiscal)
+ *    · PENDING / PARTIAL / PAID → null (ya confirmado, sin sello)
+ *
+ *  Nota: el sello SOLO afecta a la impresion HTML operativa. El PDF
+ *  oficial server-side (`GET /api/sales/:id/pdf`) no se genera para
+ *  DRAFT/CANCELLED — bloqueo en backend con 409. */
+function getStampLabel(status: SaleInvoicePrintableProps["status"]): string | null {
+  switch (status) {
+    case "DRAFT":     return "BORRADOR";
+    case "CANCELLED": return "ANULADA";
+    default:          return null;
+  }
+}
 
 function SaleInvoicePrintable(props: SaleInvoicePrintableProps): React.ReactElement {
   const {
     company, documentNumber, documentDate, clientName, clientTaxId, clientAddress,
     lines, totals, currencyCode, notes, terms, sellerName, warehouseName, paymentTermName,
+    status,
   } = props;
 
   const renderableLines = lines.filter(
     (l) => l.articleId || l.isManual || (l.type === "HEADER" && l.title),
   );
+
+  const stampLabel = getStampLabel(status);
 
   return (
     <div
@@ -60,8 +88,50 @@ function SaleInvoicePrintable(props: SaleInvoicePrintableProps): React.ReactElem
         padding: "16mm 14mm",
         boxSizing: "border-box",
         width: "100%",
+        position: "relative",
       }}
     >
+      {/* 1.E — Sello/marca de agua sobre el contenido. CSS rotado, opacidad
+          baja, pointer-events disabled para no interferir con la seleccion
+          de texto. El navegador lo imprime tal cual lo ve en pantalla
+          gracias al style inline (sin depender de hojas externas que el
+          popup puede no cargar). */}
+      {stampLabel && (
+        <div
+          aria-hidden
+          style={{
+            position: "absolute",
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            pointerEvents: "none",
+            zIndex: 9999,
+            overflow: "hidden",
+          }}
+        >
+          <div
+            style={{
+              transform: "rotate(-28deg)",
+              fontSize: stampLabel.length > 8 ? 80 : 120,
+              fontWeight: 900,
+              color: status === "CANCELLED" ? "#b91c1c" : "#9ca3af",
+              opacity: 0.18,
+              letterSpacing: "0.08em",
+              border: `8px solid ${status === "CANCELLED" ? "#b91c1c" : "#9ca3af"}`,
+              padding: "12px 36px",
+              borderRadius: 12,
+              userSelect: "none",
+              whiteSpace: "nowrap",
+            }}
+          >
+            {stampLabel}
+          </div>
+        </div>
+      )}
       {/* Header — empresa */}
       <header style={{ display: "flex", alignItems: "flex-start", gap: 16, marginBottom: 16 }}>
         {company.logoUrl ? (

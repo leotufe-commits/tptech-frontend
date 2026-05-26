@@ -44,6 +44,7 @@ import {
   MapPin,
   Tag,
   Mail,
+  Download,
 } from "lucide-react";
 
 import { TPSectionShell } from "../components/ui/TPSectionShell";
@@ -1999,6 +2000,30 @@ function InvoiceEditorModal(props: {
   /** Imprime el modal actual usando window.print(). El navegador genera el PDF. */
   function handlePrintDocument() {
     if (typeof window !== "undefined") window.print();
+  }
+
+  /** 1.E — Descarga el PDF OFICIAL server-side. Bloqueado para DRAFT
+   *  (backend responde 409 SALE_NOT_CONFIRMED) y CANCELLED (409
+   *  SALE_CANCELLED). El boton del footer ya se renderea deshabilitado
+   *  en esos estados; esta funcion es defensiva ante cualquier ruta
+   *  alternativa que la invoque. */
+  async function handleDownloadOfficialPdf(): Promise<void> {
+    if (!draft?.id) {
+      toast.error("Guardá la factura antes de descargar el PDF.");
+      return;
+    }
+    try {
+      const { blob, filename } = await salesApi.downloadPdf(draft.id);
+      // `file-saver` ya esta en deps del proyecto; import dinamico para
+      // no engordar el bundle inicial.
+      const { saveAs } = await import("file-saver");
+      saveAs(blob, filename);
+      toast.success("PDF descargado.");
+    } catch (e: unknown) {
+      const err = e as { message?: string; data?: { code?: string; message?: string } };
+      const msg = err?.data?.message || err?.message || "Error al descargar el PDF.";
+      toast.error(msg);
+    }
   }
 
   // ── Popovers de Lista / Almacén / Canal (contexto sobre el card de Líneas) ─
@@ -4418,10 +4443,35 @@ function InvoiceEditorModal(props: {
               <TPButton
                 variant="ghost"
                 onClick={handlePrintDocument}
-                title="Imprimir documento (factura)"
+                title={
+                  draft.status === "DRAFT"
+                    ? "Imprimir BORRADOR (vista operativa con sello)"
+                    : draft.status === "CANCELLED"
+                      ? "Imprimir comprobante ANULADO (vista operativa con sello)"
+                      : "Imprimir documento (factura)"
+                }
                 iconLeft={<Printer size={14} />}
               >
                 Imprimir
+              </TPButton>
+              {/* 1.E — Descarga del PDF OFICIAL server-side. Solo
+                  confirmados (PENDING/PARTIAL/PAID). DRAFT y CANCELLED
+                  quedan deshabilitados con tooltip explicativo; backend
+                  confirma con 409 si alguien llega igual. */}
+              <TPButton
+                variant="ghost"
+                onClick={handleDownloadOfficialPdf}
+                disabled={draft.status === "DRAFT" || draft.status === "CANCELLED"}
+                title={
+                  draft.status === "DRAFT"
+                    ? "Para descargar el PDF oficial, primero confirmá la factura."
+                    : draft.status === "CANCELLED"
+                      ? "Esta factura está anulada. No se puede generar el PDF oficial."
+                      : "Descargar PDF oficial de la factura"
+                }
+                iconLeft={<Download size={14} />}
+              >
+                Descargar PDF
               </TPButton>
               <TPButton
                 variant="ghost"
