@@ -34,6 +34,24 @@ describe("buildCostLineTriView", () => {
     expect(tri.adjust).toBeNull();
   });
 
+  it("METAL — unitEffective = total/qty (valor unitario CON merma, cierra al total)", () => {
+    // Caso real ANILLOS: base 187.500/gr, merma 10%, 1,50 gr → costo 309.375.
+    // unitEffective = 309.375 / 1,50 = 206.250 (= base × 1,10), y
+    // qty × unitEffective === total EXACTO.
+    const tri = buildCostLineTriView({
+      kind: "METAL", unitBase: 187500, qty: 1.5, mermaPct: 10, total: 309375,
+    });
+    expect(tri.base.unit).toBe(187500);            // base pre-merma (sin uso en el card nuevo)
+    expect(tri.base.unitEffective).toBe(206250);   // efectivo CON merma
+    expect(tri.base.qty! * tri.base.unitEffective!).toBeCloseTo(tri.total, 2); // cierra al total
+    expect(tri.adjust?.inputLabel).toBe("Merma 10,00 %");
+  });
+
+  it("METAL — qty 0/null ⇒ unitEffective null (sin división)", () => {
+    expect(buildCostLineTriView({ kind: "METAL", unitBase: 100, qty: 0, mermaPct: 0, total: 0 }).base.unitEffective).toBeNull();
+    expect(buildCostLineTriView({ kind: "METAL", unitBase: 100, qty: null, mermaPct: 0, total: 50 }).base.unitEffective).toBeNull();
+  });
+
   it("OTHER — Bonif. %: impact = passthrough EXACTO del motor (positivo = reduce)", () => {
     // Convención del motor: BONIF emite POSITIVO. El helper NO cambia el
     // número (passthrough); el signo visual lo decide la presentación.

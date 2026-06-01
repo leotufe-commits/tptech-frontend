@@ -8,7 +8,12 @@ import { TPField } from "../../components/ui/TPField";
 import TPInput from "../../components/ui/TPInput";
 import { TPButton } from "../../components/ui/TPButton";
 import { Modal } from "../../components/ui/Modal";
+import { TPTabs } from "../../components/ui/TPTabs";
 import { toast } from "../../lib/toast";
+// Fase 4.3 — Vista canónica de cuenta corriente. Consume el endpoint
+// `/balance-movements` (modelo `CurrentAccountMovement` + `AccountMovementMetalEntry`).
+// Coexiste con la vista legacy (`MovementsTable` + `EntityBalanceEntry`).
+import { EntityBalanceMovementsView } from "./EntityBalanceMovementsView";
 import {
   commercialEntitiesApi,
   type AccountStatement,
@@ -360,6 +365,11 @@ export default function EntityAccountStatement() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [emailModalOpen, setEmailModalOpen] = useState(false);
+  // Fase 4.3 — Tab para alternar entre vista legacy (EntityBalanceEntry +
+  // MovementsTable) y vista canónica (CurrentAccountMovement +
+  // AccountMovementMetalEntry). Default "legacy" para no cambiar la UX a
+  // los operadores existentes — el operador elige cuándo probar la nueva.
+  const [movementsView, setMovementsView] = useState<"legacy" | "canonical">("legacy");
 
   const backPath = isSupplierContext ? `/proveedores/${id}` : `/clientes/${id}`;
 
@@ -500,17 +510,40 @@ export default function EntityAccountStatement() {
               label={`Saldo inicial al ${statement.period.from ? fmtDate(statement.period.from) : "inicio"}`}
             />
 
-            {/* Movements table */}
+            {/* Movements — Fase 4.3: tab Vista clásica / Vista por saldos */}
             <div>
-              <div className="text-sm font-semibold mb-2 px-1">Movimientos</div>
-              <MovementsTable movements={statement.movements} />
+              <div className="flex items-center justify-between mb-2 px-1 gap-2 flex-wrap no-print">
+                <div className="text-sm font-semibold">Movimientos</div>
+                <TPTabs
+                  options={[
+                    { value: "legacy",    label: "Vista clásica" },
+                    { value: "canonical", label: "Vista por saldos" },
+                  ]}
+                  value={movementsView}
+                  onChange={(v) => setMovementsView(v as "legacy" | "canonical")}
+                  size="sm"
+                />
+              </div>
+              {movementsView === "legacy" ? (
+                <MovementsTable movements={statement.movements} />
+              ) : (
+                id ? (
+                  <EntityBalanceMovementsView
+                    entityId={id}
+                    fromDate={fromDate || undefined}
+                    toDate={toDate   || undefined}
+                  />
+                ) : null
+              )}
             </div>
 
-            {/* Closing balance */}
-            <BalanceSummary
-              balance={statement.closingBalance}
-              label={`Saldo final al ${statement.period.to ? fmtDate(statement.period.to) : "hoy"}`}
-            />
+            {/* Closing balance (solo en vista legacy — la canónica trae su propio resumen) */}
+            {movementsView === "legacy" && (
+              <BalanceSummary
+                balance={statement.closingBalance}
+                label={`Saldo final al ${statement.period.to ? fmtDate(statement.period.to) : "hoy"}`}
+              />
+            )}
 
           </div>
         )}

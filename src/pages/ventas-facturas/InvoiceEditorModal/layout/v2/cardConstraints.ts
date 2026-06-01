@@ -49,41 +49,86 @@ export type CardConstraints = {
  *  porque participan del grid global (12 cols). Aunque sean locked, los
  *  mantenemos por completitud — si en una etapa futura se desbloquean,
  *  el floor sigue vigente. */
-// MIN_H recalibrados para ROW_HEIGHT=20 (antes 32). px = h*20 + (h-1)*8.
-// Cada valor preserva (o levemente reduce) el floor en pixeles del era
-// rowHeight 32:
-//   discount/shipping minH 6 → 128px  (era 4*32+3*8 = 152, ahora 128)
-//   coupon            minH 5 → 104px  (era 3*32+2*8 = 112, ahora 104)
-//   totals            minH 10 → 232px (era 6*32+5*8 = 232, mantiene)
-//   payments          minH 8 → 184px  (era 5*32+4*8 = 192, ahora 184)
-//   account-impact    minH 6 → 128px  (era 4*32+3*8 = 152, ahora 128)
-//   observations      minH 5 → 104px  (era 3*32+2*8 = 112, ahora 104)
-//   header            minH 4 → 80px   (header del documento)
-//   lines             minH 18 → 376px (tabla + filas)
+// MIN_H recalibrados para ROW_HEIGHT=20 + MARGIN_Y=8 (px = h*20 + (h-1)*8).
+//
+// Recalibracion 2026-05-26 (cierre layout post ROW=32→20):
+// los `minH` previos (4-8) estaban calibrados para el contenido EXPANDIDO
+// de cada card. Pero el motor de reflow (`recalculateCardHeight`) usa
+// `minH` como PISO de shrink — cuando el operador colapsa un card via
+// TPCard.open=false, el contenido se vuelve ~28px (header only) pero el
+// slot del grid no puede achicarse por debajo de `minH * 20 + (minH-1) * 8`.
+// Resultado: aire vertical grande entre cards colapsados (ej. `payments`
+// con minH=8 dejaba 184px aunque el header colapsado mida 28px).
+//
+// La solucion es separar dos conceptos:
+//   · `minH` (esta tabla) = floor de SHRINK = altura del card COLAPSADO
+//     (header only, ~2 filas = 48px). Permite reflow real al colapsar.
+//   · `h` default en `presetLayouts.ts` = altura del card EXPANDIDO. El
+//     motor auto-grow crece automaticamente desde minH hasta que el
+//     contenido medido entra.
+//
+// Pixeles resultantes (header colapsado):
+//   discount/shipping/coupon  minH 2 → 48 px (header + safety)
+//   payments                  minH 2 → 48 px
+//   account-impact            minH 2 → 48 px
+//   observations              minH 2 → 48 px
+//   totals (★ hero, NO colapsa) minH 13 → 356 px (balance + breakdown +
+//                                                 selector + status)
+//   header (locked structural) minH 4 → 80 px
+//   lines  (locked structural) minH 18 → 376 px (tabla + filas)
+//
+// Los cards colapsables comparten el mismo minH para que el spacing visual
+// entre cards colapsados sea uniforme en los 3 presets (CLASSIC / COMPACT /
+// ONE_LINE). El auto-grow trae cada card a su altura natural cuando el
+// contenido lo necesita — sin importar el preset.
 export const CARD_CONSTRAINTS: Record<CardId, CardConstraints> = {
   // ─── Structural (locked) ─────────────────────────────────────────────
   header: { minW: 8, minH: 4 },
   lines:  { minW: 6, minH: 18 },
 
   // ─── Aside cards ─────────────────────────────────────────────────────
-  // Ajustes comerciales — toggleable header + un combo + un monto.
-  discount:        { minW: 3, minH: 6 },
-  shipping:        { minW: 3, minH: 6 },
-  // Cupón: 1 input + botón Aplicar.
-  coupon:          { minW: 3, minH: 5 },
-  // ★ Total — protagonista. minH 13 (~356 px con ROW=20) garantiza
-  // espacio para balance + breakdown principal + selector de modo +
-  // estado comercial sin compresion. Subido de 10 a 13 (2026-05-25)
-  // en linea con TOTAL_MIN_H en presetLayouts.ts (SSOT de altura
-  // base del Total).
-  totals:          { minW: 3, minH: 13 },
-  // Cobro: header + lista de pagos. Con al menos 1 pago.
-  payments:        { minW: 3, minH: 8 },
-  // Impacto CC: read-only, balance previsto + nota.
-  "account-impact": { minW: 3, minH: 6 },
-  // Observaciones: header colapsable. Floor 5 permite el modo "header
-  // only" sin romper layouts compactos.
-  observations:    { minW: 3, minH: 5 },
+  // Ajustes comerciales — floor de COLAPSO (header only). Auto-grow trae
+  // a la altura natural del contenido expandido sin necesidad de subir
+  // el floor.
+  discount:        { minW: 3, minH: 2 },
+  shipping:        { minW: 3, minH: 2 },
+  coupon:          { minW: 3, minH: 2 },
+  // ★ Total — protagonista. NO colapsa (no tiene toggle open/close)
+  // pero SI puede achicarse cuando el contenido es chico (factura
+  // vacia: solo total $0 + selector modo + status, ~120-140 px).
+  //
+  // Recalibracion 2026-05-28 — corrigiendo overshoot del fix 2026-05-27.
+  // Volvemos a `minH = 6` (132 px) tras feedback visual:
+  //
+  // Historico de calibraciones de este floor:
+  //   · `minH = 13` (etapa pre-2026-05-26) → 332 px piso. Forzaba aire
+  //     INTERNO de ~150 px cuando contenido era 180 px → "hueco gigante
+  //     entre Total y Cobro".
+  //   · `minH = 6` (etapa 2026-05-26) → 132 px piso. Soluciono el hueco
+  //     pero se reporto que se sentia "comprimido".
+  //   · `minH = 8` (etapa 2026-05-27) → 172 px piso. Genero el efecto
+  //     opuesto: "aire muerto" superior/inferior cuando empty
+  //     (contenido ~120 px en slot 172 → ~50 px de aire).
+  //   · `minH = 6` (actual, 2026-05-28) → 132 px piso. Balance final:
+  //     - Empty (~120 px content): slot 132 → ~12 px de respiro
+  //       interno. No comprimido, no inflado.
+  //     - Con datos (200-400 px): auto-grow al alto natural (h=9-16).
+  //     - Saldos del componente: el TotalDelComprobanteCard usa
+  //       `space-y-3 p-2.5` internos (definidos en
+  //       `components/sales/TotalDelComprobanteCard/`) que proveen el
+  //       respiro estetico sin depender del floor del grid.
+  //
+  // Cohesion visual: 132 px (Total vacio) → 48 px (Cupon/Cobro colapsado)
+  // marca jerarquia hero sin saltos drasticos.
+  totals:          { minW: 3, minH: 6 },
+  // Cobro: header colapsable. Una vez expandido el auto-grow ajusta segun
+  // cantidad de pagos cargados.
+  payments:        { minW: 3, minH: 2 },
+  // Impacto CC: read-only colapsable, balance previsto + nota.
+  "account-impact": { minW: 3, minH: 2 },
+  // Observaciones: header colapsable, textarea + tabs (terminos / adjuntos)
+  // crecen via auto-grow al expandir.
+  observations:    { minW: 3, minH: 2 },
 };
 
 /** Helper — lookup seguro. Devuelve constraints o un fallback genérico

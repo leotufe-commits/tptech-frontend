@@ -190,6 +190,39 @@ export type PricingPreviewResult = {
       | "SERVICE_AS_HECHURA"
       | "COMBO_COMPONENTS"
       | "NONE";
+    // ── Etapa C-comercial / C4-fix (POLICY §R-Rounding-14) ────────────────
+    // Extensión simétrica al tipo `SalePreviewLineMetalHechura` (sales.ts).
+    // Sin cambios funcionales en el simulador — el shape ya viajaba
+    // (passthrough en `articles.controller.ts:1437`) pero TypeScript no lo
+    // exponía. C6 hará que la UI del simulador lo renderee.
+    metalSalePreRounding?:    number | null;
+    hechuraSalePreRounding?:  number | null;
+    metalSaleRoundingDelta?:  number | null;
+    hechuraSaleRoundingDelta?:number | null;
+    physical?: {
+      metals: Array<{
+        metalParentId:      string | null;
+        metalParentName:    string;
+        preGrams:           number;
+        postGrams:          number;
+        deltaGrams:         number;
+        metalPricePerGram:  number;
+        monetaryEquivalent: number;
+        mode:               string;
+        direction:          string;
+        source:             "COMMERCIAL_PHYSICAL_ROUNDING";
+        fallback:
+          | null
+          | "NO_METAL_PRICE"
+          | "NO_CONFIG"
+          | "INVALID_GRAMS";
+      }>;
+      metalMonetaryEquivalent: number;
+      fallback:
+        | null
+        | "NO_BREAKDOWN_DATA"
+        | "NO_METALS_TO_ROUND";
+    } | null;
   } | null;
   /**
    * Desglose Metal/Hechura post-descuentos por componente.

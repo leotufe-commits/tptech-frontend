@@ -114,6 +114,25 @@ export type SalesInvoice = {
   channelId?: string;
   /** Cupón de venta — código ingresado por el operador. */
   couponCode?: string;
+  /** Etapa C16.3 — paridad rehidratación DRAFT. Forma de pago + cuotas del
+   *  documento. El motor las consume vía `getCheckoutPreview` para calcular
+   *  el `paymentAdjustment`. Hoy el modal mantiene también un state local
+   *  para selección visual; estos campos son la fuente canónica al
+   *  reabrir un borrador para que `buildSalePreviewPayload` los propague
+   *  sin perder el cálculo del payment surcharge/descuento. `undefined` =
+   *  sin forma de pago elegida (consistente con `channelId`/`couponCode`). */
+  paymentMethodId?: string;
+  paymentInstallments?: number;
+  /**
+   * Fase 4.2 — Override manual del Balance Mode del documento
+   * (POLICY.md §11 R11.4). `null`/`undefined` = el backend resuelve por
+   * jerarquía (cliente → lista → tenant → fallback UNIFIED).
+   * `"UNIFIED" | "BREAKDOWN"` = el operador pisa la resolución.
+   * Persiste en `Sale.balanceModeOverride` via create/update.
+   * El frontend NO resuelve — solo envía la intención y muestra lo que
+   * el backend devuelve en `previewResult.balanceMode` + `balanceModeSource`.
+   */
+  balanceModeOverride?: "UNIFIED" | "BREAKDOWN" | null;
   /** Resultado de la validación del cupón. */
   couponStatus?: {
     code:           string;
@@ -127,4 +146,65 @@ export type SalesInvoice = {
   channelExplicitlyCleared?:   boolean;
   priceListExplicitlyCleared?: boolean;
   warehouseExplicitlyCleared?: boolean;
+
+  /**
+   * Ajuste manual del comprobante (POLICY §R-Rounding-1 capa 17).
+   *
+   * Etapa A — `scope: "UNIFIED"`. Aplica sobre el TOTAL UNIFICADO del
+   * comprobante (no distingue dominios).
+   *   · `amount > 0` = recargo manual.
+   *   · `amount < 0` = descuento / cierre comercial.
+   *   · `amount = 0`/ausente/`null` = sin ajuste.
+   *
+   * Etapa C — `scope: "BREAKDOWN"`. Aplica sobre el SALDO DESGLOSADO.
+   * Disponible solo cuando el documento opera en modo BREAKDOWN. Dominios
+   * DISJUNTOS:
+   *   · Gramos de cada metal padre (`targetGrams` o `deltaGrams`) — el
+   *     ajuste físico vive en su metal padre.
+   *   · Bucket hechura / saldo monetario (`monetaryAmount`) — todo lo
+   *     no-metal-padre (hechura física + productos + servicios + impuestos
+   *     + envío + descuentos + cupones + canal + forma de pago + redondeos
+   *     monetarios).
+   *
+   * Principio "no mezclar": ajustes en gramos viven SOLO en su metal padre;
+   * ajustes monetarios viven SOLO en el bucket hechura/saldo. El frontend
+   * NUNCA calcula: solo captura la intención.
+   *
+   * Equivalencia monetaria (regla crítica): los ajustes de metal padre
+   * impactan `Sale.total` y los displays vía el `monetaryEquivalent` del
+   * snapshot del backend — igual que el redondeo BREAKDOWN. NUNCA se
+   * mueve el valor a hechura: el ajuste físico sigue perteneciendo al
+   * metal padre.
+   */
+  manualAdjustment?: SalesInvoiceManualAdjustmentDraft;
 };
+
+/** Intención de ajuste UNIFIED en el draft del frontend. */
+export interface SalesInvoiceManualAdjustmentDraftUnified {
+  scope?: "UNIFIED";
+  amount: number;
+  reason?: string | null;
+}
+
+/** Ajuste por metal padre en el draft del frontend (Etapa C). */
+export interface SalesInvoiceManualAdjustmentDraftMetal {
+  metalParentId:   string | null;
+  metalParentName?: string;
+  targetGrams?: number | null;
+  deltaGrams?:  number | null;
+  reason?:      string | null;
+}
+
+/** Intención de ajuste BREAKDOWN en el draft del frontend. */
+export interface SalesInvoiceManualAdjustmentDraftBreakdown {
+  scope:  "BREAKDOWN";
+  metals?:         SalesInvoiceManualAdjustmentDraftMetal[];
+  monetaryAmount?: number | null;
+  reason?:         string | null;
+}
+
+/** Unión del draft de ajuste manual. `null` / `undefined` = sin ajuste. */
+export type SalesInvoiceManualAdjustmentDraft =
+  | SalesInvoiceManualAdjustmentDraftUnified
+  | SalesInvoiceManualAdjustmentDraftBreakdown
+  | null;

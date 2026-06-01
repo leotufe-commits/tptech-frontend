@@ -1,7 +1,7 @@
 // src/pages/entity-detail/tabs/TabMerma.tsx
 // Merma % override por variante de metal — por entidad comercial
 import React, { useEffect, useState, useMemo } from "react";
-import { Plus, Star, X, Check } from "lucide-react";
+import { Plus, X, Check } from "lucide-react";
 import { TPButton } from "../../../components/ui/TPButton";
 import { TPField } from "../../../components/ui/TPField";
 import TPNumberInput from "../../../components/ui/TPNumberInput";
@@ -233,12 +233,9 @@ export default function TabMerma({ entityId, isClient, isSupplier, hasRelations 
           <TPTr key={o.id}>
             {vis.variante && (
               <TPTd>
-                <div className="flex items-center gap-2">
-                  {o.variant.isFavorite && <Star size={11} className="fill-primary text-primary shrink-0" />}
-                  <div>
-                    <div className="font-medium text-text">{o.variant.metal.name} — {o.variant.name}</div>
-                    <div className="text-xs text-muted">{o.variant.sku} · pureza {parseFloat(o.variant.purity) * 100}%</div>
-                  </div>
+                <div>
+                  <div className="font-medium text-text">{o.variant.metal.name} — {o.variant.name}</div>
+                  <div className="text-xs text-muted">{o.variant.sku} · pureza {parseFloat(o.variant.purity) * 100}%</div>
                 </div>
               </TPTd>
             )}

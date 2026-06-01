@@ -72,10 +72,48 @@ describe("buildSaleCreatePayload", () => {
       channelId:   "ch-1",
       couponCode:  null,
       notes:       "Entrega martes",
+      // Etapa C16 — la lista global del documento ahora viaja al backend.
+      priceListId: "pl-1",
       lines: [
         { articleId: "art-1", variantId: null, quantity: 2, unitPrice: 100 },
       ],
     });
+  });
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // C16 — paridad preview ↔ persist del cambio de lista global
+  // ──────────────────────────────────────────────────────────────────────────
+
+  it("C16: draft.priceListId = 'prueba2' viaja al payload (no se omite como pre-C16)", () => {
+    const out = buildSaleCreatePayload(makeDraft({ priceListId: "prueba2" }));
+    expect(out.payload.priceListId).toBe("prueba2");
+  });
+
+  it("C16: draft.priceListId = undefined → payload con priceListId: null (no se omite)", () => {
+    const out = buildSaleCreatePayload(makeDraft({ priceListId: undefined }));
+    expect(out.payload.priceListId).toBeNull();
+  });
+
+  it("C16: cambio de lista global limpia overrides por línea (`priceListIdOverride` queda null)", () => {
+    const out = buildSaleCreatePayload(makeDraft({
+      priceListId: "prueba2",
+      lines: [
+        makeLine({ id: "l1", articleId: "art-1", priceListIdOverride: null } as any),
+      ],
+    }));
+    expect(out.payload.priceListId).toBe("prueba2");
+    expect(out.payload.lines[0]!.priceListIdOverride).toBeNull();
+  });
+
+  it("C16: línea con override puntual coexiste con la lista global del doc", () => {
+    const out = buildSaleCreatePayload(makeDraft({
+      priceListId: "prueba2",
+      lines: [
+        makeLine({ id: "l1", articleId: "art-1", priceListIdOverride: "pl-otro" } as any),
+      ],
+    }));
+    expect(out.payload.priceListId).toBe("prueba2");
+    expect(out.payload.lines[0]!.priceListIdOverride).toBe("pl-otro");
   });
 
   it("seller/warehouse vacios → null (no string vacio)", () => {
@@ -154,5 +192,184 @@ describe("buildSaleCreatePayload", () => {
   it("no emite discountPct (campo no presente en DocumentLine v1)", () => {
     const out = buildSaleCreatePayload(makeDraft());
     expect(out.payload.lines[0]!.discountPct).toBeUndefined();
+  });
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // Etapa 3 — Ajustes a nivel documento (paridad preview ↔ create)
+  // ──────────────────────────────────────────────────────────────────────────
+  describe("Etapa 3 — ajustes a nivel documento", () => {
+    it("persiste shipping.cost como shippingAmount plano", () => {
+      const draft = makeDraft({
+        shipping: { methodId: "manual", cost: 250, address: "", carrier: "" },
+      });
+      const out = buildSaleCreatePayload(draft);
+      expect(out.payload.shippingAmount).toBe(250);
+      // No emite el shape rico mientras DocumentShipping no tenga mode/value/weight.
+      expect(out.payload.shipping).toBeUndefined();
+    });
+
+    it("shipping.cost == 0 → shippingAmount null (no se persiste)", () => {
+      const draft = makeDraft({
+        shipping: { methodId: "pickup", cost: 0, address: "", carrier: "" },
+      });
+      const out = buildSaleCreatePayload(draft);
+      expect(out.payload.shippingAmount).toBeNull();
+    });
+
+    it("globalDiscount manual → emite { type, value }", () => {
+      const draft = makeDraft({
+        discountGlobal: { type: "PERCENT", value: 10, reason: "Cliente VIP", origin: "MANUAL" },
+      });
+      const out = buildSaleCreatePayload(draft);
+      expect(out.payload.globalDiscount).toEqual({ type: "PERCENT", value: 10 });
+    });
+
+    it("globalDiscount con origin=CLIENT → NO se reenvía (anti doble aplicación)", () => {
+      const draft = makeDraft({
+        discountGlobal: { type: "PERCENT", value: 5, origin: "CLIENT" },
+      });
+      const out = buildSaleCreatePayload(draft);
+      expect(out.payload.globalDiscount).toBeNull();
+    });
+
+    it("globalDiscount.value == 0 → NO se emite", () => {
+      const draft = makeDraft({
+        discountGlobal: { type: "PERCENT", value: 0, origin: "MANUAL" },
+      });
+      const out = buildSaleCreatePayload(draft);
+      expect(out.payload.globalDiscount).toBeNull();
+    });
+
+    it("paymentMethodId + paymentInstallments vienen de opts", () => {
+      const out = buildSaleCreatePayload(makeDraft(), {
+        paymentMethodId:     "pm-1",
+        paymentInstallments: 3,
+      });
+      expect(out.payload.paymentMethodId).toBe("pm-1");
+      expect(out.payload.paymentInstallments).toBe(3);
+    });
+
+    it("sin paymentMethodId → installments null (no se persisten huérfanos)", () => {
+      const out = buildSaleCreatePayload(makeDraft(), {
+        paymentInstallments: 6,
+      });
+      expect(out.payload.paymentMethodId).toBeNull();
+      expect(out.payload.paymentInstallments).toBeNull();
+    });
+
+    it("paymentMethodId sin installments → default 1", () => {
+      const out = buildSaleCreatePayload(makeDraft(), {
+        paymentMethodId: "pm-1",
+      });
+      expect(out.payload.paymentInstallments).toBe(1);
+    });
+
+    it("pricingMeta.gramsOverride viaja como gramsOverride por línea", () => {
+      const line = {
+        ...makeLine(),
+        pricingMeta: {
+          gramsOverride:         12.5,
+          mermaPercentOverride:  3,
+          metalVariantIdOverride: "mv-1",
+          hechuraOverrideAmount: 250,
+          costLineOverrides: [
+            { costLineId: "cl-1", type: "METAL", quantityOverride: 5 },
+          ],
+        },
+      } as unknown as DocumentLine;
+      const out = buildSaleCreatePayload(makeDraft({ lines: [line] }));
+      expect(out.payload.lines[0]!.gramsOverride).toBe(12.5);
+      expect(out.payload.lines[0]!.mermaPercentOverride).toBe(3);
+      expect(out.payload.lines[0]!.metalVariantIdOverride).toBe("mv-1");
+      expect(out.payload.lines[0]!.hechuraOverrideAmount).toBe(250);
+      expect(out.payload.lines[0]!.costLineOverrides).toEqual([
+        { costLineId: "cl-1", type: "METAL", quantityOverride: 5 },
+      ]);
+    });
+  });
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // Etapa 4 (cierre limitación Etapa 3) — overrides comerciales per-line
+  // ──────────────────────────────────────────────────────────────────────────
+  describe("Etapa 4 — overrides comerciales per-line", () => {
+    it("manualOverrides.price=true + pricingMeta.manualPrice → manualPriceOverride", () => {
+      const line = {
+        ...makeLine(),
+        manualOverrides: { price: true },
+        pricingMeta:     { manualPrice: 1500 },
+      } as unknown as DocumentLine;
+      const out = buildSaleCreatePayload(makeDraft({ lines: [line] }));
+      expect(out.payload.lines[0]!.manualPriceOverride).toBe(1500);
+    });
+
+    it("manualOverrides.price=false → manualPriceOverride null (no se reenvía)", () => {
+      const line = {
+        ...makeLine(),
+        manualOverrides: { price: false },
+        pricingMeta:     { manualPrice: 1500 },  // existe pero el toggle está OFF
+      } as unknown as DocumentLine;
+      const out = buildSaleCreatePayload(makeDraft({ lines: [line] }));
+      expect(out.payload.lines[0]!.manualPriceOverride).toBeNull();
+    });
+
+    it("manualOverrides.discount + pricingMeta.manualDiscount → manualDiscountOverride completo", () => {
+      const line = {
+        ...makeLine(),
+        manualOverrides: { discount: true },
+        pricingMeta: {
+          manualDiscount: { mode: "PERCENT", value: 12, appliesTo: "HECHURA", kind: "BONUS" },
+        },
+      } as unknown as DocumentLine;
+      const out = buildSaleCreatePayload(makeDraft({ lines: [line] }));
+      expect(out.payload.lines[0]!.manualDiscountOverride).toEqual({
+        mode: "PERCENT", value: 12, appliesTo: "HECHURA", kind: "BONUS",
+      });
+    });
+
+    it("manualOverrides.tax + pricingMeta.taxOverride → taxOverride completo", () => {
+      const line = {
+        ...makeLine(),
+        manualOverrides: { tax: true },
+        pricingMeta: {
+          taxOverride: { mode: "AMOUNT", value: 75, appliesTo: "TOTAL" },
+        },
+      } as unknown as DocumentLine;
+      const out = buildSaleCreatePayload(makeDraft({ lines: [line] }));
+      expect(out.payload.lines[0]!.taxOverride).toEqual({
+        mode: "AMOUNT", value: 75, appliesTo: "TOTAL",
+      });
+    });
+
+    it("manualDiscountAppliesTo + manualTaxAppliesTo persisten independientes del valor", () => {
+      const line = {
+        ...makeLine(),
+        pricingMeta: {
+          manualDiscountAppliesTo: "METAL",
+          manualTaxAppliesTo:      "SUBTOTAL_AFTER_DISCOUNT",
+        },
+      } as unknown as DocumentLine;
+      const out = buildSaleCreatePayload(makeDraft({ lines: [line] }));
+      expect(out.payload.lines[0]!.manualDiscountAppliesToOverride).toBe("METAL");
+      expect(out.payload.lines[0]!.manualTaxAppliesToOverride).toBe("SUBTOTAL_AFTER_DISCOUNT");
+    });
+
+    it("priceListIdOverride se emite desde DocumentLine.priceListIdOverride", () => {
+      const line = {
+        ...makeLine(),
+        priceListIdOverride: "pl-vip",
+      } as unknown as DocumentLine;
+      const out = buildSaleCreatePayload(makeDraft({ lines: [line] }));
+      expect(out.payload.lines[0]!.priceListIdOverride).toBe("pl-vip");
+    });
+
+    it("línea sin overrides → todos los campos null/undefined", () => {
+      const out = buildSaleCreatePayload(makeDraft());
+      expect(out.payload.lines[0]!.manualPriceOverride).toBeNull();
+      expect(out.payload.lines[0]!.manualDiscountOverride).toBeNull();
+      expect(out.payload.lines[0]!.taxOverride).toBeNull();
+      expect(out.payload.lines[0]!.manualDiscountAppliesToOverride).toBeNull();
+      expect(out.payload.lines[0]!.manualTaxAppliesToOverride).toBeNull();
+      expect(out.payload.lines[0]!.priceListIdOverride).toBeNull();
+    });
   });
 });

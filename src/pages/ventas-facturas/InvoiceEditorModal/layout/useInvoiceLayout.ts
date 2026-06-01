@@ -43,7 +43,17 @@ function readStored(raw: unknown): StoredShape {
 
 export type UseInvoiceLayoutResult = {
   layoutV2: LayoutV2;
-  setLayoutV2: (next: LayoutV2) => void;
+  /**
+   * Aplica un layout nuevo. `opts.persist`:
+   *   - `true` (default): cambio user-driven (drag, resize, preset, restore) →
+   *     se persiste al backend con debounce.
+   *   - `false`: cambio cosmético (auto-grow/shrink del motor de reflow,
+   *     compactación interna por contenido) → solo actualiza estado, NO
+   *     llama al backend. Evita disparar "Error al guardar" cuando el
+   *     operador NO hizo nada y bloquea persistencia innecesaria de
+   *     correcciones de display derivables del contenido en re-mount.
+   */
+  setLayoutV2: (next: LayoutV2, opts?: { persist?: boolean }) => void;
 
   // Snapshot / restore (modo edicion).
   takeSnapshot: () => void;
@@ -219,9 +229,21 @@ export function useInvoiceLayout(open: boolean): UseInvoiceLayoutResult {
   // ── API publica ────────────────────────────────────────────────────────────
 
   const setLayoutV2 = useCallback(
-    (next: LayoutV2) => {
+    (next: LayoutV2, opts?: { persist?: boolean }) => {
       setLayoutV2State(next);
-      persistAll(next, presets, defaultPresetId);
+      // 2026-05-29 — fix "Error al guardar" fantasma:
+      // Solo persistimos cambios user-driven (drag/resize/preset/restore).
+      // Los cambios cosméticos del motor de auto-grow/shrink y la
+      // compactación interna NO se persisten — son derivables del
+      // contenido al re-mount, no representan intención del operador.
+      // Sin esto, cada apertura del modal disparaba un PUT por la
+      // re-compactación inicial, y si el backend rechazaba el payload
+      // (por cualquier razón) el operador veía "Error al guardar" sin
+      // haber hecho nada.
+      const persist = opts?.persist !== false;
+      if (persist) {
+        persistAll(next, presets, defaultPresetId);
+      }
     },
     [presets, defaultPresetId, persistAll],
   );

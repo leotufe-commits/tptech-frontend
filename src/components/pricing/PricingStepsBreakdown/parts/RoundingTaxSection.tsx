@@ -27,6 +27,8 @@ import {
 } from "../helpers";
 import type { PricingStepsDisplay } from "../types";
 import type { PricingStepResult, PricingPreviewResult } from "../../../../services/articles";
+import { formatByType } from "../../../../lib/pricing/format";
+import type { SalePreviewLine } from "../../../../services/sales";
 
 export type RoundingTaxSectionProps = {
   rndStep:    PricingStepResult | undefined;
@@ -44,6 +46,16 @@ export type RoundingTaxSectionProps = {
    *  Comparador; el Simulador lo pasa `false` para evitar la duplicación
    *  visual con la fila "Redondeo" del flujo. */
   showListRoundingCard?: boolean;
+  /** Etapa D' — Snapshot del Redondeo Comercial PER_DOCUMENT replicado por
+   *  línea (backend lo emite en `SalePreviewLine.commercialRoundingContext`).
+   *  Se renderiza al final de la cadena comercial — cierre del card del
+   *  artículo. PASSTHROUGH puro: cero matemática FE.
+   *  - `appliedAt: "DOCUMENT"` viene del backend (no se infiere en FE).
+   *  - `appliedToLineCount` viene del backend (no se cuenta en FE).
+   *  - Valores pre/post/delta/monetaryEquivalent vienen del snapshot tal cual.
+   *  null en PER_LINE_LEGACY o mixed-list (el bloque NO se renderiza — el
+   *  redondeo legacy viaja por el path histórico arriba). */
+  commercialRoundingContext?: NonNullable<SalePreviewLine["commercialRoundingContext"]> | null;
 };
 
 function SubLine({ children }: { children: React.ReactNode }) {
@@ -51,8 +63,9 @@ function SubLine({ children }: { children: React.ReactNode }) {
 }
 
 export function RoundingTaxSection(props: RoundingTaxSectionProps): React.ReactElement | null {
-  const { rndStep, hasTaxesL, result, display, showListRoundingCard = true } = props;
+  const { rndStep, hasTaxesL, result, display, showListRoundingCard = true, commercialRoundingContext } = props;
   const fm = (v: number) => formatMoneyDisplay(v, display.rate, display.symbol);
+  const fmGrams = (g: number) => `${formatByType(g, "METAL_GRAMS")} gr`;
 
   const rndApplyOn = String((rndStep as any)?.meta?.applyOn ?? "PRICE");
   const isPreTaxRounding = rndStep?.value != null && (rndStep as any).meta?.preRounding != null && rndApplyOn !== "TOTAL";
@@ -201,6 +214,90 @@ export function RoundingTaxSection(props: RoundingTaxSectionProps): React.ReactE
           </div>
         );
       })()}
+
+      {/* ── 5. Etapa D' — Redondeo Comercial PER_DOCUMENT ──────────────────────
+          Cierre conceptual de la cadena comercial del artículo.
+          PASSTHROUGH puro — todos los valores vienen de `commercialRoundingContext`
+          que el backend replicó en esta línea. Cero matemática FE.
+          REGLA DE ORO: backend calcula, frontend renderiza. */}
+      {commercialRoundingContext && (
+        <CommercialRoundingDocBlock ctx={commercialRoundingContext} fm={fm} fmGrams={fmGrams} />
+      )}
     </>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Sub-bloque — Redondeo Comercial PER_DOCUMENT (cierre de cadena del artículo)
+// ─────────────────────────────────────────────────────────────────────────────
+
+function CommercialRoundingDocBlock(props: {
+  ctx:     NonNullable<SalePreviewLine["commercialRoundingContext"]>;
+  fm:      (v: number) => string;
+  fmGrams: (g: number) => string;
+}): React.ReactElement | null {
+  const { ctx, fm, fmGrams } = props;
+
+  // Cuando hay fallback informativo y no hubo movimiento, mostramos solo el aviso.
+  const hasMovement =
+    (ctx.scope === "UNIFIED"   && ctx.unified  != null) ||
+    (ctx.scope === "BREAKDOWN" && ctx.breakdown != null);
+
+  if (!hasMovement) {
+    // Capa activa pero sin movimiento (fallback ALL_NONE / NO_METALS_BREAKDOWN_DATA).
+    return null;
+  }
+
+  // Badge "Aplicado a nivel comprobante" — el campo viene del backend.
+  // REGLA DE ORO: el frontend NO cuenta líneas — lee `appliedToLineCount`.
+  const showDocBadge =
+    ctx.appliedAt === "DOCUMENT" && ctx.appliedToLineCount > 1;
+
+  return (
+    <div className="space-y-1.5" data-testid="rts-commercial-doc-rounding">
+      <div className={vt.row.flexBetween}>
+        <span>Redondeo comercial</span>
+        <span className={vt.text.subtotalRow}>
+          {ctx.totalAdjustment > 0 ? "+" : ""}{fm(ctx.totalAdjustment)}
+        </span>
+      </div>
+      {showDocBadge && (
+        <SubLine>
+          Aplicado a nivel comprobante ({ctx.appliedToLineCount} líneas)
+        </SubLine>
+      )}
+
+      {/* UNIFIED — un único row monetario. */}
+      {ctx.unified && (
+        <SubLine>
+          {fm(ctx.unified.pre)} → {fm(ctx.unified.post)} · {ctx.unified.mode} {ctx.unified.direction}
+        </SubLine>
+      )}
+
+      {/* BREAKDOWN — metal físico (gramos + monetaryEquivalent) + hechura. */}
+      {ctx.breakdown && (
+        <>
+          {ctx.breakdown.metals.map((m) => (
+            <div key={m.metalParentId} className="pl-2 space-y-0.5" data-testid={`rts-commercial-metal-${m.metalParentId}`}>
+              <SubLine>
+                {m.metalParentName}: {fmGrams(m.preGrams)} → {fmGrams(m.postGrams)}
+                {" · "}Δ {fmGrams(m.deltaGrams)}
+                {" · "}{m.mode} {m.direction}
+              </SubLine>
+              <SubLine>
+                equivalente $ {m.monetaryEquivalent > 0 ? "+" : ""}{fm(m.monetaryEquivalent)}
+              </SubLine>
+            </div>
+          ))}
+          <div className="pl-2" data-testid="rts-commercial-hechura">
+            <SubLine>
+              Hechura / saldo: {fm(ctx.breakdown.hechura.preRoundingSaldoMonetario)} → {fm(ctx.breakdown.hechura.postRoundingSaldoMonetario)}
+              {" · "}Δ {fm(ctx.breakdown.hechura.deltaSaldoMonetario)}
+              {" · "}{ctx.breakdown.hechura.mode} {ctx.breakdown.hechura.direction}
+            </SubLine>
+          </div>
+        </>
+      )}
+    </div>
   );
 }

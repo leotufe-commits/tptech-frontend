@@ -115,6 +115,12 @@ export type PricingComposition = {
   coupon: number | null;
   couponName: string | null;
   couponCode: string | null;
+  /** % del cupón SI el motor lo configuró como porcentual (`discountType
+   *  === "PERCENTAGE"`). Es la rule del cupón tal como la define el motor,
+   *  NO el % efectivo sobre el subtotal — el helper de display lo expone
+   *  como contexto ("Cupón X — 10% del subtotal" en `subline`), nunca como
+   *  el % global del documento. */
+  couponPercent: number | null;
 
   /** Descuento global manual del documento. */
   globalDiscount: number | null;
@@ -304,6 +310,7 @@ export function composeDocumentPricingDetail(args: {
       coupon:           null,
       couponName:       null,
       couponCode:       null,
+      couponPercent:    null,
       globalDiscount:   null,
       subtotalNet:      null,
       shipping:         fallbackShipping > 0 ? fallbackShipping : null,
@@ -468,6 +475,28 @@ export function composeDocumentPricingDetail(args: {
   const taxes    = aggregateTaxBreakdown(lines);
   const taxTotal = round2(taxes.reduce((s, t) => s + t.amount, 0));
 
+  // Cupón: el motor define la rule del cupón con `discountType` ("PERCENTAGE"
+  // | "FIXED_AMOUNT") y `discountValue`. Cuando es porcentual, exponemos el
+  // % como **contexto de la rule del cupón** — NO como el % efectivo sobre
+  // el subtotal del documento. La UI lo coloca en la subline ("Cupón X —
+  // 10% del subtotal") para dejar inequívoca la base de aplicación; el
+  // monto efectivo (`coupon`) ya viene calculado por el motor.
+  //
+  // Política (regla del usuario): NO derivamos % por origen para promoción /
+  // descuento por cantidad / bonificación manual / canal / global. El motor
+  // los aplica sobre distintas bases (METAL / HECHURA / TOTAL / por línea),
+  // pueden ser secuenciales, acumulativos o no lineales — un "% uniforme"
+  // por línea NO equivale al % sobre el subtotal del documento. La UI
+  // muestra origen + impacto monetario sin %, salvo el del cupón que viene
+  // explícito desde la rule del motor.
+  const couponResult = preview.couponResult ?? null;
+  const couponPercent =
+    couponResult != null &&
+    (couponResult.discountType === "PERCENT" || couponResult.discountType === "PERCENTAGE") &&
+    typeof couponResult.discountValue === "number"
+      ? couponResult.discountValue
+      : null;
+
   return {
     subtotalGross:    round2(dt.subtotalBeforeDiscounts ?? 0),
     priceListName:    firstPriceList,
@@ -491,6 +520,7 @@ export function composeDocumentPricingDetail(args: {
     coupon:           (dt.couponDiscountAmount ?? 0) > 0 ? round2(dt.couponDiscountAmount) : null,
     couponName,
     couponCode,
+    couponPercent,
     globalDiscount:   (dt.globalDiscountAmount ?? 0) > 0 ? round2(dt.globalDiscountAmount) : null,
     subtotalNet:      round2(dt.taxableBase ?? 0),
     shipping:         (dt.shippingAmount ?? 0) > 0

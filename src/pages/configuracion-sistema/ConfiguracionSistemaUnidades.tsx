@@ -88,7 +88,14 @@ function norm(s: string) {
 /* =========================
    Página
 ========================= */
-export default function ConfiguracionSistemaUnidades() {
+export type ConfiguracionSistemaUnidadesProps = {
+  /** Cuando true, omitimos el TPSectionShell. Usado al montarse dentro
+   *  de `ItemsSistemaPage` con tabs — el shell exterior ya provee el
+   *  header. Default false → comportamiento standalone. */
+  embedded?: boolean;
+};
+
+export default function ConfiguracionSistemaUnidades({ embedded = false }: ConfiguracionSistemaUnidadesProps = {}) {
   const [tab, setTab] = useState<TabKey>("ALL");
   const [q, setQ] = useState("");
   const [items, setItems] = useState<Unit[]>([]);
@@ -329,12 +336,22 @@ export default function ConfiguracionSistemaUnidades() {
     });
   }
 
+  // Helper local — envuelve con TPSectionShell salvo en modo embedded
+  // (tab dentro de ItemsSistemaPage). Cero impacto en lógica interna.
+  const Shell = embedded
+    ? ({ children }: { children: React.ReactNode }) => <>{children}</>
+    : ({ children }: { children: React.ReactNode }) => (
+        <TPSectionShell
+          title="Unidades"
+          subtitle="Administrá unidades de venta, peso, dimensión y volumen."
+          icon={<Ruler size={22} />}
+        >
+          {children}
+        </TPSectionShell>
+      );
+
   return (
-    <TPSectionShell
-      title="Unidades"
-      subtitle="Administrá unidades de venta, peso, dimensión y volumen."
-      icon={<Ruler size={22} />}
-    >
+    <Shell>
       {/* Tabs por tipo — pestañas reales con border-bottom (estilo TPTech).
           Reemplaza los chips redondeados anteriores. Mantiene los mismos
           counts y el mismo handler (setTab) — sólo cambia el styling. */}
@@ -534,6 +551,6 @@ export default function ConfiguracionSistemaUnidades() {
           </TPField>
         </div>
       </Modal>
-    </TPSectionShell>
+    </Shell>
   );
 }

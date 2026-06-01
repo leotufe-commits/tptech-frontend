@@ -101,6 +101,48 @@ export type LinesEditorSectionProps = {
 
   // ── Preview status (para feedback "Recalculando…") ─────────────────────
   previewLoading:   boolean;
+
+  /**
+   * Etapa E2 — FIX FX para sub-líneas equivalentes ("≈ X / unidad") en
+   * facturas no-base. Passthrough hasta `SaleCompositionEditableGrid`.
+   * "Unidades de moneda BASE por 1 unidad de la moneda del documento"
+   * (= `draft.fxRate`). En moneda base es 1.
+   */
+  documentFxRate?: React.ComponentProps<typeof TPDocumentLineAdvancedEditor>["documentFxRate"];
+
+  /**
+   * Énfasis visual del Total línea c/imp. — passthrough del preset de
+   * Factura (UX.19). Cuando el preset CLASSIC tiene layout full-width,
+   * el Total línea puede ganar protagonismo (`EMPHASIZED`); el resto
+   * mantiene `STANDARD`. Default `STANDARD` si no se provee.
+   */
+  lineTotalEmphasis?: React.ComponentProps<typeof TPDocumentLineAdvancedEditor>["lineTotalEmphasis"];
+  /**
+   * Posicion de la mini-toolbar de acciones de linea. `true` la
+   * pone INLINE al lado del label "Total linea c/ imp." (look ERP
+   * clasico). `false` o ausente: la deja al pie del bloque del total.
+   * En Factura, hoy: CLASSIC → true; COMPACT / ONE_LINE → false.
+   */
+  inlineLineActions?: React.ComponentProps<typeof TPDocumentLineAdvancedEditor>["inlineLineActions"];
+  /**
+   * UX.21 — Mini-toolbar de acciones de línea sticky-right durante
+   * scroll horizontal. Passthrough hasta el editor avanzado. Default
+   * `true` (back-compat). El caller calcula el AND entre el preset y
+   * la preferencia del usuario.
+   */
+  stickyLineActions?: React.ComponentProps<typeof TPDocumentLineAdvancedEditor>["stickyLineActions"];
+
+  /** Fase A — política comercial: mapa lineId → nivel. Pasthrough al
+   *  editor avanzado, que pinta un borde lateral por fila según el
+   *  nivel ("WARNING" amarillo / "RISK" naranja / "CRITICAL" rojo).
+   *  El consumidor (VentasFacturas) lo deriva del preview. */
+  commercialLevelByLineId?: React.ComponentProps<typeof TPDocumentLineAdvancedEditor>["commercialLevelByLineId"];
+
+  /** Refinamiento Fase A — política comercial enriquecida (motivo + margen).
+   *  Si se provee, el editor avanzado renderiza un chip al pie de cada
+   *  fila con la alerta dominante. Passthrough — el consumidor lo deriva
+   *  con `deriveCommercialInfo`. */
+  commercialInfoByLineId?: React.ComponentProps<typeof TPDocumentLineAdvancedEditor>["commercialInfoByLineId"];
 };
 
 export function LinesEditorSection(props: LinesEditorSectionProps): React.ReactElement {
@@ -117,6 +159,8 @@ export function LinesEditorSection(props: LinesEditorSectionProps): React.ReactE
     handleEditArticle, handleLineArticlePick, handleCreateManualLine,
     searchArticles, exactLookupArticle,
     focusedLineId, focusSignal, editorScopeRef, previewLoading,
+    documentFxRate, lineTotalEmphasis, inlineLineActions, stickyLineActions,
+    commercialLevelByLineId, commercialInfoByLineId,
   } = props;
 
   return (
@@ -208,6 +252,24 @@ export function LinesEditorSection(props: LinesEditorSectionProps): React.ReactE
           // Fase 4.3 — feedback de "Recalculando" en el header de
           // la grilla de composición durante un preview en vuelo.
           saleCompositionLoading={previewLoading}
+          // Etapa E2 — FIX FX para sub-líneas equivalentes en facturas
+          // no-base. Passthrough hasta `SaleCompositionEditableGrid`.
+          documentFxRate={documentFxRate}
+          // UX.19 — passthrough del énfasis del Total línea desde el
+          // preset de Factura (`resolveInvoiceViewPreset`). Solo CLASSIC
+          // usa "EMPHASIZED" hoy; los demás presets son "STANDARD"
+          // (== comportamiento previo). Default "STANDARD" si no se provee.
+          lineTotalEmphasis={lineTotalEmphasis}
+          inlineLineActions={inlineLineActions}
+          // Fase A — política comercial: mapa lineId → nivel.
+          // Passthrough al editor que pinta el borde lateral por fila.
+          commercialLevelByLineId={commercialLevelByLineId}
+          // Refinamiento Fase A — chip + motivo + margen % por fila.
+          commercialInfoByLineId={commercialInfoByLineId}
+          // UX.21 — passthrough del flag sticky-actions. El caller
+          // (`VentasFacturas`) calcula `preset.stickyLineActions &&
+          // uiPreferences.stickyActions` y lo pasa.
+          stickyLineActions={stickyLineActions}
         />
       )}
     </div>

@@ -129,6 +129,15 @@ export type PricingStepsBreakdownProps = {
    *  estado local. Permite que el padre persista preferencias. */
   expanded?: Record<string, boolean>;
   onToggle?: (key: string) => void;
+
+  /** Etapa D' (cierre conceptual) — Snapshot del Redondeo Comercial
+   *  PER_DOCUMENT replicado en esta línea por el backend
+   *  (`SalePreviewLine.commercialRoundingContext`). Cuando llega, se
+   *  renderiza al final de la cadena comercial del artículo en
+   *  `RoundingTaxSection`. PASSTHROUGH puro — cero matemática FE. */
+  commercialRoundingContext?:
+    NonNullable<import("../../../services/sales").SalePreviewLine["commercialRoundingContext"]>
+    | null;
 };
 
 // ─── Tipos internos (no exportados al barrel) ──────────────────────────────

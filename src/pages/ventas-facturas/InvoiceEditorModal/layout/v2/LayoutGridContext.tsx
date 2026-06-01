@@ -12,7 +12,8 @@
 // Importante: NO calcula nada comercial. Solo posiciona cards. El render
 // real de cada card viene de `renderCard(id)` provisto por el padre.
 
-import React, { useCallback, useMemo, useRef, useEffect } from "react";
+import React, { useCallback, useMemo, useRef, useEffect, useLayoutEffect } from "react";
+import { GripVertical } from "lucide-react";
 // CSS de react-grid-layout — necesario para que el drag/resize se vea bien.
 // Import dinamico via side-effect; vite lo bundlea.
 import "react-grid-layout/css/styles.css";
@@ -27,16 +28,26 @@ import {
   GRID_CONTAINER_PADDING,
   CARD_GAP_Y_PX,
 } from "./spacing";
-import { compactVerticallyByRegion, recalculateCardHeight } from "./reflowLayout";
+import {
+  compactVerticallyByRegion,
+  recalculateCardHeight,
+  decideStabilityCommit,
+  type StabilityTracker,
+} from "./reflowLayout";
 
 const ResponsiveGridLayout = WidthProvider(GridLayout);
 
 // Constantes de spacing IMPORTADAS de `./spacing.ts` (SSOT). Cualquier
 // ajuste de gap entre cards debe modificarse alli — los call-sites
 // reciben el valor consistente.
-const ROW_HEIGHT = GRID_ROW_HEIGHT_PX; // 32 px
-const MARGIN = GRID_MARGIN;             // [12, 12]
-const CONTAINER_PADDING = GRID_CONTAINER_PADDING; // [0, 0]
+// Valores actuales (post-recalibracion 2026-05-26):
+//   ROW_HEIGHT = 20 px (granularidad fina de resize vertical)
+//   MARGIN     = [6, 6] (gap compacto entre cards — colapsados se ven
+//                        agrupados como un bloque, expandidos no se sienten
+//                        cramped)
+const ROW_HEIGHT = GRID_ROW_HEIGHT_PX;
+const MARGIN = GRID_MARGIN;
+const CONTAINER_PADDING = GRID_CONTAINER_PADDING;
 
 // 2026-05-25 — Whitelist de cards que el operador puede ocultar via
 // "Personalizar layout". Si `renderCard(id)` devuelve null para una de
@@ -64,8 +75,17 @@ export type LayoutGridContextProps = {
   regionOriginX: number;
   /** Numero de columnas del aside (subset de las 12). */
   regionColumns: number;
-  /** Callback al commit del DnD/resize. Recibe el layout V2 completo. */
-  onLayoutChange: (next: LayoutV2) => void;
+  /**
+   * Callback al commit del layout. Recibe el layout V2 completo + un flag
+   * `opts.persist` que indica si el cambio es user-driven (drag/resize)
+   * o cosmético (auto-grow/shrink del motor de reflow).
+   *
+   * - `opts.persist=true`  → cambio user-driven → padre persiste al backend.
+   * - `opts.persist=false` → cambio cosmético → padre solo actualiza estado
+   *                          local, no llama al backend. Default si
+   *                          `opts` no se pasa: persist=true (back-compat).
+   */
+  onLayoutChange: (next: LayoutV2, opts?: { persist?: boolean }) => void;
   /** Render por card (devuelve null para "no renderear"). */
   renderCard: (id: CardId) => React.ReactNode;
   /** Si true, sin handles ni DnD (modo lectura). */
@@ -150,66 +170,82 @@ export function LayoutGridContext(props: LayoutGridContextProps): React.ReactEle
     [asideCards, regionOriginX, regionColumns],
   );
 
-  // ─── Auto-grow por contenido (anti-loop endurecido) ────────────────────────
+  // ─── Auto-grow por contenido (RAF-throttled, sin lag percibido) ────────────
   //
-  // Cuatro capas de proteccion contra el loop visual del card de Total
-  // del comprobante (y similares):
+  // Refactor 2026-05-26 (cierre overlap visual durante reflow):
+  // antes habia un `setTimeout(80ms)` que se reiniciaba en cada evento del
+  // ResizeObserver. Resultado: el commit solo disparaba DESPUES de que
+  // TPCard terminaba SU PROPIA animacion (~220 ms) + 80 ms de silencio
+  // = ~300 ms. Recien entonces el grid commiteaba la nueva h, react-grid-
+  // layout iniciaba SU transicion de 220 ms → cards inferiores bajaban
+  // CON RETARDO respecto al card expandido → overlap/montaje visible.
   //
-  //   GATE 1 — Row-based check. `measuredRows = ceil(scrollHeight / rowPx)`.
-  //            Si `measuredRows <= currentH`, ya entra → no crece. Esto
-  //            evita "milimetros" provocando un grow (ej. variaciones de
-  //            sub-pixel + bordes + paddings entre renders).
+  // Reemplazo: `requestAnimationFrame` throttle. Cada evento del RO
+  // programa un UNICO RAF para el proximo frame (si no hay uno pendiente).
+  // El callback corre a ~16 ms del primer evento, mide `scrollHeight`
+  // actual, commitea el nuevo h, recompacta TODA la region.
   //
-  //   GATE 2 — Tolerance px (1 fila completa = 44 px). Si el desborde es
-  //            menor que una fila, no se considera "claramente cortado".
+  // Resultado: durante la animacion del TPCard (0-220 ms), tenemos ~14
+  // commits sucesivos (uno por frame). Cada commit dispara la transition
+  // CSS del react-grid-item (220 ms) que CHASEA el target. La animacion
+  // de los cards inferiores es continua y SINCRONIZADA con la del
+  // TPCard — sin pausa visible, sin montaje.
   //
-  //   GATE 3 — Stability counter. El mismo `newH` debe medirse N veces
-  //            consecutivas (separadas por debounce) antes de commitear.
-  //            Si las mediciones oscilan, nunca llegan al umbral.
+  // Anti-loop:
+  //   · GROW_TOLERANCE_PX (= GAP del grid): cambios < tolerancia no
+  //     disparan grow → ignora sub-pixel jitter.
+  //   · Shrink gate en `recalculateCardHeight`: shrink solo si delta >= 1
+  //     fila completa.
+  //   · RAF throttle: maximo 1 commit por frame (16 ms).
+  //   · Stability gate via `decideStabilityCommit` con REQUIRED=1: la 1ra
+  //     medicion estable commitea (no espera observaciones repetidas).
   //
-  //   GATE 4 — Per-card cooldown. Despues de un commit, esa card queda
-  //            "bloqueada" por COOLDOWN_MS — ningun nuevo commit puede
-  //            dispararse sobre ella en ese intervalo. Esto rompe
-  //            cualquier loop tight que sobreviva a los gates anteriores.
+  // COOLDOWN eliminado: con RAF throttle el anti-storm es natural; el
+  // COOLDOWN de 300 ms solo agregaba latencia entre acciones consecutivas
+  // del operador (agregar pago, expand card, etc.).
   //
   // Reglas adicionales:
-  //   · Solo CRECE — nunca achica automaticamente.
-  //   · Respeta `manuallyResized=true` (el usuario decidio).
-  //   · Respeta `minH` (no baja de ahi nunca).
-  //   · Si la medicion alterna entre dos valores (contenido responsive),
-  //     nunca alcanza estabilidad → no crece.
+  //   · Respeta `manuallyResized=true` (solo bloquea shrink, NO grow:
+  //     anti-corte de contenido).
+  //   · Respeta `minH` del SSOT.
 
-  /** Tolerancia px. Originalmente era 1 fila completa (44 px) — eso
-   *  dejaba que sub-pixeles (1-3 px por bordes/paddings) generaran
-   *  scrollbars fantasma sin disparar grow. Ahora la tolerancia se
-   *  limita al `margin vertical` del grid (12 px): cualquier desborde
-   *  > 12 px dispara grow → el slot crece y el scroll desaparece. Los
-   *  desbordes < 12 px (verdadero sub-pixel) son inocuos visualmente. */
+  /** Tolerancia px. Limitada al `margin vertical` del grid (= GAP = 6 px):
+   *  desbordes > 6 px disparan grow → el slot crece y el scroll desaparece.
+   *  Desbordes ≤ 6 px son sub-pixel inocuos. */
   const GROW_TOLERANCE_PX = MARGIN[1];
-  /** Debounce entre mediciones. 80 ms es lo suficientemente corto para
-   *  que el operador perciba el reflow como inmediato (1 frame extra
-   *  sobre la animacion CSS de 220ms), pero lo suficientemente largo
-   *  para absorber multiples eventos del ResizeObserver disparados
-   *  en cascada (ej. layout reflows internos del browser). */
-  const GROW_DEBOUNCE_MS = 80;
-  /** Mediciones identicas consecutivas antes de comprometer. Bajado
-   *  a 1 = la primera medicion estable commitea inmediato. El COOLDOWN
-   *  + GROW_TOLERANCE_PX ya proveen suficiente anti-loop. */
+  /** Mediciones identicas consecutivas antes de comprometer. Con RAF
+   *  throttle y commits continuos durante animaciones, 1 = la primera
+   *  medicion commitea — sin esperar a una segunda que con animaciones
+   *  CSS puede no llegar nunca (bug historico que dejaba el reflow
+   *  colgado hasta proxima interaccion). */
   const STABILITY_REQUIRED = 1;
-  /** Cooldown por card despues de un commit (ms). 300ms permite
-   *  reaccionar a acciones consecutivas del operador (agregar 3-4
-   *  pagos seguidos) con minima latencia entre cada reflow. */
-  const COOLDOWN_MS = 300;
 
   const contentRefs = useRef<Map<CardId, HTMLDivElement | null>>(new Map());
   const observersRef = useRef<Map<CardId, ResizeObserver>>(new Map());
-  const growTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const stabilityRef = useRef<Map<CardId, { h: number; count: number }>>(new Map());
-  const lastCommitAtRef = useRef<Map<CardId, number>>(new Map());
+  /** RAF id pendiente — si != null hay un frame programado, no agendar otro
+   *  (throttle natural: maximo 1 commit por frame). */
+  const rafIdRef = useRef<number | null>(null);
+  const stabilityRef = useRef<Map<CardId, StabilityTracker>>(new Map());
+  /** Cards que ya pasaron por al menos un commit (usado por el first-
+   *  measurement fast path). Sin papel de cooldown — RAF maneja el throttle. */
+  const seenCardsRef = useRef<Set<CardId>>(new Set());
   const layoutRef = useRef(layout);
   layoutRef.current = layout;
   const onLayoutChangeRef = useRef(onLayoutChange);
   onLayoutChangeRef.current = onLayoutChange;
+
+  /** Programa una corrida de `maybeGrowFromContent` para el proximo frame.
+   *  Si ya hay un RAF pendiente NO programa otro — el callback ya pendiente
+   *  va a recoger el estado mas reciente del DOM. Resultado: maximo 1
+   *  commit por frame, naturalmente coalesce events RO multiples del mismo
+   *  frame. */
+  const scheduleReflow = useCallback(() => {
+    if (rafIdRef.current != null) return;
+    rafIdRef.current = requestAnimationFrame(() => {
+      rafIdRef.current = null;
+      maybeGrowFromContent();
+    });
+  }, []);
 
   const setContentRef = useCallback((id: CardId, el: HTMLDivElement | null) => {
     contentRefs.current.set(id, el);
@@ -220,14 +256,11 @@ export function LayoutGridContext(props: LayoutGridContextProps): React.ReactEle
     }
     if (!el) return;
     const ro = new ResizeObserver(() => {
-      if (growTimerRef.current) clearTimeout(growTimerRef.current);
-      growTimerRef.current = setTimeout(() => {
-        maybeGrowFromContent();
-      }, GROW_DEBOUNCE_MS);
+      scheduleReflow();
     });
     ro.observe(el);
     observersRef.current.set(id, ro);
-  }, []);
+  }, [scheduleReflow]);
 
   // Callbacks de ref ESTABLES por id. El JSX antes pasaba un closure
   // inline `(el) => setContentRef(c.id, el)` que React detectaba como
@@ -251,21 +284,13 @@ export function LayoutGridContext(props: LayoutGridContextProps): React.ReactEle
 
   function maybeGrowFromContent(): void {
     const currentLayout = layoutRef.current;
-    const now = Date.now();
     let changed = false;
     const nextCards = currentLayout.cards.map((c) => {
       if (c.region !== region) return c;
-      // `manuallyResized` ya no bloquea TODO el flow — solo el shrink
-      // (lo maneja `recalculateCardHeight` en reflowLayout.ts). Asi,
-      // si el operador agrando manualmente una card pero el contenido
-      // crece mas alla del tamano manual, la card crece para no
-      // recortar (proteccion anti-corte).
-      // GATE 4: cooldown post-commit.
-      const lastCommit = lastCommitAtRef.current.get(c.id) ?? 0;
-      if (now - lastCommit < COOLDOWN_MS) {
-        stabilityRef.current.delete(c.id);
-        return c;
-      }
+      // `manuallyResized` no bloquea el flow completo — solo el shrink
+      // (en `recalculateCardHeight`). Si el operador agrando manualmente
+      // pero el contenido crece mas alla del tamano manual, la card crece
+      // para no recortar (anti-corte).
       const el = contentRefs.current.get(c.id);
       if (!el) return c;
       const measured = el.scrollHeight;
@@ -286,35 +311,38 @@ export function LayoutGridContext(props: LayoutGridContextProps): React.ReactEle
       }
       const newH = newHOrNull;
 
-      // FIRST-MEASUREMENT FAST PATH (grow y shrink):
-      // En la primera medicion de la card, aplicar el cambio
-      // inmediato sin esperar estabilidad. Esto evita scrollbar
+      // FIRST-MEASUREMENT FAST PATH:
+      // En la primera medicion despues del mount aplicamos el cambio
+      // inmediato (sin esperar al stability gate). Evita scrollbar
       // fantasma (en grow) y aire excesivo (en shrink) durante los
-      // ~900 ms iniciales.
-      const hasBeenSeen = lastCommitAtRef.current.has(c.id)
-        || stabilityRef.current.has(c.id);
-      if (!hasBeenSeen) {
+      // primeros ~16ms tras montar el modal.
+      if (!seenCardsRef.current.has(c.id)) {
         changed = true;
-        lastCommitAtRef.current.set(c.id, now);
+        seenCardsRef.current.add(c.id);
         return { ...c, h: newH };
       }
 
-      // Stability gate (para mediciones subsiguientes): tenemos que
-      // ver el mismo `newH` N veces consecutivas antes de commitear.
-      const tracker = stabilityRef.current.get(c.id);
-      if (!tracker || tracker.h !== newH) {
-        stabilityRef.current.set(c.id, { h: newH, count: 1 });
-        return c;
-      }
-      if (tracker.count + 1 < STABILITY_REQUIRED) {
-        stabilityRef.current.set(c.id, { h: newH, count: tracker.count + 1 });
+      // Stability gate (mediciones subsiguientes): delegamos a la SSOT
+      // (`decideStabilityCommit` en reflowLayout.ts) para que la decision
+      // sea testeable en isolation. Con STABILITY_REQUIRED=1 la 1ra
+      // medicion del nuevo `h` commitea inmediato — combinada con el
+      // RAF throttle (1 commit por frame), durante una animacion CSS
+      // de TPCard se generan ~14 commits sucesivos que mantienen al
+      // grid en sync con el contenido (sin lag visible).
+      const decision = decideStabilityCommit({
+        newH,
+        tracker: stabilityRef.current.get(c.id),
+        stabilityRequired: STABILITY_REQUIRED,
+      });
+      if (!decision.commit) {
+        stabilityRef.current.set(c.id, decision.nextTracker);
         return c;
       }
 
       // ✅ Estable.
       changed = true;
       stabilityRef.current.delete(c.id);
-      lastCommitAtRef.current.set(c.id, now);
+      seenCardsRef.current.add(c.id);
       return { ...c, h: newH };
     });
 
@@ -355,38 +383,72 @@ export function LayoutGridContext(props: LayoutGridContextProps): React.ReactEle
     });
     if (!geometryChanged) return;
 
-    onLayoutChangeRef.current({ version: 2, cards: finalCards });
+    // 2026-05-29 — Marcamos este commit como COSMÉTICO (persist=false).
+    // El padre actualiza estado local pero NO llama al backend. Razón:
+    // los `h` de auto-grow/shrink son derivables del contenido al
+    // re-mount (el motor los recalcula), persistirlos genera ruido y
+    // dispara "Error al guardar" fantasmas cuando el operador no hizo
+    // nada. Drag y resize (user-driven) sí persisten via `handleChange`
+    // y `handleResizeStop` más abajo.
+    onLayoutChangeRef.current({ version: 2, cards: finalCards }, { persist: false });
   }
 
-  // Cleanup observers + timers + tracker al desmontar.
+  // Cleanup observers + RAF + tracker al desmontar.
   useEffect(() => {
     return () => {
       observersRef.current.forEach((o) => o.disconnect());
       observersRef.current.clear();
       stabilityRef.current.clear();
-      lastCommitAtRef.current.clear();
-      if (growTimerRef.current) clearTimeout(growTimerRef.current);
+      seenCardsRef.current.clear();
+      if (rafIdRef.current != null) {
+        cancelAnimationFrame(rafIdRef.current);
+        rafIdRef.current = null;
+      }
     };
   }, []);
 
-  // Primer measurement en mount + re-disparo cuando cambia el SET de
-  // cards visibles (ocultar/mostrar Cobro, Cupon, etc.). Sin esto el
-  // grid arranca con los `h` default del preset aunque el contenido
-  // real sea mas chico → aire visual + gap inconsistente hasta el
-  // primer evento del ResizeObserver. Con este RAF, el shrink (y la
-  // recompactacion por visibility) ocurre en el primer frame.
+  // ─── Initial reflow + re-reflow post-hidratacion ──────────────────────────
   //
-  // La firma del effect usa la lista de ids visibles como key: cualquier
-  // cambio de visibilidad fuerza un re-disparo del measurement.
-  const visibleIdsKey = useMemo(
-    () => asideCards.map((c) => c.id).join("|"),
-    [asideCards],
-  );
-  useEffect(() => {
-    const raf = requestAnimationFrame(() => maybeGrowFromContent());
-    return () => cancelAnimationFrame(raf);
+  // CAUSA RAIZ identificada 2026-05-28:
+  // `useInvoiceLayout` hidrata el layoutV2 de forma ASINCRONA via
+  // `userPreferencesApi.get()` (red). El flujo real es:
+  //
+  //   t=0      mount → useState(getDefaultLayoutForPreset("COMPACT"))
+  //                    layout inicial con h=7/9/17 (preset, NO compacto)
+  //   t=16ms   browser pinta layout default
+  //   t=80ms+  useEffect hidratacion termina → setLayoutV2State(reconciled)
+  //   t=96ms   segundo paint con layout reconciled (compactado por
+  //            reconcileLayout.compactVerticallyByRegion)
+  //
+  // Hasta aca, todo bien. PERO: este `useLayoutEffect` dependia solo de
+  // `visibleIdsKey` (set de IDs). El set NO cambia entre el default
+  // y el reconciled (mismas 7 cards) → useLayoutEffect NO se re-ejecuta
+  // post-hidratacion → maybeGrowFromContent NUNCA mide scrollHeight
+  // hasta que cualquier otro evento dispare el ResizeObserver (click,
+  // hover, foco). De ahi el bug "se acomoda recien al hacer click".
+  //
+  // Fix: re-correr cuando cambia el ARRAY de cards (no solo IDs). Una
+  // hidratacion crea un cards array nuevo (reconcileLayout devuelve
+  // objeto nuevo); un drag/resize tambien crea uno nuevo. En ambos
+  // casos queremos re-medir.
+  //
+  // Anti-loop: maybeGrowFromContent llama onLayoutChange → padre setState
+  // → layout.cards cambia REFERENCIA → useLayoutEffect re-corre. Segunda
+  // iteracion mide scrollHeight (ya estable) → geometryChanged=false →
+  // no emit. Loop termina en 2 iteraciones max.
+  //
+  // scheduleReflow (RAF) tambien se llama como red de seguridad para
+  // captar contenido que cargue async despues del primer paint (fuentes
+  // web, imagenes del logo, datos del preview). Idempotente.
+  useLayoutEffect(() => {
+    // SYNC measurement antes del primer paint del frame actual → el
+    // browser nunca pinta el layout uncompactado de una hidratacion
+    // reciente.
+    maybeGrowFromContent();
+    // RAF de respaldo para contenido async post-paint.
+    scheduleReflow();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [visibleIdsKey]);
+  }, [layout.cards]);
 
   const handleChange = useCallback(
     (next: Layout[]) => {
@@ -404,7 +466,8 @@ export function LayoutGridContext(props: LayoutGridContextProps): React.ReactEle
           );
         });
       if (same) return;
-      onLayoutChange(fromGridLayout(layout, region, next, regionOriginX));
+      // User-driven (drag completado por el operador) → persistir.
+      onLayoutChange(fromGridLayout(layout, region, next, regionOriginX), { persist: true });
     },
     [layout, region, regionOriginX, asideCards, readOnly, onLayoutChange],
   );
@@ -420,7 +483,8 @@ export function LayoutGridContext(props: LayoutGridContextProps): React.ReactEle
           ? { ...c, manuallyResized: true }
           : c,
       );
-      onLayoutChangeRef.current({ version: 2, cards });
+      // User-driven (resize manual completado) → persistir.
+      onLayoutChangeRef.current({ version: 2, cards }, { persist: true });
     },
     [readOnly, region],
   );
@@ -453,60 +517,45 @@ export function LayoutGridContext(props: LayoutGridContextProps): React.ReactEle
           transition: none !important;
           z-index: 50;
         }
-        /* Resize handles — react-resizable renderea hasta 8 handles
-           segun la prop resizeHandles. Estilizamos los 3 que activamos
-           en modo edicion (SE esquina, S borde inferior, E borde
-           derecho) con afordancia clara y diferenciada. */
+        /* Resize handle MINIMALISTA — solo esquina SE (inferior-derecha).
+           Los handles S y E (barras de borde) se eliminaron por ser
+           visualmente invasivos. La esquina SE alcanza para ajustar tanto
+           ancho como alto en un solo gesto. Diseño discreto: triangulo
+           gris sutil que se oscurece al hover. */
         .tp-invoice-grid--edit .react-resizable-handle {
           background-image: none;
           z-index: 20;
         }
-        /* SE — esquina inferior-derecha: cuadrado azul con triangulo
-           blanco. Mas obvio que el triangulo CSS default. */
         .tp-invoice-grid--edit .react-resizable-handle-se {
-          width: 18px;
-          height: 18px;
-          right: 2px;
-          bottom: 2px;
-          background-color: rgb(var(--color-primary, 99 102 241) / 0.6);
-          border: 1px solid rgb(var(--color-primary, 99 102 241) / 0.9);
-          border-radius: 3px;
+          width: 14px;
+          height: 14px;
+          right: 3px;
+          bottom: 3px;
+          background-color: transparent;
           cursor: se-resize;
+          opacity: 0.35;
+          transition: opacity 120ms ease;
         }
         .tp-invoice-grid--edit .react-resizable-handle-se::after {
           content: "";
           position: absolute;
-          right: 3px;
-          bottom: 3px;
-          width: 8px;
-          height: 8px;
-          border-right: 2px solid white;
-          border-bottom: 2px solid white;
+          right: 1px;
+          bottom: 1px;
+          width: 10px;
+          height: 10px;
+          border-right: 2px solid currentColor;
+          border-bottom: 2px solid currentColor;
+          border-radius: 0 0 3px 0;
         }
-        /* E — borde derecho: barra vertical fina para resize horizontal
-           (ancho por columnas). */
-        .tp-invoice-grid--edit .react-resizable-handle-e {
-          width: 6px;
-          height: 50%;
-          right: 0;
-          top: 25%;
-          background-color: rgb(var(--color-primary, 99 102 241) / 0.4);
-          border-radius: 3px 0 0 3px;
-          cursor: ew-resize;
+        .tp-invoice-grid--edit .react-resizable-handle-se:hover {
+          opacity: 0.9;
         }
-        /* S — borde inferior: barra horizontal fina para resize vertical
-           (alto por filas). */
-        .tp-invoice-grid--edit .react-resizable-handle-s {
-          height: 6px;
-          width: 50%;
-          bottom: 0;
-          left: 25%;
-          background-color: rgb(var(--color-primary, 99 102 241) / 0.4);
-          border-radius: 3px 3px 0 0;
-          cursor: ns-resize;
-        }
-        .tp-invoice-grid--edit .react-resizable-handle:hover {
-          background-color: rgb(var(--color-primary, 99 102 241) / 0.9);
+        /* Card activa (hover): outline sutil que indica que es interactivo.
+           El cuerpo del card no cambia de color para no romper el TPCard. */
+        .tp-invoice-grid--edit .react-grid-item:hover {
+          outline: 1px solid rgb(var(--color-primary, 99 102 241) / 0.35);
+          outline-offset: -1px;
+          border-radius: 12px;
         }
         /* En modo lectura los handles no se renderizan (isResizable=false),
            pero garantizamos que cualquier residuo css quede oculto. */
@@ -548,11 +597,11 @@ export function LayoutGridContext(props: LayoutGridContextProps): React.ReactEle
         // permite arrastrar cards fuera). Sin esto las cards podian
         // escapar visualmente del aside al arrastrarlas hacia la izq/der.
         isBounded={!readOnly}
-        // resizeHandles=["se","s","e"]: handles activos en esquina
-        // SE (ambos), borde inferior (alto) y borde derecho (ancho).
-        // Permite resize fino por columnas (e) y por filas (s) sin
-        // tener que combinar ambos con la esquina.
-        resizeHandles={["se", "s", "e"]}
+        // resizeHandles=["se"]: solo esquina inferior-derecha (2026-05-29).
+        // Los handles de borde S y E se eliminaron por ser visualmente
+        // invasivos (barras azules) sin agregar valor real — el operador
+        // ajusta ancho y alto en un solo gesto con la esquina SE.
+        resizeHandles={["se"]}
         autoSize
         useCSSTransforms
         onLayoutChange={handleChange}
@@ -629,22 +678,29 @@ function CardShell(props: {
       </div>
     );
   }
-  // Modo edicion: handle SIEMPRE VISIBLE (antes era opacity-0 hover-only,
-  // lo que daba la sensacion de que "Personalizar layout" no habilitaba
-  // nada — el banner aparecia, pero los cards se veian identicos al modo
-  // lectura porque el handle no se percibia hasta el hover). Ahora opaco
-  // por default + leve oscurecimiento en hover para feedback de afordancia.
+  // Modo edicion 2026-05-29 — handle minimalista:
+  // Antes era una BARRA AZUL FULL-WIDTH "⋮⋮ arrastrar ⋮⋮" en el top
+  // de cada card. Visualmente invasiva y poco profesional (parecia
+  // un overlay de error / guia tecnica). Ahora es un icono `GripVertical`
+  // pequeño en la esquina top-left del card, sutil pero visible. El
+  // outline del card al hover (CSS de arriba) refuerza que es interactivo.
   return (
     <div className="relative h-full w-full">
-      <div
-        className="tp-card-drag-handle absolute left-0 right-0 top-0 z-10 flex h-5 cursor-move items-center justify-center rounded-t-md bg-primary/20 text-[10px] font-semibold uppercase tracking-wide text-primary transition-colors hover:bg-primary/30"
-        title="Arrastra para mover esta tarjeta"
+      <button
+        type="button"
+        className="tp-card-drag-handle absolute left-1 top-1 z-10 flex h-6 w-6 cursor-grab items-center justify-center rounded-md text-muted/70 transition-all hover:bg-primary/10 hover:text-primary active:cursor-grabbing"
+        title="Arrastrá para mover esta tarjeta"
+        aria-label="Arrastrar tarjeta"
+        // Evitar que el click "tonto" (sin drag) se interprete como
+        // submit/navegacion. El drag real lo maneja react-grid-layout
+        // via mousedown sobre el className `tp-card-drag-handle`.
+        onClick={(e) => e.preventDefault()}
       >
-        <span aria-hidden>⋮⋮ arrastrar ⋮⋮</span>
-      </div>
+        <GripVertical size={14} />
+      </button>
       <div
         ref={props.contentRef}
-        className="w-full overflow-x-hidden overflow-y-auto min-h-0 pt-6"
+        className="w-full overflow-x-hidden overflow-y-auto min-h-0"
       >
         {props.children}
       </div>

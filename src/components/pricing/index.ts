@@ -55,6 +55,14 @@ export type {
   HechuraAdjustment,
   SaleTaxLine,
 } from "./PriceCompositionCards";
+
+// Etapa C-comercial / C6 (POLICY §R-Rounding-14)
+export { CommercialPhysicalRoundingBlock } from "./CommercialPhysicalRoundingBlock";
+export type {
+  CommercialPhysicalRoundingBlockProps,
+  CommercialPhysicalSnapshot,
+  CommercialPhysicalEntry,
+} from "./CommercialPhysicalRoundingBlock";
 // FASE 2: export { PricingStepsBreakdown } from "./PricingStepsBreakdown/PricingStepsBreakdown";
 // FASE 3: export { TaxBreakdownTable } from "./TaxBreakdownTable/TaxBreakdownTable";
 // FASE 3: export { CheckoutResultDisplay } from "./CheckoutResultDisplay/CheckoutResultDisplay";

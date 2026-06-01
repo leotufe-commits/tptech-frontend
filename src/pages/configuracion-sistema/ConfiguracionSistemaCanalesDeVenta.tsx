@@ -1,7 +1,7 @@
 // src/pages/configuracion-sistema/ConfiguracionSistemaCanalesDeVenta.tsx
 import React, { useEffect, useMemo, useState } from "react";
 import { useConfirmDelete } from "../../hooks/useConfirmDelete";
-import { Plus, X, Check, Star } from "lucide-react";
+import { Plus, X, Check } from "lucide-react";
 
 import { TPSectionShell } from "../../components/ui/TPSectionShell";
 import { TPButton } from "../../components/ui/TPButton";
@@ -67,7 +67,13 @@ function formatAdjValue(row: SalesChannelRow): string {
 /* =========================================================
    COMPONENTE
 ========================================================= */
-export default function ConfiguracionSistemaCanalesDeVenta() {
+export type ConfiguracionSistemaCanalesDeVentaProps = {
+  /** Cuando true, omitimos el TPSectionShell. Usado al montarse dentro
+   *  de `FinanzasCobrosPage` con tabs. Default false → standalone. */
+  embedded?: boolean;
+};
+
+export default function ConfiguracionSistemaCanalesDeVenta({ embedded = false }: ConfiguracionSistemaCanalesDeVentaProps = {}) {
   const [rows, setRows]       = useState<SalesChannelRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [q, setQ]             = useState("");
@@ -217,8 +223,17 @@ export default function ConfiguracionSistemaCanalesDeVenta() {
   }
 
   /* ── JSX ─────────────────────────────────────────────────────────────────── */
+  // Helper local — envuelve con TPSectionShell salvo en modo embedded.
+  const Shell = embedded
+    ? ({ children }: { children: React.ReactNode }) => <>{children}</>
+    : ({ children }: { children: React.ReactNode }) => (
+        <TPSectionShell title="Canales de Venta" subtitle="Ajuste comercial adicional por canal (Mercado Libre, Mayorista, etc.)">
+          {children}
+        </TPSectionShell>
+      );
+
   return (
-    <TPSectionShell title="Canales de Venta" subtitle="Ajuste comercial adicional por canal (Mercado Libre, Mayorista, etc.)">
+    <Shell>
       <TPTableKit
         columns={COL_DEFS}
         rows={filtered}
@@ -241,10 +256,7 @@ export default function ConfiguracionSistemaCanalesDeVenta() {
           <TPTr key={row.id} className={!row.isActive ? "opacity-60" : undefined}>
             {vis.name && (
               <TPTd>
-                <div className="flex items-center gap-1.5">
-                  <span className="font-medium">{row.name}</span>
-                  {row.isFavorite && <Star size={12} className="shrink-0 fill-amber-400 text-amber-400" />}
-                </div>
+                <span className="font-medium">{row.name}</span>
               </TPTd>
             )}
             {vis.adjustmentValue && (
@@ -361,7 +373,7 @@ export default function ConfiguracionSistemaCanalesDeVenta() {
       />
 
       <ConfirmDeleteDialog {...dialogProps} />
-    </TPSectionShell>
+    </Shell>
   );
 }
 

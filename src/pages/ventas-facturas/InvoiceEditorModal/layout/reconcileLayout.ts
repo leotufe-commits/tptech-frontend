@@ -26,6 +26,7 @@ import {
   getDefaultLayoutForPreset,
 } from "./v2/presetLayouts";
 import { compactVerticallyByRegion } from "./v2/reflowLayout";
+import { getCardConstraints } from "./v2/cardConstraints";
 
 const VALID_IDS = new Set<CardId>(ASIDE_CARD_IDS);
 
@@ -53,8 +54,16 @@ function isCard(x: unknown): x is LayoutV2Card {
 const MAX_REASONABLE_H = 24;
 
 function clampCard(card: LayoutV2Card, defaultCard?: LayoutV2Card): LayoutV2Card {
-  const minW = Math.max(1, card.minW ?? defaultCard?.minW ?? 2);
-  const minH = Math.max(1, card.minH ?? defaultCard?.minH ?? 2);
+  // Re-clamp 2026-05-26: el `minW`/`minH` del card se TOMA SIEMPRE del
+  // SSOT (`CARD_CONSTRAINTS`), NO del valor persistido. Razon: layouts
+  // viejos guardados antes de la recalibracion ROW=32→20 traen `minH`
+  // altos (ej. `payments.minH=8` cuando el SSOT actual dice 2). Si los
+  // preservaramos, el motor de auto-shrink no podria achicar el slot al
+  // colapsar la card → aire vertical grande entre cards colapsados.
+  // Forzar SSOT garantiza que layouts legacy se recalibran al cargar.
+  const ssot = getCardConstraints(card.id);
+  const minW = Math.max(1, ssot.minW);
+  const minH = Math.max(1, ssot.minH);
   const w = Math.max(minW, Math.min(GRID_COLS, Math.floor(card.w)));
   // Normalizar h: si el persistido supera el tope, volver al default del
   // preset. Asi facturas con `totals.h=30` (heredado de bugs viejos) no
@@ -76,6 +85,9 @@ function clampCard(card: LayoutV2Card, defaultCard?: LayoutV2Card): LayoutV2Card
     h,
     minW,
     minH,
+    // Preservar manuallyResized del persistido (decision del operador
+    // sobre dimensiones manuales — no se pisa en reconcile).
+    ...(card.manuallyResized != null ? { manuallyResized: card.manuallyResized } : {}),
   };
 }
 
@@ -160,16 +172,18 @@ export function reconcileLayout(
         // Cards de main-below-lines no van por grid — no clampamos
         // coords reales; solo preservamos `id`, `region` y `h/minH`
         // por si el render quiere usarlas para resize vertical.
-        const def = cardsByDefault.get(c.id);
+        // minW/minH se toman del SSOT (`CARD_CONSTRAINTS`), no del
+        // persistido — misma logica anti-stale-floor que `clampCard`.
+        const ssot = getCardConstraints(c.id);
         return {
           id: c.id,
           region: "mainBelowLines" as const,
           x: 0,
           y: Math.max(0, Math.floor(c.y)),
           w: 12,
-          h: Math.max(c.minH ?? def?.minH ?? 4, Math.floor(c.h)),
-          minW: def?.minW ?? 4,
-          minH: def?.minH ?? 4,
+          h: Math.max(ssot.minH, Math.floor(c.h)),
+          minW: ssot.minW,
+          minH: ssot.minH,
           manuallyResized: (c as { manuallyResized?: boolean }).manuallyResized,
         };
       }

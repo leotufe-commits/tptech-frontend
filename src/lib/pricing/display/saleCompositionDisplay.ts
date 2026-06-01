@@ -170,6 +170,333 @@ export function buildMetalParentSaleTotals(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// buildMetalParentLineWeights — pesos por metal PADRE escalados a la LÍNEA,
+// para la mini-lectura del header METALES en Factura:
+//
+//   Oro · 0,91 gr c/u · 2,73 gr total · Oro puro 2,05 gr
+//
+//   · gramsPerUnit   = Σ appliedGrams              (por unidad de artículo)
+//   · gramsTotal      = gramsPerUnit × lineQty      (peso total de la línea)
+//   · pureGramsTotal  = (Σ appliedGrams × purity) × lineQty   (sin merma)
+//   · hasPure         = había al menos un metal con pureza > 0
+//
+// Reusa `buildMetalParentTotals` (fórmula canónica única; paridad Simulador).
+// Display puro: NO recalcula pricing — solo escala gramos ya emitidos por el
+// motor por la cantidad de la línea de venta. Si falta `appliedGrams` el item
+// ya se ignora en `buildMetalParentTotals`; si falta pureza → `hasPure=false`
+// y el caller NO muestra el segmento "puro" (no se inventa nada).
+// ─────────────────────────────────────────────────────────────────────────────
+export type MetalParentLineWeight = {
+  /** Nombre del metal PADRE ("Oro", "Oro 999.99"). Segmento 2 ("<padre>: puro"). */
+  name:          string;
+  /** Nombre de la VARIANTE de metal para el segmento 1 ("<variante> = bruto").
+   *  = `variantName` cuando hay UNA sola variante para ese padre (ej.
+   *  "Oro 18k"); si hay varias variantes distintas → cae al nombre del padre.
+   *  NUNCA concatena padre + ley (evita "Oro 999.99 18k"). */
+  label:         string;
+  gramsPerUnit:  number;
+  gramsTotal:    number;
+  pureGramsTotal: number;
+  hasPure:       boolean;
+};
+
+/** Resuelve el nombre de VARIANTE de un padre a partir del set de
+ *  `variantName` de sus items. Display puro, sin lógica comercial.
+ *  Sin variantName (o varias distintas) → nombre del padre (NO se mezcla
+ *  con ley/purityLabel). */
+function resolveVariantLabel(parentName: string, variantNames: Set<string>): string {
+  if (variantNames.size !== 1) return parentName;
+  const v = [...variantNames][0]?.trim() ?? "";
+  return v || parentName;
+}
+
+export function buildMetalParentLineWeights(
+  items: ReadonlyArray<{
+    metalName:       string | null;
+    purity:          number | null;
+    appliedGrams:    number | null;
+    appliedMermaPct: number | null;
+    /** Nombre de la variante de metal (segmento 1 del header, ej. "Oro 18k").
+     *  Acepta `variantName` o el alias `metalVariantName`. */
+    variantName?:     string | null;
+    metalVariantName?: string | null;
+    /** Aceptado por compat de callers; NO se usa para el label (evita
+     *  mezclar padre + ley). */
+    purityLabel?:    string | null;
+  } | null | undefined>,
+  lineQty: number | null | undefined,
+): MetalParentLineWeight[] {
+  const q =
+    lineQty != null && Number.isFinite(lineQty) && lineQty > 0 ? lineQty : 1;
+
+  // Set de variantNames por metal padre — solo de items con gramos válidos
+  // (mismo criterio de inclusión que `buildMetalParentTotals`).
+  const variantsByParent = new Map<string, Set<string>>();
+  for (const it of items) {
+    if (!it) continue;
+    const name = typeof it.metalName === "string" ? it.metalName.trim() : "";
+    const g = it.appliedGrams != null && Number.isFinite(it.appliedGrams) ? it.appliedGrams : null;
+    if (!name || g == null) continue;
+    const vn = ((it.variantName ?? it.metalVariantName) ?? "").trim();
+    if (!vn) continue;
+    if (!variantsByParent.has(name)) variantsByParent.set(name, new Set());
+    variantsByParent.get(name)!.add(vn);
+  }
+
+  return buildMetalParentTotals(items)
+    .filter((p) => p.totalGrams > 0.0000001)
+    .map((p) => ({
+      name:           p.name,
+      label:          resolveVariantLabel(p.name, variantsByParent.get(p.name) ?? new Set()),
+      gramsPerUnit:   p.totalGrams,
+      gramsTotal:     p.totalGrams * q,
+      pureGramsTotal: p.totalPureGrams * q,
+      hasPure:        p.totalPureGrams > 0.0000001,
+    }));
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// T22 — `buildMetalParentSaleLines` — desglose por METAL PADRE escalado a la
+// LÍNEA, con gramos equivalentes de VENTA y monto de venta (paridad EXACTA
+// con la card `MetalSaleCard` del Simulador):
+//
+//     Oro Fino — 1,53 gr  ·  ARS 381.562,50
+//
+//   · gramsEquivLine = Σ (appliedGrams × metalEquivFactor) × metalSaleFactor × qty
+//                       — gramos equivalentes del LADO VENTA (con margen)
+//                       escalados a la línea. Es la MISMA cifra que muestra
+//                       `MetalSaleCard` en la cabecera del card del Simulador
+//                       (`saleGramsTotal = padre.totalEquivGr × metalSaleFactor`).
+//                       Fallback: si `metalSaleFactor` es null/≤0 (motor no lo
+//                       resolvió o snapshot legacy), cae a `costEquivGr × qty`
+//                       (= sin margen). Eso ya lo hace `buildMetalParentSaleTotals`.
+//   · saleAmountLine = (Σ lineSale del padre) × qty
+//                       — `composition.metals[i].lineSale` (passthrough motor:
+//                       sale-side per cost-line METAL, CON margen).
+//                       Contrato: `Σ metals[i].lineSale === metalHechuraBreakdown.metalSale`
+//                       → multiplicado por qty reproduce EXACTO el subtotal
+//                       de venta del metal por padre que muestra el Simulador.
+//                       NULL para snapshots legacy sin lineSale.
+//
+// Cero matemática comercial: compone helpers canónicos ya compartidos con el
+// Simulador (`buildMetalParentSaleTotals` + `computeMetalSaleFactor`). No
+// infiere precios, no aplica margen nuevo, no convierte monedas.
+// (POLICY R6 / POLICY R4.5)
+// ─────────────────────────────────────────────────────────────────────────────
+/** Sub-fila de variante de metal — origen real de los gramos del padre.
+ *  Para mostrar bajo cada metal padre la lista de variantes que lo componen
+ *  con sus gramos originales × cantidad de línea. */
+export type MetalParentVariantLine = {
+  /** Nombre legible de la variante (`variantName` del catálogo, ej.
+   *  "Oro 18 Kilates"). Cuando falta, cae a `purityLabel` ("18k") y, sin
+   *  ninguno, al nombre del padre como fallback. */
+  label:         string;
+  /** Σ appliedGrams de items que comparten variante × lineQty (gramos
+   *  ORIGINALES, sin merma ni pureza). Cero matemática nueva. */
+  gramsLine:     number;
+};
+
+export type MetalParentSaleLine = {
+  name:           string;
+  /** Σ (appliedGrams × metalEquivFactor) × metalSaleFactor × lineQty.
+   *  Gramos equivalentes del LADO VENTA, escalados a la línea.
+   *  Cae a `costEquivGr × lineQty` si no hay metalSaleFactor. */
+  gramsEquivLine: number;
+  /** (Σ lineSale del padre) × lineQty. `null` si ningún item trae lineSale
+   *  (snapshot legacy). */
+  saleAmountLine: number | null;
+  /** Variantes del padre, agrupadas y sumadas por nombre. Cada entrada es
+   *  el "origen" de los gramos: `<variantName>: <gramos originales> gr`.
+   *  Sólo se incluyen variantes con gramos > 0; ordenadas por nombre. */
+  variants:       MetalParentVariantLine[];
+};
+
+export function buildMetalParentSaleLines(
+  items: ReadonlyArray<{
+    metalName:       string | null;
+    purity:          number | null;
+    appliedGrams:    number | null;
+    appliedMermaPct: number | null;
+    lineSale?:       number | null;
+    /** F1.3 Fase 2.4 — Nombre comercial de la variante de metal. */
+    variantName?:    string | null;
+    /** Alias aceptado por compat (algunos callers usan este nombre). */
+    metalVariantName?: string | null;
+    /** Ley/pureza ("18k") — fallback cuando no hay variantName. */
+    purityLabel?:    string | null;
+  } | null | undefined>,
+  lineQty: number | null | undefined,
+  /** Ratio metalSale/metalCost del motor (`computeMetalSaleFactor`). Cuando
+   *  es null/≤0 (snapshot legacy o costo 0), el helper cae a `costEquivGr`
+   *  (sin margen) — mismo fallback que `MetalSaleCard` del Simulador. */
+  metalSaleFactor: number | null | undefined,
+): MetalParentSaleLine[] {
+  const q =
+    lineQty != null && Number.isFinite(lineQty) && lineQty > 0 ? lineQty : 1;
+  // Acumulación de `lineSale` per-unit por metal padre. `has` distingue
+  // "snapshot legacy sin lineSale" (→ null al final) de "motor declara
+  // lineSale = 0" (→ 0 al final).
+  const saleByParent = new Map<string, { sum: number; has: boolean }>();
+  // T26 — Agregación de variantes por padre: `<padre> → Map<label, grams>`.
+  // El label se resuelve por preferencia: variantName → purityLabel → padre.
+  // Items con el MISMO label suman sus `appliedGrams`. Antes de escalar por
+  // qty (eso se hace al final).
+  const variantsByParent = new Map<string, Map<string, number>>();
+  for (const it of items) {
+    if (!it) continue;
+    const name = typeof it.metalName === "string" ? it.metalName.trim() : "";
+    const g    = it.appliedGrams;
+    if (!name || g == null || !Number.isFinite(g)) continue;
+    // sale
+    const prev = saleByParent.get(name) ?? { sum: 0, has: false };
+    const ls = it.lineSale;
+    if (ls != null && Number.isFinite(ls)) {
+      prev.sum += ls;
+      prev.has  = true;
+    }
+    saleByParent.set(name, prev);
+    // variantes
+    const variantLabel =
+      ((it.variantName ?? it.metalVariantName) ?? "").trim()
+      || (it.purityLabel ?? "").trim()
+      || name;
+    if (!variantsByParent.has(name)) variantsByParent.set(name, new Map());
+    const vMap = variantsByParent.get(name)!;
+    vMap.set(variantLabel, (vMap.get(variantLabel) ?? 0) + g);
+  }
+  // Delegamos en `buildMetalParentSaleTotals` para `saleEquivGr` (= gramos
+  // equivalentes LADO VENTA con margen). Es la MISMA composición que usa
+  // `MetalSaleCard`: `costEquivGr × metalSaleFactor` con fallback a
+  // `costEquivGr` cuando el factor no aplica.
+  const factor =
+    metalSaleFactor != null && Number.isFinite(metalSaleFactor) && metalSaleFactor > 0.0001
+      ? metalSaleFactor
+      : null;
+  return buildMetalParentSaleTotals(items, factor)
+    .filter((p) => p.saleEquivGr > 0.0000001)
+    .map((p) => {
+      const s = saleByParent.get(p.name);
+      const vMap = variantsByParent.get(p.name) ?? new Map<string, number>();
+      const variants: MetalParentVariantLine[] = Array.from(vMap.entries())
+        .filter(([, g]) => g > 0.0000001)
+        .map(([label, g]) => ({ label, gramsLine: g * q }))
+        .sort((a, b) => a.label.localeCompare(b.label, "es"));
+      return {
+        name:           p.name,
+        gramsEquivLine: p.saleEquivGr * q,
+        saleAmountLine: s?.has ? s.sum * q : null,
+        variants,
+      };
+    });
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// T13 — `buildLineHechuraSaleUnified` — total HECHURA UNIFICADA per-línea
+// (paridad visual con el card HECHURA del Simulador).
+//
+// Conceptualmente:
+//
+//   hechuraUnified =
+//     subtotalHechura          (= metalHechuraBreakdown.hechuraSale × qty)
+//   + Σ products.totalValue    (composition.products[i].totalValue)
+//   + Σ services.totalValue    (composition.services[i].totalValue)
+//   + impuestos imputados a HECHURA
+//       (parte proporcional según taxBreakdown × applyOn,
+//        usando la misma lógica que `buildSaleTaxLines` del simulador)
+//
+// Cero matemática comercial nueva: todos los inputs son passthrough
+// estricto del motor (POLICY R6). El helper SUMA y DISTRIBUYE bases que el
+// motor ya emitió — equivalente a las agregaciones de display que ya hace
+// `TPPriceCompositionKpis` (Simulador).
+//
+// `productsTotal` y `servicesTotal` se calculan a partir de `totalValue` de
+// cada cost line de composición; el motor emite estos campos en escala de
+// línea (no per-unit). Por eso NO los multiplicamos por `qty`.
+//
+// `taxOnHechura` se obtiene distribuyendo cada impuesto entre metal y
+// hechura proporcionalmente a sus bases (mismo criterio que el Simulador).
+// Si no hay tax breakdown con `rate`, devuelve 0 (sin recalcular nada).
+// ─────────────────────────────────────────────────────────────────────────────
+
+export type LineHechuraUnified = {
+  /** Subtotal hechura (per-unit × qty) post-ajustes, pre-impuestos. */
+  hechuraSubtotal: number;
+  /** Σ composition.products[].totalValue. */
+  productsTotal:   number;
+  /** Σ composition.services[].totalValue. */
+  servicesTotal:   number;
+  /** Σ parte de cada impuesto imputada a HECHURA (distribución
+   *  proporcional contra metalSale × qty / hechuraSubtotal). */
+  taxOnHechura:    number;
+  /** Total unificado para mostrar al usuario. */
+  total:           number;
+};
+
+export function buildLineHechuraSaleUnified(args: {
+  metalSaleUnit:   number | null | undefined;
+  hechuraSaleUnit: number | null | undefined;
+  quantity:        number | null | undefined;
+  products?: ReadonlyArray<{ totalValue?: number | null } | null | undefined>;
+  services?: ReadonlyArray<{ totalValue?: number | null } | null | undefined>;
+  taxBreakdown?: ReadonlyArray<{
+    rate?:   number | null;
+    taxAmount?: number | null;
+    applyOn?: string | null;
+  } | null | undefined>;
+}): LineHechuraUnified {
+  const qty = Number.isFinite(args.quantity ?? 0) && (args.quantity ?? 0) > 0
+    ? (args.quantity as number)
+    : 1;
+  const hechuraUnit = typeof args.hechuraSaleUnit === "number" && args.hechuraSaleUnit > 0
+    ? args.hechuraSaleUnit
+    : 0;
+  const metalUnit = typeof args.metalSaleUnit === "number" && args.metalSaleUnit > 0
+    ? args.metalSaleUnit
+    : 0;
+  const hechuraSubtotal = hechuraUnit * qty;
+  const metalSubtotal   = metalUnit   * qty;
+
+  const sumTotalValue = (xs: ReadonlyArray<{ totalValue?: number | null } | null | undefined> | undefined) => {
+    if (!xs) return 0;
+    let s = 0;
+    for (const x of xs) {
+      const v = x?.totalValue;
+      if (typeof v === "number" && Number.isFinite(v)) s += v;
+    }
+    return s;
+  };
+  const productsTotal = sumTotalValue(args.products);
+  const servicesTotal = sumTotalValue(args.services);
+
+  // Tax distribuido entre metal y hechura proporcionalmente. Si una
+  // applyOn del item viene como "HECHURA" o "METAL" explícita, se respeta.
+  // Para applyOn=TOTAL (default), se splittea por proporción de bases.
+  let taxOnHechura = 0;
+  if (Array.isArray(args.taxBreakdown)) {
+    for (const t of args.taxBreakdown) {
+      if (!t) continue;
+      const taxAmount = typeof t.taxAmount === "number" ? t.taxAmount : 0;
+      if (!Number.isFinite(taxAmount) || taxAmount <= 0) continue;
+      const apply = (t.applyOn ?? "TOTAL") as string;
+      if (apply === "HECHURA") {
+        taxOnHechura += taxAmount;
+      } else if (apply === "METAL") {
+        // 0 contribución a hechura
+      } else {
+        // TOTAL — proporcional a las bases imponibles.
+        const base = metalSubtotal + hechuraSubtotal;
+        if (base > 0) {
+          taxOnHechura += taxAmount * (hechuraSubtotal / base);
+        }
+      }
+    }
+  }
+
+  const total = hechuraSubtotal + productsTotal + servicesTotal + taxOnHechura;
+  return { hechuraSubtotal, productsTotal, servicesTotal, taxOnHechura, total };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // resolveItemCurrencyDisplay — display de moneda original + equivalente en
 // moneda del comprobante para cost lines (HECHURA / PRODUCT / SERVICE).
 //
@@ -186,6 +513,18 @@ export function buildMetalParentSaleTotals(
 // Cuando `currencyId` falta, no hay catálogo (`currencyById`), no se puede
 // resolver el code, o el code resuelto coincide con `documentCurrency` → la
 // función devuelve `null` y el caller mantiene el render por defecto.
+//
+// FIX FX (Etapa E2): `unitValueBase` viene SIEMPRE en moneda BASE del tenant
+// (ver backend `pricing-composition.ts:170-181`), incluso cuando el preview
+// fue convertido a moneda de display. En facturas en moneda no-base (ej.
+// USD), si se renderiza ese equivalente con la etiqueta de la moneda del
+// documento sin convertir, el operador ve "USD 33.799,00" siendo un valor
+// en ARS. Para corregirlo sin tocar el motor, este helper acepta un
+// `displayRate` opcional (= rate del documento, "unidades base por 1
+// unidad de moneda doc") y divide el equivalente antes de devolverlo.
+// `displayRate=1` (default) o factura en moneda base → no convierte, mismo
+// comportamiento anterior. Cero matemática nueva: división trivial sobre
+// dato del motor.
 // ─────────────────────────────────────────────────────────────────────────────
 export function resolveItemCurrencyDisplay(
   item: {
@@ -205,6 +544,15 @@ export function resolveItemCurrencyDisplay(
   } | null | undefined,
   documentCurrency: string,
   currencyById?: CurrencyByIdMap | null,
+  /**
+   * Rate de la moneda del documento — "unidades de moneda BASE por 1
+   * unidad de la moneda del documento" (ej. 446 si 1 USD = 446 ARS y la
+   * base es ARS). Cuando el documento está en moneda base, el rate es
+   * efectivamente 1. Sólo afecta el cálculo del `equivalentUnitValue`
+   * (que siempre vuelve en base desde el motor); cero efecto si la
+   * factura es en moneda base o si el rate es inválido / ausente.
+   */
+  displayRate?: number,
 ): {
   originalCurrencyLabel: string;
   equivalentUnitValue:   number | null;
@@ -242,6 +590,19 @@ export function resolveItemCurrencyDisplay(
       Number.isFinite(qty) && qty > 0 && Number.isFinite(total) && total > 0
         ? total / qty
         : null;
+  }
+  // FIX FX (Etapa E2) — convertir BASE → moneda del documento si la factura
+  // no está en moneda base. Sólo aplica si el caller provee `displayRate`
+  // válido distinto de 1. División trivial sobre dato del motor; cero
+  // matemática nueva.
+  if (
+    equivalentUnitValue != null
+    && typeof displayRate === "number"
+    && Number.isFinite(displayRate)
+    && displayRate > 0
+    && displayRate !== 1
+  ) {
+    equivalentUnitValue = equivalentUnitValue / displayRate;
   }
   return { originalCurrencyLabel: code, equivalentUnitValue };
 }
@@ -429,6 +790,12 @@ export type CostLineTriView = {
     qty:          number | null;
     currencyCode: string | null;
     equivUnit:    number | null;
+    /** Valor unitario EFECTIVO = `total / qty` (el costo por unidad/gramo que
+     *  YA incluye merma/ajuste, el mismo "Valor unitario" de la tabla inferior).
+     *  Por construcción `qty × unitEffective === total` → la fórmula del card
+     *  multiplica exacto al Costo total mostrado. Passthrough del total del
+     *  motor expresado como tasa: NO recalcula el costo. `null` si `qty` es 0/null. */
+    unitEffective: number | null;
   };
   /** Columna "Merma / Ajuste" — 2 niveles. null si no hay modificador. */
   adjust: {
@@ -447,11 +814,18 @@ function fmtPct(n: number): string {
 }
 
 export function buildCostLineTriView(i: CostLineTriInput): CostLineTriView {
+  const qtyVal = i.qty ?? null;
   const base = {
     unit:         i.unitBase ?? null,
-    qty:          i.qty ?? null,
+    qty:          qtyVal,
     currencyCode: i.currencyCode ?? null,
     equivUnit:    i.equivUnit ?? null,
+    // Valor unitario efectivo (con merma/ajuste) = total / qty. Tautológico:
+    // qty × unitEffective === total. Solo expresa el total del motor como tasa.
+    unitEffective:
+      qtyVal != null && Number.isFinite(qtyVal) && Math.abs(qtyVal) > 1e-9
+        ? i.total / qtyVal
+        : null,
   };
 
   let adjust: CostLineTriView["adjust"] = null;

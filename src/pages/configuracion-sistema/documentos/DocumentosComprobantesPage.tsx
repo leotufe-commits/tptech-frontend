@@ -37,11 +37,15 @@
 
 import React from "react";
 import { useSearchParams } from "react-router-dom";
-import { FileText, Hash, Clock } from "lucide-react";
+import { FileText, Hash } from "lucide-react";
 import { TPSectionShell } from "../../../components/ui/TPSectionShell";
 import { TPCard } from "../../../components/ui/TPCard";
 import TPTabs from "../../../components/ui/TPTabs";
 import DocumentosHub from "./DocumentosHub";
+// Etapa B (2026-05-29) — Numeración funcional con CRUD admin sobre
+// `/api/receipt-series`. Reemplaza al placeholder `NumeracionComingSoon`
+// que vivía inline en este archivo.
+import NumeracionAdmin from "./NumeracionAdmin";
 
 type TabValue = "plantillas" | "numeracion";
 
@@ -103,32 +107,9 @@ function HelpCard({ tab }: { tab: TabValue }): React.ReactElement {
   );
 }
 
-/** Panel "Próximamente" para la tab Numeración. Visual claro que el módulo
- *  todavía no está disponible, con descripción del scope esperado. */
-function NumeracionComingSoon(): React.ReactElement {
-  return (
-    <div className="rounded-2xl border border-dashed border-border bg-card/40 p-6 max-w-2xl">
-      <div className="flex items-start gap-3">
-        <div className="grid h-11 w-11 shrink-0 place-items-center rounded-xl border border-border bg-surface2 text-muted">
-          <Clock size={20} aria-hidden />
-        </div>
-        <div className="min-w-0">
-          <h3 className="text-base font-semibold text-text">Numeración de comprobantes</h3>
-          <p className="text-sm text-muted mt-1 leading-relaxed">
-            Módulo en preparación. Va a permitir configurar series, prefijos,
-            punto de venta y próximo número por tipo de comprobante
-            (Factura, Presupuesto, Remito, etc.), con sincronización opcional
-            contra AFIP.
-          </p>
-          <p className="text-xs text-muted mt-3">
-            Mientras tanto, la numeración se asigna automáticamente al crear
-            cada documento siguiendo la secuencia interna del sistema.
-          </p>
-        </div>
-      </div>
-    </div>
-  );
-}
+// Etapa B (2026-05-29) — `NumeracionComingSoon` placeholder removido.
+// La tab Numeración ahora muestra `<NumeracionAdmin />` con CRUD
+// funcional contra `/api/receipt-series`.
 
 const TAB_ICON: Record<TabValue, React.ReactNode> = {
   plantillas: <FileText size={22} />,
@@ -176,7 +157,7 @@ export default function DocumentosComprobantesPage() {
         <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_280px] items-start">
           <div className="min-w-0">
             {activeTab === "plantillas" && <DocumentosHub embedded />}
-            {activeTab === "numeracion" && <NumeracionComingSoon />}
+            {activeTab === "numeracion" && <NumeracionAdmin />}
           </div>
 
           <aside className="lg:sticky lg:top-4">

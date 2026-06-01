@@ -34,6 +34,33 @@ export function buildSalePreviewPayload(
   // no vacía. Cualquier cambio del filtro debe hacerse en una sola fuente
   // (`matchPreviewLines.ts`) — ver el comentario allí sobre la invariante.
   const realLines = draft.lines.filter(isPreviewableLine);
+
+  // ── Etapa 3A-fix — Defensa contra race scope/mode ─────────────────────────
+  // POLICY §R-Rounding-1 capa 17 + sales.service:5122-5129:
+  //   El motor RECHAZA con 400 cualquier preview/confirm con
+  //   `manualAdjustment.scope === "BREAKDOWN"` y `balanceMode` resuelto
+  //   distinto de BREAKDOWN.
+  //
+  // Bug observado: el operador ve "Desglosado" en el card (porque la UI
+  // muestra el modo EFECTIVO `hasMetals ? "BREAKDOWN" : ...`), pero
+  // `draft.balanceModeOverride` puede estar en `null` (auto-resolución por
+  // tenant UNIFIED) o en `"UNIFIED"` (override previo del operador). El
+  // promote del estado puede no haber actualizado todavía cuando llega el
+  // próximo preview. Resultado: payload `{override: UNIFIED, scope:
+  // BREAKDOWN}` → 400.
+  //
+  // Fix: si el `manualAdjustment` ya armado tiene scope BREAKDOWN, el
+  // override del PAYLOAD se fuerza a "BREAKDOWN" sin importar lo que diga el
+  // draft. Defensa final, independiente del estado de la UI.
+  const manualAdjustmentPayload = buildManualAdjustmentPayload(draft.manualAdjustment);
+  const manualAdjustmentScopeForPayload = manualAdjustmentPayload?.scope ?? null;
+  const balanceModeOverrideForPayload: "UNIFIED" | "BREAKDOWN" | null =
+    manualAdjustmentScopeForPayload === "BREAKDOWN"
+      ? "BREAKDOWN"
+      : draft.balanceModeOverride === "UNIFIED" || draft.balanceModeOverride === "BREAKDOWN"
+        ? draft.balanceModeOverride
+        : null;
+
   const out = {
     hasRealLines: realLines.length > 0,
     payload: {
@@ -43,7 +70,10 @@ export function buildSalePreviewPayload(
 
         type Mode = "PERCENT" | "AMOUNT";
         type AppliesTo = "TOTAL" | "METAL" | "HECHURA" | "METAL_Y_HECHURA" | "SUBTOTAL_AFTER_DISCOUNT" | "SUBTOTAL_BEFORE_DISCOUNT" | "PRODUCT" | "SERVICE";
-        type LineOverride = { mode: Mode; value: number; appliesTo?: AppliesTo } | null;
+        type AdjKind = "BONUS" | "SURCHARGE";
+        // El override de descuento opcionalmente lleva `kind` (BONUS/SURCHARGE);
+        // el override de impuesto no (no aplica el concepto recargo allí).
+        type LineOverride = { mode: Mode; value: number; appliesTo?: AppliesTo; kind?: AdjKind } | null;
 
         // Override de precio: si flag activo → mandamos la INTENCIÓN del
         // operador, que vive en `pricingMeta.manualPrice`. NO `l.unitPrice`:
@@ -59,20 +89,27 @@ export function buildSalePreviewPayload(
             ? (meta?.manualPrice != null ? meta.manualPrice : l.unitPrice)
             : null;
 
-        // Override de bonificación: si flag → reconstruimos {mode,value,appliesTo}
-        // a partir de la última config en pricingMeta.manualDiscount, o del
-        // discountAmount unitario como AMOUNT/TOTAL fallback.
+        // Override de ajuste manual (bonif/recargo): si flag → reconstruimos
+        // {mode,value,appliesTo,kind} desde la última config en
+        // pricingMeta.manualDiscount. `kind` viaja al backend tal cual lo
+        // setea el editor; ausente = BONUS (el motor aplica back-compat).
+        //
+        // Defensa en profundidad: si el flag `ov.discount` quedó pegado sin
+        // `meta.manualDiscount` (estado inconsistente — no debería ocurrir si
+        // todos los paths usan `applyLineOverrides`, que sincroniza ambos),
+        // NO derivar un override desde `l.discountAmount`: ese valor puede
+        // venir de un descuento HEREDADO del cliente (origin=CLIENT), y
+        // promoverlo a override manual lo reenvía al motor → doble
+        // aplicación / "override fantasma". En ese caso ignoramos el flag y
+        // devolvemos `null` para que el motor recalcule el automático.
         let manualDiscountOverride: LineOverride = null;
-        if (ov?.discount === true) {
-          if (meta?.manualDiscount) {
-            manualDiscountOverride = meta.manualDiscount;
-          } else {
-            const qty = Number.isFinite(l.quantity) ? l.quantity : 0;
-            const discUnit = qty > 0 ? (l.discountAmount ?? 0) / qty : 0;
-            manualDiscountOverride = discUnit > 0
-              ? { mode: "AMOUNT", value: discUnit, appliesTo: "TOTAL" }
-              : null;
-          }
+        if (ov?.discount === true && meta?.manualDiscount) {
+          manualDiscountOverride = {
+            mode:      meta.manualDiscount.mode,
+            value:     meta.manualDiscount.value,
+            appliesTo: meta.manualDiscount.appliesTo,
+            kind:      meta.manualDiscount.kind,
+          };
         }
 
         // Override de impuesto: análogo. pricingMeta.taxOverride es la
@@ -144,6 +181,22 @@ export function buildSalePreviewPayload(
       clientId:       draft.clientId      ?? null,
       channelId:      draft.channelId     ?? null,
       couponCode:     draft.couponCode || null,
+      // CONTRATO shipping (rectificado 2026-05-28):
+      //   `draft.shipping.cost` esta SIEMPRE en moneda DOC (la del
+      //   comprobante). El operador edita y ve este valor directamente
+      //   en el TPNumberInput de la ShippingCard, sin conversiones.
+      //   La conversion BASE→DOC ocurre UNA SOLA VEZ al derivar del
+      //   carrier (`derivedCost = baseCost / fxRate` en ShippingCard).
+      //
+      //   Aca enviamos `cost` tal cual: el backend espera el valor
+      //   en moneda DOC y aplica `toB = n * rate` internamente para
+      //   volver a BASE en el snapshot.
+      //
+      //   Bug histórico cerrado: el contrato anterior decía "cost en
+      //   BASE" y dividía por fxRate aca. Cualquier desincronizacion
+      //   entre cost almacenado y fxRate vigente producia valores
+      //   absurdos (12000 × 1798 = 21.6M observado). El nuevo contrato
+      //   elimina las multiplicaciones estructuralmente.
       shippingAmount: draft.shipping?.cost ?? 0,
       // Lista global del documento. Sin esto, cambiar la lista en el header
       // no afectaría el preview: el backend caería a la jerarquía por
@@ -167,34 +220,98 @@ export function buildSalePreviewPayload(
         draft.discountGlobal.origin !== "CLIENT"
           ? { type: draft.discountGlobal.type, value: draft.discountGlobal.value }
           : null,
+      // Fase 4.2 — Balance Mode override del documento. Solo viaja cuando
+      // el operador lo seteó manualmente (UNIFIED/BREAKDOWN). Si es null,
+      // omitido del payload (`undefined` por destructuring del backend) y
+      // el backend resuelve por jerarquía R11.4.
+      //
+      // Etapa 3A-fix: la resolución incluye la defensa "scope BREAKDOWN
+      // fuerza override BREAKDOWN" — ver `balanceModeOverrideForPayload`
+      // calculado arriba.
+      balanceModeOverride: balanceModeOverrideForPayload,
+      // Ajuste manual (POLICY §R-Rounding-1 capa 17).
+      //   · UNIFIED (Etapa A) — un único monto humano sobre `engineTotal`.
+      //   · BREAKDOWN (Etapa C) — metals[] (gramos) + monetaryAmount.
+      // El frontend NO calcula: solo envía la INTENCIÓN. El backend valida
+      // y arma el snapshot. Si nada significativo → null.
+      manualAdjustment: manualAdjustmentPayload,
     },
   };
 
-  // [BONIF_DEBUG] instrumentación temporal — remover tras diagnóstico.
-  if (import.meta.env.DEV) {
-    // eslint-disable-next-line no-console
-    console.groupCollapsed(
-      `[BONIF_DEBUG] buildSalePreviewPayload — clientId=${draft.clientId ?? "(SIN CLIENTE)"} · ${out.payload.lines.length} línea(s)`,
-    );
-    out.payload.lines.forEach((pl: any, i: number) => {
-      const src = realLines[i];
-      // eslint-disable-next-line no-console
-      console.log(`[BONIF_DEBUG] línea[${i}]`, {
-        lineId:                          src?.id,
-        articleId:                       pl.articleId ?? "(MANUAL)",
-        manualOverrides:                 src?.manualOverrides ?? null,
-        manualDiscountOverride:          pl.manualDiscountOverride ?? null,
-        manualDiscountOverride_appliesTo: pl.manualDiscountOverride?.appliesTo ?? null,
-        manualDiscountAppliesToOverride: pl.manualDiscountAppliesToOverride ?? null,
-        meta_manualDiscount:             src?.pricingMeta?.manualDiscount ?? null,
-        meta_manualDiscountAppliesTo:    (src?.pricingMeta as any)?.manualDiscountAppliesTo ?? null,
-      });
-    });
-    // eslint-disable-next-line no-console
-    console.log("[BONIF_DEBUG] payload.lines (JSON):", JSON.stringify(out.payload.lines));
-    // eslint-disable-next-line no-console
-    console.groupEnd();
+  return out;
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Manual Adjustment — builder de payload (UNIFIED + BREAKDOWN).
+// ────────────────────────────────────────────────────────────────────────────
+const MA_EPS_MONEY = 0.005;
+const MA_EPS_GRAMS = 0.0001;
+
+function trimOrNull(s: string | null | undefined): string | null {
+  if (typeof s !== "string") return null;
+  const t = s.trim();
+  return t.length > 0 ? t : null;
+}
+
+/** Construye el payload del ajuste manual a partir del draft.
+ *  Devuelve `null` cuando no hay intención significativa. */
+export function buildManualAdjustmentPayload(
+  draft: SalesInvoice["manualAdjustment"],
+): import("../../services/sales").ManualAdjustmentApiInput | null {
+  if (!draft) return null;
+
+  // BREAKDOWN
+  if ((draft as any).scope === "BREAKDOWN") {
+    const b = draft as Extract<NonNullable<SalesInvoice["manualAdjustment"]>, { scope: "BREAKDOWN" }>;
+    const metals = Array.isArray(b.metals) ? b.metals : [];
+    const cleanedMetals = metals
+      .map((m) => {
+        const hasTarget =
+          typeof m.targetGrams === "number" && Number.isFinite(m.targetGrams);
+        const hasDelta =
+          typeof m.deltaGrams === "number" &&
+          Number.isFinite(m.deltaGrams) &&
+          Math.abs(m.deltaGrams as number) > MA_EPS_GRAMS;
+        if (!hasTarget && !hasDelta) return null;
+        return {
+          metalParentId:   m.metalParentId ?? null,
+          ...(m.metalParentName ? { metalParentName: m.metalParentName } : {}),
+          ...(hasTarget ? { targetGrams: m.targetGrams as number } : {}),
+          ...(hasDelta  ? { deltaGrams:  m.deltaGrams  as number } : {}),
+          reason: trimOrNull(m.reason ?? null),
+        };
+      })
+      .filter((x): x is NonNullable<typeof x> => x != null);
+
+    const monetary =
+      typeof b.monetaryAmount === "number" &&
+      Number.isFinite(b.monetaryAmount) &&
+      Math.abs(b.monetaryAmount) > MA_EPS_MONEY
+        ? b.monetaryAmount
+        : undefined;
+
+    if (cleanedMetals.length === 0 && monetary === undefined) return null;
+
+    return {
+      scope:  "BREAKDOWN",
+      metals: cleanedMetals,
+      ...(monetary !== undefined ? { monetaryAmount: monetary } : {}),
+      reason: trimOrNull(b.reason ?? null),
+    };
   }
 
-  return out;
+  // UNIFIED (scope explícito o omitido).
+  const u = draft as Extract<NonNullable<SalesInvoice["manualAdjustment"]>, { amount: number }>;
+  if (
+    typeof u.amount !== "number" ||
+    !Number.isFinite(u.amount) ||
+    Math.abs(u.amount) <= MA_EPS_MONEY
+  ) {
+    return null;
+  }
+  return {
+    scope:  "UNIFIED",
+    amount: u.amount,
+    reason: trimOrNull(u.reason ?? null),
+  };
 }

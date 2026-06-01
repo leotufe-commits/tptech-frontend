@@ -33,6 +33,7 @@
 
 import type { InvoiceViewPreset } from "../../../../../lib/sales/invoiceViewPresets";
 import type { CardId, LayoutV2, LayoutV2Card } from "../types";
+import { CARD_CONSTRAINTS } from "./cardConstraints";
 
 /** Numero total de columnas de la grilla (estandar dashboard). */
 export const GRID_COLS = 12;
@@ -193,68 +194,62 @@ function buildLayout(preset: InvoiceViewPreset, geom: PresetGeometry): LayoutV2 
 // =============================================================================
 // REFERENCIA — calculo de pixeles por unidad de grilla:
 //   px = h * ROW_HEIGHT + (h - 1) * MARGIN_Y
-//      = h * 32 + (h - 1) * 12
+//      = h * 20 + (h - 1) * 8       (post-recalibracion 2026-05-25)
 //
-//   h=4  → 152 px  (card minima — TPCard header + textarea colapsado)
-//   h=5  → 196 px  (account-impact con 1 linea de balance)
-//   h=6  → 240 px  (cupon, account-impact con breakdown)
-//   h=7  → 284 px  (descuento global, envio — input + label + radio)
-//   h=8  → 328 px  (descuento con razon larga, payments con 2 metodos)
-//   h=9  → 372 px  (payments con 3 metodos)
-//   h=10 → 416 px
-//   h=12 → 504 px  (totals con monetary breakdown)
-//   h=16 → 680 px  (totals con metales)
-//   h=17 → 724 px  (totals + balance mode + breakdown + status)
+//   h=2  →  48 px  (card colapsada — header only, sin body)
+//   h=3  →  76 px
+//   h=4  → 104 px  (account-impact con 1 linea de balance)
+//   h=5  → 132 px  (cupon expandido con input + boton)
+//   h=6  → 160 px  (descuento expandido — header + combo + monto)
+//   h=7  → 188 px  (descuento global, envio — input + label + radio)
+//   h=9  → 244 px  (observations expandida — textarea + tabs)
+//   h=13 → 356 px  (totals — piso del hero)
+//   h=17 → 460 px  (totals expandido con balance + breakdown + status)
 //
-// Las alturas estan calibradas para que el CONTENIDO REAL de cada card
-// entre sin necesidad de scroll vertical en cualquiera de los 3
-// breakpoints objetivo (1366 / 1600 / 1920). El usuario sigue pudiendo
-// achicar via resize manual — los `minH` evitan que se pueda colapsar
-// debajo del contenido critico (input bloqueado por su propia altura).
+// IMPORTANTE: distincion de dos conceptos:
+//   · `h` (esta tabla)             = altura EXPANDIDA del card (con su
+//                                    contenido natural visible).
+//   · `minH` (cardConstraints.ts)  = floor de SHRINK = altura COLAPSADA
+//                                    (header only, ~48 px). El motor de
+//                                    auto-grow trae cada card a su h
+//                                    natural en el primer render.
+//
+// El operador puede achicar via resize manual hasta `minH` (collapsed).
+// El operador puede agrandar manualmente y eso se preserva via
+// `manuallyResized=true` (auto-shrink lo respeta).
 // =============================================================================
 
 // ─── Metricas centralizadas — cards SECUNDARIOS (densidad uniforme) ──────────
-// Producto pidio reducir el "aire vertical" de los cards secundarios
-// (discount, shipping, coupon, payments, account-impact) que tenian
-// mucho espacio vacio entre los inputs y el borde inferior. La altura
-// base baja de 7 (~284px) a 5 (~196px), suficiente para 1 header + 2-3
-// inputs sin scrollbar. El motor de auto-grow crece automaticamente si
-// algun card concreto necesita mas (ej. discount con razon larga).
+// Alturas BASE compactas para el contenido EXPANDIDO de cards secundarios.
+// El motor auto-grow las crece automaticamente cuando el contenido las
+// desborda (ej. Cobro con varios pagos, Total con metales, Observaciones
+// con texto largo). El motor auto-shrink las achica al `minH` del SSOT
+// cuando el card se colapsa (TPCard.open=false).
 //
-// Total mantiene altura hero. Observations mantiene altura propia para
-// dejar lugar a textarea + tabs + adjuntos.
-// Alturas BASE compactas (calibradas para el caso comun, sin aire
-// excesivo). El motor auto-grow las crece automaticamente cuando el
-// contenido las desborda (ej. Cobro con varios pagos, Total con
-// metales, Observaciones con texto largo).
-//
-// Calibracion 2026-05-25 (post-reduccion ROW=32→20):
-// los `h` se expresan ahora en filas de 20 px (antes 32). Para que el
-// tamano visual sea similar al previo (o levemente mas compacto donde
-// el contenido lo permite) hay que multiplicar `h` por ~1.6:
-//
-//   SECONDARY:    px = h*20 + (h-1)*8 → h=7 → 188 px (~ 1 header + 2 inputs)
-//   OBSERVATIONS: px = h*20 + (h-1)*8 → h=9 → 244 px (~ textarea colapsada)
-//   TOTAL:        px = h*20 + (h-1)*8 → h=13 → 356 px (~ header grande +
-//                                                       total + breakdown
-//                                                       + selector + status)
-//
-// `MIN_H` se sube proporcionalmente. Estos floors evitan que el operador
-// achique las cards por debajo del contenido critico (input cortado,
-// header sin body, total recortado).
+// `MIN_H` se delega al SSOT (`CARD_CONSTRAINTS` en cardConstraints.ts) —
+// una sola fuente de verdad de floors para que reconcileLayout (que
+// re-clampa contra SSOT al cargar) y los presets emitan los mismos
+// valores. Esto evita que layouts legacy con `minH` desactualizados
+// queden con aire vertical post-colapso.
 const SECONDARY_H = 7;
-const SECONDARY_MIN_H = 4;
 const OBSERVATIONS_H = 9;
-const OBSERVATIONS_MIN_H = 5;
-// 2026-05-25 — Recalibracion Total (pedido producto "cierre layout fino"):
-// con ROW=20 los valores previos (h=13 → 356 px) quedaban cortos para el
-// contenido real (header grande + total + breakdown + selector modo +
-// status). Subimos a h=17 (~460 px) y elevamos el piso a 13 (~356 px) para
-// que el operador no pueda comprimir el card principal por debajo de su
-// contenido base, manteniendo jerarquia visual estable entre los 3
-// presets (CLASSIC / COMPACT / ONE_LINE).
 const TOTAL_H = 17;
-const TOTAL_MIN_H = 13;
+
+/**
+ * Helper que mezcla altura expandida del preset con `minH` del SSOT.
+ * Los presets solo declaran la altura DEFAULT EXPANDIDA — el floor de
+ * shrink (`minH`) viene SIEMPRE del SSOT (`CARD_CONSTRAINTS`). El
+ * `minW` del preset puede ser mas estricto que el SSOT (ej. CLASSIC con
+ * aside ancho usa minW=4 aunque el SSOT diga 3 — el preset endurece).
+ */
+function sizeFor(id: CardId, h: number, presetMinW: number): CardSize {
+  const ssot = CARD_CONSTRAINTS[id];
+  return {
+    h,
+    minW: Math.max(presetMinW, ssot.minW),
+    minH: ssot.minH,
+  };
+}
 
 // ─── CLASSIC ─────────────────────────────────────────────────────────────────
 // ERP tradicional. Aside derecho ancho (x=7, w=5). Tipografia mas grande
@@ -263,13 +258,13 @@ const CLASSIC: PresetGeometry = {
   asideX: 7,
   asideW: 5,
   cards: {
-    "discount":       { h: SECONDARY_H,    minW: 4, minH: SECONDARY_MIN_H },
-    "shipping":       { h: SECONDARY_H,    minW: 4, minH: SECONDARY_MIN_H },
-    "coupon":         { h: SECONDARY_H,    minW: 4, minH: SECONDARY_MIN_H },
-    "totals":         { h: TOTAL_H,        minW: 4, minH: TOTAL_MIN_H },
-    "payments":       { h: SECONDARY_H,    minW: 4, minH: SECONDARY_MIN_H },
-    "account-impact": { h: SECONDARY_H,    minW: 4, minH: SECONDARY_MIN_H },
-    "observations":   { h: OBSERVATIONS_H, minW: 4, minH: OBSERVATIONS_MIN_H },
+    "discount":       sizeFor("discount",       SECONDARY_H,    4),
+    "shipping":       sizeFor("shipping",       SECONDARY_H,    4),
+    "coupon":         sizeFor("coupon",         SECONDARY_H,    4),
+    "totals":         sizeFor("totals",         TOTAL_H,        4),
+    "payments":       sizeFor("payments",       SECONDARY_H,    4),
+    "account-impact": sizeFor("account-impact", SECONDARY_H,    4),
+    "observations":   sizeFor("observations",   OBSERVATIONS_H, 4),
   },
 };
 
@@ -280,13 +275,13 @@ const COMPACT: PresetGeometry = {
   asideX: 8,
   asideW: 4,
   cards: {
-    "discount":       { h: SECONDARY_H,    minW: 3, minH: SECONDARY_MIN_H },
-    "shipping":       { h: SECONDARY_H,    minW: 3, minH: SECONDARY_MIN_H },
-    "coupon":         { h: SECONDARY_H,    minW: 3, minH: SECONDARY_MIN_H },
-    "totals":         { h: TOTAL_H,        minW: 3, minH: TOTAL_MIN_H },
-    "payments":       { h: SECONDARY_H,    minW: 3, minH: SECONDARY_MIN_H },
-    "account-impact": { h: SECONDARY_H,    minW: 3, minH: SECONDARY_MIN_H },
-    "observations":   { h: OBSERVATIONS_H, minW: 3, minH: OBSERVATIONS_MIN_H },
+    "discount":       sizeFor("discount",       SECONDARY_H,    3),
+    "shipping":       sizeFor("shipping",       SECONDARY_H,    3),
+    "coupon":         sizeFor("coupon",         SECONDARY_H,    3),
+    "totals":         sizeFor("totals",         TOTAL_H,        3),
+    "payments":       sizeFor("payments",       SECONDARY_H,    3),
+    "account-impact": sizeFor("account-impact", SECONDARY_H,    3),
+    "observations":   sizeFor("observations",   OBSERVATIONS_H, 3),
   },
 };
 
@@ -299,13 +294,13 @@ const ONE_LINE: PresetGeometry = {
   asideX: 0,
   asideW: 12,
   cards: {
-    "discount":       { h: SECONDARY_H,    minW: 6, minH: SECONDARY_MIN_H },
-    "shipping":       { h: SECONDARY_H,    minW: 6, minH: SECONDARY_MIN_H },
-    "coupon":         { h: SECONDARY_H,    minW: 6, minH: SECONDARY_MIN_H },
-    "totals":         { h: TOTAL_H,        minW: 6, minH: TOTAL_MIN_H },
-    "payments":       { h: SECONDARY_H,    minW: 6, minH: SECONDARY_MIN_H },
-    "account-impact": { h: SECONDARY_H,    minW: 6, minH: SECONDARY_MIN_H },
-    "observations":   { h: OBSERVATIONS_H, minW: 6, minH: OBSERVATIONS_MIN_H },
+    "discount":       sizeFor("discount",       SECONDARY_H,    6),
+    "shipping":       sizeFor("shipping",       SECONDARY_H,    6),
+    "coupon":         sizeFor("coupon",         SECONDARY_H,    6),
+    "totals":         sizeFor("totals",         TOTAL_H,        6),
+    "payments":       sizeFor("payments",       SECONDARY_H,    6),
+    "account-impact": sizeFor("account-impact", SECONDARY_H,    6),
+    "observations":   sizeFor("observations",   OBSERVATIONS_H, 6),
   },
 };
 

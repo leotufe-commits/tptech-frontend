@@ -2594,8 +2594,16 @@ export default function PricingSimulator() {
   }, [result?.taxBreakdown]);
 
   const totalFinal = useMemo<number | null>(() => {
+    // Paridad Factura — para listas PER_DOCUMENT el backend suprime el redondeo
+    // PER_LINE y el total POST-redondeo comercial viaja en
+    // `lineTotalWithTaxPostCommercialRounding` (per-línea). El simulador es
+    // 1 línea → per-unit = post / qty (escalado, no derivación de pricing).
+    const postLine = (result as any)?.lineTotalWithTaxPostCommercialRounding;
+    if (typeof postLine === "number" && Number.isFinite(postLine)) {
+      return postLine / Math.max(quantity ?? 1, 1);
+    }
     return normLine?.unitTotalWithTax ?? null;
-  }, [normLine?.unitTotalWithTax]);
+  }, [result, quantity, normLine?.unitTotalWithTax]);
 
   // precio unitario post-canal+cupón, pre-pago
   // Total per-unit post-canal/cupón con impuestos. Fuente única: backend.
@@ -2609,6 +2617,11 @@ export default function PricingSimulator() {
     const qty = Math.max(quantity ?? 1, 1);
     if (result.checkoutResult?.finalAmount != null) {
       return result.checkoutResult.finalAmount / qty;
+    }
+    // Paridad Factura — preferir el total POST-redondeo comercial PER_DOCUMENT.
+    const postLine = (result as any)?.lineTotalWithTaxPostCommercialRounding;
+    if (typeof postLine === "number" && Number.isFinite(postLine)) {
+      return postLine / qty;
     }
     const dt = (result as any).documentTotals;
     if (dt?.totalWithTax != null) return Number(dt.totalWithTax) / qty;
@@ -2638,8 +2651,18 @@ export default function PricingSimulator() {
     // flags `*Estimated`. Si `metalSale` no viene (source=NONE, datos
     // incompletos), lo dejamos en 0 y el KPI se omite — NO inventamos un
     // proporcional desde el frontend.
-    const metalSale = metalHechuraBreakdownNorm && metalHechuraBreakdownNorm.metalSale > 0
+    const metalSaleBase = metalHechuraBreakdownNorm && metalHechuraBreakdownNorm.metalSale > 0
       ? metalHechuraBreakdownNorm.metalSale
+      : 0;
+    // Paridad Factura — para listas PER_DOCUMENT el valor comercial del metal
+    // es `metalSale + metalRoundingMonetaryImpact` (post-redondeo comercial).
+    // El impacto viaja per-línea → per-unit = impacto / qty. Passthrough puro.
+    const metalImpactLine = typeof (result as any)?.metalRoundingMonetaryImpact === "number"
+      && Number.isFinite((result as any).metalRoundingMonetaryImpact)
+      ? (result as any).metalRoundingMonetaryImpact
+      : 0;
+    const metalSale = metalSaleBase > 0
+      ? metalSaleBase + metalImpactLine / Math.max(quantity ?? 1, 1)
       : 0;
 
     const monedaSale = precio - metalSale;
@@ -2647,7 +2670,7 @@ export default function PricingSimulator() {
     const monedaPct  = 100 - metalPct;
 
     return { precio, metalSale, monedaSale, metalPct, monedaPct };
-  }, [result, appliedTaxes, totalFinal]);
+  }, [result, appliedTaxes, totalFinal, quantity]);
 
   // Alertas — fuente única: `result.alerts` del motor. Las reglas de negocio
   // (margen mínimo, precio < costo, impuestos altos) viven en backend

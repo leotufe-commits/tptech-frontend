@@ -4,7 +4,6 @@ import { useConfirmDelete } from "../../hooks/useConfirmDelete";
 import {
   Plus,
   Save,
-  Star,
   CreditCard,
   Trash2,
   X,
@@ -196,7 +195,14 @@ const PAY_COLS: TPColDef[] = [
 /* =========================================================
    MAIN PAGE
 ========================================================= */
-export default function ConfiguracionSistemaPagos() {
+export type ConfiguracionSistemaPagosProps = {
+  /** Cuando true, omitimos el TPSectionShell. Usado al montarse dentro
+   *  de `FinanzasCobrosPage` con tabs — el shell exterior ya provee el
+   *  header. Default false → comportamiento standalone. */
+  embedded?: boolean;
+};
+
+export default function ConfiguracionSistemaPagos({ embedded = false }: ConfiguracionSistemaPagosProps = {}) {
   /* ---------- estado principal ---------- */
   const [rows, setRows] = useState<PaymentMethodRow[]>([]);
   const [loading, setLoading] = useState(false);
@@ -499,12 +505,22 @@ export default function ConfiguracionSistemaPagos() {
   /* =========================================================
      RENDER
   ========================================================= */
+  // Helper local — envuelve con TPSectionShell salvo en modo embedded
+  // (tab dentro de FinanzasCobrosPage). Cero impacto en lógica interna.
+  const Shell = embedded
+    ? ({ children }: { children: React.ReactNode }) => <>{children}</>
+    : ({ children }: { children: React.ReactNode }) => (
+        <TPSectionShell
+          title="Medios de Pago"
+          subtitle="Configurá los métodos de pago aceptados en la joyería"
+          icon={<CreditCard size={22} />}
+        >
+          {children}
+        </TPSectionShell>
+      );
+
   return (
-    <TPSectionShell
-      title="Medios de Pago"
-      subtitle="Configurá los métodos de pago aceptados en la joyería"
-      icon={<CreditCard size={22} />}
-    >
+    <Shell>
       <TPTableKit
         columns={PAY_COLS}
         rows={filteredRows}
@@ -989,16 +1005,11 @@ export default function ConfiguracionSistemaPagos() {
 
             <div className="flex justify-between gap-4 py-2 border-b border-border">
               <span className="text-muted font-medium">Favorito</span>
-              <span className="flex items-center gap-1 text-text">
-                {viewTarget.isFavorite ? (
-                  <>
-                    <Star size={13} className="fill-amber-400 text-amber-400" />
-                    <span className="text-xs">Sí</span>
-                  </>
-                ) : (
-                  <span className="text-muted text-xs italic">No</span>
-                )}
-              </span>
+              {viewTarget.isFavorite ? (
+                <span className="text-text text-xs">Sí</span>
+              ) : (
+                <span className="text-muted text-xs italic">No</span>
+              )}
             </div>
 
             {viewTarget.notes && (
@@ -1020,6 +1031,6 @@ export default function ConfiguracionSistemaPagos() {
           CONFIRM DELETE
       ========================================================= */}
       <ConfirmDeleteDialog {...deleteDialogProps} />
-    </TPSectionShell>
+    </Shell>
   );
 }

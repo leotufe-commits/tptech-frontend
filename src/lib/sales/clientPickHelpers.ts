@@ -180,7 +180,14 @@ export function buildClientPatches(input: {
   };
 
   const pricingPatch: Partial<SalesInvoice> = {
-    ...(input.autoPriceListId ? { priceListId: input.autoPriceListId } : {}),
+    // T15 — `priceListId` viaja SIEMPRE cuando el caller resolvió un valor
+    // (string), aunque sea "" (sin lista). El merge `{...cur, ...pricingPatch}`
+    // necesita PISAR `cur.priceListId` para no arrastrar la lista del
+    // cliente anterior cuando el nuevo no tiene una. Si el caller pasa
+    // `null`/`undefined`, no se emite (compat con tests legacy).
+    ...(typeof input.autoPriceListId === "string"
+      ? { priceListId: input.autoPriceListId }
+      : {}),
     // Moneda SIEMPRE (target resuelto = propia del cliente o base) →
     // "Recalcular" autoritativo, sin moneda stale del cliente anterior.
     ...(input.currency ? { currency: input.currency } : {}),

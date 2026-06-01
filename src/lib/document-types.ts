@@ -263,10 +263,66 @@ export interface DocumentLine {
     appliedPromotionName?:  string | null;
     /** Precio base antes de descuentos (lista). */
     basePrice?:             number | null;
+    /**
+     * Cantidad CON la que el motor calculó esta línea (passthrough de
+     * `SalePreviewLine.quantity`). NO es la cantidad local actual del draft;
+     * es la cantidad que se usó para producir `basePrice`/`lineDiscount`/
+     * `subtotal`/`lineTotalWithTax`. Mientras el draft tenga una cantidad
+     * nueva pero el preview backend todavía no haya respondido, este campo
+     * permite que los displays derivados (% efectivo de bonificación, etc.)
+     * se mantengan ESTABLES contra el snapshot anterior en vez de mezclar
+     * la nueva cantidad con los importes viejos (flicker visual). El
+     * frontend NO calcula con esto — es metadata para anclar el cálculo
+     * de display al snapshot correcto. */
+    previewQuantity?:        number | null;
     /** Descuento por cantidad (separado del global). */
     quantityDiscountAmount?: number | null;
     /** Descuento por promoción (separado del global). */
     promotionDiscountAmount?: number | null;
+    /**
+     * Descuento del cliente POR LÍNEA (capa 5 del motor). Expuesto
+     * INDEPENDIENTEMENTE de `applyOn` — incluido cuando la rule aplica
+     * sobre TOTAL y queda absorbida en `unitPrice`. Único campo confiable
+     * para mostrar el impacto del cliente sin derivar. */
+    customerDiscountAmount?: number | null;
+    /** Metadata explicativa per-origen del motor (display-only).
+     *  Permite mostrar "Cálculo: base × valor" sin recalcular nada. */
+    quantityDiscountBase?:       number | null;
+    quantityDiscountValue?:      number | null;
+    quantityDiscountValueType?:  "PERCENTAGE" | "FIXED_AMOUNT" | null;
+    promotionDiscountBase?:      number | null;
+    promotionDiscountValue?:     number | null;
+    promotionDiscountValueType?: "PERCENTAGE" | "FIXED_AMOUNT" | null;
+    customerDiscountBase?:       number | null;
+    /** Subset whitelist de pricing.steps[] que serializa el mapper backend.
+     *  Permite renderizar el pipeline de cálculo en orden real del motor.
+     *  Cada step tiene `value` per-unidad y `meta.discountBase/Amount`
+     *  también per-unidad (multiplicar por qty para totales por línea). */
+    pricingSteps?: Array<{
+      key:     string;
+      label:   string;
+      status:  "ok" | "partial" | "missing" | "skipped";
+      value:   number | null;
+      message?: string;
+      meta?: {
+        discountBase?:           number | null;
+        discountAmount?:         number | null;
+        discountBaseEstimated?:  boolean;
+        surchargeBase?:          number | null;
+        surchargeAmount?:        number | null;
+        surchargeBaseEstimated?: boolean;
+        value?:     number | null;
+        type?:      "PERCENTAGE" | "FIXED_AMOUNT" | null;
+        valueType?: "PERCENTAGE" | "FIXED_AMOUNT" | null;
+        applyOn?:   string | null;
+        ruleType?:  "DISCOUNT" | "BONUS" | "SURCHARGE" | null;
+        kind?:      "BONUS" | "SURCHARGE" | null;
+        mode?:      "PERCENT" | "FIXED" | null;
+        promoId?:    string | null;
+        discountId?: string | null;
+        promoName?:  string | null;
+      };
+    }>;
     /** Costo unitario y margen (si el backend lo resolvió). */
     unitCost?:              number | null;
     unitMargin?:            number | null;
@@ -281,6 +337,172 @@ export interface DocumentLine {
     // en precio de venta". Passthrough puro, cero matemática derivada.
     metalMarginPct?:        number | null;
     hechuraMarginPct?:      number | null;
+    // ── Etapa C-comercial / C4-fix (POLICY §R-Rounding-14) ────────────────
+    // Auditoría del redondeo COMERCIAL aplicado a la línea por la lista de
+    // precios. Quedan `null` cuando el redondeo no actuó (passthrough).
+    // Solo viajan al draft — la UI los consumirá en C6 para mostrar la
+    // fila "Redondeo de lista — metal/hechura". Cero matemática nueva.
+    metalSalePreRounding?:    number | null;
+    hechuraSalePreRounding?:  number | null;
+    metalSaleRoundingDelta?:  number | null;
+    hechuraSaleRoundingDelta?:number | null;
+
+    // ── Etapa D' (cierre conceptual) — Redondeo Comercial PER_DOCUMENT ─────
+    // VISTA del Redondeo Comercial del comprobante para visualización dentro
+    // del card del artículo. El backend replica el snapshot del documento en
+    // CADA `lines[i]` para que el card de composición lo muestre como cierre
+    // de la cadena comercial sin tener que mirar el response completo.
+    //
+    // IMPORTANTE — naturaleza del campo:
+    //   · NO representa un redondeo propio de esta línea.
+    //   · NO implica que el cálculo se haya ejecutado sobre esta línea.
+    //   · El cálculo SIEMPRE se hace a nivel comprobante en
+    //     `computeSaleDocumentTotals` (cuando la lista tiene
+    //     `commercialRoundingScope = PER_DOCUMENT`).
+    //   · Por eso `appliedAt` SIEMPRE vale `"DOCUMENT"` en este campo.
+    //
+    // REGLA DE ORO: frontend SOLO lee. Cero recálculo, cero inferencia.
+    // Si un valor no existe en este snapshot, NO calcularlo en frontend —
+    // agregarlo al snapshot backend.
+    //
+    // null cuando la lista del documento opera en PER_LINE_LEGACY o
+    // mixed-list (NO_SHARED_LIST). En ese caso, el card no muestra el
+    // bloque PER_DOCUMENT.
+    commercialRoundingContext?: {
+      source:             "PRICE_LIST";
+      scope:              "UNIFIED" | "BREAKDOWN";
+      appliedAt:          "DOCUMENT";
+      appliedToLineCount: number;
+      totalAdjustment:    number;
+      unified?: {
+        pre:        number;
+        post:       number;
+        adjustment: number;
+        mode:       string;
+        direction:  string;
+      };
+      breakdown?: {
+        metals: ReadonlyArray<{
+          metalParentId:      string;
+          metalParentName:    string;
+          preGrams:           number;
+          postGrams:          number;
+          deltaGrams:         number;
+          metalPricePerGram:  number;
+          monetaryEquivalent: number;
+          mode:               string;
+          direction:          string;
+        }>;
+        metalMonetaryEquivalent: number;
+        hechura: {
+          preRoundingSaldoMonetario:  number;
+          postRoundingSaldoMonetario: number;
+          deltaSaldoMonetario:        number;
+          mode:                       string;
+          direction:                  string;
+          source:                     "PRICE_LIST_HECHURA";
+        };
+        combinedAdjustment: number;
+      };
+      fallback?: "ALL_NONE" | "NO_METALS_BREAKDOWN_DATA" | "NO_SHARED_LIST" | null;
+    } | null;
+
+    /** Opción δ (R-COMMERCIAL-METAL-VISIBLE) — Impacto monetario del
+     *  Redondeo Comercial PER_DOCUMENT atribuido a ESTA línea (prorrateado
+     *  proporcionalmente a la fracción de gramsPure que la línea aporta a
+     *  los metales padre redondeados).
+     *
+     *  Uso en el Resumen Comercial del artículo:
+     *    Metal Visible = saleAmountLine + metalRoundingMonetaryImpact
+     *    Hechura       = Total línea c/ imp. − Metal Visible
+     *
+     *  Invariante a nivel documento:
+     *    Σ líneas metalRoundingMonetaryImpact
+     *      === Σ commercialRoundingContext.breakdown.metals[*].monetaryEquivalent
+     *      === commercialRoundingContext.breakdown.metalMonetaryEquivalent
+     *
+     *  Backend SSOT — frontend solo suma dos campos del response. Cero
+     *  matemática FE. `null` cuando no hay snapshot D' o cuando no hubo
+     *  delta de redondeo. */
+    metalRoundingMonetaryImpact?: number | null;
+
+    /** Opción A — Impacto monetario del Redondeo Comercial PER_DOCUMENT
+     *  atribuido al bucket HECHURA / MONETARIO de ESTA línea (prorrateado por
+     *  `hechuraSale × qty`). Espejo de `metalRoundingMonetaryImpact`.
+     *  Σ líneas hechuraRoundingMonetaryImpact === breakdown.hechura.deltaSaldoMonetario.
+     *  Backend SSOT — cero matemática FE. */
+    hechuraRoundingMonetaryImpact?: number | null;
+
+    /** Opción A — TOTAL LÍNEA C/ IMP. POST-redondeo comercial:
+     *    = lineTotalWithTax + metalRoundingMonetaryImpact + hechuraRoundingMonetaryImpact
+     *
+     *  Es el total que el Resumen Comercial muestra como cierre de la línea,
+     *  cumpliendo por construcción:
+     *    METAL Comercial post + MONETARIO Comercial post = TOTAL LÍNEA post.
+     *
+     *  Backend SSOT — el frontend lo LEE, no lo compone. `null`/ausente ⇒ no
+     *  hubo Redondeo Comercial PER_DOCUMENT y el post === pre. */
+    lineTotalWithTaxPostCommercialRounding?: number | null;
+
+    /** Opción A (descomposición FÍSICA) — SALDO MONETARIO POST-redondeo
+     *  comercial por línea (= total − valor físico del metal, redondeado). Es
+     *  lo que el bloque MONETARIO del Resumen muestra en modo DESGLOSADO
+     *  (ej. 185.500). Backend SSOT. `null` ⇒ el FE cae al MONETARIO comercial
+     *  (hechura con margen). */
+    lineMonetarySaldoPostCommercialRounding?: number | null;
+
+    /** Saldo monetario PRE redondeo comercial por línea (= lineTotalWithTax −
+     *  Σ metalSale). El card MONETARIO lo muestra como "AR$ 185.475,21 →" antes
+     *  de la flecha al post. Backend SSOT — el FE solo lo lee. */
+    lineMonetarySaldoPreCommercialRounding?: number | null;
+
+    /** Gramos comerciales POST-redondeo POR LÍNEA y metal padre + su
+     *  monetización (display-only). Calculados por el backend con el gramsPure +
+     *  margen de ESTA línea, así que agregar otra línea del mismo metal NO los
+     *  modifica. El Resumen Comercial del Artículo los usa para los gramos del
+     *  metal en lugar del agregado del documento. Backend SSOT — el FE solo los
+     *  lee. `null`/ausente ⇒ no hubo Redondeo Comercial PER_DOCUMENT BREAKDOWN.
+     *  `metalReferenceValue` (valor comercial $/gramo) y `monetaryImpact`
+     *  (deltaGrams × refValue) opcionales para snapshots viejos. */
+    lineCommercialRoundingMetals?: Array<{
+      metalParentId:   string;
+      metalParentName: string;
+      preGrams:        number;
+      postGrams:       number;
+      deltaGrams:      number;
+      metalReferenceValue?: number;
+      monetaryImpact?:      number;
+    }> | null;
+    /** Snapshot completo del redondeo COMERCIAL PHYSICAL — paralelo al
+     *  `documentRoundingApplied.breakdown.metalPhysical` del financiero.
+     *  Solo presente cuando la lista operó en `commercialRoundingMetalDomain
+     *  = "PHYSICAL"` y la línea tenía `metalsByParent` válidos. `null` en
+     *  MONETARY (legacy). Shape EXACTO del DTO backend
+     *  (`SalePreviewLineCommercialPhysicalSnapshot`). */
+    commercialPhysical?: {
+      metals: Array<{
+        metalParentId:      string | null;
+        metalParentName:    string;
+        preGrams:           number;
+        postGrams:          number;
+        deltaGrams:         number;
+        metalPricePerGram:  number;
+        monetaryEquivalent: number;
+        mode:               string;
+        direction:          string;
+        source:             "COMMERCIAL_PHYSICAL_ROUNDING";
+        fallback:
+          | null
+          | "NO_METAL_PRICE"
+          | "NO_CONFIG"
+          | "INVALID_GRAMS";
+      }>;
+      metalMonetaryEquivalent: number;
+      fallback:
+        | null
+        | "NO_BREAKDOWN_DATA"
+        | "NO_METALS_TO_ROUND";
+    } | null;
     /**
      * Desglose post-descuentos por componente (sale-side). El motor expone
      * `base + adjustments[] + final` por cada componente (metal / hechura).
@@ -380,12 +602,18 @@ export interface DocumentLine {
      */
     manualPrice?: number | null;
     /**
-     * Override manual del descuento sobre el precio de lista. Reemplaza qty
-     * discount + promotion. Ignorado si también hay `manualPrice`.
+     * Override manual del AJUSTE COMERCIAL sobre el precio de lista
+     * (bonificación o recargo). Reemplaza qty discount + promotion.
+     * Ignorado si también hay `manualPrice`.
+     *
+     * `kind` es opcional y back-compat: ausente → BONUS (resta);
+     * "SURCHARGE" suma. El motor backend decide cómo aplicarlo; el
+     * frontend solo persiste y reenvía la intención.
      */
     manualDiscount?: {
       mode:      "PERCENT" | "AMOUNT";
       value:     number;
+      kind?:     "BONUS" | "SURCHARGE";
       appliesTo?: "TOTAL" | "METAL" | "HECHURA" | "METAL_Y_HECHURA" | "SUBTOTAL_AFTER_DISCOUNT" | "SUBTOTAL_BEFORE_DISCOUNT" | "PRODUCT" | "SERVICE";
     } | null;
     /**
@@ -820,10 +1048,30 @@ export type CounterpartyRole = "CLIENT" | "SUPPLIER";
  *   · `carrier`   — transporte/responsable (texto libre)
  */
 export interface DocumentShipping {
+  /** Id del carrier configurado en `ConfiguracionSistemaEnvios` (catálogo
+   *  real). Antes apuntaba al mock estático. */
   methodId?: string;
-  cost?: number;
-  address?: string;
-  carrier?: string;
+  /** Id de la tarifa específica del carrier (cuando tiene >1 activa).
+   *  Selector secundario, mismo flujo que el Simulador. */
+  rateId?:   string;
+  /** Costo final del envío en la moneda del documento. Lo deriva el card
+   *  desde el catálogo cuando se elige carrier/rate, y el operador puede
+   *  pisarlo manualmente. El motor lo recibe como `shippingAmount` plano. */
+  cost?:     number;
+  /** Origen del `cost`:
+   *   - `"CARRIER"` (default): derivado de la tarifa del catálogo.
+   *     Cambia automáticamente al cambiar carrier/rate o moneda DOC.
+   *   - `"MANUAL"`: el operador tipeó un valor explícito. NO se
+   *     reescribe ante cambios de moneda DOC.
+   *
+   *  Reseteable: al cambiar de carrier/rate, vuelve a "CARRIER" y el
+   *  cost se re-deriva del catálogo.
+   */
+  costSource?: "CARRIER" | "MANUAL";
+  /** Dirección de destino (texto libre hasta que haya catálogo). */
+  address?:  string;
+  /** Transporte/responsable (texto libre). */
+  carrier?:  string;
 }
 
 /**

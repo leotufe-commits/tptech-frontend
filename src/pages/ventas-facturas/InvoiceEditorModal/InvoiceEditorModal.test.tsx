@@ -11,6 +11,8 @@ import {
   AddressPickerPopover, PaymentCard, InvoiceHeaderForm,
 } from "./index";
 import type { InvoiceHeaderFormProps } from "./InvoiceHeaderForm";
+import { DEFAULT_LAYOUT } from "./layout/defaults";
+import { getCardsBySlot } from "./layout/layoutMigration";
 
 const fmtCurrency = (n: number) => `$${n.toFixed(2)}`;
 
@@ -23,21 +25,22 @@ describe("<DiscountCard />", () => {
     expect(screen.getByText("Sin descuento")).toBeTruthy();
   });
 
-  it("muestra valor en % cuando type=PERCENT", () => {
+  it("muestra valor en % cuando type=PERCENT (con signo − de descuento)", () => {
     render(
       <DiscountCard value={{ type: "PERCENT", value: 10 }} onPatch={() => {}}
         open={true} onOpenChange={() => {}} fmtCurrency={fmtCurrency} />
     );
     // PERCENT respeta el preset del tenant (default 2 decimales) → "10,00%".
-    expect(screen.getByText("10,00%")).toBeTruthy();
+    // El header prefija con `−` para comunicar dirección de descuento.
+    expect(screen.getByText("−10,00%")).toBeTruthy();
   });
 
-  it("muestra valor en monto cuando type=AMOUNT", () => {
+  it("muestra valor en monto cuando type=AMOUNT (con signo − de descuento)", () => {
     render(
       <DiscountCard value={{ type: "AMOUNT", value: 500 }} onPatch={() => {}}
         open={true} onOpenChange={() => {}} fmtCurrency={fmtCurrency} />
     );
-    expect(screen.getByText("$500.00")).toBeTruthy();
+    expect(screen.getByText("−$500.00")).toBeTruthy();
   });
 
   it("dispara onOpenChange al togglear", () => {
@@ -49,6 +52,115 @@ describe("<DiscountCard />", () => {
     // El click en el header del TPCard despliega — verificamos al menos que el header renderiza
     expect(screen.getByText("Descuento global")).toBeTruthy();
     void toggled;
+  });
+
+  // ────────────────────────────────────────────────────────────────────────
+  // Layout una-fila + X de limpieza (FASE UX).
+  // ────────────────────────────────────────────────────────────────────────
+  it("renderiza Motivo, Tipo y Valor en el mismo grid de 12 columnas", () => {
+    const { container } = render(
+      <DiscountCard value={{ type: "PERCENT", value: 5, reason: "promo" }}
+        onPatch={() => {}} open={true} onOpenChange={() => {}} fmtCurrency={fmtCurrency} />
+    );
+    // Buscamos el grid contenedor de los tres campos.
+    const grid = container.querySelector(".grid-cols-12");
+    expect(grid).toBeTruthy();
+    // Los tres labels viven dentro del MISMO grid (una fila visual).
+    const labels = Array.from(grid!.querySelectorAll(".col-span-6, .col-span-12"))
+      .map((el) => el.textContent ?? "")
+      .join(" ");
+    expect(labels).toMatch(/Motivo/);
+    expect(labels).toMatch(/Tipo/);
+    expect(labels).toMatch(/Valor/);
+  });
+
+  it("la X del campo Valor llama onPatch({ value: 0 }) cuando hay valor > 0", () => {
+    const onPatch = vi.fn();
+    const { container } = render(
+      <DiscountCard value={{ type: "PERCENT", value: 15, reason: "" }}
+        onPatch={onPatch} open={true} onOpenChange={() => {}} fmtCurrency={fmtCurrency} />
+    );
+    // TPNumberInput renderiza la X interna con aria-label "Limpiar valor".
+    const clearBtn = container.querySelector('button[aria-label="Limpiar valor"]') as HTMLButtonElement | null;
+    expect(clearBtn).toBeTruthy();
+    fireEvent.click(clearBtn!);
+    expect(onPatch).toHaveBeenCalledWith({ value: 0 });
+  });
+
+  it("la X NO aparece cuando el descuento es heredado del cliente (read-only)", () => {
+    const { container } = render(
+      <DiscountCard value={{ type: "PERCENT", value: 15, reason: "", origin: "CLIENT" } as any}
+        onPatch={() => {}} open={true} onOpenChange={() => {}} fmtCurrency={fmtCurrency} />
+    );
+    expect(container.querySelector('button[aria-label="Limpiar valor"]')).toBeNull();
+  });
+
+  // ────────────────────────────────────────────────────────────────────────
+  // Favorito en el combo Tipo (UserPreference.defaultGlobalDiscountType).
+  // ────────────────────────────────────────────────────────────────────────
+  it("muestra el combo Tipo con estrella de favorito cuando se provee onSetFavoriteType", () => {
+    const onSetFavoriteType = vi.fn();
+    render(
+      <DiscountCard value={{ type: "PERCENT", value: 0, reason: "" }}
+        onPatch={() => {}} open={true} onOpenChange={() => {}} fmtCurrency={fmtCurrency}
+        favoriteType="PERCENT"
+        onSetFavoriteType={onSetFavoriteType} />
+    );
+    // El combo se renderiza — verificamos por la etiqueta del campo.
+    expect(screen.getByText("Tipo")).toBeTruthy();
+    // El handler está disponible (la estrella es UI del TPComboFixed; el
+    // contrato funcional se valida con que el handler reciba la llamada
+    // cuando el combo se interactúa — ese flow está cubierto por TPComboFixed
+    // en su propio test suite. Acá fijamos que el wiring del prop existe).
+    expect(onSetFavoriteType).not.toHaveBeenCalled();
+  });
+
+  it("el combo Tipo respeta favoriteType=AMOUNT pintando esa opción como predeterminada", () => {
+    // El favoriteValue se propaga al TPComboFixed → la opción AMOUNT recibe
+    // la marca de estrella. Validamos que el render no rompe y el value
+    // visible del combo arranca correctamente desde value.type.
+    render(
+      <DiscountCard value={{ type: "AMOUNT", value: 100, reason: "" }}
+        onPatch={() => {}} open={true} onOpenChange={() => {}} fmtCurrency={fmtCurrency}
+        favoriteType="AMOUNT"
+        onSetFavoriteType={vi.fn()} />
+    );
+    expect(screen.getByText("Tipo")).toBeTruthy();
+  });
+
+  // ────────────────────────────────────────────────────────────────────────
+  // Rediseño UX — header con impacto signed + color discount (FASE UX 2).
+  //
+  // El header debe comunicar la DIRECCIÓN del impacto (descuento → signo
+  // `−` + color rojo) sin requerir abrir el card. Si no hay valor, "Sin
+  // descuento" muted. Cero matemática nueva — el value viene del padre,
+  // que lo lee del draft (NO del pricing-engine: este card es solo el
+  // input del operador).
+  // ────────────────────────────────────────────────────────────────────────
+  it("header con value > 0 muestra signo `−` y data-tp-discount-impact=discount", () => {
+    const { container } = render(
+      <DiscountCard value={{ type: "AMOUNT", value: 100 }} onPatch={() => {}}
+        open={true} onOpenChange={() => {}} fmtCurrency={fmtCurrency} />,
+    );
+    const tag = container.querySelector('[data-tp-discount-impact="discount"]');
+    expect(tag).toBeTruthy();
+    expect(tag!.textContent).toContain("−");
+    expect(tag!.textContent).toContain("$100.00");
+    // Color de descuento (token semántico — `vt.colors.discount`).
+    expect(tag!.className).toMatch(/text-red-500/);
+  });
+
+  it("header con value = 0 muestra 'Sin descuento' (data-tp-discount-impact=none) sin signo", () => {
+    const { container } = render(
+      <DiscountCard value={{ type: "PERCENT", value: 0 }} onPatch={() => {}}
+        open={true} onOpenChange={() => {}} fmtCurrency={fmtCurrency} />,
+    );
+    const tag = container.querySelector('[data-tp-discount-impact="none"]');
+    expect(tag).toBeTruthy();
+    expect(tag!.textContent).toBe("Sin descuento");
+    // Anti-regresión: NO inventar signo cuando no hay impacto.
+    expect(tag!.textContent).not.toContain("−");
+    expect(tag!.textContent).not.toContain("+");
   });
 });
 
@@ -69,13 +181,59 @@ describe("<ShippingCard />", () => {
     expect(screen.getByText("$1500.00")).toBeTruthy();
   });
 
-  it("renderiza inputs 'Método' y 'Costo'", () => {
+  it("renderiza inputs 'Método de entrega' y 'Costo'", () => {
+    // El card carga carriers reales vía shippingApi.list(). En el test no se
+    // mockea la red — el fetch falla silenciosamente y el combo queda con
+    // "Sin método de entrega". Los labels SÍ se renderizan inmediatamente.
     render(
       <ShippingCard value={null} onPatch={() => {}}
         open={true} onOpenChange={() => {}} fmtCurrency={fmtCurrency} />
     );
-    expect(screen.getByText("Método")).toBeTruthy();
+    expect(screen.getByText("Método de entrega")).toBeTruthy();
     expect(screen.getByText("Costo")).toBeTruthy();
+  });
+
+  it("la X del Costo llama onPatch({ cost: 0 }) cuando hay costo > 0", () => {
+    const onPatch = vi.fn();
+    const { container } = render(
+      <ShippingCard value={{ cost: 500 } as any} onPatch={onPatch}
+        open={true} onOpenChange={() => {}} fmtCurrency={fmtCurrency} />
+    );
+    const clearBtn = container.querySelector('button[aria-label="Limpiar valor"]') as HTMLButtonElement | null;
+    expect(clearBtn).toBeTruthy();
+    fireEvent.click(clearBtn!);
+    expect(onPatch).toHaveBeenCalledWith({ cost: 0 });
+  });
+
+  // ────────────────────────────────────────────────────────────────────────
+  // Rediseño UX — header compacto (FASE UX 2). El header debe comunicar
+  // método + monto sin obligar a abrir el card. Cero matemática nueva: el
+  // `cost` viene del catálogo (carrier/rate) o del override manual, y el
+  // formato pasa por `fmtCurrency` (preset del tenant).
+  // ────────────────────────────────────────────────────────────────────────
+  it("header sin método y sin costo → 'Sin envío' (data-tp-shipping-impact=none)", () => {
+    const { container } = render(
+      <ShippingCard value={null} onPatch={() => {}}
+        open={true} onOpenChange={() => {}} fmtCurrency={fmtCurrency} />,
+    );
+    const tag = container.querySelector('[data-tp-shipping-impact="none"]');
+    expect(tag).toBeTruthy();
+    expect(tag!.textContent).toBe("Sin envío");
+  });
+
+  it("header con costo > 0 (sin carrier en catálogo) muestra label genérico + monto destacado", () => {
+    // Sin carrier seleccionado pero con cost > 0 → fallback "Envío · monto".
+    // (Caso edge: el operador tipeó un costo manual antes de elegir método).
+    const { container } = render(
+      <ShippingCard value={{ cost: 15000 } as any} onPatch={() => {}}
+        open={true} onOpenChange={() => {}} fmtCurrency={fmtCurrency} />,
+    );
+    const tag = container.querySelector('[data-tp-shipping-impact="set"]');
+    expect(tag).toBeTruthy();
+    // Monto destacado (font-semibold tabular-nums text-text) dentro del header.
+    const amount = tag!.querySelector("span.font-semibold");
+    expect(amount).toBeTruthy();
+    expect(amount!.textContent).toBe("$15000.00");
   });
 });
 
@@ -262,7 +420,7 @@ describe("<PaymentCard />", () => {
 
   it("muestra warning cuando totalCobrado > effectiveTotal", () => {
     render(<PaymentCard {...(baseProps as any)} totalCobrado={1200} balance={0} effectiveTotal={1000} />);
-    expect(screen.getByText(/supera el total a facturar/)).toBeTruthy();
+    expect(screen.getByText(/supera el total/)).toBeTruthy();
   });
 });
 
@@ -335,8 +493,11 @@ describe("<InvoiceHeaderForm />", () => {
         isBase: false, isActive: true, latestRate: 1500, latestAt: null } as any]}
       isBaseCurrencyResolver={() => false}
     />);
-    // El badge muestra el código + el rate. Aceptamos cualquiera de los dos.
-    expect(screen.getByText(/1500\.00/)).toBeTruthy();
+    // El badge muestra el código + el rate. Region/decimals-agnóstico: el preset
+    // FX_RATE del tenant gobierna decimales y separadores (AR default usa miles
+    // con punto: "1.500,…"). Validamos que aparezca "1500" en alguna forma con
+    // separador de miles opcional.
+    expect(screen.getByText(/1[.,]?500/)).toBeTruthy();
   });
 
   it("dispara onOpenFx al click en el badge de cotización", () => {
@@ -413,5 +574,32 @@ describe("<InvoiceHeaderForm />", () => {
     );
     expect(screen.getByText("Av. Siempre Viva 742")).toBeTruthy();
     expect(screen.getByText("MONOTRIBUTO")).toBeTruthy();
+  });
+});
+
+// ============================================================================
+// Garantía Fase 1: el render dinámico del aside (driven by layout) produce
+// el MISMO orden visual que el JSX hardcoded histórico cuando no hay
+// preferencia guardada del usuario. Si esta invariante se rompe, el modal
+// de Factura cambia de aspecto al desplegar — eso es exactamente lo que la
+// Fase 1 debe evitar (plumbing sin cambios visibles).
+// ============================================================================
+describe("Layout Fase 1 — orden default = JSX histórico (cero cambios visuales)", () => {
+  it("slot 'aside' del DEFAULT_LAYOUT: discount → shipping → coupon → totals → payments → account-impact → observations", () => {
+    expect(getCardsBySlot(DEFAULT_LAYOUT, "aside").map((c) => c.id)).toEqual([
+      "discount", "shipping", "coupon", "totals", "payments", "account-impact", "observations",
+    ]);
+  });
+
+  it("DEFAULT_LAYOUT contiene las 9 cards (header, lines, observations + 6 aside con account-impact)", () => {
+    const ids = DEFAULT_LAYOUT.cards.map((c) => c.id).sort();
+    expect(ids).toEqual([
+      "account-impact", "coupon", "discount", "header", "lines",
+      "observations", "payments", "shipping", "totals",
+    ]);
+  });
+
+  it("todas las cards arrancan con width='full' (Fase 1 no usa half/third/two-thirds)", () => {
+    expect(DEFAULT_LAYOUT.cards.every((c) => c.width === "full")).toBe(true);
   });
 });

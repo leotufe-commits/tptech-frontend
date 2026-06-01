@@ -115,6 +115,59 @@ export function recalculateCardHeight(args: {
 }
 
 /**
+ * Estado del stability tracker por card (anti-jitter del auto-grow).
+ * Se persiste en un `Map<CardId, StabilityTracker>` por el motor del
+ * grid mientras este observando cambios de contenido de un card.
+ */
+export type StabilityTracker = { h: number; count: number };
+
+/**
+ * Decision del stability gate tras una medicion del contenido de un card.
+ *   - `commit: true`  → el nuevo `h` paso el filtro, se aplica al layout.
+ *   - `commit: false` → todavia no estable, mantener el card actual y
+ *     guardar `nextTracker` para la proxima medicion.
+ */
+export type StabilityDecision =
+  | { commit: true }
+  | { commit: false; nextTracker: StabilityTracker };
+
+/**
+ * Stability gate del auto-grow. Decide si una nueva medicion `newH` se
+ * commitea YA al layout o si hay que esperar a observarla `stabilityRequired`
+ * veces consecutivas (anti-jitter por contenido oscilante).
+ *
+ *   - `stabilityRequired = 1` → la PRIMERA observacion commitea. Es el
+ *     comportamiento esperado para acciones discretas del operador
+ *     (expand/collapse de TPCard, agregar/quitar pago, etc.): post-animacion
+ *     el ResizeObserver dispara una sola vez y el reflow debe commitear ahi
+ *     mismo. NO esperar a una segunda observacion que probablemente nunca
+ *     llegue (el contenido ya esta estable).
+ *   - `stabilityRequired > 1` → se necesitan N observaciones consecutivas
+ *     del mismo `newH` para commit. Util si el contenido oscila
+ *     (responsive, scrollbars apareciendo/desapareciendo, etc.).
+ *
+ * Nota historica: la version previa de este gate tenia un bug — incluso
+ * con `stabilityRequired=1` requeria DOS observaciones porque la primera
+ * obs SIEMPRE caia en la rama "no hay tracker → set tracker → return".
+ * Tras animaciones de expand/collapse la segunda obs no llegaba nunca →
+ * el commit quedaba colgado hasta que el operador interactuaba con otro
+ * card. Esta funcion implementa la semantica correcta.
+ */
+export function decideStabilityCommit(args: {
+  newH: number;
+  tracker: StabilityTracker | undefined;
+  stabilityRequired: number;
+}): StabilityDecision {
+  const { newH, tracker, stabilityRequired } = args;
+  const sameAsTracker = tracker != null && tracker.h === newH;
+  const newCount = sameAsTracker ? tracker!.count + 1 : 1;
+  if (newCount < stabilityRequired) {
+    return { commit: false, nextTracker: { h: newH, count: newCount } };
+  }
+  return { commit: true };
+}
+
+/**
  * Re-acomodo CENTRAL del layout tras un cambio de altura en una card.
  *
  * Flujo:

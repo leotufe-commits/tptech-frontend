@@ -14,6 +14,7 @@ import {
   applyManualTaxRate,
   buildPatchedLine,
   resetLineForClientChange,
+  clearLineExemptionFlag,
 } from "../patchLineHelpers";
 import type { DocumentLine } from "../../document-types";
 
@@ -268,6 +269,90 @@ describe("buildPatchedLine", () => {
     });
     expect(out.manualOverrides).toEqual({ quantity: true });
   });
+
+  // ──────────────────────────────────────────────────────────────────────
+  // Anti-regresión "manual siempre manda aunque qty cambie".
+  //
+  // Cambiar la cantidad cuando hay `manualOverrides.discount=true` activo
+  // NO debe perder ese flag. detectManualEdit detecta `flagDeltas.quantity`
+  // y buildPatchedLine acumula con el manualOverrides previo (spread). El
+  // motor backend respeta el override al recibir el payload con la nueva
+  // qty + manualDiscountOverride, así que promo/qty/cliente NO se
+  // reactivan funcionalmente.
+  // ──────────────────────────────────────────────────────────────────────
+  it("ANTI-REGRESIÓN: cambiar qty preserva manualOverrides.discount existente", () => {
+    // Línea con manual de bonificación activo + qty=2.
+    const line = makeLine({
+      quantity: 2,
+      manualOverrides: { discount: true } as any,
+      pricingMeta: {
+        manualDiscount: { mode: "PERCENT", value: 15, appliesTo: "TOTAL", kind: "BONUS" },
+      } as any,
+    });
+    // Detectar edit de qty (escenario "qty entra en tramo de descuento").
+    const det = detectManualEdit(line, { quantity: 5 });
+    expect(det.flagDeltas).toEqual({ quantity: true });
+    expect(det.isManualPriceEdit).toBe(false);
+    expect(det.isEngineDriven).toBe(false);
+
+    const out = buildPatchedLine({
+      line, patch: { quantity: 5 },
+      isManualPriceEdit: det.isManualPriceEdit,
+      flagDeltas: det.flagDeltas,
+    });
+    // Manual de descuento NUNCA se pierde — el spread { ...prev, ...new }
+    // acumula sin pisar a false.
+    expect(out.manualOverrides?.discount).toBe(true);
+    expect(out.manualOverrides?.quantity).toBe(true);
+    // manualDiscount en meta se preserva (no se sobrescribe).
+    expect(out.pricingMeta?.manualDiscount).toEqual({
+      mode: "PERCENT", value: 15, appliesTo: "TOTAL", kind: "BONUS",
+    });
+    expect(out.quantity).toBe(5);
+  });
+
+  it("ANTI-REGRESIÓN: múltiples cambios de qty mantienen manualOverrides.discount intacto", () => {
+    // Simula qty=2 → 5 → 10 → 3. El flag manual debe persistir en cada paso.
+    let line = makeLine({
+      quantity: 2,
+      manualOverrides: { discount: true } as any,
+      pricingMeta: {
+        manualDiscount: { mode: "PERCENT", value: 20, appliesTo: "TOTAL", kind: "BONUS" },
+      } as any,
+    });
+    for (const nextQty of [5, 10, 3]) {
+      const det = detectManualEdit(line, { quantity: nextQty });
+      line = buildPatchedLine({
+        line, patch: { quantity: nextQty },
+        isManualPriceEdit: det.isManualPriceEdit,
+        flagDeltas: det.flagDeltas,
+      });
+      expect(line.manualOverrides?.discount).toBe(true);
+      expect((line.pricingMeta as any)?.manualDiscount?.value).toBe(20);
+      expect(line.quantity).toBe(nextQty);
+    }
+  });
+
+  it("ANTI-REGRESIÓN: manual 0 (md.value=0) también preserva flag al cambiar qty", () => {
+    // Con la nueva semántica global "X = manual 0", el operador tiene
+    // un override con value=0 explícito. Cambiar qty NO debe restaurar
+    // automáticos: el flag y el meta se mantienen.
+    const line = makeLine({
+      quantity: 2,
+      manualOverrides: { discount: true } as any,
+      pricingMeta: {
+        manualDiscount: { mode: "PERCENT", value: 0, appliesTo: "TOTAL", kind: "BONUS" },
+      } as any,
+    });
+    const det = detectManualEdit(line, { quantity: 10 });
+    const out = buildPatchedLine({
+      line, patch: { quantity: 10 },
+      isManualPriceEdit: det.isManualPriceEdit,
+      flagDeltas: det.flagDeltas,
+    });
+    expect(out.manualOverrides?.discount).toBe(true);
+    expect((out.pricingMeta as any)?.manualDiscount?.value).toBe(0);
+  });
 });
 
 // ─── resetLineForClientChange ──────────────────────────────────────────────
@@ -362,5 +447,203 @@ describe("resetLineForClientChange", () => {
       pricingMeta: { manualPrice: 100 } as any,
     });
     expect(resetLineForClientChange(line)).toBe(line);
+  });
+
+  // ────────────────────────────────────────────────────────────────────────
+  // clearManualOverrides: true → "Recalcular precios" debe limpiar TAMBIÉN
+  // los overrides MANUALES del operador (decisión del cliente nuevo manda).
+  // ────────────────────────────────────────────────────────────────────────
+
+  it("clearManualOverrides=true: limpia manualDiscount + flag discount", () => {
+    const line = makeLine({
+      taxAmount: 0,
+      discountAmount: 100,
+      manualOverrides: { discount: true } as any,
+      pricingMeta: {
+        manualDiscount: { mode: "PERCENT", value: 15, appliesTo: "TOTAL", kind: "SURCHARGE" },
+      } as any,
+    });
+    const out = resetLineForClientChange(line, { clearManualOverrides: true });
+    expect((out.pricingMeta as any).manualDiscount).toBeNull();
+    expect(out.manualOverrides?.discount).toBeUndefined();
+    expect(out.discountAmount).toBe(0);
+  });
+
+  it("clearManualOverrides=true: limpia manualPrice + flag price + restaura unitPrice desde basePrice", () => {
+    const line = makeLine({
+      unitPrice: 80,
+      manualOverrides: { price: true } as any,
+      pricingMeta: { manualPrice: 80, basePrice: 100 } as any,
+    });
+    const out = resetLineForClientChange(line, { clearManualOverrides: true });
+    expect((out.pricingMeta as any).manualPrice).toBeNull();
+    expect(out.manualOverrides?.price).toBeUndefined();
+    expect(out.unitPrice).toBe(100); // vuelve al basePrice de lista
+  });
+
+  it("clearManualOverrides=true: limpia manualDiscountAppliesTo independiente del valor", () => {
+    const line = makeLine({
+      pricingMeta: { manualDiscountAppliesTo: "METAL" } as any,
+    });
+    const out = resetLineForClientChange(line, { clearManualOverrides: true });
+    expect((out.pricingMeta as any).manualDiscountAppliesTo).toBeNull();
+  });
+
+  it("clearManualOverrides=true: la limpieza es AMPLIA — también borra estado heredado (igual que sin flag)", () => {
+    const line = makeLine({
+      taxAmount: 42,
+      discountAmount: 10,
+      manualOverrides: { discount: true, tax: true } as any,
+      pricingMeta: {
+        manualDiscount: { mode: "PERCENT", value: 5, appliesTo: "TOTAL", kind: "BONUS" },
+        taxOverride: { mode: "PERCENT", value: 21, appliesTo: "TOTAL" },
+        inheritedDiscount: { ruleType: "DISCOUNT", value: 10, applyOn: "TOTAL", origin: "CLIENT" },
+        taxBreakdown: [{ name: "IVA", rate: 21, taxAmount: 42 }],
+      } as any,
+    });
+    const out = resetLineForClientChange(line, { clearManualOverrides: true });
+    // Manual + heredado, todo limpio.
+    expect((out.pricingMeta as any).manualDiscount).toBeNull();
+    expect((out.pricingMeta as any).taxOverride).toBeNull();
+    expect((out.pricingMeta as any).inheritedDiscount).toBeNull();
+    expect(out.manualOverrides?.discount).toBeUndefined();
+    expect(out.manualOverrides?.tax).toBeUndefined();
+    expect(out.taxAmount).toBe(0);
+    expect(out.discountAmount).toBe(0);
+  });
+
+  it("clearManualOverrides=false (default): preserva manualDiscount/manualPrice (back-compat)", () => {
+    const line = makeLine({
+      taxAmount: 42,
+      discountAmount: 0,
+      manualOverrides: { discount: true, tax: true, price: true } as any,
+      pricingMeta: {
+        manualDiscount: { mode: "PERCENT", value: 5, appliesTo: "TOTAL", kind: "BONUS" },
+        manualPrice: 80,
+        taxOverride: { mode: "PERCENT", value: 21, appliesTo: "TOTAL" },
+        taxBreakdown: [{ name: "IVA", rate: 21, taxAmount: 42 }],
+      } as any,
+    });
+    const out = resetLineForClientChange(line); // sin opciones → default
+    // Manual preservado (contrato histórico).
+    expect((out.pricingMeta as any).manualDiscount).not.toBeNull();
+    expect((out.pricingMeta as any).manualPrice).toBe(80);
+    expect(out.manualOverrides?.discount).toBe(true);
+    expect(out.manualOverrides?.price).toBe(true);
+    // Pero tax / heredado SÍ se limpiaron.
+    expect((out.pricingMeta as any).taxOverride).toBeNull();
+    expect(out.manualOverrides?.tax).toBeUndefined();
+    expect(out.taxAmount).toBe(0);
+  });
+
+  it("clearManualOverrides=true: sin basePrice válido NO toca unitPrice (deja que el preview lo hidrate)", () => {
+    const line = makeLine({
+      unitPrice: 50,
+      manualOverrides: { price: true } as any,
+      pricingMeta: { manualPrice: 50 } as any, // sin basePrice
+    });
+    const out = resetLineForClientChange(line, { clearManualOverrides: true });
+    expect((out.pricingMeta as any).manualPrice).toBeNull();
+    // unitPrice se mantiene como estaba (50) — el preview vuelve a hidratar.
+    expect(out.unitPrice).toBe(50);
+  });
+
+  it("clearManualOverrides=true: no-op cuando ya no hay nada que limpiar (incluso con flag activo)", () => {
+    const line = makeLine({
+      taxAmount: 0,
+      discountAmount: 0,
+      manualOverrides: {} as any,
+      pricingMeta: {} as any,
+    });
+    expect(resetLineForClientChange(line, { clearManualOverrides: true })).toBe(line);
+  });
+});
+
+// ─── clearLineExemptionFlag (P1 #3 — Etapa E2) ──────────────────────────────
+
+describe("clearLineExemptionFlag — Mantener precios al cambiar cliente", () => {
+  // REPRODUCTOR DEL BUG:
+  // Operador tiene factura con cliente exento (`taxExemptByEntity=true`,
+  // taxAmount=0). Cambia a cliente NO exento y elige "Mantener precios".
+  // Sin este fix, las líneas seguían con flag exento pegado mientras el
+  // header mostraba cliente nuevo → inconsistencia visual + riesgo de
+  // confirmar factura sin IVA cuando el cliente nuevo sí debe tributar.
+  it("limpia taxExemptByEntity cuando estaba en true", () => {
+    const line = makeLine({
+      taxAmount: 0,
+      pricingMeta: {
+        taxExemptByEntity: true,
+        taxBreakdown: [],
+      } as any,
+    });
+    const out = clearLineExemptionFlag(line);
+    expect(out.pricingMeta?.taxExemptByEntity).toBeUndefined();
+  });
+
+  it("preserva taxAmount, taxOverride, taxBreakdown, discountAmount y unitPrice (NO recalcula precios)", () => {
+    // Esta es la garantía clave: 'Mantener precios' significa mantener
+    // los importes cotizados. El helper SOLO limpia el flag fiscal.
+    const line = makeLine({
+      unitPrice:      100,
+      discountAmount: 15,
+      taxAmount:      0,                      // del cliente exento previo
+      subtotal:       85,
+      lineTotal:      85,
+      manualOverrides: { discount: true } as any,
+      pricingMeta: {
+        taxExemptByEntity: true,
+        taxOverride: { mode: "PERCENT", value: 21 } as any,
+        taxBreakdown: [{ taxId: "iva", taxName: "IVA", rate: 21, taxAmount: 0 }] as any,
+        manualDiscount: { value: 15, mode: "AMOUNT" } as any,
+        inheritedDiscount: { value: 5, origin: "CLIENT" } as any,
+      } as any,
+    });
+    const out = clearLineExemptionFlag(line);
+    expect(out.pricingMeta?.taxExemptByEntity).toBeUndefined();
+    // Todo lo demás se preserva tal cual:
+    expect(out.unitPrice).toBe(100);
+    expect(out.discountAmount).toBe(15);
+    expect(out.taxAmount).toBe(0);
+    expect(out.subtotal).toBe(85);
+    expect(out.lineTotal).toBe(85);
+    expect((out.pricingMeta as any).taxOverride).toEqual({ mode: "PERCENT", value: 21 });
+    expect((out.pricingMeta as any).taxBreakdown).toEqual([{ taxId: "iva", taxName: "IVA", rate: 21, taxAmount: 0 }]);
+    expect((out.pricingMeta as any).manualDiscount).toEqual({ value: 15, mode: "AMOUNT" });
+    expect((out.pricingMeta as any).inheritedDiscount).toEqual({ value: 5, origin: "CLIENT" });
+    expect(out.manualOverrides).toEqual({ discount: true });
+  });
+
+  it("limpia taxExemptByEntity cuando estaba en false (también lo borra: el preview lo re-hidrata)", () => {
+    const line = makeLine({
+      pricingMeta: { taxExemptByEntity: false } as any,
+    });
+    const out = clearLineExemptionFlag(line);
+    expect(out.pricingMeta?.taxExemptByEntity).toBeUndefined();
+  });
+
+  it("devuelve la MISMA referencia si el flag ya estaba undefined (identidad estable)", () => {
+    const line = makeLine({
+      pricingMeta: { basePrice: 100 } as any,
+    });
+    expect(clearLineExemptionFlag(line)).toBe(line);
+  });
+
+  it("devuelve la MISMA referencia si la línea no tiene pricingMeta", () => {
+    const line = makeLine({ pricingMeta: undefined });
+    expect(clearLineExemptionFlag(line)).toBe(line);
+  });
+
+  it("preserva otros campos del pricingMeta (basePrice, composition, etc.)", () => {
+    const line = makeLine({
+      pricingMeta: {
+        basePrice: 100,
+        taxExemptByEntity: true,
+        composition: { metals: [], hechuras: [], products: [], services: [], taxes: [] } as any,
+      } as any,
+    });
+    const out = clearLineExemptionFlag(line);
+    expect(out.pricingMeta?.basePrice).toBe(100);
+    expect((out.pricingMeta as any).composition).toEqual({ metals: [], hechuras: [], products: [], services: [], taxes: [] });
+    expect(out.pricingMeta?.taxExemptByEntity).toBeUndefined();
   });
 });

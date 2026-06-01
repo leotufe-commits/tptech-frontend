@@ -105,7 +105,7 @@ describe("TPNumber de Impuestos — conexión al flujo de override", () => {
     expect(override).toEqual({ mode: "PERCENT", value: 30, appliesTo: "TOTAL" });
   });
 
-  it("la X (clear) manda un override explícito de impuesto 0 (no undefined)", () => {
+  it("la X (clear) PONE EL IMPUESTO EN 0 como override manual explícito", () => {
     const spy = vi.fn();
     render(
       <LinesEditorSection
@@ -115,11 +115,18 @@ describe("TPNumber de Impuestos — conexión al flujo de override", () => {
       />,
     );
 
-    // La X de TPNumberInput tiene aria-label "Limpiar valor". Hay una por
-    // input editable (Precio, Bonif, Impuestos) — tomamos la de la celda
-    // de Impuestos para no depender del orden global.
+    // Semántica global de la X en Factura de ventas: PONER EL VALOR EN 0
+    // como override manual explícito (NO restaurar el automático). El motor
+    // recibe { mode, value: 0, appliesTo } y aplica 0 reemplazando IVA
+    // configurado / exención del cliente. Los automáticos solo vuelven con
+    // "Restablecer línea" o reingreso del artículo. Coherente con la X de
+    // Bonificación (que también pone en 0).
+    //
+    // aria-label: "Poner impuesto en 0" (semántico). Otros inputs (Precio)
+    // mantienen "Limpiar valor" como default — la X de Cantidad tiene
+    // semántica distinta (resetea al mín de venta).
     const clearBtn = getTaxCell().querySelector(
-      'button[aria-label="Limpiar valor"]',
+      'button[aria-label="Poner impuesto en 0"]',
     ) as HTMLButtonElement;
     expect(clearBtn).toBeTruthy();
     fireEvent.click(clearBtn);
@@ -127,6 +134,8 @@ describe("TPNumber de Impuestos — conexión al flujo de override", () => {
     expect(spy).toHaveBeenCalled();
     const [lineId, override] = spy.mock.calls[spy.mock.calls.length - 1];
     expect(lineId).toBe("line-1");
+    // X = override manual con value=0 (NO null que era la semántica
+    // anterior "restaurar"). Preserva mode y appliesTo actuales.
     expect(override).toEqual({ mode: "PERCENT", value: 0, appliesTo: "TOTAL" });
   });
 });

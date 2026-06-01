@@ -139,6 +139,11 @@ export function SaleLinePricingPanel(props: SaleLinePricingPanelProps): React.Re
             display={display}
             variant="compact"
             whatIfActive={false}
+            // Etapa D' — Snapshot del Redondeo Comercial PER_DOCUMENT
+            // replicado por el backend en esta línea. Cuando llega, el
+            // card lo muestra al final de la cadena comercial.
+            // PASSTHROUGH puro — cero matemática FE.
+            commercialRoundingContext={pricingMeta.commercialRoundingContext ?? null}
           />
           {/* FASE 8.1 — Cards de composición del precio (Metal + Hechura).
               variant="compact" → grid 1-col + padding reducido para no saturar

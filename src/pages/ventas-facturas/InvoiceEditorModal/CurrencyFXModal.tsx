@@ -22,6 +22,7 @@ import TPSelect from "../../../components/ui/TPSelect";
 import { TPCheckbox } from "../../../components/ui/TPCheckbox";
 import { CURRENCY_MOCK_OPTIONS, isBaseCurrency } from "../../../lib/document-types";
 import { fmtDate } from "../../../lib/document-helpers";
+import { formatByType } from "../../../lib/pricing/format";
 import type { CurrencyRow } from "../../../services/valuation";
 
 export type FxDraftValue = {
@@ -95,7 +96,7 @@ export function CurrencyFXModal(props: CurrencyFXModalProps): React.ReactElement
   const ratePreviewText = fxIsBase
     ? "Moneda base"
     : fxCurrency?.latestRate != null
-      ? `Última cotización del sistema: ${Number(fxCurrency.latestRate).toFixed(2)}${fxCurrency.latestAt ? ` · ${fmtDate(fxCurrency.latestAt)}` : ""}`
+      ? `Última cotización del sistema: ${formatByType(fxCurrency.latestRate, "FX_RATE")}${fxCurrency.latestAt ? ` · ${fmtDate(fxCurrency.latestAt)}` : ""}`
       : "Sin cotización vigente — cargá una a mano para esta factura.";
 
   const fxSymbol = (fxCurrency?.symbol ?? "").trim() || fxCurrency?.code || "";
@@ -138,7 +139,7 @@ export function CurrencyFXModal(props: CurrencyFXModalProps): React.ReactElement
           <TPNumberInput
             value={fxIsBase ? 1 : value.fxRate}
             onChange={(v) => onValueChange((s) => ({ ...s, fxRate: v ?? 1 }))}
-            decimals={2}
+            formatType="FX_RATE"
             disabled={fxIsBase}
             // FASE 9 — C1: TPNumberInput admite el literal `0`. La validación
             // dura ("> 0") vive en el caller (`applyFx`) y bloquea el apply
@@ -159,7 +160,7 @@ export function CurrencyFXModal(props: CurrencyFXModalProps): React.ReactElement
             Vista previa
           </div>
           <div className="mt-0.5 text-sm font-bold tabular-nums text-text">
-            {fxSymbol} {(fxIsBase ? 1 : value.fxRate).toFixed(2)}
+            {fxSymbol} {formatByType(fxIsBase ? 1 : value.fxRate, "FX_RATE")}
           </div>
         </div>
         {!fxIsBase && fxCurrency && fxCurrency.latestRate == null && (

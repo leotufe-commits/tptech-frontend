@@ -89,20 +89,32 @@ export interface SendInvoiceEmailModalProps {
 // por el server (o viceversa).
 const EMAIL_RX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-/** Pivot funcional — subject state-aware. Defaults pedidos por producto:
- *    · DRAFT     → "BORRADOR <N°> - <Joyería>"
- *    · CANCELLED → "FACTURA ANULADA <N°> - <Joyería>"
- *    · final     → "Factura <N°> - <Joyería>" */
+/** Subject state-aware. Pedido producto 2026-05-28 — todo el estado
+ *  del comprobante va en MAYÚSCULAS (BORRADOR / FACTURA / FACTURA
+ *  ANULADA) para uniformar el formato y reforzar la jerarquía visual
+ *  cuando el mail aparece en la bandeja del cliente:
+ *    · DRAFT     → "<Joyería> - BORRADOR <N°>"
+ *    · CANCELLED → "<Joyería> - FACTURA ANULADA <N°>"
+ *    · final     → "<Joyería> - FACTURA <N°>"
+ *
+ *  Cuando la joyería no tiene nombre configurado, el subject cae al
+ *  formato sin prefijo: "BORRADOR <N°>" / "FACTURA ANULADA <N°>" /
+ *  "FACTURA <N°>".
+ *
+ *  IMPORTANTE: los templates persistidos (`DocumentTemplate.emailSubjectTemplate`)
+ *  NO se ven afectados — siguen interpolandose tal cual el operador los
+ *  escribió (con el casing que el operador definió). Este formato solo
+ *  aplica como FALLBACK cuando no hay template persistido. */
 function buildDefaultSubject(
   invoiceNumber: string,
   status:        SendInvoiceEmailStatus | undefined,
   jewelryName?:  string | null,
 ): string {
-  const tenantSuffix = jewelryName?.trim() ? ` - ${jewelryName.trim()}` : "";
+  const tenantPrefix = jewelryName?.trim() ? `${jewelryName.trim()} - ` : "";
   switch (status) {
-    case "DRAFT":     return `BORRADOR ${invoiceNumber}${tenantSuffix}`;
-    case "CANCELLED": return `FACTURA ANULADA ${invoiceNumber}${tenantSuffix}`;
-    default:          return `Factura ${invoiceNumber}${tenantSuffix}`;
+    case "DRAFT":     return `${tenantPrefix}BORRADOR ${invoiceNumber}`;
+    case "CANCELLED": return `${tenantPrefix}FACTURA ANULADA ${invoiceNumber}`;
+    default:          return `${tenantPrefix}FACTURA ${invoiceNumber}`;
   }
 }
 
@@ -212,20 +224,39 @@ export default function SendInvoiceEmailModal(props: SendInvoiceEmailModalProps)
     baselineRef.current = { subject: defaultSubject, message: defaultMessage };
   }, [open, customerEmail, defaultSubject, defaultMessage]);
 
-  const errors = useMemo(() => {
-    const e: { to?: string; subject?: string; message?: string } = {};
-    if (!to.trim())                            e.to      = "Ingresá el email del destinatario.";
-    else if (!EMAIL_RX.test(to.trim()))        e.to      = "El email no es válido.";
-    if (!subject.trim())                       e.subject = "El asunto es requerido.";
-    if (!message.trim())                       e.message = "El mensaje es requerido.";
+  // 2026-05-27 — Separación entre validación del DESTINATARIO y del
+  // CONTENIDO (subject + message). El boton "Enviar" requiere AMBOS
+  // (necesita un email valido para mandar el mail). Pero "Guardar como
+  // predeterminado" y "Restaurar texto" son acciones sobre el CONTENIDO
+  // del mail, no sobre el envio — deben funcionar aunque el cliente
+  // no tenga email registrado todavia.
+  //
+  // Antes ambos estaban acoplados en `hasErrors`: el operador no podia
+  // guardar una plantilla porque el campo `to` estaba vacio. Bug UX.
+  const recipientErrors = useMemo(() => {
+    const e: { to?: string } = {};
+    if (!to.trim())                      e.to = "Ingresá el email del destinatario.";
+    else if (!EMAIL_RX.test(to.trim()))  e.to = "El email no es válido.";
     return e;
-  }, [to, subject, message]);
+  }, [to]);
 
-  const hasErrors            = !!(errors.to || errors.subject || errors.message);
+  const contentErrors = useMemo(() => {
+    const e: { subject?: string; message?: string } = {};
+    if (!subject.trim()) e.subject = "El asunto es requerido.";
+    if (!message.trim()) e.message = "El mensaje es requerido.";
+    return e;
+  }, [subject, message]);
+
+  /** Errores completos — bloquea SOLO el boton "Enviar". */
+  const hasErrors        = !!(recipientErrors.to || contentErrors.subject || contentErrors.message);
+  /** Errores de contenido — bloquea "Guardar como predeterminado". El
+   *  destinatario es irrelevante para guardar una plantilla. */
+  const hasContentErrors = !!(contentErrors.subject || contentErrors.message);
+
   const customerHasNoEmail   = !customerEmail || !customerEmail.trim();
-  const visibleToError       = touched.to      ? errors.to      ?? null : null;
-  const visibleSubjectError  = touched.subject ? errors.subject ?? null : null;
-  const visibleMessageError  = touched.message ? errors.message ?? null : null;
+  const visibleToError       = touched.to      ? recipientErrors.to       ?? null : null;
+  const visibleSubjectError  = touched.subject ? contentErrors.subject    ?? null : null;
+  const visibleMessageError  = touched.message ? contentErrors.message    ?? null : null;
 
   // Dirty-state: subject o message difieren de la baseline guardada.
   // Re-calcular en cada render — los strings son chicos, el costo es nulo.
@@ -295,52 +326,60 @@ export default function SendInvoiceEmailModal(props: SendInvoiceEmailModalProps)
       subtitle={`Comprobante ${invoiceNumber}`}
       maxWidth="2xl"
       footer={
-        <div className="flex items-center justify-between gap-2">
-          {/* Lado izquierdo: acciones de plantilla (Guardar + Restaurar).
-              Visualmente separado de las acciones primarias (Cancelar/
-              Enviar) — son acciones de config, no del envio actual.
-              "Guardar como predeterminado" solo se habilita cuando hay
-              dirty-state (subject o message difieren de la baseline). */}
-          <div className="flex items-center gap-2">
-            {onSaveAsTemplate ? (
-              <>
-                <TPButton
-                  variant="ghost"
-                  onClick={handleSaveAsTemplate}
-                  disabled={loading || savingTemplate || hasErrors || !isDirty}
-                  loading={savingTemplate}
-                  iconLeft={<Save size={14} />}
-                  title={
-                    !isDirty
-                      ? "El asunto y mensaje actuales coinciden con el texto predeterminado."
-                      : "Se guardará como texto predeterminado para este tipo de comprobante."
-                  }
-                >
-                  {savingTemplate ? "Guardando…" : "Guardar como predeterminado"}
-                </TPButton>
-                <TPButton
-                  variant="ghost"
-                  onClick={handleRestoreDefaults}
-                  disabled={loading || savingTemplate || !isDirty}
-                  iconLeft={<RotateCcw size={14} />}
-                  title="Restaurar el asunto y mensaje al texto predeterminado guardado."
-                >
-                  Restaurar texto
-                </TPButton>
-              </>
-            ) : null}
-          </div>
-          {/* Lado derecho: acciones primarias del envio. Cancelar y Enviar
-              son ambos TPButton — comparten alto y padding por defecto del
-              componente. Cancelar lleva `border` para devolverle jerarquia
-              visual contra el fondo del modal. */}
-          <div className="flex items-center gap-2">
+        // Layout 2026-05-27: acciones secundarias alineadas a la izquierda
+        // del footer (visualmente como "config del mensaje"), Cancelar +
+        // Enviar a la derecha (acciones primarias del flujo). `mr-auto`
+        // en el grupo izquierdo lo ancla al borde izq y empuja todo lo
+        // demas a la derecha — funciona aunque el grupo izquierdo este
+        // vacio (modo `onSaveAsTemplate=undefined`).
+        <div className="flex flex-wrap items-center gap-2">
+          {/* Lado IZQUIERDO: acciones de plantilla (Guardar + Restaurar).
+              Son acciones secundarias sobre el contenido del mail —
+              independientes del estado del destinatario (un operador
+              puede ajustar la plantilla aunque el cliente todavia no
+              tenga email cargado).
+              "Guardar como predeterminado" se habilita cuando hay
+              dirty-state Y el contenido (subject/message) es valido.
+              NO requiere destinatario valido. */}
+          {onSaveAsTemplate ? (
+            <div className="flex flex-wrap items-center gap-2 mr-auto">
+              <TPButton
+                variant="ghost"
+                onClick={handleSaveAsTemplate}
+                disabled={loading || savingTemplate || hasContentErrors || !isDirty}
+                loading={savingTemplate}
+                iconLeft={<Save size={14} />}
+                title={
+                  !isDirty
+                    ? "El asunto y mensaje actuales coinciden con el texto predeterminado."
+                    : "Se guardará como texto predeterminado para este tipo de comprobante."
+                }
+              >
+                {savingTemplate ? "Guardando…" : "Guardar como predeterminado"}
+              </TPButton>
+              <TPButton
+                variant="ghost"
+                onClick={handleRestoreDefaults}
+                disabled={loading || savingTemplate || !isDirty}
+                iconLeft={<RotateCcw size={14} />}
+                title="Restaurar el asunto y mensaje al texto predeterminado guardado."
+              >
+                Restaurar texto
+              </TPButton>
+            </div>
+          ) : null}
+          {/* Lado DERECHO: acciones primarias del envio. Ambos usan
+              variants TPButton del mismo "tier" (secondary + primary
+              comparten `h-[42px] rounded-xl px-4` en `tp.ts`) →
+              MISMA altura, mismo padding, mismo border-radius. Antes
+              Cancelar usaba `ghost` (que NO tiene altura fija) +
+              border manual → desalineacion visual con Enviar. */}
+          <div className="flex items-center gap-2 ml-auto">
             <TPButton
-              variant="ghost"
+              variant="secondary"
               onClick={onClose}
               disabled={loading}
               iconLeft={<X size={14} />}
-              className="border border-border/60"
             >
               Cancelar
             </TPButton>

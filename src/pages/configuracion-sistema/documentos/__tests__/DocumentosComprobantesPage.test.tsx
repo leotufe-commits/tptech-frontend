@@ -20,6 +20,13 @@ vi.mock("../DocumentosHub", () => ({
   default: () => <div data-testid="documentos-hub">HUB_RENDERED</div>,
 }));
 
+// Mockear NumeracionAdmin (Etapa B 2026-05-29) — validamos solo que se
+// monta cuando la tab activa es "numeracion". Los tests específicos de
+// la pantalla viven en `NumeracionAdmin.test.tsx`.
+vi.mock("../NumeracionAdmin", () => ({
+  default: () => <div data-testid="numeracion-admin">NUMERACION_ADMIN_RENDERED</div>,
+}));
+
 function renderWithUrl(initialUrl: string) {
   return render(
     <MemoryRouter initialEntries={[initialUrl]}>
@@ -48,13 +55,13 @@ describe("DocumentosComprobantesPage (Fase A)", () => {
     expect(screen.getByTestId("documentos-hub")).toBeTruthy();
   });
 
-  it("?tab=numeracion → muestra el placeholder Próximamente", () => {
+  it("?tab=numeracion → monta NumeracionAdmin (Etapa B 2026-05-29)", () => {
     renderWithUrl("/x?tab=numeracion");
-    expect(screen.getByText(/Numeración de comprobantes/i)).toBeTruthy();
-    // "Módulo en preparación" aparece tanto en el placeholder como en
-    // la tarjeta de ayuda — usamos getAllBy* para no fallar por match doble.
-    expect(screen.getAllByText(/Módulo en preparación/i).length).toBeGreaterThan(0);
+    expect(screen.getByTestId("numeracion-admin")).toBeTruthy();
     expect(screen.queryByTestId("documentos-hub")).toBeNull();
+    // El placeholder "Módulo en preparación" YA NO existe en esta tab.
+    // (la frase puede seguir apareciendo en la ayuda lateral del subtítulo
+    //  de la pantalla; lo importante es que el panel central monte el CRUD).
   });
 
   it("?tab=preview (legacy) → redirige a Plantillas (deep-links no rompen)", () => {

@@ -44,32 +44,32 @@ function inputByLabel(label: string): HTMLInputElement | HTMLTextAreaElement {
   return el;
 }
 
-describe("SendInvoiceEmailModal — subject state-aware", () => {
-  it("DRAFT → 'BORRADOR <N°> - <Joyería>'", () => {
+describe("SendInvoiceEmailModal — subject state-aware (joyería primero, 2026-05-27)", () => {
+  it("DRAFT → '<Joyería> - BORRADOR <N°>'", () => {
     render(<SendInvoiceEmailModal {...makeProps({ status: "DRAFT", invoiceNumber: "VTA-0001" })} />);
     const subject = inputByLabel("Asunto") as HTMLInputElement;
-    expect(subject.value).toBe("BORRADOR VTA-0001 - Joyería Test");
+    expect(subject.value).toBe("Joyería Test - BORRADOR VTA-0001");
   });
 
-  it("CANCELLED → 'FACTURA ANULADA <N°> - <Joyería>'", () => {
+  it("CANCELLED → '<Joyería> - FACTURA ANULADA <N°>'", () => {
     render(<SendInvoiceEmailModal {...makeProps({ status: "CANCELLED" })} />);
     const subject = inputByLabel("Asunto") as HTMLInputElement;
-    expect(subject.value).toBe("FACTURA ANULADA A-0001-00000001 - Joyería Test");
+    expect(subject.value).toBe("Joyería Test - FACTURA ANULADA A-0001-00000001");
   });
 
   it.each(["PENDING", "PARTIAL", "PAID"] as const)(
-    "%s (estado final) → 'Factura <N°> - <Joyería>'",
+    "%s (estado final) → '<Joyería> - FACTURA <N°>' (mayúscula 2026-05-28)",
     (status) => {
       render(<SendInvoiceEmailModal {...makeProps({ status })} />);
       const subject = inputByLabel("Asunto") as HTMLInputElement;
-      expect(subject.value).toBe("Factura A-0001-00000001 - Joyería Test");
+      expect(subject.value).toBe("Joyería Test - FACTURA A-0001-00000001");
     },
   );
 
   it("sin jewelryName → omite ' - <Joyería>'", () => {
     render(<SendInvoiceEmailModal {...makeProps({ jewelryName: null })} />);
     const subject = inputByLabel("Asunto") as HTMLInputElement;
-    expect(subject.value).toBe("Factura A-0001-00000001");
+    expect(subject.value).toBe("FACTURA A-0001-00000001");
   });
 });
 
@@ -179,7 +179,7 @@ describe("SendInvoiceEmailModal — submit, loading, errores", () => {
     await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
     const payload = onSubmit.mock.calls[0]![0];
     expect(payload.to).toBe("cliente@example.com");
-    expect(payload.subject).toBe("Factura A-0001-00000001 - Joyería Test");
+    expect(payload.subject).toBe("Joyería Test - FACTURA A-0001-00000001");
     // El message default tiene 6 lineas (incluido un blank), separadas por \n.
     expect(payload.message.split("\n").length).toBe(6);
     // No debe haber sido trimmeado.
@@ -230,7 +230,7 @@ describe("SendInvoiceEmailModal — open/close lifecycle", () => {
       <SendInvoiceEmailModal {...makeProps({ status: "DRAFT", invoiceNumber: "VTA-0001" })} />,
     );
     let subject = inputByLabel("Asunto") as HTMLInputElement;
-    expect(subject.value).toBe("BORRADOR VTA-0001 - Joyería Test");
+    expect(subject.value).toBe("Joyería Test - BORRADOR VTA-0001");
 
     // Cerrar.
     rerender(<SendInvoiceEmailModal {...makeProps({ open: false, status: "DRAFT", invoiceNumber: "VTA-0001" })} />);
@@ -238,7 +238,7 @@ describe("SendInvoiceEmailModal — open/close lifecycle", () => {
     // Re-abrir con otro status + invoice number → defaults nuevos.
     rerender(<SendInvoiceEmailModal {...makeProps({ open: true, status: "PAID", invoiceNumber: "A-0001-00000005" })} />);
     subject = inputByLabel("Asunto") as HTMLInputElement;
-    expect(subject.value).toBe("Factura A-0001-00000005 - Joyería Test");
+    expect(subject.value).toBe("Joyería Test - FACTURA A-0001-00000005");
   });
 });
 
@@ -292,7 +292,7 @@ describe("SendInvoiceEmailModal — plantilla persistida (interpolacion)", () =>
       defaultSubjectTemplate: "",
       defaultMessageTemplate: "   ",   // solo whitespace = vacio
     })} />);
-    expect((inputByLabel("Asunto") as HTMLInputElement).value).toBe("Factura A-0001-00000001 - Joyería Test");
+    expect((inputByLabel("Asunto") as HTMLInputElement).value).toBe("Joyería Test - FACTURA A-0001-00000001");
   });
 });
 
@@ -426,5 +426,137 @@ describe("SendInvoiceEmailModal — label de variables (ajuste UX)", () => {
   it("NUNCA se renderea con onSaveAsTemplate (el soporte de variables sigue activo, solo el label esta oculto)", () => {
     render(<SendInvoiceEmailModal {...makeProps({ onSaveAsTemplate: vi.fn() })} />);
     expect(screen.queryByText(/Variables disponibles/i)).toBeNull();
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 2026-05-27 — Separacion plantilla / envio + footer alignment + unif TPButton
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("SendInvoiceEmailModal — Guardar/Restaurar independientes del email", () => {
+  it("Guardar — habilita al modificar el ASUNTO aunque el destinatario este vacio", () => {
+    // Cliente sin email registrado → campo `to` vacio al abrir el modal.
+    render(<SendInvoiceEmailModal {...makeProps({
+      onSaveAsTemplate: vi.fn(),
+      customerEmail: null,
+    })} />);
+
+    const to       = inputByLabel("Destinatario") as HTMLInputElement;
+    const saveBtn  = screen.getByRole("button", { name: /Guardar como predeterminado/i });
+    expect(to.value).toBe("");
+    expect((saveBtn as HTMLButtonElement).disabled).toBe(true); // sin dirty aun
+
+    // Modificamos solo el asunto. El destinatario sigue vacio.
+    fireEvent.change(inputByLabel("Asunto"), { target: { value: "Mi asunto nuevo {{numero}}" } });
+    expect((saveBtn as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it("Guardar — habilita al modificar el MENSAJE aunque el destinatario sea invalido", () => {
+    render(<SendInvoiceEmailModal {...makeProps({
+      onSaveAsTemplate: vi.fn(),
+      customerEmail: "esto-no-es-un-email",
+    })} />);
+
+    const saveBtn = screen.getByRole("button", { name: /Guardar como predeterminado/i });
+    fireEvent.change(inputByLabel("Mensaje"), { target: { value: "Hola {{cliente}}, va." } });
+    expect((saveBtn as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it("Enviar — sigue DISABLED si el destinatario es invalido (regla de envio intacta)", () => {
+    render(<SendInvoiceEmailModal {...makeProps({
+      customerEmail: "invalido-no-arroba",
+    })} />);
+    const sendBtn = screen.getByRole("button", { name: /Enviar/i });
+    expect((sendBtn as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("Enviar — habilitado cuando hay email valido + subject + message", () => {
+    render(<SendInvoiceEmailModal {...makeProps({
+      customerEmail: "cliente@example.com",
+    })} />);
+    const sendBtn = screen.getByRole("button", { name: /Enviar/i });
+    expect((sendBtn as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it("Guardar — sigue disabled si SUBJECT esta vacio (contentErrors gana)", () => {
+    render(<SendInvoiceEmailModal {...makeProps({
+      onSaveAsTemplate: vi.fn(),
+      customerEmail: null,
+    })} />);
+    // Vaciar el asunto → contentErrors.subject = true → Guardar disabled
+    fireEvent.change(inputByLabel("Asunto"), { target: { value: "" } });
+    const saveBtn = screen.getByRole("button", { name: /Guardar como predeterminado/i });
+    expect((saveBtn as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("Restaurar — funciona sin email cargado", () => {
+    render(<SendInvoiceEmailModal {...makeProps({
+      onSaveAsTemplate: vi.fn(),
+      customerEmail: null,
+    })} />);
+    const subject = inputByLabel("Asunto") as HTMLInputElement;
+    const original = subject.value;
+    fireEvent.change(subject, { target: { value: "Cambio sin email" } });
+
+    const restoreBtn = screen.getByRole("button", { name: /Restaurar texto/i });
+    expect((restoreBtn as HTMLButtonElement).disabled).toBe(false);
+    fireEvent.click(restoreBtn);
+    expect((inputByLabel("Asunto") as HTMLInputElement).value).toBe(original);
+  });
+});
+
+describe("SendInvoiceEmailModal — Cancelar/Enviar unificados (variantes TPButton)", () => {
+  it("Cancelar usa h-[42px] de TP_BTN_SECONDARY (mismo height que TP_BTN_PRIMARY de Enviar)", () => {
+    render(<SendInvoiceEmailModal {...makeProps()} />);
+    const cancelBtn = screen.getByRole("button", { name: /Cancelar/i });
+    const sendBtn   = screen.getByRole("button", { name: /Enviar/i });
+    // Ambos comparten la utilidad de altura fija de tp.ts.
+    expect(cancelBtn.className).toMatch(/h-\[42px\]/);
+    expect(sendBtn.className).toMatch(/h-\[42px\]/);
+    // Ambos usan rounded-xl (no rounded-lg del ghost variant viejo).
+    expect(cancelBtn.className).toMatch(/rounded-xl/);
+    expect(sendBtn.className).toMatch(/rounded-xl/);
+  });
+
+  it("Cancelar dispara onClose y NO depende del email", () => {
+    const onClose = vi.fn();
+    render(<SendInvoiceEmailModal {...makeProps({ customerEmail: null, onClose })} />);
+    const cancelBtn = screen.getByRole("button", { name: /Cancelar/i });
+    expect((cancelBtn as HTMLButtonElement).disabled).toBe(false);
+    fireEvent.click(cancelBtn);
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("SendInvoiceEmailModal — formato asunto Joyería - ESTADO N° (2026-05-27)", () => {
+  it("Templates persistidos en DocumentTemplate tienen prioridad sobre el default nuevo", () => {
+    // Si el operador ya guardo un template propio, se respeta tal cual
+    // interpolado, sin aplicar el nuevo formato "Joyería primero".
+    render(<SendInvoiceEmailModal {...makeProps({
+      defaultSubjectTemplate: "Documento {{numero}} :: {{joyeria}}",
+      status: "PENDING",
+    })} />);
+    expect((inputByLabel("Asunto") as HTMLInputElement).value)
+      .toBe("Documento A-0001-00000001 :: Joyería Test");
+  });
+
+  // 2026-05-28 — Estado SIEMPRE en mayuscula (BORRADOR / FACTURA / FACTURA
+  // ANULADA). Uniforma el casing visual y refuerza la identidad del
+  // comprobante en la bandeja del cliente.
+  it("estado FINAL usa 'FACTURA' en mayuscula (no 'Factura')", () => {
+    render(<SendInvoiceEmailModal {...makeProps({ status: "PENDING" })} />);
+    const subject = (inputByLabel("Asunto") as HTMLInputElement).value;
+    expect(subject).toMatch(/FACTURA\s/);
+    expect(subject).not.toMatch(/\bFactura\s/); // Title case viejo NO debe aparecer
+  });
+
+  it("estado DRAFT usa 'BORRADOR' (ya era mayuscula, sanity check)", () => {
+    render(<SendInvoiceEmailModal {...makeProps({ status: "DRAFT" })} />);
+    expect((inputByLabel("Asunto") as HTMLInputElement).value).toMatch(/BORRADOR\s/);
+  });
+
+  it("estado CANCELLED usa 'FACTURA ANULADA' (mayuscula compuesta)", () => {
+    render(<SendInvoiceEmailModal {...makeProps({ status: "CANCELLED" })} />);
+    expect((inputByLabel("Asunto") as HTMLInputElement).value).toMatch(/FACTURA ANULADA/);
   });
 });

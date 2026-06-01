@@ -85,7 +85,7 @@ export function CostLineOtherRow(props: CostLineOtherRowProps): React.ReactEleme
       {baseText && (
         <div className={cn(vt.row.flexBetween, vt.colors.formula)}>
           <span className={vt.text.label}>Costo unit.</span>
-          <span className={cn(vt.text.formulaCompact, "tabular-nums text-right")}>{baseText}</span>
+          <span className={cn(vt.text.formulaCompact, vt.colors.label, "tabular-nums text-right")}>{baseText}</span>
         </div>
       )}
 

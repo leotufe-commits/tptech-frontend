@@ -45,7 +45,25 @@ const baseProps = {
 const COMP = { metal: {}, hechura: {}, taxes: [] };
 
 function cell(label: string): HTMLElement {
-  return screen.getByText(label).parentElement as HTMLElement;
+  // El header de "Bonificación" ahora es un <button> dropdown; el <span> con
+  // el texto matchea pero su parentElement directo es el <button>, no la
+  // celda. Subimos hasta el primer ancestro que tenga el botón "Aplica a"
+  // (común a celdas Bonificación e Impuestos). Para "Impuestos" sigue siendo
+  // un <div> plano, así que el matched element ya es válido por sí mismo.
+  // Para tolerar múltiples matches (el span "Bonificación" + opciones del
+  // menú abierto en otros tests), usamos getAllByText y el primero.
+  const matches = screen.getAllByText(label);
+  for (const node of matches) {
+    let el: HTMLElement | null = node;
+    while (el) {
+      if (el.querySelector('button[title="Cambiar a qué componente aplica"]')) {
+        return el;
+      }
+      el = el.parentElement;
+    }
+  }
+  // Fallback al comportamiento legacy si no se encontró.
+  return matches[0].parentElement as HTMLElement;
 }
 function appliesToText(c: HTMLElement): string | null {
   return c.querySelector('button[title="Cambiar a qué componente aplica"]')?.textContent ?? null;
@@ -74,6 +92,41 @@ describe("Combos limitados a 3 opciones simples", () => {
     openCombo(cell("Bonificación"));
     const opts = popoverOptions();
     expect(opts.sort()).toEqual(["Solo hechura", "Solo metal", "Total"]);
+  });
+
+  // Línea SIN composition (manual, o pre-preview): no podemos ofrecer
+  // "Solo metal" / "Solo hechura" porque no sabemos qué hay debajo. La
+  // única opción segura es Total — el combo puede o bien no renderizarse
+  // (1 sola opción → estático), o bien renderizarse con solo TOTAL; en
+  // ambos casos METAL/HECHURA NO deben aparecer ni en el texto del
+  // trigger ni en el popover. Cubre "applyOn funciona sin cliente/sin
+  // composition" del checklist de interacción.
+  it("Bonificación: línea SIN composition → no ofrece 'Solo metal' / 'Solo hechura'", () => {
+    render(<LinesEditorSection {...(baseProps as any)}
+      lines={[line("L1", { /* sin composition */ })]} />);
+    const bonifCell = cell("Bonificación");
+    const trigger = bonifCell.querySelector('button[title="Cambiar a qué componente aplica"]');
+    // Si el combo se renderizó, abrimos y verificamos opciones; si no, OK.
+    if (trigger) {
+      fireEvent.click(trigger as HTMLButtonElement);
+      const opts = popoverOptions();
+      expect(opts.some((o) => /Solo metal|Solo hechura/.test(o))).toBe(false);
+    }
+    // En ningún caso el texto del trigger debe nombrar METAL/HECHURA.
+    expect(bonifCell.textContent ?? "").not.toMatch(/Solo metal|Solo hechura/);
+  });
+
+  it("Impuestos: línea SIN composition → no ofrece 'Solo metal' / 'Solo hechura'", () => {
+    render(<LinesEditorSection {...(baseProps as any)}
+      lines={[line("L1", { taxOverride: { mode: "PERCENT", value: 5, appliesTo: "TOTAL" } })]} />);
+    const ivaCell = cell("Impuestos");
+    const trigger = ivaCell.querySelector('button[title="Cambiar a qué componente aplica"]');
+    if (trigger) {
+      fireEvent.click(trigger as HTMLButtonElement);
+      const opts = popoverOptions();
+      expect(opts.some((o) => /Solo metal|Solo hechura/.test(o))).toBe(false);
+    }
+    expect(ivaCell.textContent ?? "").not.toMatch(/Solo metal|Solo hechura/);
   });
 });
 
@@ -124,7 +177,11 @@ describe("Cambiar el combo viaja como override (sin valor) y recalcula", () => {
     expect(last[1].manualTaxAppliesTo).toBe("HECHURA");
   });
 
-  it("Bonificación → 'Solo metal' viaja manualDiscountAppliesTo (sin override de valor)", () => {
+  it("Bonificación → 'Solo metal' SIEMPRE crea manualDiscount (T3 — persistir como manual)", () => {
+    // T3 — cambiar "Aplica en" es intención manual del operador. El patch
+    // siempre arma `manualDiscount` con el efectivo visible + nueva base +
+    // kind actual, para que `manualOverrides.discount` se prenda en
+    // `applyLineOverrides` y la rehidratación NO pise la elección.
     const spy = vi.fn();
     render(<LinesEditorSection {...(baseProps as any)} applyLineOverrides={spy}
       lines={[line("L1", { inheritedDiscountAppliesTo: "HECHURA", composition: COMP })]} />);
@@ -133,7 +190,9 @@ describe("Cambiar el combo viaja como override (sin valor) y recalcula", () => {
       .find((b) => /Solo metal/.test(b.textContent ?? "")) as HTMLButtonElement);
     const last = spy.mock.calls[spy.mock.calls.length - 1];
     expect(last[1].manualDiscountAppliesTo).toBe("METAL");
-    expect(last[1].manualDiscount).toBeUndefined();
+    // Ahora SÍ viaja manualDiscount (con la base nueva y kind por default).
+    expect(last[1].manualDiscount).toBeDefined();
+    expect(last[1].manualDiscount.appliesTo).toBe("METAL");
   });
 });
 
@@ -148,8 +207,16 @@ describe("Independiente por línea (mismo artículo)", () => {
           composition: COMP,
         }, { manualOverrides: { discount: true } }),
       ]} />);
-    const texts = screen.getAllByText("Bonificación")
-      .map((el) => appliesToText(el.parentElement as HTMLElement));
+    // Tomamos los buttons-trigger del dropdown ("Tipo de ajuste: Bonificación")
+    // y para cada uno subimos al ancestro que contiene el botón "Aplica a".
+    const triggers = screen.getAllByRole("button", { name: /tipo de ajuste:\s*bonificación/i });
+    const texts = triggers.map((t) => {
+      let el: HTMLElement | null = t;
+      while (el && !el.querySelector('button[title="Cambiar a qué componente aplica"]')) {
+        el = el.parentElement;
+      }
+      return appliesToText(el as HTMLElement);
+    });
     expect(texts.some((t) => /Solo metal/.test(t ?? ""))).toBe(true);
     expect(texts.some((t) => /Solo hechura/.test(t ?? ""))).toBe(true);
   });

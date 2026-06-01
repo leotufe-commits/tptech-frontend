@@ -30,7 +30,7 @@ import type { LucideIcon } from "lucide-react";
 
 import TPNumberInput from "./TPNumberInput";
 import { cn } from "./tp";
-import { fmtMoney } from "../../lib/document-helpers";
+import { formatByType, formatMoneyDoc } from "../../lib/pricing/format";
 import type { DocumentLine } from "../../lib/document-types";
 import {
   groupCompositionItems,
@@ -498,19 +498,19 @@ export function LineAdvancedOverridesPanel({
                 summary={
                   <InfoLineRow>
                     {costTotal != null && (
-                      <InfoItem label="Costo" value={fmtMoney(costTotal, currency)} />
+                      <InfoItem label="Costo" value={formatMoneyDoc(costTotal, currency)} />
                     )}
                     {gananciaTotal != null && (
                       <InfoItem
                         label="Ganancia"
-                        value={fmtMoney(gananciaTotal, currency)}
+                        value={formatMoneyDoc(gananciaTotal, currency)}
                         className={gananciaToneClass}
                       />
                     )}
                     {showMargin && (
                       <InfoItem
                         label="Margen"
-                        value={margin != null ? `${margin.toFixed(1)}%` : "—"}
+                        value={formatByType(margin, "MARGIN_PERCENT")}
                         className={marginToneClass}
                       />
                     )}
@@ -559,13 +559,13 @@ export function LineAdvancedOverridesPanel({
                         {hasDiscount && (
                           <InfoItem
                             label="Bruto"
-                            value={fmtMoney(bruto, currency)}
+                            value={formatMoneyDoc(bruto, currency)}
                           />
                         )}
                         {hasDiscount && (
                           <InfoItem
                             label="Descuentos"
-                            value={`−${fmtMoney(lineDisc, currency)}`}
+                            value={`−${formatMoneyDoc(lineDisc, currency)}`}
                             className="text-emerald-500"
                             labelTitle="Total consolidado de promociones, bonificaciones y descuentos aplicados por el motor."
                           />
@@ -585,7 +585,7 @@ export function LineAdvancedOverridesPanel({
                         <div className="flex w-fit flex-col items-end">
                           <InfoItem
                             label="Neto"
-                            value={fmtMoney(salePrice ?? 0, currency)}
+                            value={formatMoneyDoc(salePrice ?? 0, currency)}
                             highlight
                           />
                           <div className="text-[9px] italic text-muted/70">
@@ -615,7 +615,7 @@ export function LineAdvancedOverridesPanel({
                 )}
                 {purityValue != null && (
                   <FieldRow label="Pureza">
-                    <ReadOnlyValue>{purityValue.toFixed(3)}</ReadOnlyValue>
+                    <ReadOnlyValue>{formatByType(purityValue, "PURITY")}</ReadOnlyValue>
                   </FieldRow>
                 )}
                 <FieldRow label="Gramos">
@@ -671,7 +671,7 @@ export function LineAdvancedOverridesPanel({
                     typeof t.rate === "number" ? ` ${t.rate}%` : "";
                   return (
                     <FieldRow key={t.id} label={`${t.name}${ratePart}${scopeLabel}`}>
-                      <ReadOnlyValue>{fmtMoney(t.taxAmount, currency)}</ReadOnlyValue>
+                      <ReadOnlyValue>{formatMoneyDoc(t.taxAmount, currency)}</ReadOnlyValue>
                     </FieldRow>
                   );
                 })}
@@ -693,18 +693,18 @@ export function LineAdvancedOverridesPanel({
           <div className="grid grid-cols-3 gap-2">
             <SummaryStat label="Costo total">
               {costTotal != null
-                ? <span className="font-semibold tabular-nums text-text">{fmtMoney(costTotal, currency)}</span>
+                ? <span className="font-semibold tabular-nums text-text">{formatMoneyDoc(costTotal, currency)}</span>
                 : <span className="text-muted/50">—</span>}
             </SummaryStat>
             <SummaryStat label="Precio de venta" hint="Neto, sin impuestos">
               <span className="font-semibold tabular-nums text-text">
-                {fmtMoney(salePrice ?? 0, currency)}
+                {formatMoneyDoc(salePrice ?? 0, currency)}
               </span>
             </SummaryStat>
             {showMargin && (
               <SummaryStat label="Margen">
                 <span className={`font-semibold tabular-nums text-[11px] ${marginToneClass}`}>
-                  {margin != null ? `${margin.toFixed(1)}%` : "—"}
+                  {formatByType(margin, "MARGIN_PERCENT")}
                 </span>
               </SummaryStat>
             )}
@@ -1053,7 +1053,7 @@ function CompositionTable({
   ) => void;
 }) {
   const fmt = (v: number | null | undefined) =>
-    v != null && Number.isFinite(v) ? fmtMoney(v, currency) : null;
+    v != null && Number.isFinite(v) ? formatMoneyDoc(v, currency) : null;
 
   // ── Resumen chips superiores. Cada chip = tipo con count + agregado. ─────
   const totalComponents =
@@ -1085,9 +1085,7 @@ function CompositionTable({
         <ChipResumen
           type="METAL"
           label="Metales"
-          value={metalTotalGrams != null
-            ? `${metalTotalGrams.toFixed(2)} g`
-            : "—"}
+          value={formatByType(metalTotalGrams, "METAL_GRAMS")}
         />
         <ChipResumen
           type="HECHURA"
@@ -1136,7 +1134,7 @@ function CompositionTable({
             const mermaText = g.appliedMermaPct === VARIES
               ? "Merma: varias"
               : g.appliedMermaPct != null
-                ? `Merma: ${(g.appliedMermaPct as number).toFixed(2)}%`
+                ? `Merma: ${formatByType(g.appliedMermaPct as number, "MERMA_PERCENT")}`
                 : null;
             const secondary = (
               <span>
@@ -1445,7 +1443,7 @@ function DocumentAdjustmentsBlock({
       : "text-amber-600 dark:text-amber-400";
     return (
       <span className={cn("tabular-nums font-semibold", cls)}>
-        {sign}{fmtMoney(Math.abs(amount), currency)}
+        {sign}{formatMoneyDoc(Math.abs(amount), currency)}
       </span>
     );
   };
@@ -1459,7 +1457,7 @@ function DocumentAdjustmentsBlock({
         <div className="flex items-baseline justify-between gap-2">
           <span className="text-muted">
             Bonificación global{lineMd.valuePct != null && (
-              <span className="ml-1 text-text/90">{lineMd.valuePct.toFixed(2)}%</span>
+              <span className="ml-1 text-text/90">{formatByType(lineMd.valuePct, "PERCENT")}</span>
             )}
           </span>
           {fmtAmount(lineMd.amount, lineMd.kind === "BONUS")}
@@ -1504,7 +1502,7 @@ function AdjustmentChip({
       {type === "PERCENTAGE" && value != null && (
         <span className="text-muted/70 mr-0.5">{value}%</span>
       )}
-      {sign}{fmtMoney(Math.abs(amount), currency)}
+      {sign}{formatMoneyDoc(Math.abs(amount), currency)}
     </span>
   );
 }
@@ -1667,7 +1665,7 @@ function GroupedMetalAccordion({
       {totalGrams != null && (
         <>
           <span className="text-muted/40">·</span>
-          <span>Total gramos: <span className="font-medium text-text/90 tabular-nums">{totalGrams.toFixed(2)} g</span></span>
+          <span>Total gramos: <span className="font-medium text-text/90 tabular-nums">{formatByType(totalGrams, "METAL_GRAMS")}</span></span>
         </>
       )}
       {/* Chips de subgrupos cuando hay múltiples variantes. */}
@@ -1676,17 +1674,17 @@ function GroupedMetalAccordion({
           <span className="text-muted/40 mr-2">·</span>
           {g.metalName ?? g.purityLabel ?? "—"}:{" "}
           <span className="tabular-nums text-text/90">
-            {g.totalAppliedGrams != null ? `${g.totalAppliedGrams.toFixed(2)} g` : "—"}
+            {formatByType(g.totalAppliedGrams, "METAL_GRAMS")}
           </span>
         </span>
       ))}
     </div>
   );
   const rightValue = metaMetalSale != null
-    ? <>Valor venta: <span className="text-text">{fmtMoney(metaMetalSale, currency)}</span></>
+    ? <>Valor venta: <span className="text-text">{formatMoneyDoc(metaMetalSale, currency)}</span></>
     : null;
   const rightSub = metaMetalSale != null && qtyLine > 1
-    ? <>Total: {fmtMoney(metaMetalSale * qtyLine, currency)}</>
+    ? <>Total: {formatMoneyDoc(metaMetalSale * qtyLine, currency)}</>
     : null;
 
   return (
@@ -1710,15 +1708,15 @@ function GroupedMetalAccordion({
             </span>
             <span className="text-muted">Líneas: <span className="tabular-nums text-text/90">{g.count}</span></span>
             {g.totalAppliedGrams != null && (
-              <span className="text-muted">Gramos: <span className="tabular-nums text-text/90">{g.totalAppliedGrams.toFixed(2)} g</span></span>
+              <span className="text-muted">Gramos: <span className="tabular-nums text-text/90">{formatByType(g.totalAppliedGrams, "METAL_GRAMS")}</span></span>
             )}
             {g.appliedMermaPct === VARIES ? (
               <span className="text-muted">Merma: <span className="text-text/90">varias</span></span>
             ) : g.appliedMermaPct != null ? (
-              <span className="text-muted">Merma: <span className="tabular-nums text-text/90">{(g.appliedMermaPct as number).toFixed(2)}%</span></span>
+              <span className="text-muted">Merma: <span className="tabular-nums text-text/90">{formatByType(g.appliedMermaPct as number, "MERMA_PERCENT")}</span></span>
             ) : null}
             {g.totalLineCost != null && (
-              <span className="text-muted">Costo: <span className="tabular-nums font-medium text-text">{fmtMoney(g.totalLineCost, currency)}</span></span>
+              <span className="text-muted">Costo: <span className="tabular-nums font-medium text-text">{formatMoneyDoc(g.totalLineCost, currency)}</span></span>
             )}
           </div>
         ))}
@@ -1760,12 +1758,12 @@ function GroupedHechuraAccordion({
     </div>
   );
   const rightValue = metaHechuraSale != null
-    ? <>Valor venta: <span className="text-text">{fmtMoney(metaHechuraSale, currency)}</span></>
+    ? <>Valor venta: <span className="text-text">{formatMoneyDoc(metaHechuraSale, currency)}</span></>
     : (aggregate.totalLineCost != null
-        ? <>Costo: <span className="text-text">{fmtMoney(aggregate.totalLineCost, currency)}</span></>
+        ? <>Costo: <span className="text-text">{formatMoneyDoc(aggregate.totalLineCost, currency)}</span></>
         : null);
   const rightSub = metaHechuraSale != null && qtyLine > 1
-    ? <>Total: {fmtMoney(metaHechuraSale * qtyLine, currency)}</>
+    ? <>Total: {formatMoneyDoc(metaHechuraSale * qtyLine, currency)}</>
     : null;
 
   return (
@@ -1790,10 +1788,10 @@ function GroupedHechuraAccordion({
             )}
             <span className="text-muted">Moneda: <span className="text-text/90">{currency || "—"}</span></span>
             {h.appliedAmount != null && (
-              <span className="text-muted">Valor: <span className="tabular-nums text-text/90">{fmtMoney(h.appliedAmount, currency)}</span></span>
+              <span className="text-muted">Valor: <span className="tabular-nums text-text/90">{formatMoneyDoc(h.appliedAmount, currency)}</span></span>
             )}
             {h.lineCost != null && (
-              <span className="text-muted">Costo: <span className="tabular-nums font-medium text-text">{fmtMoney(h.lineCost, currency)}</span></span>
+              <span className="text-muted">Costo: <span className="tabular-nums font-medium text-text">{formatMoneyDoc(h.lineCost, currency)}</span></span>
             )}
           </div>
         ))}
@@ -1836,10 +1834,10 @@ function GroupedProductServiceAccordion({
     </div>
   );
   const rightValue = aggregate.totalValue != null
-    ? <>Total: <span className="text-text">{fmtMoney(aggregate.totalValue, currency)}</span></>
+    ? <>Total: <span className="text-text">{formatMoneyDoc(aggregate.totalValue, currency)}</span></>
     : null;
   const rightSub = aggregate.totalValue != null && qtyLine > 1
-    ? <>Doc.: {fmtMoney(aggregate.totalValue * qtyLine, currency)}</>
+    ? <>Doc.: {formatMoneyDoc(aggregate.totalValue * qtyLine, currency)}</>
     : null;
 
   return (
@@ -1879,19 +1877,19 @@ function GroupedProductServiceAccordion({
                 <span className="text-muted">Código: <span className="text-text/90">{code}</span></span>
               )}
               {it.quantity != null && (
-                <span className="text-muted">Cantidad: <span className="tabular-nums text-text/90">{it.quantity.toLocaleString("es-AR", { maximumFractionDigits: 4 })}</span></span>
+                <span className="text-muted">Cantidad: <span className="tabular-nums text-text/90">{formatByType(it.quantity, "QUANTITY")}</span></span>
               )}
               {it.unitValue != null && (
-                <span className="text-muted">Unitario: <span className="tabular-nums text-text/90">{fmtMoney(it.unitValue, currency)}</span></span>
+                <span className="text-muted">Unitario: <span className="tabular-nums text-text/90">{formatMoneyDoc(it.unitValue, currency)}</span></span>
               )}
               {it.totalValue != null && (
-                <span className="text-muted">Total: <span className="tabular-nums font-medium text-text">{fmtMoney(it.totalValue, currency)}</span></span>
+                <span className="text-muted">Total: <span className="tabular-nums font-medium text-text">{formatMoneyDoc(it.totalValue, currency)}</span></span>
               )}
               {showAdj && (
                 <span className="text-muted">
                   {adjWord}{adjPct}:{" "}
                   <span className={cn("tabular-nums", adjCls)}>
-                    {adjSign}{fmtMoney(Math.abs(adjAmount as number), currency)}
+                    {adjSign}{formatMoneyDoc(Math.abs(adjAmount as number), currency)}
                   </span>
                 </span>
               )}

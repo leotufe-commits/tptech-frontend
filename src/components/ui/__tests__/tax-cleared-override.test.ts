@@ -8,7 +8,7 @@
 // ============================================================================
 
 import { describe, it, expect } from "vitest";
-import { isTaxClearedOverride } from "../TPDocumentLineAdvancedEditor";
+import { isTaxClearedOverride } from "../TPDocumentLineAdvancedEditor.helpers";
 
 describe("isTaxClearedOverride", () => {
   it("sin override (impuesto automático normal) → false (no se limpia)", () => {

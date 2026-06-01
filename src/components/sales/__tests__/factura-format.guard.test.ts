@@ -11,6 +11,7 @@ const ROOT = join(process.cwd(), "src");
 
 const TARGET_FILES = [
   "components/ui/TPDocumentLineAdvancedEditor.tsx",
+  "components/ui/LineAdvancedOverridesPanel.tsx",
   "components/sales/SaleCompositionEditableGrid.tsx",
   "components/sales/SalePricingPanel.tsx",
   "components/sales/SaleLineCompositionPre.tsx",
@@ -21,6 +22,8 @@ const TARGET_FILES = [
   "pages/ventas-facturas/InvoiceEditorModal/DiscountCard.tsx",
   "pages/ventas-facturas/InvoiceEditorModal/ShippingCard.tsx",
   "pages/ventas-facturas/InvoiceEditorModal/PaymentCard.tsx",
+  "pages/ventas-facturas/InvoiceEditorModal/CurrencyFXModal.tsx",
+  "pages/ventas-facturas/InvoiceEditorModal/InvoiceHeaderForm.tsx",
 ];
 
 const FILES = TARGET_FILES.map((p) => join(ROOT, p)).filter(existsSync);

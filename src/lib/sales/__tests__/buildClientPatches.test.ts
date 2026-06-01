@@ -56,13 +56,43 @@ describe("buildClientPatches — separación identidad vs. pricing", () => {
     expect(Object.keys(pricingPatch).every((k) => (PRICING_KEYS as readonly string[]).includes(k))).toBe(true);
   });
 
-  it("pricingPatch OMITE campos ausentes (cliente sin lista/moneda/fx)", () => {
+  it("pricingPatch OMITE campos ausentes (null/undefined → no se emite)", () => {
     const { pricingPatch } = buildClientPatches({
       clientId: "c2", clientName: "X", clientSnapshot: snap,
       sellerId: "", canonicalTerm: "", dueDate: "",
       autoPriceListId: null, currency: null, fxRate: undefined,
     });
     expect(pricingPatch).toEqual({});
+  });
+
+  it("T15 — autoPriceListId='' (resolvedo a string vacío) → EMITE priceListId='' (limpia la del cliente anterior)", () => {
+    // Caso: el cliente nuevo no tiene lista, y la cadena de fallback
+    // (UserPref → favorito → primera activa) tampoco devolvió ninguna.
+    // El patch debe PISAR `cur.priceListId` con "" para que NO quede la
+    // lista del cliente anterior pegada.
+    const draft = { clientId: "c1", priceListId: "pl-OLD" };
+    const { pricingPatch } = buildClientPatches({
+      clientId: "c2", clientName: "X", clientSnapshot: snap,
+      sellerId: "", canonicalTerm: "", dueDate: "",
+      autoPriceListId: "", currency: null, fxRate: undefined,
+    });
+    expect(pricingPatch).toHaveProperty("priceListId", "");
+    const recalced = { ...draft, ...pricingPatch };
+    expect(recalced.priceListId).toBe("");
+  });
+
+  it("T15 — autoPriceListId resuelto a un id válido (UserPref/favorito) → reemplaza la lista anterior", () => {
+    // Cliente nuevo sin lista propia. El caller resolvió via UserPref →
+    // "pl-PREF". El patch debe llevar "pl-PREF" → pisa "pl-OLD".
+    const draft = { clientId: "c1", priceListId: "pl-OLD" };
+    const { pricingPatch } = buildClientPatches({
+      clientId: "c2", clientName: "X", clientSnapshot: snap,
+      sellerId: "", canonicalTerm: "", dueDate: "",
+      autoPriceListId: "pl-PREF", currency: null, fxRate: undefined,
+    });
+    expect(pricingPatch.priceListId).toBe("pl-PREF");
+    const recalced = { ...draft, ...pricingPatch };
+    expect(recalced.priceListId).toBe("pl-PREF");
   });
 
   it("aplicar SOLO clientDataPatch (rama 'Mantener') no toca lista/moneda/fx del draft", () => {

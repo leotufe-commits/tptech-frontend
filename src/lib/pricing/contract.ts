@@ -341,6 +341,11 @@ export type NormalizedCompositionMetalItem = {
   costLineId:        string | null;
   metalVariantId:    string | null;
   metalName:         string | null;
+  /** F1.3 Fase 2.4 — Nombre comercial de la VARIANTE de metal
+   *  (`MetalVariant.name` del catálogo; ej. "Oro 18 Kilates"). Distinto a
+   *  `metalName` (= nombre del metal PADRE, ej. "Oro Fino SIII"). `null` en
+   *  snapshots legacy sin enriquecimiento de catálogo. */
+  variantName:       string | null;
   purity:            number | null;
   purityLabel:       string | null;
   appliedGrams:      number | null;
@@ -486,6 +491,40 @@ export type NormalizedMetalHechuraBreakdown = {
   hechuraSaleEstimated?: boolean;
   /** FASE 1 — trazabilidad del origen del breakdown. */
   source?: NormalizedMetalHechuraBreakdownSource;
+  // ── Etapa C-comercial / C4-fix + C6 (POLICY §R-Rounding-14) ─────────────
+  // Auditoría del redondeo COMERCIAL. Quedan `null` cuando el redondeo no
+  // actuó (passthrough). Los lee `CommercialPhysicalRoundingBlock`.
+  metalSalePreRounding?:    number | null;
+  hechuraSalePreRounding?:  number | null;
+  metalSaleRoundingDelta?:  number | null;
+  hechuraSaleRoundingDelta?:number | null;
+  /** Snapshot completo del redondeo COMERCIAL PHYSICAL — paralelo al
+   *  `documentRoundingApplied.breakdown.metalPhysical` del financiero. Shape
+   *  EXACTO del DTO backend (`SalePreviewLineCommercialPhysicalSnapshot`). */
+  physical?: {
+    metals: Array<{
+      metalParentId:      string | null;
+      metalParentName:    string;
+      preGrams:           number;
+      postGrams:          number;
+      deltaGrams:         number;
+      metalPricePerGram:  number;
+      monetaryEquivalent: number;
+      mode:               string;
+      direction:          string;
+      source:             "COMMERCIAL_PHYSICAL_ROUNDING";
+      fallback:
+        | null
+        | "NO_METAL_PRICE"
+        | "NO_CONFIG"
+        | "INVALID_GRAMS";
+    }>;
+    metalMonetaryEquivalent: number;
+    fallback:
+      | null
+      | "NO_BREAKDOWN_DATA"
+      | "NO_METALS_TO_ROUND";
+  } | null;
 };
 
 /** Tipo de capa que generó un ajuste sobre un componente. */
@@ -685,6 +724,19 @@ export type NormalizedPricingLine = {
   costLineOverridesApplied: NormalizedCostLineOverride[];
   /** Warnings internos del motor (debug only — la UI normal los ignora). */
   debugWarnings: NormalizedDebugWarning[];
+
+  // ── Política comercial POR LÍNEA (Fase A — fix de propagación) ─────────
+  /** Política comercial calculada por el motor para esta línea.
+   *  `canConfirm: false` o `blockingAlerts` no vacío señalan que la
+   *  línea está en estado bloqueante según la config del tenant
+   *  (`pricingLowMarginBlockPercent`, `pricingBlockLossSale`, etc.).
+   *  Opcional para back-compat con normalizers que no lo poblen. */
+  policy?: { canConfirm: boolean; blockingAlerts: string[] };
+  /** Alertas comerciales emitidas por el motor para la línea
+   *  (LOW_MARGIN, LOSS_SALE, ZERO_OR_NEGATIVE_PRICE, COST_UNRESOLVED,
+   *  PARTIAL_DATA). Las consume `deriveCommercialLevel` /
+   *  `deriveCommercialInfo` para clasificar visualmente. Opcional. */
+  alerts?: Array<{ code: string; level: "info" | "warning" | "error"; message: string }>;
 };
 
 /** Línea individual de la composición de costo (PRODUCT o SERVICE). */
@@ -783,18 +835,43 @@ export type NormalizedPricingResult = {
   } | null;
 
   /**
-   * Detalle del redondeo a nivel comprobante (modo UNIFIED). `null` si la
-   * política está apagada o el delta fue 0. Útil para mostrar en debug/dev
-   * el preRounding ↔ postRounding sin recalcular.
+   * Detalle del redondeo a nivel comprobante (Etapa 1B — shape discriminado
+   * por scope: UNIFIED / BREAKDOWN / BOTH). `null` si la política está
+   * apagada o todas las capas dieron delta 0.
    */
   documentRoundingApplied?: {
-    source?:       string;     // "TENANT_POLICY"
-    applyOn?:      string;     // "DOC_TOTAL"
-    mode?:         string;
-    direction?:    string;
-    preRounding?:  number;
-    postRounding?: number;
-    adjustment?:   number;
+    source?:  string;
+    scope?:   "UNIFIED" | "BREAKDOWN" | "BOTH" | string;
+    applyOn?: string;
+    totalAdjustment?: number;
+    unified?: {
+      applyOn?:      string;
+      mode?:         string;
+      direction?:    string;
+      preRounding?:  number;
+      postRounding?: number;
+      adjustment?:   number;
+    };
+    breakdown?: {
+      metal?: {
+        applyOn?:      string;
+        mode?:         string;
+        direction?:    string;
+        preRounding?:  number;
+        postRounding?: number;
+        adjustment?:   number;
+      };
+      hechura?: {
+        applyOn?:      string;
+        mode?:         string;
+        direction?:    string;
+        preRounding?:  number;
+        postRounding?: number;
+        adjustment?:   number;
+      };
+      combinedAdjustment?: number;
+    };
+    fallback?: "NO_BREAKDOWN_DATA" | null;
   } | null;
 
   /** Política de la venta + alertas. */

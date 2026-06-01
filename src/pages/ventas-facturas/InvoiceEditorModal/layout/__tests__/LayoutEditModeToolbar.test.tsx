@@ -107,3 +107,90 @@ describe("LayoutEditModeToolbar — Cancelar cambios (Etapa 3)", () => {
     expect(screen.queryByText("Cancelar cambios")).toBeNull();
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 2026-05-29 — Banner explicativo + estados de persistencia mejorados
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("LayoutEditModeToolbar — banner explicativo (2026-05-29)", () => {
+  it("editing=true → renderiza ayuda 'Mover' + 'Redimensionar desde la esquina'", () => {
+    render(
+      <LayoutEditModeToolbar
+        editing={true}
+        onEnter={vi.fn()} onExit={vi.fn()} onReset={vi.fn()}
+      />,
+    );
+    const help = screen.getByTestId("layout-edit-help");
+    expect(help).toBeInTheDocument();
+    expect(help.textContent).toMatch(/Mover/);
+    expect(help.textContent).toMatch(/Redimensionar/i);
+  });
+
+  it("editing=false → no renderiza banner (modo lectura limpio)", () => {
+    render(
+      <LayoutEditModeToolbar
+        editing={false}
+        onEnter={vi.fn()} onExit={vi.fn()} onReset={vi.fn()}
+      />,
+    );
+    expect(screen.queryByTestId("layout-edit-help")).toBeNull();
+  });
+});
+
+describe("LayoutEditModeToolbar — estados de persistencia (2026-05-29)", () => {
+  it("status=idle → NO renderiza indicador", () => {
+    render(
+      <LayoutEditModeToolbar
+        editing={true} persistenceStatus="idle"
+        onEnter={vi.fn()} onExit={vi.fn()} onReset={vi.fn()}
+      />,
+    );
+    expect(screen.queryByTestId("layout-persist-pending")).toBeNull();
+    expect(screen.queryByTestId("layout-persist-saving")).toBeNull();
+    expect(screen.queryByTestId("layout-persist-saved")).toBeNull();
+    expect(screen.queryByTestId("layout-persist-error")).toBeNull();
+  });
+
+  it("status=pending → muestra 'Cambios sin guardar' (NO 'Guardando…' todavía)", () => {
+    render(
+      <LayoutEditModeToolbar
+        editing={true} persistenceStatus="pending"
+        onEnter={vi.fn()} onExit={vi.fn()} onReset={vi.fn()}
+      />,
+    );
+    const el = screen.getByTestId("layout-persist-pending");
+    expect(el.textContent).toMatch(/Cambios sin guardar/i);
+  });
+
+  it("status=saving → muestra 'Guardando…' con loader", () => {
+    render(
+      <LayoutEditModeToolbar
+        editing={true} persistenceStatus="saving"
+        onEnter={vi.fn()} onExit={vi.fn()} onReset={vi.fn()}
+      />,
+    );
+    expect(screen.getByTestId("layout-persist-saving").textContent).toMatch(/Guardando/i);
+  });
+
+  it("status=saved → muestra 'Guardado'", () => {
+    render(
+      <LayoutEditModeToolbar
+        editing={true} persistenceStatus="saved"
+        onEnter={vi.fn()} onExit={vi.fn()} onReset={vi.fn()}
+      />,
+    );
+    expect(screen.getByTestId("layout-persist-saved").textContent).toMatch(/Guardado/i);
+  });
+
+  it("status=error → muestra 'No se pudo guardar. Reintentá.' (accionable, NO 'Error al guardar' críptico)", () => {
+    render(
+      <LayoutEditModeToolbar
+        editing={true} persistenceStatus="error"
+        onEnter={vi.fn()} onExit={vi.fn()} onReset={vi.fn()}
+      />,
+    );
+    const err = screen.getByTestId("layout-persist-error");
+    expect(err.textContent).toMatch(/No se pudo guardar/i);
+    expect(err.textContent).toMatch(/Reintentá/i);
+  });
+});

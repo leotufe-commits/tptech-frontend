@@ -21,21 +21,41 @@ const DOC_ICONS: Record<DocumentKind, React.ReactNode> = {
   MOVIMIENTO_STOCK: <ArrowLeftRight size={20} />,
 };
 
-export default function DocumentosHub() {
+export type DocumentosHubProps = {
+  /** Cuando true, omitimos el TPSectionShell. Usado al montarse dentro
+   *  de `DocumentosComprobantesPage` con tabs — el shell exterior ya
+   *  provee el header. Default false → comportamiento standalone. */
+  embedded?: boolean;
+};
+
+export default function DocumentosHub({ embedded = false }: DocumentosHubProps = {}) {
   const navigate = useNavigate();
 
+  // Helper local — envuelve con TPSectionShell salvo en modo embedded.
+  const Shell = embedded
+    ? ({ children }: { children: React.ReactNode }) => <>{children}</>
+    : ({ children }: { children: React.ReactNode }) => (
+        <TPSectionShell
+          title="Plantillas de documentos"
+          subtitle="Configurá el encabezado, columnas, secciones y estilo visual para cada tipo de documento del sistema."
+          icon={<FileText size={22} />}
+        >
+          {children}
+        </TPSectionShell>
+      );
+
   return (
-    <TPSectionShell
-      title="Plantillas de documentos"
-      subtitle="Configurá el encabezado, columnas, secciones y estilo visual para cada tipo de documento del sistema."
-      icon={<FileText size={22} />}
-    >
+    <Shell>
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 max-w-4xl">
         {ALL_KINDS.map((kind) => (
           <button
             key={kind}
             type="button"
-            onClick={() => navigate(kind)}
+            // Path ABSOLUTO — el hub puede montarse en distintas rutas
+            // (standalone en `/documentos` o embebido dentro de
+            // `/documentos-comprobantes`), pero el editor siempre vive
+            // en `/configuracion-sistema/documentos/:kind`.
+            onClick={() => navigate(`/configuracion-sistema/documentos/${kind}`)}
             className="group flex items-center gap-4 rounded-2xl border border-border bg-card p-4 text-left
               shadow-[0_1px_0_0_rgba(0,0,0,0.05)] transition-all duration-150
               hover:bg-surface2 hover:shadow-[0_6px_18px_rgba(0,0,0,0.09)] hover:-translate-y-px
@@ -58,6 +78,6 @@ export default function DocumentosHub() {
           </button>
         ))}
       </div>
-    </TPSectionShell>
+    </Shell>
   );
 }

@@ -170,6 +170,23 @@ textarea.tp-input:hover {
 }
 
 /* =====================================
+   .tp-input-dense — variante densa para líneas operativas de
+   facturación (Factura: Cantidad, Precio, Bonificación, IVA).
+   Reduce la altura del input nativo de 42 px → 34 px sin tocar el
+   resto del visual (mismo border, focus, hover). El radius más
+   pequeño y la tipografía levemente menor refuerzan la sensación
+   compacta sin perder respiración. Especificidad input.tp-input.tp-input-dense
+   (0,2,1) gana sobre input.tp-input (0,1,1).
+   ===================================== */
+input.tp-input.tp-input-dense {
+  height: 34px;
+  line-height: 34px;
+  padding: 0 0.75rem;
+  border-radius: 0.5rem;
+  font-size: 0.9rem;
+}
+
+/* =====================================
    TPComboCreatableMulti — div container con clase tp-input
    Idéntico visual a input.tp-input pero en div flex (multi-tag).
 ===================================== */

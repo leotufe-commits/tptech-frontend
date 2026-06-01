@@ -88,6 +88,13 @@ export type SaleLineRow = {
   sortOrder: number;
   article: { id: string; code: string; name: string; mainImageUrl: string } | null;
   variant: { id: string; code: string; name: string } | null;
+  // ── Etapa 4 — overrides comerciales persistidos en SaleLine ──────────────
+  manualPriceOverride?:             string | null;
+  manualDiscountOverride?:          SaleLineManualDiscountOverride | null;
+  taxOverride?:                     SaleLineTaxOverride            | null;
+  manualDiscountAppliesToOverride?: SaleLineAppliesTo              | null;
+  manualTaxAppliesToOverride?:      SaleLineAppliesTo              | null;
+  priceListIdOverride?:             string | null;
 };
 
 export type SalePaymentRow = {
@@ -165,6 +172,34 @@ export type SaleDetail = SaleRow & {
   saleTotals: SaleTotals | null;
   /** Comprobantes emitidos por la venta (vacio si esta en DRAFT). */
   receipts?: SaleReceiptRow[];
+  // ── Etapa 1.1 — ajustes a nivel documento persistidos en el DRAFT ──────
+  // Backend los persiste para garantizar paridad preview ↔ confirm. El
+  // frontend los lee para rehidratar el modal al reabrir un borrador.
+  shippingAmount?:      string | null;
+  globalDiscountType?:  "PERCENT" | "AMOUNT" | null;
+  globalDiscountValue?: string | null;
+  paymentMethodId?:     string | null;
+  paymentInstallments?: number | null;
+  // ── Etapa C16.3 — campos requeridos para paridad de rehidratación ─────
+  // El backend ya los persiste en `Sale.channelId` / `Sale.couponId`; el
+  // detail los expone para que el frontend reconstruya el contexto del
+  // preview al reabrir. Sin esto, el reabrir pierde canal/cupón y los
+  // totales divergen del pre-save.
+  channelId?: string | null;
+  couponId?:  string | null;
+  coupon?:    { id: string; code: string } | null;
+  // ── Etapa 4.2 — Balance Mode persistido ───────────────────────────────
+  balanceModeOverride?: "UNIFIED" | "BREAKDOWN" | null;
+  balanceMode?:         "UNIFIED" | "BREAKDOWN" | null;
+  balanceModeSource?:   string | null;
+  // ── Manual Adjustment (Etapas A + C) ───────────────────────────────────
+  // El backend persiste estos campos en `Sale` para que el frontend pueda
+  // rehidratar el modal al reabrir un borrador (manualAdjustmentInput) o
+  // mostrar el snapshot inmutable post-confirm (manualAdjustmentSnapshot).
+  // `engineTotal` queda en `null` mientras la venta está en DRAFT.
+  manualAdjustmentInput?:    ManualAdjustmentApiInput   | null;
+  manualAdjustmentSnapshot?: ManualAdjustmentApiSnapshot | null;
+  engineTotal?:              string | null;
 };
 
 // ─── Sale Preview ─────────────────────────────────────────────────────────────
@@ -251,6 +286,71 @@ export type SalePreviewInput = {
    *  de la tasa vigente del catálogo. SOLO afecta el preview; el confirm
    *  persiste en moneda base con la tasa del momento. */
   currencyRate?: number | null;
+  /** Fase 4.2 — Override manual del Balance Mode del documento
+   *  (POLICY.md §11 R11.4). Si viene null/ausente, el backend resuelve
+   *  por jerarquía. Si viene "UNIFIED"/"BREAKDOWN" → balanceModeSource
+   *  = "DOCUMENT_OVERRIDE" en el response. */
+  balanceModeOverride?: "UNIFIED" | "BREAKDOWN" | null;
+  /** Ajuste manual del comprobante (POLICY §R-Rounding-1 capa 17).
+   *  Etapa A: scope "UNIFIED" — un único monto humano.
+   *  Etapa C: scope "BREAKDOWN" — ajuste por metal (gramos) + hechura. */
+  manualAdjustment?: ManualAdjustmentApiInput | null;
+};
+
+export interface ManualAdjustmentApiInputUnified {
+  scope:  "UNIFIED";
+  amount: number;
+  reason?: string | null;
+}
+
+export interface ManualAdjustmentApiInputBreakdownMetal {
+  metalParentId:   string | null;
+  metalParentName?: string;
+  targetGrams?: number | null;
+  deltaGrams?:  number | null;
+  reason?:      string | null;
+}
+
+export interface ManualAdjustmentApiInputBreakdown {
+  scope:  "BREAKDOWN";
+  metals?:         ManualAdjustmentApiInputBreakdownMetal[];
+  monetaryAmount?: number | null;
+  reason?:         string | null;
+}
+
+export type ManualAdjustmentApiInput =
+  | ManualAdjustmentApiInputUnified
+  | ManualAdjustmentApiInputBreakdown;
+
+/** Etapa C-comercial / C4-fix (POLICY §R-Rounding-14) — entry por metal padre
+ *  del snapshot comercial PHYSICAL. Shape idéntico al del backend
+ *  (`SalePreviewLineCommercialPhysicalEntry`). El frontend lo trata como
+ *  passthrough — cero matemática. */
+export type SalePreviewLineCommercialPhysicalEntry = {
+  metalParentId:      string | null;
+  metalParentName:    string;
+  preGrams:           number;
+  postGrams:          number;
+  deltaGrams:         number;
+  metalPricePerGram:  number;
+  monetaryEquivalent: number;
+  mode:               string;
+  direction:          string;
+  source:             "COMMERCIAL_PHYSICAL_ROUNDING";
+  fallback:
+    | null
+    | "NO_METAL_PRICE"
+    | "NO_CONFIG"
+    | "INVALID_GRAMS";
+};
+
+export type SalePreviewLineCommercialPhysicalSnapshot = {
+  metals:                  SalePreviewLineCommercialPhysicalEntry[];
+  metalMonetaryEquivalent: number;
+  fallback:
+    | null
+    | "NO_BREAKDOWN_DATA"
+    | "NO_METALS_TO_ROUND";
 };
 
 export type SalePreviewLineMetalHechura = {
@@ -273,6 +373,20 @@ export type SalePreviewLineMetalHechura = {
     | "SERVICE_AS_HECHURA"
     | "COMBO_COMPONENTS"
     | "NONE";
+  // ── Etapa C-comercial / C4-fix (POLICY §R-Rounding-14) ──────────────────
+  // Auditoría del redondeo comercial. Quedan `null` cuando el redondeo no
+  // actuó (passthrough). El frontend los renderea desde C6 — esta etapa
+  // solo los transporta.
+  metalSalePreRounding?:    number | null;
+  hechuraSalePreRounding?:  number | null;
+  metalSaleRoundingDelta?:  number | null;
+  hechuraSaleRoundingDelta?:number | null;
+  /** Snapshot completo del redondeo COMERCIAL PHYSICAL — paralelo al
+   *  `documentRoundingApplied.breakdown.metalPhysical` del financiero.
+   *  Solo presente cuando la lista operó en
+   *  `commercialRoundingMetalDomain="PHYSICAL"` y había `metalsByParent`
+   *  válidos. `null` en MONETARY (legacy). */
+  physical?:                SalePreviewLineCommercialPhysicalSnapshot | null;
 };
 
 export type SalePreviewPricingSnapshot = {
@@ -297,6 +411,36 @@ export type SalePreviewPricingSnapshot = {
   appliedPromotionName: string | null;
   appliedDiscountId:    string | null;
   resolvedAt:           string;
+};
+
+/** Subset serializable de `PricingStep` del motor. Paridad backend
+ *  (`sales.service.ts > SalePreviewStep`). Permite renderizar el pipeline de
+ *  cálculo por línea en el ORDEN REAL del motor (POLICY R4.5). */
+export type SalePreviewStep = {
+  key:     string;
+  label:   string;
+  status:  "ok" | "partial" | "missing" | "skipped";
+  /** Valor resultante per-unidad post-step. */
+  value:   number | null;
+  message?: string;
+  meta?: {
+    discountBase?:           number | null;
+    discountAmount?:         number | null;
+    discountBaseEstimated?:  boolean;
+    surchargeBase?:          number | null;
+    surchargeAmount?:        number | null;
+    surchargeBaseEstimated?: boolean;
+    value?:     number | null;
+    type?:      "PERCENTAGE" | "FIXED_AMOUNT" | null;
+    valueType?: "PERCENTAGE" | "FIXED_AMOUNT" | null;
+    applyOn?:   string | null;
+    ruleType?:  "DISCOUNT" | "BONUS" | "SURCHARGE" | null;
+    kind?:      "BONUS" | "SURCHARGE" | null;
+    mode?:      "PERCENT" | "FIXED" | null;
+    promoId?:    string | null;
+    discountId?: string | null;
+    promoName?:  string | null;
+  };
 };
 
 export type SalePreviewLine = {
@@ -333,6 +477,42 @@ export type SalePreviewLine = {
   quantityDiscountAmount:  number | null;
   /** Descuento de promoción por unidad (Fase 5). */
   promotionDiscountAmount: number | null;
+  /**
+   * Descuento POR LÍNEA aplicado por la regla comercial del cliente (capa 5
+   * del motor). El backend lo expone INDEPENDIENTEMENTE de `applyOn` — incluido
+   * cuando la rule aplica sobre TOTAL y queda absorbida en `unitPrice` (en ese
+   * caso `componentSaleBreakdown.adjustments[]` NO emite el adjustment).
+   *
+   * Es el único campo confiable para mostrar el impacto monetario del
+   * descuento del cliente por línea sin derivar — paridad con
+   * `SalePriceResult.customerDiscountAmount` del backend
+   * (`pricing-engine.types.ts` línea 304 / `sales.service.ts` línea 3016).
+   *
+   * `null` cuando no hay rule activa o el motor no aplicó descuento de
+   * cliente a esta línea. */
+  customerDiscountAmount:  number | null;
+
+  /**
+   * Metadata explicativa per-origen para que la UI pueda mostrar
+   * "Cálculo: base × valor" sin recalcular nada. Vienen del motor en
+   * `steps[].meta.{discountBase, value, type}` y los serializa el mapper
+   * de venta (`sales.service.ts`). Son **display-only** — no afectan el
+   * resultado del motor. POLICY R4.5 / R6.
+   */
+  quantityDiscountBase:       number | null;
+  quantityDiscountValue:      number | null;
+  quantityDiscountValueType:  "PERCENTAGE" | "FIXED_AMOUNT" | null;
+  promotionDiscountBase:      number | null;
+  promotionDiscountValue:     number | null;
+  promotionDiscountValueType: "PERCENTAGE" | "FIXED_AMOUNT" | null;
+  customerDiscountBase:       number | null;
+
+  /** Subset whitelist de `pricing.steps[]` que serializa el mapper. Permite
+   *  renderizar el pipeline de cálculo en el orden REAL del motor (POLICY R4.5
+   *  — passthrough estricto). Valores per-unidad; el frontend multiplica por
+   *  qty para totales por línea. `undefined` cuando es un preview legacy. */
+  pricingSteps?: SalePreviewStep[];
+
   priceSource:          string;
   appliedPriceListId:   string | null;
   appliedPriceListName: string | null;
@@ -351,6 +531,12 @@ export type SalePreviewLine = {
   costPartial:          boolean;
   costMode:             string;
   policy: { canConfirm: boolean; blockingAlerts: string[] };
+  /** Alertas comerciales emitidas por el motor para esta línea
+   *  (LOW_MARGIN, LOSS_SALE, ZERO_OR_NEGATIVE_PRICE, COST_UNRESOLVED,
+   *  PARTIAL_DATA). El backend siempre las emite; el frontend las
+   *  consume vía `deriveCommercialLevel`/`deriveCommercialInfo`. Opcional
+   *  porque snapshots viejos (< v6) pueden no traerlo. */
+  alerts?: Array<{ code: string; level: "info" | "warning" | "error"; message: string }>;
   /** Desglose por impuesto individual aplicado a la línea. */
   taxBreakdown:         any[];
   /** Desglose Metal/Hechura cuando aplica (Fase 5). */
@@ -603,6 +789,71 @@ export type SalePreviewLine = {
    * futuro podría mostrarlos.
    */
   debugWarnings?: DebugWarning[];
+
+  // ── Etapa D' (cierre conceptual) — Redondeo Comercial por línea ─────────
+  /** **Vista** del Redondeo Comercial del comprobante para visualización
+   *  dentro del card del artículo.
+   *
+   *  IMPORTANTE — naturaleza del campo:
+   *    · NO representa un redondeo propio de esta línea.
+   *    · NO implica que el cálculo se haya ejecutado sobre esta línea.
+   *    · Es una replicación visual: el snapshot del documento se copia
+   *      a cada `lines[i]` para que el card de artículo
+   *      (`PricingStepsBreakdown.RoundingTaxSection`) lo muestre como
+   *      cierre de la cadena comercial. El cálculo siempre fue a nivel
+   *      comprobante (por eso `appliedAt` SIEMPRE vale `"DOCUMENT"`).
+   *
+   *  Cuando es `null`, la lista del documento opera en PER_LINE_LEGACY o
+   *  mixed-list — el card de artículo no muestra el bloque PER_DOCUMENT.
+   *
+   *  REGLA DE ORO PERMANENTE:
+   *    Si un valor necesario no existe en este snapshot:
+   *      · NO calcularlo en frontend.
+   *      · NO inferirlo.
+   *      · NO reconstruirlo.
+   *    El fix correcto es agregarlo al snapshot backend.
+   *
+   *  - `appliedAt: "DOCUMENT"` viene del backend (no se infiere).
+   *  - `appliedToLineCount: N` viene del backend (NUNCA `lines.length` en FE).
+   *  - Valores monetarios y de gramos vienen del snapshot tal cual. */
+  commercialRoundingContext?: {
+    source: "PRICE_LIST";
+    scope:  "UNIFIED" | "BREAKDOWN";
+    appliedAt:          "DOCUMENT";
+    appliedToLineCount: number;
+    totalAdjustment:    number;
+    unified?: {
+      pre:        number;
+      post:       number;
+      adjustment: number;
+      mode:       string;
+      direction:  string;
+    };
+    breakdown?: {
+      metals: ReadonlyArray<{
+        metalParentId:      string;
+        metalParentName:    string;
+        preGrams:           number;
+        postGrams:          number;
+        deltaGrams:         number;
+        metalPricePerGram:  number;
+        monetaryEquivalent: number;
+        mode:               string;
+        direction:          string;
+      }>;
+      metalMonetaryEquivalent: number;
+      hechura: {
+        preRoundingSaldoMonetario:  number;
+        postRoundingSaldoMonetario: number;
+        deltaSaldoMonetario:        number;
+        mode:                       string;
+        direction:                  string;
+        source:                     "PRICE_LIST_HECHURA";
+      };
+      combinedAdjustment: number;
+    };
+    fallback?: "ALL_NONE" | "NO_METALS_BREAKDOWN_DATA" | "NO_SHARED_LIST" | null;
+  } | null;
 };
 
 /**
@@ -673,17 +924,42 @@ export type SaleDocumentTotals = {
     mode:          string;
     direction:     string;
   } | null;
-  /** Detalle del redondeo a nivel comprobante (modo UNIFIED), cuando la
-   *  política `Jewelry.documentRoundingEnabled` está activa y el delta es
-   *  != 0. Null en caso contrario. */
+  /** Detalle del redondeo a nivel comprobante (Etapa 1B — shape discriminado
+   *  por scope: UNIFIED / BREAKDOWN / BOTH). `null` si la política está
+   *  apagada o todas las capas dieron delta 0. */
   documentRoundingApplied?: {
-    source?:       string;
-    applyOn?:      string;
-    mode?:         string;
-    direction?:    string;
-    preRounding?:  number;
-    postRounding?: number;
-    adjustment?:   number;
+    source?:  string;
+    scope?:   "UNIFIED" | "BREAKDOWN" | "BOTH" | string;
+    applyOn?: string;
+    totalAdjustment?: number;
+    unified?: {
+      applyOn?:      string;
+      mode?:         string;
+      direction?:    string;
+      preRounding?:  number;
+      postRounding?: number;
+      adjustment?:   number;
+    };
+    breakdown?: {
+      metal?: {
+        applyOn?:      string;
+        mode?:         string;
+        direction?:    string;
+        preRounding?:  number;
+        postRounding?: number;
+        adjustment?:   number;
+      };
+      hechura?: {
+        applyOn?:      string;
+        mode?:         string;
+        direction?:    string;
+        preRounding?:  number;
+        postRounding?: number;
+        adjustment?:   number;
+      };
+      combinedAdjustment?: number;
+    };
+    fallback?: "NO_BREAKDOWN_DATA" | null;
   } | null;
 };
 
@@ -764,9 +1040,200 @@ export type SalePreviewResult = {
   currencyRate?:           number;
   /** true si hubo conversión real (responseCurrency != base). */
   currencyConverted?:      boolean;
+
+  // ── Fase 3B.7 — Balance Mode (POLICY.md §11) ──────────────────────────
+  /** Modo de balance resuelto en este preview (UNIFIED / BREAKDOWN).
+   *  El backend resuelve la prioridad (documento → cliente → lista →
+   *  tenant → fallback). El frontend solo lee y muestra. */
+  balanceMode?:        "UNIFIED" | "BREAKDOWN";
+  /** De dónde salió el modo. Auditoría / "Ver origen". */
+  balanceModeSource?:  string;
+  /** Breakdown canónico del documento. En UNIFIED, `metals=[]`. En
+   *  BREAKDOWN, una entrada por metal padre + saldo monetario. Los
+   *  campos monetarios ya vienen convertidos a la moneda de display
+   *  (igual contrato que `total`/`subtotal`). Los gramos NO se convierten. */
+  balanceBreakdown?:   BalanceBreakdownDTO;
+
+  // ── Etapa A — Manual Adjustment (POLICY §R-Rounding-1 capa 17) ────────
+  /** Total emitido por el motor antes del ajuste manual. Auditoría +
+   *  bloque "TPTech calculó" del card. Convertido a moneda display si
+   *  hubo conversión. */
+  engineTotal?:        number | null;
+  /** Total final post-ajuste manual (= `engineTotal + ajuste`). Si no
+   *  hubo ajuste, `finalTotal === total === engineTotal`. */
+  finalTotal?:         number | null;
+  /** Snapshot del ajuste manual. `null` si el operador no tipeó ajuste.
+   *  Etapa A: `scope: "UNIFIED"`. Etapa C: `scope: "BREAKDOWN"`.
+   *  @deprecated Etapa 1+2 backend: usar `manualAdjustmentSnapshot` (paridad de
+   *  naming con `Sale.manualAdjustmentSnapshot` en DB). Alias mantenido durante
+   *  la migración del frontend — es la MISMA referencia que `manualAdjustmentSnapshot`. */
+  manualAdjustment?: ManualAdjustmentApiSnapshot | null;
+
+  // ── Etapa 1.1 backend — campos canónicos top-level ────────────────────
+  // El backend ahora expone los snapshots con el mismo nombre con que se
+  // persisten en `Sale`. Reference aliasing: `manualAdjustmentSnapshot` y
+  // `manualAdjustment` apuntan al MISMO objeto; `documentRoundingSnapshot`
+  // y `documentTotals.documentRoundingApplied` también. El converter de
+  // moneda muta in-place una sola vez por path conocido.
+
+  /** Snapshot canónico del ajuste manual (mismo shape que
+   *  `Sale.manualAdjustmentSnapshot`). Es la MISMA referencia que el alias
+   *  deprecated `manualAdjustment`. */
+  manualAdjustmentSnapshot?: ManualAdjustmentApiSnapshot | null;
+
+  /** Snapshot canónico del redondeo automático del documento. Mismo shape que
+   *  `Sale.documentRoundingSnapshot` que `confirmSale` persiste. Es la MISMA
+   *  referencia que `documentTotals.documentRoundingApplied` enriquecida con
+   *  `suppressedListDeferredRounding`. */
+  documentRoundingSnapshot?: SalePreviewResult["documentTotals"]["documentRoundingApplied"];
 };
 
+export interface ManualAdjustmentApiSnapshotTotals {
+  monetaryAdjustment:      number;
+  metalMonetaryEquivalent: number;
+  totalMonetaryAdjustment: number;
+}
+
+export interface ManualAdjustmentApiSnapshotAudit {
+  appliedBy: { userId: string; userName: string } | null;
+  appliedAt: string;
+  reason?:   string | null;
+}
+
+export interface ManualAdjustmentApiSnapshotUnified {
+  scope:  "UNIFIED";
+  unified: { preAmount: number; postAmount: number; amount: number };
+  breakdown?: undefined;
+  totals: ManualAdjustmentApiSnapshotTotals;
+  audit:  ManualAdjustmentApiSnapshotAudit;
+}
+
+export interface ManualAdjustmentApiSnapshotBreakdownMetal {
+  metalParentId:      string | null;
+  metalParentName:    string;
+  preGrams:           number;
+  postGrams:          number;
+  deltaGrams:         number;
+  metalPricePerGram:  number;
+  monetaryEquivalent: number;
+}
+
+export interface ManualAdjustmentApiSnapshotBreakdown {
+  scope:  "BREAKDOWN";
+  unified?: undefined;
+  breakdown: {
+    metals:   ManualAdjustmentApiSnapshotBreakdownMetal[];
+    monetary: { preAmount: number; amount: number; postAmount: number };
+  };
+  totals: ManualAdjustmentApiSnapshotTotals;
+  audit:  ManualAdjustmentApiSnapshotAudit;
+}
+
+export type ManualAdjustmentApiSnapshot =
+  | ManualAdjustmentApiSnapshotUnified
+  | ManualAdjustmentApiSnapshotBreakdown;
+
+// ─────────────────────────────────────────────────────────────────────────
+// Fase 3B.7 — DTO de Balance Breakdown (POLICY.md §11). Se acopla al shape
+// que el backend emite en `DocumentBalanceBreakdown`. Read-only para el
+// frontend: no se construye nunca acá, sólo se lee.
+// ─────────────────────────────────────────────────────────────────────────
+export interface BalanceBreakdownMetalVariantDTO {
+  variantId:     string;
+  variantName:   string;
+  gramsOriginal: number;
+  purity:        number;
+  gramsPure:     number;
+  sourceLineId:  string;
+}
+
+export interface BalanceBreakdownMetalDTO {
+  metalParentId:         string;
+  metalParentName:       string;
+  gramsOriginal:         number;
+  /** Pureza ponderada. null cuando Σg=0 (caso edge). */
+  purity:                number | null;
+  gramsPure:             number;
+  /** Cotización referencial. SE CONVIERTE a moneda doc. */
+  quotePriceSnapshot:    number | null;
+  /** Valuación referencial = gramsPure × quotePrice. SE CONVIERTE. */
+  valuationMonetary:     number | null;
+  valuationCurrencyCode: string;
+  variants?:             BalanceBreakdownMetalVariantDTO[];
+  sourceLineIds:         string[];
+}
+
+/** Grupo visual del componente. El frontend agrupa por ESTE campo (no por
+ *  `type`). Los snapshots históricos pueden no traerlo — en ese caso el
+ *  frontend cae a un mapeo legacy `type → group`. */
+export type BalanceMonetaryComponentGroupDTO =
+  | "HECHURA"
+  | "PRODUCT"
+  | "TAX"
+  | "DISCOUNT"
+  | "BONUS"
+  | "SURCHARGE"
+  | "ADJUSTMENT"
+  | "ROUNDING"
+  | "SHIPPING"
+  | "COUPON"
+  | "CHANNEL"
+  | "PAYMENT"
+  /** Etapa UX-Auditable (2026-05-29) — diferencia entre la valuación del
+   *  metal del cost-line y el valor físico puro del balance. Cierra la
+   *  ecuación Σ components == saldo monetario canónico. */
+  | "MARGIN";
+
+export interface BalanceBreakdownMonetaryComponentDTO {
+  /** Kind canónico (granularidad fina — auditoría / drill-down). */
+  type:    string;
+  /** Grupo visual. Opcional para back-compat con snapshots viejos. */
+  group?:  BalanceMonetaryComponentGroupDTO;
+  label:   string;
+  /** Signed: + suma a saldo, − resta. */
+  amount:  number;
+  sourceLineId?: string;
+  source?: string;
+}
+
+export interface BalanceBreakdownMonetaryDTO {
+  /** Saldo monetario EN MONEDA DEL DOCUMENTO (ya convertido). */
+  amount:        number;
+  currencyCode:  string;
+  /** Tasa snapshot BASE↔doc al confirmar (histórico, no se convierte). */
+  currencyRate:  number;
+  /** Saldo monetario EN MONEDA BASE (no se convierte; definición = BASE). */
+  amountBase:    number;
+  components?:   BalanceBreakdownMonetaryComponentDTO[];
+}
+
+export interface BalanceBreakdownDTO {
+  /** En UNIFIED: []. En BREAKDOWN: una entrada por metal padre. */
+  metals:           BalanceBreakdownMetalDTO[];
+  monetaryBalance:  BalanceBreakdownMonetaryDTO;
+}
+
 // ─── Payloads ─────────────────────────────────────────────────────────────────
+/** Override de aplicación ("appliesTo") para descuentos/impuestos de línea.
+ *  Espejo de `SaleLineAppliesTo` del backend. */
+export type SaleLineAppliesTo =
+  | "TOTAL" | "METAL" | "HECHURA" | "METAL_Y_HECHURA"
+  | "SUBTOTAL_AFTER_DISCOUNT" | "SUBTOTAL_BEFORE_DISCOUNT"
+  | "PRODUCT" | "SERVICE";
+
+export type SaleLineManualDiscountOverride = {
+  mode:      "PERCENT" | "AMOUNT";
+  value:     number;
+  appliesTo?: SaleLineAppliesTo;
+  kind?:     "BONUS" | "SURCHARGE";
+};
+
+export type SaleLineTaxOverride = {
+  mode:      "PERCENT" | "AMOUNT";
+  value:     number;
+  appliesTo?: SaleLineAppliesTo;
+};
+
 export type SaleLineInput = {
   articleId: string;
   variantId?: string | null;
@@ -779,16 +1246,21 @@ export type SaleLineInput = {
   appliedDiscountId?: string | null;
 
   // ── Fase 1.5 — overrides de composición persistibles en DRAFT ────────────
-  // Mismas reglas y semántica que `SalePreviewLineInput`. Cuando viajan en
-  // `salesApi.create()` o `salesApi.update()`, el backend los aplica al
-  // resolver el snapshot y los guarda en `pricingSnapshot.costLineOverridesApplied`.
-  // Hoy no hay caller que los envíe (VentasFacturas usa preview-only); el
-  // tipo está disponible para cuando se conecte la grilla editable.
   gramsOverride?:          number | null;
   mermaPercentOverride?:   number | null;
   metalVariantIdOverride?: string | null;
   hechuraOverrideAmount?:  number | null;
   costLineOverrides?:      CostLineOverride[];
+
+  // ── Etapa 4 — overrides comerciales del operador, persistibles en DRAFT ──
+  // El backend los persiste en SaleLine; al reabrir la sale via getOne, el
+  // mapper del frontend los rehidrata en `pricingMeta` + `manualOverrides`.
+  manualPriceOverride?:             number | null;
+  manualDiscountOverride?:          SaleLineManualDiscountOverride | null;
+  taxOverride?:                     SaleLineTaxOverride            | null;
+  manualDiscountAppliesToOverride?: SaleLineAppliesTo              | null;
+  manualTaxAppliesToOverride?:      SaleLineAppliesTo              | null;
+  priceListIdOverride?:             string | null;
 };
 
 export type CreateSalePayload = {
@@ -798,7 +1270,42 @@ export type CreateSalePayload = {
   notes?:      string;
   channelId?:  string | null;
   couponCode?: string | null;
+  /** Etapa C16 — paridad preview ↔ persist (fix drift C15).
+   *  Lista de precios DEL DOCUMENTO. El backend la usa como fallback para
+   *  cada línea que no tenga su propio `priceListIdOverride`. Mismo contrato
+   *  que `previewSale` (`PreviewSaleInput.priceListId`). Sin esto, el
+   *  backend cae a la jerarquía cliente → favorita y se pierde la lista
+   *  que el operador eligió en el combo global. */
+  priceListId?: string | null;
   lines:       SaleLineInput[];
+  /** Fase 4.2 — Override manual del Balance Mode del documento
+   *  (POLICY.md §11 R11.4). Persiste en `Sale.balanceModeOverride`. */
+  balanceModeOverride?: "UNIFIED" | "BREAKDOWN" | null;
+  // ── Etapa 1.1 — ajustes a nivel documento (paridad preview ↔ confirm) ──
+  // El backend los persiste en `Sale` para que `confirmSale` reaplique
+  // los mismos montos que `previewSale`. Aceptamos shape rico (`shipping`,
+  // `globalDiscount` objeto) o monto plano por compatibilidad con preview.
+  /** Costo de envío del documento — monto ya resuelto. Se ignora si
+   *  `shipping` viene con un valor válido. */
+  shippingAmount?: number | null;
+  /** Envío crudo. El backend lo resuelve a monto vía `resolveShippingAmount`. */
+  shipping?: {
+    mode:    "FIXED" | "BY_WEIGHT" | "FREE";
+    value?:  number | null;
+    weight?: number | null;
+  } | null;
+  /** Descuento global del documento — shape rico. */
+  globalDiscount?: { type: "PERCENT" | "AMOUNT"; value: number } | null;
+  /** Descuento global como monto plano. Se mapea a `{ type: "AMOUNT", value }`. */
+  globalDiscountAmount?: number | null;
+  /** Forma de pago seleccionada en el DRAFT — afecta paymentAdjustmentAmount. */
+  paymentMethodId?: string | null;
+  /** Cantidad de cuotas (≥ 1). Requiere `paymentMethodId`. */
+  paymentInstallments?: number | null;
+  /** Ajuste manual del comprobante (POLICY §R-Rounding-1 capa 17).
+   *  Etapa A: scope "UNIFIED". Etapa C: scope "BREAKDOWN" — solo cuando
+   *  el documento operará en modo BREAKDOWN. */
+  manualAdjustment?: ManualAdjustmentApiInput | null;
 };
 
 export type AddPaymentPayload = {

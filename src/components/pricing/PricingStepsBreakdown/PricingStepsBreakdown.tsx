@@ -50,6 +50,7 @@ export function PricingStepsBreakdown(props: PricingStepsBreakdownProps): React.
     showListRoundingCard = true,
     expanded: expandedProp,
     onToggle,
+    commercialRoundingContext = null,
   } = props;
   const fm = (v: number) => formatMoneyDisplay(v, display.rate, display.symbol);
 
@@ -151,6 +152,7 @@ export function PricingStepsBreakdown(props: PricingStepsBreakdownProps): React.
         result={result}
         display={display}
         showListRoundingCard={showListRoundingCard}
+        commercialRoundingContext={commercialRoundingContext}
       />
       <FinalAdjustmentsSection
         basePriceVal={basePriceVal}

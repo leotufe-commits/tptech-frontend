@@ -4,7 +4,7 @@
 // del modal y expone: Restaurar diseno, Cancelar cambios, Listo.
 
 import React from "react";
-import { Check, RotateCcw, X, Loader2 } from "lucide-react";
+import { Check, RotateCcw, X, Loader2, GripVertical, MoveDiagonal } from "lucide-react";
 import { TPButton } from "../../../../components/ui/TPButton";
 import type { PersistenceStatus } from "./types";
 
@@ -39,7 +39,25 @@ export function LayoutEditModeToolbar(props: LayoutEditModeToolbarProps): React.
   // Contenedor con borde + fondo sutil para que el grupo se lea como
   // una unidad cohesionada y no botones sueltos flotando.
   return (
-    <div className="flex items-center gap-2">
+    <div className="flex flex-wrap items-center gap-3">
+      {/* Banner explicativo 2026-05-29 — ayuda breve para el modo edit.
+          El operador no técnico no necesita un tutorial, solo una pista
+          de qué arrastrar y desde dónde. Icono GripVertical + icono
+          MoveDiagonal = mismos que se ven en las cards. */}
+      <p
+        className="flex items-center gap-2 text-[11px] text-muted"
+        data-testid="layout-edit-help"
+      >
+        <span className="inline-flex items-center gap-1">
+          <GripVertical size={12} className="text-primary" />
+          Mover
+        </span>
+        <span className="text-muted/40">·</span>
+        <span className="inline-flex items-center gap-1">
+          <MoveDiagonal size={12} className="text-primary" />
+          Redimensionar desde la esquina
+        </span>
+      </p>
       {persistenceStatus ? <PersistenceIndicator status={persistenceStatus} /> : null}
       <div className="flex items-center gap-1.5 rounded-xl border border-border/60 bg-card/50 p-1 shadow-sm backdrop-blur-sm">
         <TPButton
@@ -78,17 +96,24 @@ export function LayoutEditModeToolbar(props: LayoutEditModeToolbarProps): React.
 function PersistenceIndicator(props: { status: PersistenceStatus }): React.ReactElement | null {
   const { status } = props;
   if (status === "idle") return null;
-  if (status === "pending" || status === "saving") {
+  if (status === "pending") {
     return (
-      <span className="flex items-center gap-1 text-[11px] text-muted">
+      <span className="flex items-center gap-1 text-[11px] text-muted" data-testid="layout-persist-pending">
+        Cambios sin guardar
+      </span>
+    );
+  }
+  if (status === "saving") {
+    return (
+      <span className="flex items-center gap-1 text-[11px] text-muted" data-testid="layout-persist-saving">
         <Loader2 size={12} className="animate-spin" />
-        Guardando...
+        Guardando…
       </span>
     );
   }
   if (status === "saved") {
     return (
-      <span className="flex items-center gap-1 text-[11px] text-emerald-500">
+      <span className="flex items-center gap-1 text-[11px] text-emerald-500" data-testid="layout-persist-saved">
         <Check size={12} />
         Guardado
       </span>
@@ -96,8 +121,12 @@ function PersistenceIndicator(props: { status: PersistenceStatus }): React.React
   }
   if (status === "error") {
     return (
-      <span className="flex items-center gap-1 text-[11px] text-red-500">
-        Error al guardar
+      <span
+        className="flex items-center gap-1 text-[11px] text-red-500"
+        data-testid="layout-persist-error"
+        title="El último cambio no pudo guardarse. Volvé a mover o redimensionar para reintentar."
+      >
+        No se pudo guardar. Reintentá.
       </span>
     );
   }

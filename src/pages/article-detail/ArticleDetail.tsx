@@ -23,7 +23,6 @@ import {
   ScanBarcode,
   Settings2,
   ShoppingCart,
-  Star,
   Store,
   Tag,
   Trash2,
@@ -1005,7 +1004,6 @@ export default function ArticleDetail() {
                     <div className="flex items-center gap-2.5 flex-wrap">
                       <h1 className="text-2xl font-bold text-text leading-tight">{article.name}</h1>
                       <TPStatusPill active={article.status === "ACTIVE"} />
-                      {article.isFavorite && <Star size={14} className="fill-yellow-400 text-yellow-400 shrink-0" />}
                     </div>
 
                     {/* Badges: tipo + combo (si aplica) + variantes + categoría */}

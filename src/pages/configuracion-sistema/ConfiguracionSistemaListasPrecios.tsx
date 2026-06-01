@@ -1,7 +1,7 @@
 // src/pages/configuracion-sistema/ConfiguracionSistemaListasPrecios.tsx
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { ExternalLink, Plus, Save, Star, X } from "lucide-react";
+import { ExternalLink, Plus, Save, X } from "lucide-react";
 
 import { cn } from "../../components/ui/tp";
 import { TPSectionShell } from "../../components/ui/TPSectionShell";
@@ -131,30 +131,34 @@ function describeRoundingScope(
   draft: Draft,
   doc: DocumentRoundingConfig | null,
 ): string {
+  // POLICY §R-Rounding-12 — dominios oficiales:
+  //   · LINE      → "Redondeo comercial"   (sobre el precio antes de impuestos)
+  //   · DOCUMENT  → "Redondeo financiero"  (sobre el total después de impuestos)
+  //   · BOTH      → ambos coexisten
   const docActive = !!(doc?.documentRoundingEnabled && doc.documentRoundingMode !== "NONE");
   if (scope === "DOCUMENT") {
     return docActive
-      ? `Redondeo: Comprobante (${DOC_ROUNDING_MODE_SHORT[doc!.documentRoundingMode]})`
-      : "Redondeo: Comprobante (Sin redondeo)";
+      ? `Redondeo financiero (${DOC_ROUNDING_MODE_SHORT[doc!.documentRoundingMode]})`
+      : "Redondeo financiero (Sin redondeo)";
   }
   if (scope === "BOTH") {
-    return "Redondeo: Ambos";
+    return "Redondeo: comercial + financiero";
   }
   // LINE
   const hasLine = draft.roundingTarget !== "NONE";
-  if (!hasLine) return "Redondeo: Sin redondeo";
+  if (!hasLine) return "Redondeo comercial: sin aplicar";
 
   // METAL_HECHURA: la lista redondea por componente; mostramos eso explícito
   // sin elegir un único modo (la spec lo pide así).
   if (draft.mode === "METAL_HECHURA") {
-    return "Redondeo: Línea (Metal/Hechura)";
+    return "Redondeo comercial (Metal/Hechura)";
   }
 
   // MARGIN_TOTAL / COST_PER_GRAM: la precisión efectiva vive en
   // `roundingModeHechura` (ver el bloque "Precio final" del card).
   const mode = draft.roundingModeHechura;
-  if (mode === "NONE") return "Redondeo: Línea";
-  return `Redondeo: Línea (${LINE_ROUNDING_MODE_SHORT[mode]})`;
+  if (mode === "NONE") return "Redondeo comercial";
+  return `Redondeo comercial (${LINE_ROUNDING_MODE_SHORT[mode]})`;
 }
 
 /* =========================================================
@@ -220,7 +224,10 @@ function numToStr(v: number | null): string {
 /* =========================================================
    Draft
 ========================================================= */
-type Draft = {
+// Etapa C9 — `Draft` y `draftToPayload` exportados para que los tests del
+// mapper puedan ejercitar la lógica de derivación del Comercial PHYSICAL
+// sin tener que renderizar la pantalla completa. Cero cambio funcional.
+export type Draft = {
   name: string;
   mode: PriceListMode;
   marginTotal: number | null;
@@ -238,6 +245,14 @@ type Draft = {
   validityRange: TPDateRangeValue;
   notes: string;
   isFavorite: boolean;
+  // ── Etapa C-comercial / C10 (POLICY §R-Rounding-14) ─────────────────────
+  // Dominio del redondeo del METAL — visible y editable solo en
+  // modo DESGLOSADO (METAL_HECHURA) con rounding activo:
+  //   · "PHYSICAL" → contrato canónico (gramos físicos por metal padre).
+  //   · "MONETARY" → legacy (redondea subtotal $ del metal).
+  // En modo UNIFICADO o sin rounding el campo se ignora y `draftToPayload`
+  // lo deriva a "MONETARY" para no contaminar listas legacy.
+  commercialRoundingMetalDomain: "MONETARY" | "PHYSICAL";
 };
 
 const EMPTY_DRAFT: Draft = {
@@ -258,6 +273,9 @@ const EMPTY_DRAFT: Draft = {
   validityRange: { from: null, to: null },
   notes: "",
   isFavorite: false,
+  // C10 — default canónico para listas NUEVAS DESGLOSADAS. Se ignora cuando
+  // el modo no es METAL_HECHURA (draftToPayload lo baja a MONETARY).
+  commercialRoundingMetalDomain: "PHYSICAL",
 };
 
 function parseDateStr(v: string | null | undefined): Date | null {
@@ -311,10 +329,16 @@ function rowToDraft(r: PriceListRow): Draft {
     },
     notes: r.notes,
     isFavorite: r.isFavorite ?? false,
+    // C10 — hidratar el dominio actual de DB. Si la lista vieja no lo trae
+    // (snapshot legacy), default a PHYSICAL solo si es DESGLOSADA (sugerimos
+    // migración a canónico); para UNIFICADA/COST_PER_GRAM default MONETARY.
+    commercialRoundingMetalDomain:
+      r.commercialRoundingMetalDomain
+        ?? (r.mode === "METAL_HECHURA" ? "PHYSICAL" : "MONETARY"),
   };
 }
 
-function draftToPayload(d: Draft): PriceListPayload {
+export function draftToPayload(d: Draft): PriceListPayload {
   const validFrom = d.vigenciaActiva ? dateToStr(d.validityRange.from) : null;
   const validTo = d.vigenciaActiva ? dateToStr(d.validityRange.to) : null;
 
@@ -383,6 +407,38 @@ function draftToPayload(d: Draft): PriceListPayload {
     validTo,
     isFavorite: d.isFavorite,
     notes: d.notes.trim(),
+    // ── Etapa C-comercial / C10 (POLICY §R-Rounding-14) ─────────────────
+    // El operador eligió explícitamente el dominio via toggle UI dentro
+    // del bloque DESGLOSADO:
+    //   · Modo DESGLOSADO + rounding activo → respetar `d.commercialRoundingMetalDomain`
+    //     (PHYSICAL canónico por default — ver `EMPTY_DRAFT`).
+    //   · Modo UNIFICADO / sin rounding / sin DESGLOSADO → forzar MONETARY
+    //     + null (el toggle no está visible para estas listas; el dominio
+    //     es inerte porque el motor solo bifurca cuando mode=METAL_HECHURA).
+    //
+    // Config canónica del JSON: `byMetalParentId: {}` + `fallback` con el
+    // modo/dirección que el operador eligió en la pareja "Metal" de arriba.
+    // El motor backend (C3, `pricing-engine.pricelist.ts:399-433`) bifurca
+    // al path PHYSICAL exactamente con esto.
+    commercialRoundingMetalDomain:
+      d.mode === "METAL_HECHURA" &&
+      roundingTarget === "METAL" &&
+      roundingMode !== "NONE"
+        ? d.commercialRoundingMetalDomain
+        : "MONETARY",
+    commercialPhysicalRoundingConfig:
+      d.mode === "METAL_HECHURA" &&
+      roundingTarget === "METAL" &&
+      roundingMode !== "NONE" &&
+      d.commercialRoundingMetalDomain === "PHYSICAL"
+        ? {
+            byMetalParentId: {},
+            fallback: {
+              mode:      roundingMode,
+              direction: roundingDirection,
+            },
+          }
+        : null,
   };
 }
 
@@ -1075,16 +1131,33 @@ function PriceListFormModal({
                     cambiar a "Por línea" si necesita esa granularidad. */}
                 {roundingScope === "LINE" && hasRounding && (
                   <>
+                    {/* Etapa A — Cierre UX (POLICY §R-Rounding-12):
+                        Cuando `roundingTarget === "METAL"` (modo desglosado),
+                        el motor aplica el rounding INMEDIATAMENTE sobre cada
+                        componente (metal y hechura por separado) — no usa la
+                        configuración `applyOn`. Deshabilitamos el select para
+                        evitar que el operador asuma que las opciones
+                        PRICE/NET/TOTAL modifican el comportamiento.
+                        Conceptualmente: en desglosado no hay "momento" de
+                        aplicación porque opera sobre componentes, no sobre
+                        un total agregado. */}
                     <TPField label="Aplicar sobre">
                       <TPComboFixed
                         value={draft.roundingApplyOn}
                         onChange={(v) => set("roundingApplyOn", v as RoundingApplyOn)}
+                        disabled={draft.roundingTarget === "METAL"}
                         options={[
                           { value: "TOTAL", label: "Total final (con impuestos)" },
                           { value: "NET",   label: "Sin impuestos (después de descuentos)" },
                           { value: "PRICE", label: "Precio de lista (antes de descuentos)" },
                         ]}
                       />
+                      {draft.roundingTarget === "METAL" && (
+                        <p className="text-[10px] text-muted/70 italic mt-1">
+                          En modo desglosado el redondeo se aplica directamente sobre cada componente
+                          (metal y hechura). Las opciones de "Aplicar sobre" no aplican en este modo.
+                        </p>
+                      )}
                     </TPField>
 
                     {/* Modo unificado (MARGIN_TOTAL / COST_PER_GRAM) — bloque único.
@@ -1127,6 +1200,70 @@ function PriceListFormModal({
                     {/* Modo desglosado (METAL_HECHURA) — bloques Metal + Hechura. */}
                     {draft.mode === "METAL_HECHURA" && (
                       <div className="space-y-3">
+                        {/* C10 — Toggle dominio del metal (POLICY §R-Rounding-14).
+                            Solo visible en DESGLOSADO. Aplica únicamente al
+                            redondeo del METAL; la hechura siempre es monetaria
+                            por contrato canónico (no se ofrece toggle). */}
+                        <div
+                          className="space-y-2 rounded-lg border border-primary/30 bg-primary/5 px-3 py-2.5"
+                          data-testid="commercial-rounding-domain-block"
+                        >
+                          <p className="text-xs font-semibold text-muted uppercase tracking-wide">
+                            Dominio del redondeo del metal
+                          </p>
+                          <div
+                            role="radiogroup"
+                            aria-label="Dominio del redondeo del metal"
+                            className="grid grid-cols-1 md:grid-cols-2 gap-2"
+                          >
+                            {([
+                              {
+                                value: "PHYSICAL" as const,
+                                label: "Físico (gramos)",
+                                caption:
+                                  "Redondea gramos por metal padre (Oro Fino, Plata…) y suma su equivalente $ al total. Contrato canónico TPTech.",
+                              },
+                              {
+                                value: "MONETARY" as const,
+                                label: "Monetario (legacy)",
+                                caption:
+                                  "Redondea directamente el subtotal $ del metal por línea. Compat hacia atrás — no recomendado para listas nuevas.",
+                              },
+                            ]).map((opt) => {
+                              const active =
+                                draft.commercialRoundingMetalDomain === opt.value;
+                              return (
+                                <button
+                                  key={opt.value}
+                                  type="button"
+                                  role="radio"
+                                  aria-checked={active}
+                                  data-testid={`commercial-rounding-domain-${opt.value.toLowerCase()}`}
+                                  onClick={() =>
+                                    set("commercialRoundingMetalDomain", opt.value)
+                                  }
+                                  className={cn(
+                                    "flex flex-col items-start gap-1 rounded-md border px-3 py-2 text-left text-xs transition",
+                                    active
+                                      ? "border-primary bg-primary/15 text-primary"
+                                      : "border-border bg-card text-text hover:bg-surface2/40",
+                                  )}
+                                >
+                                  <span className="font-semibold">{opt.label}</span>
+                                  <span
+                                    className={cn(
+                                      "text-[10px] leading-snug",
+                                      active ? "text-primary/80" : "text-muted",
+                                    )}
+                                  >
+                                    {opt.caption}
+                                  </span>
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
+
                         {/* Metal */}
                         <div className="space-y-3">
                           <p className="text-xs font-semibold text-muted uppercase tracking-wide">Metal</p>
@@ -1236,9 +1373,18 @@ function PriceListFormModal({
                 )}>
                   <div className="flex items-baseline justify-between gap-2">
                     <p className="text-[11px] font-semibold uppercase tracking-wide text-muted">
-                      Redondeo por comprobante
+                      Redondeo financiero
                     </p>
                   </div>
+                  {/* POLICY §R-Rounding-12 — distinción de dominio. Esta
+                      lista define un "Redondeo comercial" (antes de
+                      impuestos); el "Redondeo financiero" se aplica al total
+                      final luego de impuestos y se configura en Política de
+                      precios. Texto explícito para evitar confusión. */}
+                  <p className="text-[10px] text-muted/70 italic -mt-1">
+                    Se aplica sobre el total final luego de impuestos.
+                    Configurable en Política de precios.
+                  </p>
 
                   {docPolicyLoading ? (
                     <div className="text-xs italic text-muted">Cargando política…</div>
@@ -1391,10 +1537,7 @@ function PriceListViewContent({ row }: { row: PriceListRow }) {
         {item(
           "Favorita",
           row.isFavorite ? (
-            <span className="inline-flex items-center gap-1 text-sm font-medium">
-              <Star size={13} className="fill-yellow-400 text-yellow-400" />
-              Sí, predeterminada
-            </span>
+            <span className="text-sm font-medium">Sí, predeterminada</span>
           ) : (
             "No"
           )
@@ -1423,10 +1566,17 @@ function PriceListViewContent({ row }: { row: PriceListRow }) {
         </div>
       </div>
 
-      {/* Redondeo */}
+      {/* Redondeo comercial — dominio LISTA: se aplica sobre el precio comercial
+          ANTES de impuestos. Distinto del "Redondeo financiero" del comprobante
+          (POLICY §R-Rounding-12). */}
       {hasRounding && (
         <div className="rounded-lg bg-surface border border-border/50 p-3 space-y-3">
-          <p className="text-xs font-semibold text-muted uppercase tracking-wide">Redondeo</p>
+          <div className="space-y-0.5">
+            <p className="text-xs font-semibold text-muted uppercase tracking-wide">Redondeo comercial</p>
+            <p className="text-[10px] text-muted/70 italic">
+              Se aplica sobre el precio comercial antes de impuestos.
+            </p>
+          </div>
           {item("Aplica en", ROUNDING_TARGET_LABELS[row.roundingTarget])}
           {item("Momento", ROUNDING_APPLY_ON_LABELS[row.roundingApplyOn ?? "TOTAL"])}
 

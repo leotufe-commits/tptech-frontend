@@ -183,4 +183,240 @@ describe("buildSalePreviewPayload — origin de globalDiscount (anti doble aplic
     );
     expect(payload.globalDiscount).toBeNull();
   });
+
+  // ─── T43.5 — Anti-regresión del loop infinito de redondeo ────────────────
+  //
+  // El payload del preview debe leer `pricingMeta.manualPrice` como fuente
+  // ÚNICA del precio manual del operador — NO `l.unitPrice` directo.
+  //
+  // Motivo: `l.unitPrice` lo hidrata el preview anterior y puede tener
+  // micro-redondeos del motor. Si el siguiente preview construye su
+  // payload desde `l.unitPrice`, la diferencia de redondeo cambia la firma
+  // del preview, dispara otro preview, y así sucesivamente → loop
+  // infinito. El campo `meta.manualPrice` preserva el INTENTO exacto del
+  // operador (sin redondeo motor), por eso es la fuente segura.
+  describe("T43.5 — manualPriceOverride viene de meta.manualPrice, NO de l.unitPrice", () => {
+    it("flag price=true + meta.manualPrice=500 + l.unitPrice=499.99 (drift motor) → payload usa 500", () => {
+      // Caso real del loop: motor devolvió 499.99 (con drift de redondeo),
+      // pero el operador puso 500. El payload debe respetar la intención.
+      const { payload } = buildSalePreviewPayload(
+        makeDraft({
+          lines: [makeLine({
+            unitPrice: 499.99,                          // hidratado post-preview
+            manualOverrides: { price: true } as any,    // flag activo
+            pricingMeta: { manualPrice: 500 } as any,   // intención del operador
+          })],
+        }),
+      );
+      expect((payload.lines[0] as any).manualPriceOverride).toBe(500);
+    });
+
+    it("flag price=true + meta.manualPrice null → fallback a l.unitPrice", () => {
+      // Sin meta.manualPrice explícito (estado transitorio), pero con flag
+      // activo: el payload usa l.unitPrice como fallback para no perder el
+      // override.
+      const { payload } = buildSalePreviewPayload(
+        makeDraft({
+          lines: [makeLine({
+            unitPrice: 750,
+            manualOverrides: { price: true } as any,
+            pricingMeta: { manualPrice: null } as any,
+          })],
+        }),
+      );
+      expect((payload.lines[0] as any).manualPriceOverride).toBe(750);
+    });
+
+    it("SIN flag price (override no activo) → manualPriceOverride = null (precio de lista)", () => {
+      const { payload } = buildSalePreviewPayload(
+        makeDraft({
+          lines: [makeLine({
+            unitPrice: 100,
+            // sin manualOverrides ni pricingMeta.
+          })],
+        }),
+      );
+      expect((payload.lines[0] as any).manualPriceOverride).toBeNull();
+    });
+
+    it("anti-loop: con drift en l.unitPrice, dos previews consecutivos mandan EXACTAMENTE el mismo override", () => {
+      // Caso concreto del loop infinito: operador puso 500, motor devolvió
+      // 499.9994. Si el payload usara l.unitPrice, en el siguiente ciclo
+      // mandaría 499.9994 → motor devuelve 499.9988 → ... LOOP.
+      // El payload debe seguir mandando 500 (= meta.manualPrice) → la firma
+      // del preview es estable → no se dispara otro preview.
+      const ov   = { price: true } as any;
+      const meta = { manualPrice: 500 } as any;
+
+      const { payload: p1 } = buildSalePreviewPayload(
+        makeDraft({ lines: [makeLine({ unitPrice: 499.9994, manualOverrides: ov, pricingMeta: meta })] }),
+      );
+      const { payload: p2 } = buildSalePreviewPayload(
+        makeDraft({ lines: [makeLine({ unitPrice: 500.0021, manualOverrides: ov, pricingMeta: meta })] }),
+      );
+      // Ambos payloads mandan 500 sin importar el drift de l.unitPrice.
+      expect((p1.lines[0] as any).manualPriceOverride).toBe(500);
+      expect((p2.lines[0] as any).manualPriceOverride).toBe(500);
+      expect((p1.lines[0] as any).manualPriceOverride).toBe((p2.lines[0] as any).manualPriceOverride);
+    });
+  });
+
+  // ────────────────────────────────────────────────────────────────────────
+  // Fase 4.2 — balanceModeOverride viaja en el payload
+  // ────────────────────────────────────────────────────────────────────────
+  describe("balanceModeOverride", () => {
+    it("sin override en draft → payload manda balanceModeOverride = null", () => {
+      const { payload } = buildSalePreviewPayload(
+        makeDraft({ lines: [makeLine()] }),
+      );
+      expect((payload as any).balanceModeOverride).toBeNull();
+    });
+
+    it("override UNIFIED → payload manda 'UNIFIED'", () => {
+      const { payload } = buildSalePreviewPayload(
+        makeDraft({ balanceModeOverride: "UNIFIED", lines: [makeLine()] }),
+      );
+      expect((payload as any).balanceModeOverride).toBe("UNIFIED");
+    });
+
+    it("override BREAKDOWN → payload manda 'BREAKDOWN'", () => {
+      const { payload } = buildSalePreviewPayload(
+        makeDraft({ balanceModeOverride: "BREAKDOWN", lines: [makeLine()] }),
+      );
+      expect((payload as any).balanceModeOverride).toBe("BREAKDOWN");
+    });
+
+    it("override = null en draft → payload manda null (Automático)", () => {
+      const { payload } = buildSalePreviewPayload(
+        makeDraft({ balanceModeOverride: null, lines: [makeLine()] }),
+      );
+      expect((payload as any).balanceModeOverride).toBeNull();
+    });
+
+    it("override con string ajeno al enum → sanitizado a null (defensive)", () => {
+      const { payload } = buildSalePreviewPayload(
+        makeDraft({ balanceModeOverride: "MIXED" as any, lines: [makeLine()] }),
+      );
+      expect((payload as any).balanceModeOverride).toBeNull();
+    });
+
+    it("cambiar override entre previews cambia la firma (re-dispara preview)", () => {
+      const drafts = [
+        makeDraft({ balanceModeOverride: null,        lines: [makeLine()] }),
+        makeDraft({ balanceModeOverride: "UNIFIED",   lines: [makeLine()] }),
+        makeDraft({ balanceModeOverride: "BREAKDOWN", lines: [makeLine()] }),
+      ];
+      const payloads = drafts.map((d) => buildSalePreviewPayload(d).payload);
+      const sigs = payloads.map((p) => JSON.stringify(p));
+      // Los 3 payloads son distintos → la signature cambia → previewSale corre.
+      expect(new Set(sigs).size).toBe(3);
+    });
+  });
+
+  // ────────────────────────────────────────────────────────────────────────
+  // Etapa 3A-fix — Defensa scope/mode: si manualAdjustment.scope=BREAKDOWN,
+  // el payload SIEMPRE fuerza balanceModeOverride=BREAKDOWN, sin importar
+  // el estado del draft. Resuelve el race: el operador edita ajuste por
+  // metal, pero el setState del balanceModeOverride todavía no se aplicó
+  // (o el operador clickeó "Unificado" previamente). El motor rechaza con
+  // 400 cualquier combinación incoherente; el frontend ahora la previene
+  // estructuralmente.
+  // ────────────────────────────────────────────────────────────────────────
+  describe("Etapa 3A-fix — scope BREAKDOWN fuerza override BREAKDOWN", () => {
+    it("scope BREAKDOWN + override=null → payload con override='BREAKDOWN' (auto-promovido)", () => {
+      const { payload } = buildSalePreviewPayload(
+        makeDraft({
+          balanceModeOverride: null,
+          lines: [makeLine()],
+          manualAdjustment: {
+            scope: "BREAKDOWN",
+            metals: [],
+            monetaryAmount: 50,
+          } as any,
+        }),
+      );
+      expect((payload as any).balanceModeOverride).toBe("BREAKDOWN");
+      expect((payload as any).manualAdjustment?.scope).toBe("BREAKDOWN");
+    });
+
+    it("scope BREAKDOWN + override='UNIFIED' stale → payload con override='BREAKDOWN' (fuerza coherencia)", () => {
+      // Caso reportado por el usuario: operador clickeó 'Unificado' previamente,
+      // después editó ajuste por metal. Sin esta defensa, el motor tiraba 400.
+      const { payload } = buildSalePreviewPayload(
+        makeDraft({
+          balanceModeOverride: "UNIFIED",
+          lines: [makeLine()],
+          manualAdjustment: {
+            scope: "BREAKDOWN",
+            metals: [{ metalParentId: "oro-fino", targetGrams: 1 }],
+            monetaryAmount: 0,
+          } as any,
+        }),
+      );
+      expect((payload as any).balanceModeOverride).toBe("BREAKDOWN");
+    });
+
+    it("scope BREAKDOWN + override='BREAKDOWN' → payload con override='BREAKDOWN' (no-op coherente)", () => {
+      const { payload } = buildSalePreviewPayload(
+        makeDraft({
+          balanceModeOverride: "BREAKDOWN",
+          lines: [makeLine()],
+          manualAdjustment: {
+            scope: "BREAKDOWN",
+            metals: [],
+            monetaryAmount: 50,
+          } as any,
+        }),
+      );
+      expect((payload as any).balanceModeOverride).toBe("BREAKDOWN");
+    });
+
+    it("scope UNIFIED + override='BREAKDOWN' → preserva override (no fuerza UNIFIED)", () => {
+      // El operador puede tener documento en BREAKDOWN con ajuste UNIFIED
+      // simultáneo (caso edge pero válido — el motor lo acepta).
+      const { payload } = buildSalePreviewPayload(
+        makeDraft({
+          balanceModeOverride: "BREAKDOWN",
+          lines: [makeLine()],
+          manualAdjustment: {
+            scope: "UNIFIED",
+            amount: -100,
+          } as any,
+        }),
+      );
+      expect((payload as any).balanceModeOverride).toBe("BREAKDOWN");
+      expect((payload as any).manualAdjustment?.scope).toBe("UNIFIED");
+    });
+
+    it("sin ajuste manual + override='UNIFIED' → preserva override (la defensa NO se activa)", () => {
+      const { payload } = buildSalePreviewPayload(
+        makeDraft({
+          balanceModeOverride: "UNIFIED",
+          lines: [makeLine()],
+          manualAdjustment: undefined,
+        }),
+      );
+      expect((payload as any).balanceModeOverride).toBe("UNIFIED");
+      expect((payload as any).manualAdjustment).toBeNull();
+    });
+
+    it("ajuste BREAKDOWN sanitizado a null (sin metales útiles ni monetario) → preserva override", () => {
+      // Si el operador puso scope=BREAKDOWN pero sin movimientos, el builder
+      // de manualAdjustment sanitiza a null. La defensa NO se activa porque
+      // el payload ya no tiene scope=BREAKDOWN.
+      const { payload } = buildSalePreviewPayload(
+        makeDraft({
+          balanceModeOverride: "UNIFIED",
+          lines: [makeLine()],
+          manualAdjustment: {
+            scope: "BREAKDOWN",
+            metals: [],
+            // sin monetaryAmount significativo
+          } as any,
+        }),
+      );
+      expect((payload as any).manualAdjustment).toBeNull();
+      expect((payload as any).balanceModeOverride).toBe("UNIFIED");
+    });
+  });
 });

@@ -100,6 +100,28 @@ export type HechuraSaleCardProps = {
   /** Estado de expansión del card. */
   expanded:                 boolean;
   onToggle:                 () => void;
+  /** Override post-redondeo comercial de hechura emitido por el motor
+   *  (`metalHechuraBreakdown.hechuraSale`). Cuando se provee, reemplaza el
+   *  agregado `hechuraSaleTotal` (que es la Σ de `lineSale` por componente,
+   *  pre-redondeo) en todos los lugares de display y en `hechSaleAdjusted`.
+   *  El detalle pre→post→delta sigue rendizándose en
+   *  `CommercialPhysicalRoundingBlock`. Cero matemática nueva: passthrough
+   *  estricto del campo ya emitido por el backend. */
+  hechuraSalePostOverride?: number | null;
+  /** Paridad Factura — Redondeo Comercial PER_DOCUMENT. Cuando se provee
+   *  (`lineMonetarySaldoPostCommercialRounding` del backend), REEMPLAZA el
+   *  TOTAL PRINCIPAL del card (`displaySaleTotal` = saldo comercial post, el
+   *  "MONETARIO" de Factura) en lugar de derivarlo de `totalWithTax − Σ Metales`
+   *  (que con PER_LINE suprimido daría el pre). Passthrough estricto — el resto
+   *  del card (componentes, IVA, etc.) no cambia. `null` ⇒ comportamiento legacy. */
+  displaySaleTotalOverride?: number | null;
+  /** Resumen Comercial — saldo monetario PRE redondeo comercial PER_DOCUMENT
+   *  (`lineMonetarySaldoPreCommercialRounding`). Con `displaySaleTotalOverride`
+   *  (= post) compone "AR$ 185.475,21 → AR$ 185.500,00". `null` ⇒ no se muestra. */
+  commercialSaldoPre?:       number | null;
+  /** Impacto $ del redondeo del bucket monetario (`hechuraRoundingMonetaryImpact`).
+   *  Se muestra como "+AR$ 24,79". `null`/0 ⇒ sin impacto. */
+  commercialSaldoImpact?:    number | null;
 };
 
 export function HechuraSaleCard(props: HechuraSaleCardProps): React.ReactElement {
@@ -109,14 +131,29 @@ export function HechuraSaleCard(props: HechuraSaleCardProps): React.ReactElement
     steps, adjustments, metalSaleEntries, saleTaxLines,
     rndStep, baseStep, result, whatIfActive, quantity, display,
     channel, payment, expanded, onToggle,
+    hechuraSalePostOverride = null,
+    displaySaleTotalOverride = null,
+    commercialSaldoPre = null,
+    commercialSaldoImpact = null,
   } = props;
   const fm = (v: number) => formatMoneyDisplay(v, display.rate, display.symbol);
+
+  // Subtotal efectivo de hechura — passthrough del backend cuando viene
+  // `metalHechuraBreakdown.hechuraSale` (post-redondeo comercial de lista).
+  // Si no viene, fallback al agregado calculado por `computeHechuraSaleTotal`
+  // (back-compat estricto). NO se mezcla pre + delta: usamos el campo
+  // directo que el motor ya emitió.
+  const hasHechuraOverride =
+    hechuraSalePostOverride != null && Number.isFinite(hechuraSalePostOverride);
+  const effectiveHechuraSubtotal = hasHechuraOverride
+    ? (hechuraSalePostOverride as number)
+    : hechuraSaleTotal;
 
   const totalMetalSaleForTax = metalSaleEntries.reduce((acc, p) => acc + p.totalCost, 0);
   const hasMetalSale = totalMetalSaleForTax > 0.001;
   const totalAdjustments = adjustments.reduce((s, a) => s + a.amount, 0);
   const hasAdjustments = adjustments.length > 0;
-  const hechSaleAdjusted = hechuraSaleTotal - totalAdjustments;
+  const hechSaleAdjusted = effectiveHechuraSubtotal - totalAdjustments;
   const allSaleTaxTotal = saleTaxLines.reduce((a, t) => a + t.totalTax, 0);
   const rndDiff = rndStep?.value != null && (rndStep as any).meta?.preRounding != null
     ? parseFloat(String(rndStep.value)) - parseFloat(String((rndStep as any).meta.preRounding))
@@ -124,12 +161,25 @@ export function HechuraSaleCard(props: HechuraSaleCardProps): React.ReactElement
   const hasRounding = Math.abs(rndDiff) > 0.001;
 
   // SSOT: header del card = Total producto − Σ(Metales).
+  // Paridad Factura — si el backend emitió el saldo comercial POST-redondeo
+  // PER_DOCUMENT (`displaySaleTotalOverride`), ese es el MONETARIO (passthrough
+  // estricto, ya redondeado por el motor). Si no, fallback al cálculo legacy.
+  const hasDisplaySaleOverride =
+    displaySaleTotalOverride != null && Number.isFinite(displaySaleTotalOverride);
+  // ¿Se renderea el CIERRE comercial al final (Subtotal ajustado / Redondeo /
+  // Total componente)? Si sí, el "Total componente" informativo de la zona de
+  // IVA queda DUPLICADO → se oculta. En listas unificadas (sin cierre) ese
+  // "Total componente" se mantiene como único total del detalle.
+  const showsCommercialClosing =
+    commercialSaldoPre != null && Number.isFinite(commercialSaldoPre) && hasDisplaySaleOverride;
   const productTotalRawAll = result?.totalWithTax != null
     ? parseFloat(String(result.totalWithTax))
     : null;
-  const displaySaleTotal = productTotalRawAll != null
-    ? productTotalRawAll - totalMetalSaleForTax
-    : hechSaleAdjusted + allSaleTaxTotal + rndDiff;
+  const displaySaleTotal = hasDisplaySaleOverride
+    ? (displaySaleTotalOverride as number)
+    : (productTotalRawAll != null
+        ? productTotalRawAll - totalMetalSaleForTax
+        : hechSaleAdjusted + allSaleTaxTotal + rndDiff);
 
   // Cierre del producto — ajustes post-product (cupón, canal, pago, envío).
   const couponDiscRaw = !whatIfActive && (result?.couponResult as any)?.applied
@@ -187,7 +237,7 @@ export function HechuraSaleCard(props: HechuraSaleCardProps): React.ReactElement
           {/* ── Origen — combo vs líneas COST_LINES ── */}
           {(baseStep?.key === "COMBO_BASE" && Array.isArray((baseStep as any)?.meta?.components) && ((baseStep as any).meta.components as any[]).length > 0) ? (
             <div className="border-t border-border/20 pt-1.5 space-y-0">
-              <p className={cn(vt.text.label, "font-semibold uppercase tracking-widest mb-1", vt.colors.formula)}>
+              <p className={cn(vt.text.groupLabel, vt.colors.formula, "mb-1")}>
                 Componentes del combo
               </p>
               <div className={cn("space-y-1", vt.text.label)}>
@@ -226,7 +276,7 @@ export function HechuraSaleCard(props: HechuraSaleCardProps): React.ReactElement
             </div>
           ) : pHechSteps.length > 0 && (
             <div className="border-t border-border/20 pt-1.5 space-y-0">
-              <p className={cn(vt.text.label, "font-semibold uppercase tracking-widest mb-1", vt.colors.formula)}>Origen</p>
+              <p className={cn(vt.text.groupLabel, vt.colors.formula, "mb-1")}>Origen</p>
               <div className={cn("space-y-1", vt.text.label)}>
                 {pHechSteps.map((step: any, hi: number) => {
                   const m: any = step.meta ?? {};
@@ -299,7 +349,7 @@ export function HechuraSaleCard(props: HechuraSaleCardProps): React.ReactElement
             <div className="space-y-1">
               <div className={cn(vt.row.flexBetween, vt.card.pill)}>
                 <span className={cn(vt.text.subtotalRow, vt.colors.labelSoft)}>Subtotal hechura</span>
-                <span className={cn(vt.text.subtotalRow, vt.colors.subtotal)}>{fm(hechuraSaleTotal)}</span>
+                <span className={cn(vt.text.subtotalRow, vt.colors.subtotal)}>{fm(effectiveHechuraSubtotal)}</span>
               </div>
               {adjustments.map((adj, ai) => {
                 const reduces = adj.amount > 0;
@@ -343,7 +393,7 @@ export function HechuraSaleCard(props: HechuraSaleCardProps): React.ReactElement
               {pHechSteps.length > 1 && !hasAdjustments && (
                 <div className={cn(vt.row.flexBetween, vt.card.pill)}>
                   <span className={cn(vt.text.subtotalRow, vt.colors.labelSoft)}>Subtotal</span>
-                  <span className={cn(vt.text.subtotalRow, vt.colors.subtotal)}>{fm(hechuraSaleTotal)}</span>
+                  <span className={cn(vt.text.subtotalRow, vt.colors.subtotal)}>{fm(effectiveHechuraSubtotal)}</span>
                 </div>
               )}
               {saleTaxLines.map((t, ti) => (
@@ -394,8 +444,11 @@ export function HechuraSaleCard(props: HechuraSaleCardProps): React.ReactElement
             </div>
           )}
 
-          {/* ── Total componente — línea INFORMATIVA ── */}
-          {(saleTaxLines.length > 0 || hasRounding || hasAdjustments) && (
+          {/* ── Total componente — línea INFORMATIVA ──
+              Se OCULTA cuando abajo aparece el cierre comercial (Subtotal
+              ajustado / Redondeo / Total componente), para no duplicar el total.
+              En listas unificadas (sin cierre) se mantiene como único total. */}
+          {(saleTaxLines.length > 0 || hasRounding || hasAdjustments) && !showsCommercialClosing && (
             <div className={cn(vt.row.flexBetween, "border-t border-border/20 pt-1")}>
               <span className={cn(vt.text.label, vt.colors.labelSoft)}>Total componente</span>
               <span className={cn(vt.text.rowAmountFine, vt.colors.labelSoft, "shrink-0")}>{fm(displaySaleTotal)}</span>
@@ -441,7 +494,7 @@ export function HechuraSaleCard(props: HechuraSaleCardProps): React.ReactElement
 
         return (
           <div className="pt-1.5 mt-0.5 border-t border-border/30 space-y-1">
-            <p className={cn("text-[8px] font-semibold uppercase tracking-widest mb-0.5", vt.colors.formulaFaint)}>
+            <p className={cn(vt.text.groupLabel, vt.colors.formula, "mb-0.5")}>
               Cierre del producto
             </p>
 
@@ -541,6 +594,47 @@ export function HechuraSaleCard(props: HechuraSaleCardProps): React.ReactElement
           </div>
         );
       })()}
+
+      {/* ── Resumen Comercial — Redondeo del saldo monetario, como CONSTRUCCIÓN
+          (sin flechas, sin bloque destacado). Lee como:
+              Subtotal ajustado   185.475,21   ← origen (izquierda)
+              Redondeo comercial  +24,79       ← ajuste (izquierda)
+              TOTAL COMPONENTE    185.500,00   ← total (derecha)
+          AL FINAL del card y SOLO expandido. Passthrough estricto: pre =
+          `lineMonetarySaldoPreCommercialRounding`, post = `displaySaleTotal`,
+          impacto = `hechuraRoundingMonetaryImpact`. Cero matemática FE. */}
+      {expanded && commercialSaldoPre != null && Number.isFinite(commercialSaldoPre) && hasDisplaySaleOverride && (
+        <div className="border-t border-border/20 pt-1.5 mt-0.5 space-y-px" data-tp-hechura-commercial-rounding>
+          {/* Construcción: label IZQ · valor DER en las tres filas, para que se
+              lea  185.475,21 / +24,79 / 185.500,00. Sin flechas. MISMA jerarquía
+              visual que las filas de IVA/promo (`vt.text.label` + `rowAmountFine`
+              + `vt.colors.label`) → el redondeo NO se ve más fuerte que otros
+              ajustes. */}
+          {/* Subtotal ajustado (pre). */}
+          <div className={vt.row.flexBetween}>
+            <span className={cn(vt.text.label, vt.colors.label)}>Subtotal ajustado</span>
+            <span className={cn(vt.text.rowAmountFine, vt.colors.label, "tabular-nums shrink-0")}>
+              {fm(commercialSaldoPre as number)}
+            </span>
+          </div>
+          {/* Redondeo comercial (+impacto) — valor a la DERECHA. */}
+          {commercialSaldoImpact != null && Math.abs(commercialSaldoImpact) > 0.005 && (
+            <div className={vt.row.flexBetween}>
+              <span className={cn(vt.text.label, vt.colors.label)}>Redondeo comercial</span>
+              <span className={cn(vt.text.rowAmountFine, vt.colors.label, "tabular-nums shrink-0")}>
+                {commercialSaldoImpact > 0 ? "+" : ""}{fm(commercialSaldoImpact as number)}
+              </span>
+            </div>
+          )}
+          {/* Total componente (post) — cierre de la construcción. Único total de
+              este bloque (no se duplica con el "Total producto" del cierre, que
+              es otro concepto: incluye canal/cupón/pago/envío). */}
+          <div className={cn(vt.row.flexBetween, vt.text.subLabel, "tabular-nums border-t border-border/20 pt-1 mt-1")}>
+            <span className={cn("font-semibold", vt.colors.label)}>Total componente</span>
+            <span className={cn("shrink-0 font-bold", vt.colors.subtotal)}>{fm(displaySaleTotal)}</span>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

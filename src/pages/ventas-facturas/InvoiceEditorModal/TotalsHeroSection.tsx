@@ -34,7 +34,7 @@ export type TotalsHeroSectionProps = {
   viewMode: React.ComponentProps<typeof TPDocumentTotalsHero>["viewMode"];
   /** Setter del modo. */
   onViewModeChange: React.ComponentProps<typeof TPDocumentTotalsHero>["onViewModeChange"];
-  /** Etiqueta del total. Default "Total a facturar". */
+  /** Etiqueta del total. Default "Total". */
   totalLabel?: string;
   /** Estado del fetch. Cuando es "loading" y `hasResponse=false`, muestra
    *  loader esquina superior derecha. */
@@ -52,7 +52,7 @@ export type TotalsHeroSectionProps = {
 export function TotalsHeroSection(props: TotalsHeroSectionProps): React.ReactElement {
   const {
     composition, currency, displayRate, viewMode, onViewModeChange,
-    totalLabel = "Total a facturar", previewStatus, hasResponse,
+    totalLabel = "Total", previewStatus, hasResponse,
     previewStale = false,
   } = props;
   return (

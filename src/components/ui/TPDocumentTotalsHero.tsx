@@ -18,6 +18,12 @@ import { Info } from "lucide-react";
 import { cn } from "./tp";
 import { formatMoneyDoc as fmtMoney, formatByType } from "../../lib/pricing/format";
 import type { PricingComposition } from "../../lib/pricing-display-helpers";
+import {
+  buildSaleDiscountGroups,
+  isEmptyGroup,
+  type DiscountSourceItem,
+  type DiscountItemGroup,
+} from "../../lib/pricing/display/saleDiscountSourcesDisplay";
 
 export type TPDocumentTotalsHeroViewMode = "unified" | "detailed";
 
@@ -61,7 +67,7 @@ export type TPDocumentTotalsHeroProps = {
   displayRate?: number;
   viewMode: TPDocumentTotalsHeroViewMode;
   onViewModeChange: (v: TPDocumentTotalsHeroViewMode) => void;
-  /** Override del label superior. Default: "Total a facturar". */
+  /** Override del label superior. Default: "Total". */
   totalLabel?: string;
 };
 
@@ -156,13 +162,12 @@ export function TPDocumentTotalsHero({
   displayRate = 1,
   viewMode,
   onViewModeChange,
-  totalLabel = "Total a facturar",
+  totalLabel = "Total",
 }: TPDocumentTotalsHeroProps) {
   const mFmt = (amount: number) => fmtMoney((amount ?? 0) / displayRate, currency);
   const hasRounding = Math.abs(c.rounding) >= 0.01;
   const hasShipping = (c.shipping ?? 0) > 0;
   const taxesTotalForRow = c.taxTotal > 0 ? c.taxTotal : null;
-  const isChannelDiscount = (c.channelAdjustment ?? 0) < 0;
 
   // Fase 3A — toggle "Ver conceptos no aplicados". Default: ocultos para
   // que la composición sea más liviana y el operador foque en lo que SÍ se
@@ -316,7 +321,7 @@ export function TPDocumentTotalsHero({
               </div>
               <div className="flex justify-between pt-1">
                 <span className="text-[11px] font-semibold uppercase tracking-wide text-text">
-                  Total final
+                  Total
                 </span>
                 <span className="tabular-nums font-bold text-primary">
                   {mFmt(c.total)}
@@ -411,111 +416,111 @@ export function TPDocumentTotalsHero({
             />
           </div>
 
-          {/* ── BLOQUE 2: AJUSTES Y DESCUENTOS ────────────────────────── */}
-          <div className="space-y-0">
-            <SectionHeader>Ajustes y descuentos</SectionHeader>
-            <CompositionRow
-              currency={currency}
-              displayRate={displayRate}
-              label={
-                c.customerDiscountPercent != null
-                  ? `Descuento de cliente (${formatByType(c.customerDiscountPercent, "PERCENT", { bare: true })}%)`
-                  : "Descuento de cliente"
-              }
-              amount={c.customerDiscount}
-              asNegative
-              tone="discount"
-              hideWhenInactive={hideInactive}
-              subline={(() => {
-                if (c.customerDiscount == null) return null;
-                switch (c.customerDiscountApplyOn) {
-                  case "METAL":   return "Aplica sobre: Metal";
-                  case "HECHURA": return "Aplica sobre: Hechura";
-                  case "MIXED":   return "Aplica sobre: Metal + Hechura";
-                  case "TOTAL":   return "Aplica sobre: Precio ajustado (lista + canal + promociones)";
-                  default:        return null;
-                }
-              })()}
-              hint="Descuento que aplica la lista de precios o el rol del cliente sobre el precio bruto."
-            />
+          {/* ── BLOQUE 2: AJUSTES Y DESCUENTOS ──────────────────────────
+              Estructura en DOS NIVELES, vía `buildSaleDiscountGroups`:
+                · Nivel 1 — origen comercial:
+                    · Automáticos: lo que aplica el motor (promo, qty,
+                      cliente, cupón, canal).
+                    · Manuales: lo que decidió el operador (bonif. manual
+                      por línea, descuento global del documento).
+                · Nivel 2 — signo: Bonificaciones (descuentos) vs Recargos.
+              El helper hace passthrough de montos y % — el frontend NO
+              recalcula nada. Los % aparecen sólo en la `subline` y sólo
+              cuando el motor los expuso con base inequívoca (cliente, cupón).
+              Si no hay ítems en ningún grupo, no se muestra el bloque. */}
+          {(() => {
+            const groups = buildSaleDiscountGroups(c);
+            const hasAuto   = !isEmptyGroup(groups.automatic);
+            const hasManual = !isEmptyGroup(groups.manual);
+            if (!hasAuto && !hasManual && !showInactive) return null;
 
-            <CompositionRow
-              currency={currency}
-              displayRate={displayRate}
-              label="Canal de venta"
-              amount={c.channelAdjustment}
-              asNegative={isChannelDiscount}
-              tone={isChannelDiscount ? "discount" : "surcharge"}
-              hideWhenInactive={hideInactive}
-              subline={c.channelName}
-              hint="Ajuste positivo (recargo) o negativo (descuento) configurado en el canal de venta del documento."
-            />
-
-            <CompositionRow
-              currency={currency}
-              displayRate={displayRate}
-              label="Descuento por cantidad"
-              amount={c.quantityDiscount}
-              asNegative
-              tone="discount"
-              hideWhenInactive={hideInactive}
-              hint="Descuento por escalas de cantidad aplicado por el motor a las líneas."
-            />
-
-            <CompositionRow
-              currency={currency}
-              displayRate={displayRate}
-              label="Promoción"
-              amount={c.promotion}
-              asNegative
-              tone="discount"
-              hideWhenInactive={hideInactive}
-              subline={c.promotionName ? `Promo: ${c.promotionName}` : null}
-              hint="Descuento aplicado por una promoción activa para alguna de las líneas."
-            />
-
-            {/* Bonificación manual: solo aparece si al menos una línea tiene
-                `manualDiscountOverride`. En esas líneas el motor reemplaza
-                promo + desc. cantidad por el valor manual; lo separamos en
-                una fila propia para que las filas "Promoción" y "Desc. por
-                cantidad" no incluyan importes manuales. */}
-            {c.manualDiscount != null && (
+            const renderItemRow = (
+              it: DiscountSourceItem,
+              signed: "negative" | "positive",
+            ) => (
               <CompositionRow
+                key={it.key}
                 currency={currency}
                 displayRate={displayRate}
-                label="Bonificación manual"
-                amount={c.manualDiscount}
-                asNegative
-                tone="discount"
-                subline="Reemplaza promoción y desc. por cantidad en las líneas afectadas."
-                hint="Total de los manualDiscountOverride aplicados en líneas individuales."
+                label={it.label}
+                amount={it.amount}
+                asNegative={signed === "negative"}
+                tone={signed === "negative" ? "discount" : "surcharge"}
+                subline={it.subline}
+                hint={it.hint}
               />
-            )}
+            );
 
-            <CompositionRow
-              currency={currency}
-              displayRate={displayRate}
-              label="Cupón de venta"
-              amount={c.coupon}
-              asNegative
-              tone="discount"
-              hideWhenInactive={hideInactive}
-              subline={c.couponName ? `${c.couponName}${c.couponCode ? ` · ${c.couponCode}` : ""}` : null}
-              hint="Descuento del cupón aplicado al documento. Lo valida el motor."
-            />
+            /** Subtotal de un sub-grupo (bonif o recargo). Suma trivial. */
+            const renderGroupTotal = (
+              label:  string,
+              amount: number,
+              signed: "negative" | "positive",
+            ) => (
+              <div className="mt-0.5 flex items-center justify-between gap-3 border-t border-border/40 py-1 text-[11px]">
+                <span className="font-semibold text-text">{label}</span>
+                <span className="tabular-nums font-bold text-amber-500">
+                  {(signed === "negative" ? "−" : "+") + mFmt(amount)}
+                </span>
+              </div>
+            );
 
-            {c.globalDiscount != null && (
-              <CompositionRow
-                currency={currency}
-                displayRate={displayRate}
-                label="Descuento global"
-                amount={c.globalDiscount}
-                asNegative
-                tone="discount"
-                hint="Descuento manual cargado a nivel documento."
-              />
-            )}
-          </div>
+            /** Renderiza un bloque completo (Automáticos o Manuales) con sus
+             *  sub-bloques Bonificaciones / Recargos. */
+            const renderBlock = (
+              title:   string,
+              caption: string,
+              g:       DiscountItemGroup,
+            ) => {
+              if (isEmptyGroup(g)) return null;
+              const hasBonifs    = g.bonifications.length > 0;
+              const hasSurcharges = g.surcharges.length > 0;
+              return (
+                <div className="space-y-1.5">
+                  <SectionHeader>{title}</SectionHeader>
+                  <div className="-mt-0.5 text-[9px] italic text-muted/60">{caption}</div>
+                  {hasBonifs && (
+                    <div className="space-y-0">
+                      {g.bonifications.map((it) => renderItemRow(it, "negative"))}
+                      {renderGroupTotal("Total bonificado", g.bonificationTotal, "negative")}
+                    </div>
+                  )}
+                  {hasSurcharges && (
+                    <div className="space-y-0">
+                      {g.surcharges.map((it) => renderItemRow(it, "positive"))}
+                      {renderGroupTotal("Total recargos", g.surchargeTotal, "positive")}
+                    </div>
+                  )}
+                </div>
+              );
+            };
+
+            return (
+              <>
+                {renderBlock(
+                  "Ajustes automáticos",
+                  "Aplicados por el motor (promociones, descuentos por cantidad, cliente, cupón, canal).",
+                  groups.automatic,
+                )}
+                {renderBlock(
+                  "Ajustes manuales",
+                  "Editables por el operador (bonificación manual por línea y descuento global).",
+                  groups.manual,
+                )}
+
+                {/* Estado vacío visible solo cuando se pidió ver inactivos y
+                    no hay ningún ajuste — para explicar "no hay ajustes". */}
+                {!hasAuto && !hasManual && showInactive && (
+                  <div className="space-y-0">
+                    <SectionHeader>Ajustes y descuentos</SectionHeader>
+                    <div className="py-1 text-[11px] italic text-muted/70">
+                      No hay bonificaciones ni recargos aplicados a este documento.
+                    </div>
+                  </div>
+                )}
+              </>
+            );
+          })()}
 
           {/* ── BLOQUE 3: BASE IMPONIBLE ──────────────────────────────── */}
           <div className="space-y-0">
@@ -640,12 +645,12 @@ export function TPDocumentTotalsHero({
             </div>
           )}
 
-          {/* ── BLOQUE 6: TOTAL FINAL ─────────────────────────────────── */}
+          {/* ── BLOQUE 6: TOTAL ───────────────────────────────────────── */}
           <div className="space-y-0">
             <div className="my-1 border-t border-border/60" />
             <div className="flex items-center justify-between gap-3 py-1">
               <span className="text-[11px] font-semibold uppercase tracking-wide text-text">
-                Total final
+                Total
               </span>
               <span className="text-base font-bold tabular-nums text-primary">
                 {mFmt(c.total)}

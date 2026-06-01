@@ -11,9 +11,8 @@
 //   - Header con badge (Cobrada / Parcial / Pendiente) y saldo restante.
 //   - Lista de pagos (cada uno con medio, depósito, monto, moneda + remove).
 //   - Botón "Agregar cobro".
-//   - Resumen (Total a facturar / Cobrado / Saldo).
+//   - Resumen (Total / Cobrado / Saldo).
 //   - Banner de warning si `totalCobrado > total`.
-//   - Estado final (Cobrada / Parcial / Pendiente).
 // ============================================================================
 
 import React from "react";
@@ -83,8 +82,11 @@ export function PaymentCard(props: PaymentCardProps): React.ReactElement {
   return (
     <TPCard
       title="Cobro"
-      bodyClassName="!p-3"
-      headerClassName="!py-2"
+      // Padding compacto unificado con el resto de cards del aside
+      // (look ERP comercial). Antes era !p-3 / !py-2 — aire excesivo
+      // comparado con DiscountCard / ShippingCard / CouponCard.
+      bodyClassName="!p-2.5"
+      headerClassName="!py-1.5"
       collapsible
       open={open}
       onOpenChange={onOpenChange}
@@ -103,9 +105,9 @@ export function PaymentCard(props: PaymentCardProps): React.ReactElement {
         </span>
       }
     >
-      <div className="space-y-2">
+      <div className="space-y-3">
         {payments.length === 0 && (
-          <div className="rounded-md border border-dashed border-border bg-surface2/30 px-3 py-3 text-center text-[11px] text-muted">
+          <div className="rounded-lg border border-dashed border-border/40 bg-surface2/15 px-3 py-4 text-center text-[11px] text-muted">
             No hay cobros cargados todavía.
           </div>
         )}
@@ -117,8 +119,8 @@ export function PaymentCard(props: PaymentCardProps): React.ReactElement {
             <div
               key={p.id}
               className={cn(
-                "space-y-1.5 rounded-md border bg-surface2/30 p-2",
-                depositMissing ? "border-red-500/60" : "border-border",
+                "space-y-2 rounded-lg border bg-surface2/15 p-3",
+                depositMissing ? "border-red-500/50" : "border-border/40",
               )}
             >
               <div className="flex items-center gap-1.5">
@@ -181,6 +183,7 @@ export function PaymentCard(props: PaymentCardProps): React.ReactElement {
                     formatType="MONEY"
                     decimals={2}
                     min={0}
+                    showArrows={false}
                   />
                 </div>
                 <div>
@@ -200,15 +203,16 @@ export function PaymentCard(props: PaymentCardProps): React.ReactElement {
           type="button"
           data-tp-enter="ignore"
           onClick={onAddPayment}
-          className="inline-flex w-full items-center justify-center gap-1 rounded-md border border-dashed border-border bg-surface2/30 px-3 py-2 text-[11px] font-semibold text-primary transition hover:bg-surface2/60"
+          className="inline-flex w-full items-center justify-center gap-1.5 rounded-lg border border-dashed border-border/40 bg-transparent px-3 py-2.5 text-[11px] font-semibold text-primary transition hover:bg-surface2/30 hover:border-border/60"
         >
           <Plus size={12} /> Agregar cobro
         </button>
 
-        {/* Resumen */}
-        <div className="space-y-1 rounded-md border border-border/60 bg-surface2/30 p-2 text-[11px]">
+        {/* Resumen — UX.5: separador top sutil en vez de caja con borde
+            completo para evitar la sensación "caja dentro de caja". */}
+        <div className="space-y-1.5 border-t border-border/20 pt-3 text-[11px]">
           <div className="flex justify-between">
-            <span className="text-muted">Total a facturar</span>
+            <span className="text-muted">Total</span>
             <span className="tabular-nums font-semibold text-text">{fmtCurrency(effectiveTotal)}</span>
           </div>
           <div className="flex justify-between">
@@ -217,7 +221,7 @@ export function PaymentCard(props: PaymentCardProps): React.ReactElement {
               {totalCobrado > 0 ? fmtCurrency(totalCobrado) : "—"}
             </span>
           </div>
-          <div className="flex justify-between border-t border-border/60 pt-1">
+          <div className="flex justify-between border-t border-border/20 pt-1.5">
             <span className="font-semibold text-text">Saldo</span>
             <span className={cn(
               "tabular-nums font-bold",
@@ -229,17 +233,15 @@ export function PaymentCard(props: PaymentCardProps): React.ReactElement {
         </div>
 
         {totalCobrado > effectiveTotal + 0.001 && (
-          <div className="flex items-start gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-2 py-1.5 text-[11px] text-amber-500">
+          <div className="flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-[11px] text-amber-500">
             <AlertTriangle size={14} className="mt-0.5 shrink-0" />
             <span>
-              El total cobrado <strong className="tabular-nums">{fmtCurrency(totalCobrado)}</strong> supera el total a facturar.
+              El total cobrado <strong className="tabular-nums">{fmtCurrency(totalCobrado)}</strong> supera el total del comprobante.
             </span>
           </div>
         )}
-
-        <div className="rounded bg-surface2/40 px-2 py-1 text-center text-[10px] uppercase tracking-wide">
-          <span className={cn("font-semibold", statusColor)}>{statusLabel}</span>
-        </div>
+        {/* Estado final ya se muestra en el header del TPCard (right slot) —
+            evitamos repetir el badge al pie del resumen (Etapa A.2). */}
       </div>
     </TPCard>
   );

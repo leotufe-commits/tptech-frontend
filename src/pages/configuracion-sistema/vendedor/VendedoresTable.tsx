@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { Plus, Star } from "lucide-react";
+import { Plus } from "lucide-react";
 import TPImageLightbox from "../../../components/ui/TPImageLightbox";
 import { TPButton } from "../../../components/ui/TPButton";
 import { TPTableKit, type TPColDef } from "../../../components/ui/TPTableKit";
@@ -121,11 +121,10 @@ export function VendedoresTable({
                         </div>
                       )}
                     </div>
-                    <div className="min-w-0 flex items-center gap-1.5">
-                      <span className="text-sm font-medium text-text truncate">
+                    <div className="min-w-0">
+                      <span className="text-sm font-medium text-text truncate block">
                         {row.displayName}
                       </span>
-                      {row.isFavorite && <Star size={12} className="shrink-0 fill-amber-400 text-amber-400" />}
                     </div>
                   </div>
                 </TPTd>

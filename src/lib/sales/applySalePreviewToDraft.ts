@@ -144,8 +144,36 @@ export function applySalePreviewToDraft(
         appliedPromotionId:      pl.appliedPromotionId,
         appliedPromotionName:    pl.appliedPromotionName,
         basePrice:               pl.basePrice,
+        // Cantidad ANCLA del snapshot del motor. Se usa en los displays
+        // derivados (% efectivo de bonificación) para que NO se mezclen el
+        // qty nuevo del draft con `subtotal`/`lineDiscount` del preview
+        // anterior mientras el siguiente preview viaja. Passthrough puro,
+        // sin matemática. Ver `selectInvoiceLineView` (anti-flicker) y la
+        // celda Bonificación de `TPDocumentLineAdvancedEditor`.
+        previewQuantity:         pl.quantity,
         quantityDiscountAmount:  pl.quantityDiscountAmount,
         promotionDiscountAmount: pl.promotionDiscountAmount,
+        // Sprint 3 — descuento del cliente per-línea expuesto por el motor
+        // (`SalePriceResult.customerDiscountAmount`). Imprescindible para
+        // mostrar el impacto del cliente cuando `applyOn=TOTAL` y el motor
+        // absorbe el descuento en `unitPrice` sin emitir adjustments por
+        // componente. Sin esto, la UI no puede diferenciar "cliente $0" real
+        // de "el motor no segregó el detalle". POLICY R4.5: passthrough puro.
+        customerDiscountAmount:  pl.customerDiscountAmount ?? null,
+        // Metadata explicativa per-origen (POLICY R4.5) — display-only.
+        // El motor las emite en `steps[].meta` y el mapper backend las
+        // serializa. Permiten mostrar "Cálculo: base × valor" sin recalcular.
+        quantityDiscountBase:       pl.quantityDiscountBase ?? null,
+        quantityDiscountValue:      pl.quantityDiscountValue ?? null,
+        quantityDiscountValueType:  pl.quantityDiscountValueType ?? null,
+        promotionDiscountBase:      pl.promotionDiscountBase ?? null,
+        promotionDiscountValue:     pl.promotionDiscountValue ?? null,
+        promotionDiscountValueType: pl.promotionDiscountValueType ?? null,
+        customerDiscountBase:       pl.customerDiscountBase ?? null,
+        // Pipeline de pasos en orden real del motor (POLICY R4.5).
+        // Permite renderizar "Base inicial → Desc. cantidad → Promo → Cliente
+        // → Manual" sin derivar nada. `undefined` para previews legacy.
+        pricingSteps:               pl.pricingSteps,
         unitCost:                pl.unitCost,
         unitMargin:              pl.unitMargin,
         marginPercent:           pl.marginPercent,
@@ -156,6 +184,48 @@ export function applySalePreviewToDraft(
         // Fase 2.7.b — márgenes agregados por tipo (passthrough).
         metalMarginPct:          pl.metalHechuraBreakdown?.metalMarginPct   ?? null,
         hechuraMarginPct:        pl.metalHechuraBreakdown?.hechuraMarginPct ?? null,
+        // ── Etapa C-comercial / C4-fix (POLICY §R-Rounding-14) ────────────
+        // Auditoría del redondeo comercial — viaja al draft para que la UI
+        // (etapa C6) muestre la fila "Redondeo de lista — metal/hechura"
+        // sin tener que mantener un estado paralelo. Passthrough puro.
+        metalSalePreRounding:    pl.metalHechuraBreakdown?.metalSalePreRounding    ?? null,
+        hechuraSalePreRounding:  pl.metalHechuraBreakdown?.hechuraSalePreRounding  ?? null,
+        metalSaleRoundingDelta:  pl.metalHechuraBreakdown?.metalSaleRoundingDelta  ?? null,
+        hechuraSaleRoundingDelta:pl.metalHechuraBreakdown?.hechuraSaleRoundingDelta?? null,
+        // Snapshot COMERCIAL PHYSICAL por metal padre. `null` cuando la
+        // lista operó MONETARY (legacy) o cuando no hay metales en la línea.
+        commercialPhysical:      pl.metalHechuraBreakdown?.physical ?? null,
+        // Etapa D' (cierre conceptual) — VISTA del Redondeo Comercial
+        // PER_DOCUMENT replicada por el backend en esta línea.
+        // PASSTHROUGH puro — el card de artículo (`RoundingTaxSection`)
+        // la usa para mostrar el cierre de la cadena comercial. `null`
+        // cuando la lista del documento opera en PER_LINE_LEGACY o
+        // mixed-list (NO_SHARED_LIST). REGLA DE ORO: si está en
+        // `preview.lines[i]`, debe pasar al draft tal cual — cero
+        // recálculo, cero inferencia.
+        commercialRoundingContext: (pl as any).commercialRoundingContext ?? null,
+        // Opción δ (R-COMMERCIAL-METAL-VISIBLE) — Impacto $ del Redondeo
+        // Comercial PER_DOCUMENT distribuido a ESTA línea (backend SSOT).
+        // Permite computar Metal Visible = metalSale × qty + impact.
+        // Passthrough estricto — cero matemática FE.
+        metalRoundingMonetaryImpact: (pl as any).metalRoundingMonetaryImpact ?? null,
+        // Opción A — Impacto $ del Redondeo Comercial en el bucket HECHURA/
+        // MONETARIO + TOTAL LÍNEA post-redondeo. Passthrough estricto: el
+        // Resumen Comercial los usa para cerrar la línea cumpliendo
+        // METAL post + MONETARIO post = TOTAL post. Cero matemática FE.
+        hechuraRoundingMonetaryImpact: (pl as any).hechuraRoundingMonetaryImpact ?? null,
+        lineTotalWithTaxPostCommercialRounding:
+          (pl as any).lineTotalWithTaxPostCommercialRounding ?? null,
+        // Descomposición FÍSICA — saldo monetario POST por línea (el bloque
+        // MONETARIO del Resumen lo muestra directo). Passthrough estricto.
+        lineMonetarySaldoPostCommercialRounding:
+          (pl as any).lineMonetarySaldoPostCommercialRounding ?? null,
+        // Gramos comerciales POST por línea y metal padre (display-only). El
+        // Resumen Comercial del Artículo los usa para los gramos del metal —
+        // son PER-LÍNEA, así que no acumulan al sumar varias líneas del mismo
+        // metal. Passthrough estricto: cero matemática FE.
+        lineCommercialRoundingMetals:
+          (pl as any).lineCommercialRoundingMetals ?? null,
         // Desglose por componente con adjustments. Permite que la UI muestre
         // el monto absoluto de la bonificación junto al porcentaje configurado,
         // leyendo backend sin recalcular (POLICY.md §4 R4.5).
@@ -213,6 +283,18 @@ export function applySalePreviewToDraft(
   });
 
   const dt = preview.documentTotals;
+  // Etapa A — Manual Adjustment. `preview.finalTotal` es `engineTotal + ajuste`
+  // (= lo que se persistirá en `Sale.total` al confirmar). Sin ajuste manual:
+  // `finalTotal === dt.total`. Con ajuste: difieren por el delta. El draft
+  // debe reflejar el TOTAL FINAL para que el header del card y los displays
+  // que leen `draft.total` (cuenta corriente, header, PDF preview) sean
+  // coherentes con lo que el backend va a persistir. Passthrough puro: si el
+  // backend no devolvió finalTotal (compat), caemos al `dt.total` del motor.
+  const finalTotalFromBackend = (preview as any).finalTotal;
+  const totalForDraft =
+    typeof finalTotalFromBackend === "number" && Number.isFinite(finalTotalFromBackend)
+      ? finalTotalFromBackend
+      : dt.total;
   return {
     ...draft,
     lines:          updatedLines,
@@ -224,6 +306,6 @@ export function applySalePreviewToDraft(
       dt.globalDiscountAmount,
     ),
     taxAmount:      dt.taxAmount,
-    total:          dt.total,
+    total:          totalForDraft,
   };
 }

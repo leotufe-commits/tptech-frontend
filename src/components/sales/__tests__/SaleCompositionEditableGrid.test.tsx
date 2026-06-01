@@ -20,6 +20,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, within } from "@testing-library/react";
 import { SaleCompositionEditableGrid } from "../SaleCompositionEditableGrid";
 import type { DocumentLine } from "../../../lib/document-types";
+import { formatByType } from "../../../lib/pricing/format";
 
 // ─── Helpers ───────────────────────────────────────────────────────────────
 
@@ -645,11 +646,11 @@ describe("Fase 2.4 — columna UNID. removida; unidad inline", () => {
     // "Unidad" puede aparecer en header + filas (fallback) — verificamos
     // que al menos exista una ocurrencia (el header).
     expect(screen.getAllByText("Unidad").length).toBeGreaterThanOrEqual(1);
-    expect(screen.getByText("Costo unit.")).toBeInTheDocument();
+    expect(screen.getByText("Valor unitario")).toBeInTheDocument();
     // FASE F22 — "Merma / Ajuste" vuelve como columna independiente.
     expect(screen.getByText("Merma / Ajuste")).toBeInTheDocument();
-    expect(screen.getByText("Costo Total")).toBeInTheDocument();
-    expect(screen.getByText("Venta")).toBeInTheDocument();
+    expect(screen.getByText("Costo total")).toBeInTheDocument();
+    expect(screen.getByText("Venta total")).toBeInTheDocument();
     // Labels viejos NO deben existir.
     expect(screen.queryByText("Val. unit.")).toBeNull();
     expect(screen.queryByText("V. venta")).toBeNull();
@@ -861,24 +862,24 @@ describe("FASE 12.23 — sin flash/tachado debajo del input al editar", () => {
 // ────────────────────────────────────────────────────────────────────────────
 
 describe("Fase 2.6.2 / FASE F14 — Header de Composición", () => {
-  it("FASE F14 — Header del card muestra 'Valor de costo:' (renombrado de 'Componentes:')", () => {
+  it("FASE F14 — Header del card muestra 'Costo total línea:' (renombrado de 'Componentes:')", () => {
     render(<SaleCompositionEditableGrid line={makeLine()} onApply={vi.fn()} {...baseProps} />);
-    expect(screen.getByText(/Valor de costo:/)).toBeInTheDocument();
+    expect(screen.getByText(/Costo total línea:/)).toBeInTheDocument();
     expect(screen.queryByText(/Componentes:/)).toBeNull();
   });
 
-  it("FASE F14 — Header muestra 'Valor de costo:' con el monto agregado", () => {
+  it("FASE F14 — Header muestra 'Costo total línea:' con el monto agregado", () => {
     render(<SaleCompositionEditableGrid line={makeLine()} onApply={vi.fn()} {...baseProps} />);
-    expect(screen.getByText(/Valor de costo:/)).toBeInTheDocument();
+    expect(screen.getByText(/Costo total línea:/)).toBeInTheDocument();
   });
 
-  it("FASE F14 — Header muestra 'Valor de venta:' inline cuando hay basePrice/unitPrice", () => {
+  it("FASE F14 — Header muestra 'Venta total línea:' inline cuando hay basePrice/unitPrice", () => {
     const line = makeLine();
     line.quantity = 1;
     (line.pricingMeta as any).basePrice = 3187469.38;
     render(<SaleCompositionEditableGrid line={line} onApply={vi.fn()} {...baseProps} />);
-    // FASE F14 — "Valor de venta:" (sin "neto").
-    expect(screen.getByText(/Valor de venta:/)).toBeInTheDocument();
+    // FASE F14 — "Venta total línea:" (sin "neto").
+    expect(screen.getByText(/Venta total línea:/)).toBeInTheDocument();
     expect(screen.queryByText(/Valor de venta neto:/)).toBeNull();
     expect(screen.getByText(/ARS\s*3\.187\.469,38/)).toBeInTheDocument();
   });
@@ -897,7 +898,7 @@ describe("Fase 2.6.2 / FASE F14 — Header de Composición", () => {
     delete (line.pricingMeta as any).basePrice;
     (line as any).unitPrice = null;
     render(<SaleCompositionEditableGrid line={line} onApply={vi.fn()} {...baseProps} />);
-    expect(screen.queryByText(/Valor de venta:/)).toBeNull();
+    expect(screen.queryByText(/Venta total línea:/)).toBeNull();
   });
 });
 
@@ -908,7 +909,7 @@ describe("Fase 2.6.2 / FASE F14 — Header de Composición", () => {
 describe("Fase 2.6.3 / FASE F14 — label 'Valor de venta' en header", () => {
   it("FASE F14 — Header usa el label 'Valor de venta' (sin sufijo 'neto')", () => {
     render(<SaleCompositionEditableGrid line={makeLine()} onApply={vi.fn()} {...baseProps} />);
-    expect(screen.getByText(/Valor de venta:/)).toBeInTheDocument();
+    expect(screen.getByText(/Venta total línea:/)).toBeInTheDocument();
     expect(screen.queryByText(/Valor de venta neto:/)).toBeNull();
   });
 
@@ -932,31 +933,31 @@ describe("Fase 2.7.a — labels alineados a composición de COSTO", () => {
 
   it("Header de columnas usa 'Costo unit.' (no 'Val. unit.')", () => {
     render(<SaleCompositionEditableGrid line={makeLine()} onApply={vi.fn()} {...baseProps} />);
-    expect(screen.getByText("Costo unit.")).toBeInTheDocument();
+    expect(screen.getByText("Valor unitario")).toBeInTheDocument();
     expect(screen.queryByText("Val. unit.")).toBeNull();
   });
 
   it("FASE 12.2 — header de columnas usa 'Costo Total' (no 'Costo línea' ni 'V. venta')", () => {
     render(<SaleCompositionEditableGrid line={makeLine()} onApply={vi.fn()} {...baseProps} />);
-    expect(screen.getByText("Costo Total")).toBeInTheDocument();
+    expect(screen.getByText("Costo total")).toBeInTheDocument();
     expect(screen.queryByText("Costo línea")).toBeNull();
     expect(screen.queryByText("V. venta")).toBeNull();
   });
 
   it("Tooltips informativos: 'Costo unit.' (con merma/ajuste debajo) y 'Costo Total' (con margen debajo)", () => {
     render(<SaleCompositionEditableGrid line={makeLine()} onApply={vi.fn()} {...baseProps} />);
-    const costoUnit  = screen.getByText("Costo unit.");
-    const costoTotal = screen.getByText("Costo Total");
+    const costoUnit  = screen.getByText("Valor unitario");
+    const costoTotal = screen.getByText("Costo total");
     // FASE 12.3 — `Costo unit.` extendido para señalar merma/ajuste debajo.
     expect(costoUnit.getAttribute("title")).toMatch(/^Costo base del componente/);
     // FASE 12.4 — `Costo Total` extendido para señalar margen embebido debajo.
     expect(costoTotal.getAttribute("title")).toMatch(/^Costo final del componente/);
   });
 
-  it("FASE F14 — Header inline usa 'Valor de costo:' y 'Valor de venta:' (renombrados)", () => {
+  it("FASE F14 — Header inline usa 'Costo total línea:' y 'Venta total línea:' (renombrados)", () => {
     render(<SaleCompositionEditableGrid line={makeLine()} onApply={vi.fn()} {...baseProps} />);
-    expect(screen.getByText(/Valor de costo:/)).toBeInTheDocument();
-    expect(screen.getByText(/Valor de venta:/)).toBeInTheDocument();
+    expect(screen.getByText(/Costo total línea:/)).toBeInTheDocument();
+    expect(screen.getByText(/Venta total línea:/)).toBeInTheDocument();
     expect(screen.queryByText(/Componentes:/)).toBeNull();
     expect(screen.queryByText(/Valor de venta neto:/)).toBeNull();
   });
@@ -964,7 +965,7 @@ describe("Fase 2.7.a — labels alineados a composición de COSTO", () => {
   it("FASE F22 — la columna 'Merma / Ajuste' vuelve como columna independiente del header", () => {
     render(<SaleCompositionEditableGrid line={makeLine()} onApply={vi.fn()} {...baseProps} />);
     expect(screen.getByText("Cantidad")).toBeInTheDocument();
-    expect(screen.getByText("Venta")).toBeInTheDocument();
+    expect(screen.getByText("Venta total")).toBeInTheDocument();
     expect(screen.getByText("Merma / Ajuste")).toBeInTheDocument();
   });
 });
@@ -985,7 +986,7 @@ describe("FASE F22 — Merma/Ajuste como columna independiente", () => {
   it("el header 'Merma / Ajuste' EXISTE como columna independiente", () => {
     render(<SaleCompositionEditableGrid line={makeLine()} onApply={vi.fn()} {...baseProps} />);
     expect(screen.getByText("Merma / Ajuste")).toBeInTheDocument();
-    expect(screen.getByText("Costo unit.")).toBeInTheDocument();
+    expect(screen.getByText("Valor unitario")).toBeInTheDocument();
   });
 
   it("FASE F13/F22 — METAL muestra el editor de Merma inline en su columna propia (sin label, con sufijo %)", () => {
@@ -1290,11 +1291,13 @@ describe("Fase 4.2 — TAB navigation", () => {
 });
 
 // ────────────────────────────────────────────────────────────────────────────
-// 19. Fase 4.3 — Loading indicator visible
+// 19. T6 — Label "Recalculando…" del header REMOVIDO (era fugaz, parpadeaba).
+//    El header de la grilla mantiene el último valor válido hasta que llega
+//    el siguiente preview; el spinner inline se eliminó del DOM.
 // ────────────────────────────────────────────────────────────────────────────
 
-describe("Fase 4.3 — loading indicator", () => {
-  it("previewLoading=true → muestra spinner 'Recalculando…'", () => {
+describe("T6 — header sin label 'Recalculando' (fugaz, eliminado)", () => {
+  it("previewLoading=true → spinner NO se renderiza (el header queda estable)", () => {
     render(
       <SaleCompositionEditableGrid
         line={makeLine()}
@@ -1303,8 +1306,8 @@ describe("Fase 4.3 — loading indicator", () => {
         previewLoading
       />,
     );
-    expect(screen.getByTestId("sale-grid-loading")).toBeInTheDocument();
-    expect(screen.getByText(/Recalculando…/)).toBeInTheDocument();
+    expect(screen.queryByTestId("sale-grid-loading")).toBeNull();
+    expect(screen.queryByText(/Recalculando/)).toBeNull();
   });
 
   it("previewLoading=false → spinner oculto", () => {
@@ -1402,7 +1405,7 @@ describe("FASE 12.4 — vista única (sin switch Vista costo/Vista comercial)", 
 
   it("FASE F23 — la tabla muestra 'Costo Total' (sin tooltip de margen embebido — F23 sacó el margen a su propia columna)", () => {
     render(<SaleCompositionEditableGrid line={makeLine()} onApply={vi.fn()} {...baseProps} />);
-    const costoTotal = screen.getByText("Costo Total");
+    const costoTotal = screen.getByText("Costo total");
     // F23 — Costo Total ya no embed el margen; el tooltip se redujo a
     // "Costo final del componente".
     expect(costoTotal.getAttribute("title")).toMatch(/Costo final del componente/i);
@@ -1691,9 +1694,9 @@ describe("FASE 12.13 — Refinamiento visual final", () => {
     render(<SaleCompositionEditableGrid line={makeLine()} onApply={vi.fn()} {...baseProps} />);
     expect(screen.getByText("Componente")).toBeInTheDocument();
     expect(screen.getByText("Cantidad")).toBeInTheDocument();
-    expect(screen.getByText("Costo unit.")).toBeInTheDocument();
-    expect(screen.getByText("Costo Total")).toBeInTheDocument();
-    expect(screen.getByText("Venta")).toBeInTheDocument();
+    expect(screen.getByText("Valor unitario")).toBeInTheDocument();
+    expect(screen.getByText("Costo total")).toBeInTheDocument();
+    expect(screen.getByText("Venta total")).toBeInTheDocument();
   });
 });
 
@@ -1825,7 +1828,7 @@ describe("FASE 12.17 — Feedback theme + labels sentence-case", () => {
 
   it("FASE 12.22 — headers de columna centrados (alineados con bloques de ancho estable)", () => {
     render(<SaleCompositionEditableGrid line={makeLine()} onApply={vi.fn()} {...baseProps} />);
-    for (const label of ["Cantidad", "Costo unit.", "Costo Total", "Venta"]) {
+    for (const label of ["Cantidad", "Valor unitario", "Costo total", "Venta total"]) {
       const header = screen.getByText(label);
       expect(header.className).toMatch(/text-center/);
       expect(header.className).not.toMatch(/text-right/);
@@ -1853,6 +1856,200 @@ describe("FASE 12.17 — Feedback theme + labels sentence-case", () => {
       expect(el.className).toMatch(/text-center/);
       expect(el.className).not.toMatch(/text-right/);
     });
+  });
+
+  // ───────────────────────────────────────────────────────────────────────
+  // UX — Fórmula auxiliar "qty × valor unitario" debajo de los totales.
+  //
+  // Regla: `formulaQuantity = qtyValue × qtyLine` — la cantidad EFECTIVA
+  // de la fila de composición escalada a la línea factura. Cuando es ≤ 1
+  // (caso edge: 1 unidad / 1 gramo total), no se muestra la fórmula
+  // (no aporta información). En el caso común (gramos > 1 o cantidad > 1),
+  // la fórmula explica cómo se forma el total.
+  // ───────────────────────────────────────────────────────────────────────
+
+  it("qtyValue × qtyLine = 1 (caso edge) → NO aparece la fórmula", () => {
+    // Fixture con metal 1gr × 1 unidad de artículo → formulaQuantity = 1.
+    // En este caso la fórmula no aporta, no se renderea.
+    const line = makeLine({
+      composition: {
+        metal: null, hechura: null, taxes: [],
+        metals: [{
+          costLineId: "cl-1", metalVariantId: "mv-1",
+          metalName: "Oro", purity: 0.75, purityLabel: "18k",
+          appliedGrams: 1, appliedMermaPct: 0,
+          lineCost: 100, quotePrice: 100,
+        }],
+        hechuras: [], products: [], services: [],
+      } as any,
+    });
+    render(<SaleCompositionEditableGrid line={line} onApply={vi.fn()} {...baseProps} />);
+    // qtyValue (1) × qtyLine (1) = 1 → no fórmula.
+    expect(document.querySelectorAll("[data-tp-cost-total-formula]").length).toBe(0);
+  });
+
+  it("qtyValue > 1 (gramos del metal) → fórmula aparece con la cantidad de la fila", () => {
+    // Fixture default: metal con 2.5 gramos, línea con 1 unidad.
+    // formulaQuantity = 2.5 × 1 = 2.5 → fórmula visible.
+    const line = makeLine();
+    render(<SaleCompositionEditableGrid line={line} onApply={vi.fn()} {...baseProps} />);
+    const costFormulas = document.querySelectorAll("[data-tp-cost-total-formula]");
+    expect(costFormulas.length).toBeGreaterThanOrEqual(1);
+    const text = costFormulas[0]?.textContent ?? "";
+    expect(text).toMatch(/×/);
+    // Debe aparecer "2,5" en algún formato del tenant (es-AR usa coma).
+    expect(text).toMatch(/2[.,]5/);
+  });
+
+  it("qty línea factura > 1 → la fórmula refleja qtyValue × qtyLine (gramos totales línea)", () => {
+    const line = { ...makeLine(), quantity: 6 };
+    render(<SaleCompositionEditableGrid line={line} onApply={vi.fn()} {...baseProps} />);
+    expect(screen.getByText("Costo total")).toBeInTheDocument();
+    const costFormulas = document.querySelectorAll("[data-tp-cost-total-formula]");
+    expect(costFormulas.length).toBeGreaterThanOrEqual(1);
+    const text = costFormulas[0]?.textContent ?? "";
+    // Metal default: appliedGrams=2.5, qtyLine=6 → formulaQuantity = 15.
+    // El texto debe contener "15" en algún formato del tenant.
+    expect(text).toMatch(/15/);
+  });
+
+  it("Bug regresión: cambiar quantityOverride de la fila metal → label refleja el nuevo valor", () => {
+    // Caso real: el operador edita los gramos del metal en la grilla. El
+    // override vive en `pricingMeta.costLineOverrides[]` (intent del
+    // usuario) o `costLineOverridesApplied[]` (eco del backend). La fórmula
+    // debe usar el override, NO los gramos originales (`appliedGrams`).
+    const line = makeLine({
+      costLineOverrides: [
+        { costLineId: "cl-metal-override", quantityOverride: 7,
+          type: "METAL" },
+      ],
+      composition: {
+        metal: null, hechura: null, taxes: [],
+        metals: [{
+          costLineId: "cl-metal-override", metalVariantId: "mv-1",
+          metalName: "Oro", purity: 0.75, purityLabel: "18k",
+          appliedGrams: 5,             // original — debe ser ignorado
+          appliedMermaPct: 0,
+          lineCost: 1400,              // motor con qty=7 (override aplicado)
+          quotePrice: 200,
+        }],
+        hechuras: [], products: [], services: [],
+      } as any,
+    } as any);
+    render(<SaleCompositionEditableGrid line={line} onApply={vi.fn()} {...baseProps} />);
+    const costFormulas = document.querySelectorAll("[data-tp-cost-total-formula]");
+    expect(costFormulas.length).toBeGreaterThanOrEqual(1);
+    const text = costFormulas[0]?.textContent ?? "";
+    // Refleja qtyValue del override (7), NO los originales (5).
+    expect(text).toMatch(/7/);
+  });
+
+  it("Bug regresión: cambiar quantityOverride de hechura → label refleja el nuevo valor", () => {
+    const line = makeLine({
+      costLineOverrides: [
+        { costLineId: "cl-hechura-override", quantityOverride: 4,
+          type: "HECHURA" },
+      ],
+      composition: {
+        metal: null, hechura: null, taxes: [],
+        metals: [],
+        hechuras: [{
+          costLineId: "cl-hechura-override",
+          appliedAmount: 200, lineCost: 800,
+          lineLabel: "Hechura override",
+        }],
+        products: [], services: [],
+      } as any,
+    } as any);
+    render(<SaleCompositionEditableGrid line={line} onApply={vi.fn()} {...baseProps} />);
+    const costFormulas = document.querySelectorAll("[data-tp-cost-total-formula]");
+    expect(costFormulas.length).toBeGreaterThanOrEqual(1);
+    const text = costFormulas[0]?.textContent ?? "";
+    expect(text).toMatch(/4/);
+  });
+
+  // ───────────────────────────────────────────────────────────────────────
+  // UX — Header del card usa "Costo total línea" y "Venta total línea"
+  // (ambos totales coherentes, no mezcla unitario vs total).
+  // ───────────────────────────────────────────────────────────────────────
+
+  it("Header usa 'Costo total línea' y 'Venta total línea' (renombrados)", () => {
+    render(<SaleCompositionEditableGrid line={makeLine()} onApply={vi.fn()} {...baseProps} />);
+    expect(screen.getByText(/Costo total línea/)).toBeInTheDocument();
+    expect(screen.getByText(/Venta total línea/)).toBeInTheDocument();
+    // Labels viejos NO deben quedar (pueden confundir).
+    expect(screen.queryByText(/Valor de costo:/)).toBeNull();
+    expect(screen.queryByText(/Valor de venta:/)).toBeNull();
+  });
+
+  it("Header: qty = 1 — costo total línea = Σ lineCost (sin escalar)", () => {
+    // Fixture default: metals.lineCost=500, hechuras=200, products=150, services=80.
+    // Σ = 930. qty=1 → total línea = 930.
+    render(<SaleCompositionEditableGrid line={makeLine()} onApply={vi.fn()} {...baseProps} />);
+    const header = screen.getByText(/Costo total línea/).parentElement!;
+    expect(header.textContent ?? "").toMatch(/930/);
+  });
+
+  it("Header: qty > 1 — costo total línea = Σ lineCost × qty (escalado coherente con venta)", () => {
+    // qty=3 → costo total = 930 × 3 = 2.790. La venta del header (basePrice
+    // × qty) también está escalada × qty → ambos en la MISMA ESCALA.
+    const line = { ...makeLine(), quantity: 3 };
+    render(<SaleCompositionEditableGrid line={line} onApply={vi.fn()} {...baseProps} />);
+    const headerCost = screen.getByText(/Costo total línea/).parentElement!;
+    expect(headerCost.textContent ?? "").toMatch(/2\.?790/);
+    // Sanity: la venta también es total línea (qty=3 × basePrice del fixture).
+    const headerSale = screen.getByText(/Venta total línea/).parentElement!;
+    // basePrice del fixture = 1000 → 1000 × 3 = 3.000.
+    expect(headerSale.textContent ?? "").toMatch(/3\.?000/);
+  });
+
+  it("Header: composición mixta (metal + hechura + producto + servicio) — total se suma sin perder componentes", () => {
+    const line = { ...makeLine(), quantity: 2 };
+    render(<SaleCompositionEditableGrid line={line} onApply={vi.fn()} {...baseProps} />);
+    const header = screen.getByText(/Costo total línea/).parentElement!;
+    // qty=2 → 930 × 2 = 1.860. Confirma que el header agrega los 4 tipos.
+    expect(header.textContent ?? "").toMatch(/1\.?860/);
+  });
+
+  it("Header: cuando NO hay componentes y NO hay basePrice → no se rendea costo ni venta", () => {
+    const line = makeLine({
+      basePrice: null as any, unitPrice: null as any,
+      composition: { metal: null, hechura: null, taxes: [], metals: [], hechuras: [], products: [], services: [] } as any,
+    });
+    // Sin basePrice tampoco hay unitPrice válido en `line.unitPrice`:
+    const lineNoSale = { ...line, unitPrice: null as any };
+    render(<SaleCompositionEditableGrid line={lineNoSale} onApply={vi.fn()} {...baseProps} />);
+    expect(screen.queryByText(/Costo total línea/)).toBeNull();
+    expect(screen.queryByText(/Venta total línea/)).toBeNull();
+  });
+
+  it("Sub-label 'Total: X gr' usa el mismo estilo visual que la fórmula auxiliar", () => {
+    // El usuario pidió unificar el lenguaje visual de las explicaciones
+    // secundarias: el sub-label "Total: 2,60 gr" debajo del input Cantidad
+    // (METAL) debe matchear las clases de la fórmula auxiliar de Costo
+    // total / Venta total. Garante consistencia visual.
+    const line = { ...makeLine(), quantity: 6 };  // qtyLine > 1 → label aparece
+    render(<SaleCompositionEditableGrid line={line} onApply={vi.fn()} {...baseProps} />);
+    const subLabel = document.querySelector("[data-testid='metal-qty-total']");
+    expect(subLabel).not.toBeNull();
+    // Mismas clases que la fórmula auxiliar (text-[9px] + text-muted/65 +
+    // leading-tight). Sin border, sin alerta — es ayuda secundaria.
+    const cls = subLabel?.className ?? "";
+    expect(cls).toMatch(/text-\[9px\]/);
+    expect(cls).toMatch(/text-muted\/65/);
+    expect(cls).toMatch(/leading-tight/);
+    expect(cls).toMatch(/tabular-nums/);
+    expect(cls).not.toMatch(/border/);   // sin border destacado
+  });
+
+  it("qty > 1 — total queda en font-bold y la fórmula en text-muted (jerarquía visual)", () => {
+    const line = { ...makeLine(), quantity: 4 };
+    render(<SaleCompositionEditableGrid line={line} onApply={vi.fn()} {...baseProps} />);
+    const formula = document.querySelector("[data-tp-cost-total-formula]");
+    expect(formula).not.toBeNull();
+    // La fórmula es chiquita y muted; el total mantiene su font-bold/tabular.
+    expect(formula?.className ?? "").toMatch(/text-muted/);
+    expect(formula?.className ?? "").toMatch(/text-\[9px\]/);
   });
 
   it("FASE 12.21 — METAL Costo Unit. NO duplica 'ARS' (un solo prefix de moneda)", () => {
@@ -2092,8 +2289,11 @@ describe("FASE 12.17 — Feedback theme + labels sentence-case", () => {
     render(<SaleCompositionEditableGrid line={line} onApply={vi.fn()} {...baseProps} />);
     const header = document.querySelector('[data-group-type="METAL"]')!;
     expect(header.textContent).toMatch(/·\s*Oro:/);
-    expect(header.textContent).toMatch(/1,90\s*gr/);
-    expect(header.textContent).not.toMatch(/Oro puro/);
+    expect(header.textContent).toMatch(/1,90\s*g\b/);
+    // El header incluye los pesos TOTALES de la línea: variante bruta
+    // (`<label> = X gr`) y oro puro como `<padre>: X gr` (SIN la palabra
+    // "puro" — el nombre del metal padre ya lo expresa).
+    expect(header.textContent).not.toMatch(/puro/i);
   });
 
   it("FASE F10 — 2 metales del mismo padre se suman bajo un solo label 'Oro:'", () => {
@@ -2115,9 +2315,13 @@ describe("FASE 12.17 — Feedback theme + labels sentence-case", () => {
     expect(header.textContent).toMatch(/·\s*Oro:/);
     // default Oro: 2,5×0,75×1,015 = 1,903125 ; pushed Oro: 1,2×0,9×1 = 1,08
     // → equiv total = 2,983125 → "2,98 gr" (un solo label "Oro:").
-    expect(header.textContent).toMatch(/2,98\s*gr/);
+    expect(header.textContent).toMatch(/2,98\s*g\b/);
+    // Segmento 2 (metal padre, final con merma+margen × cantidad):
+    // un único chip "· Oro: 2,98 gr" consolidado. Ya NO se muestra el puro
+    // teórico sin merma → sin la palabra "puro" y un solo "· Oro:".
+    expect(header.textContent!.match(/·\s*Oro:\s*2,98\s*g\b/g)?.length).toBe(1);
+    expect(header.textContent).not.toMatch(/puro/i);
     expect(header.textContent!.match(/·\s*Oro:/g)?.length).toBe(1);
-    expect(header.textContent).not.toMatch(/Oro puro/);
   });
 
   it("FASE F10 — 2 metales padre distintos muestran ambos: 'Oro: X gr · Plata: Y gr' (sin 'puro/pura')", () => {
@@ -2138,8 +2342,9 @@ describe("FASE 12.17 — Feedback theme + labels sentence-case", () => {
     const header = document.querySelector('[data-group-type="METAL"]')!;
     expect(header.textContent).toMatch(/·\s*Oro:/);
     expect(header.textContent).toMatch(/·\s*Plata:/);
-    expect(header.textContent).toMatch(/9,25\s*gr/);
-    expect(header.textContent).not.toMatch(/Oro puro/);
+    expect(header.textContent).toMatch(/9,25\s*g\b/);
+    // Oro puro total se muestra como "· <padre>: X gr" (sin "puro/pura").
+    expect(header.textContent).not.toMatch(/puro/i);
     expect(header.textContent).not.toMatch(/Plata pura/);
   });
 
@@ -2164,7 +2369,7 @@ describe("FASE 12.17 — Feedback theme + labels sentence-case", () => {
     // factor = 1+merma/100. default Oro = 1,903125 ; sin-pureza = 5×1 = 5
     // → equiv total = 6,903125 → "6,90 gr". (Antes se omitía → era el bug
     // de divergencia con el Simulador.)
-    expect(header.textContent).toMatch(/6,90\s*gr/);
+    expect(header.textContent).toMatch(/6,90\s*g\b/);
   });
 
   it("FASE F10 — si NINGUNA línea tiene metalName+purity+appliedGrams, NO se muestra el label de gramos", () => {
@@ -2915,9 +3120,9 @@ describe("FASE F24 — Orden de columnas finales", () => {
   it("Orden: ... Merma/Ajuste → Costo Total → Margen → Costo de Venta", () => {
     render(<SaleCompositionEditableGrid line={makeLine()} onApply={vi.fn()} {...baseProps} />);
     const mermaAj    = screen.getByText("Merma / Ajuste");
-    const costoTotal = screen.getByText("Costo Total");
+    const costoTotal = screen.getByText("Costo total");
     const margen     = screen.getByText("Margen");
-    const costoVenta = screen.getByText("Venta");
+    const costoVenta = screen.getByText("Venta total");
     // Merma/Ajuste → Costo Total → Margen → Costo de Venta (DOM order).
     expect(mermaAj.compareDocumentPosition(costoTotal) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(costoTotal.compareDocumentPosition(margen) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
@@ -2940,7 +3145,7 @@ describe("FASE F24 — Orden de columnas finales", () => {
     render(<SaleCompositionEditableGrid line={makeLine()} onApply={vi.fn()} {...baseProps} />);
     // El header "Costo de Venta" existe y está a la derecha de Margen.
     const margen = screen.getByText("Margen");
-    const costoVenta = screen.getByText("Venta");
+    const costoVenta = screen.getByText("Venta total");
     expect(margen.compareDocumentPosition(costoVenta) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 });
@@ -3004,9 +3209,9 @@ describe("FASE F25 — Sin flash de label tachado al editar Merma/Ajuste", () =>
 describe("FASE F23 — Columna 'Margen' independiente", () => {
   it("FASE F24 — Header muestra el label 'Margen' entre 'Costo Total' y 'Costo de Venta'", () => {
     render(<SaleCompositionEditableGrid line={makeLine()} onApply={vi.fn()} {...baseProps} />);
-    const costoTotal = screen.getByText("Costo Total");
+    const costoTotal = screen.getByText("Costo total");
     const margen     = screen.getByText("Margen");
-    const costoVenta = screen.getByText("Venta");
+    const costoVenta = screen.getByText("Venta total");
     expect(margen).toBeInTheDocument();
     const pos1 = costoTotal.compareDocumentPosition(margen);
     const pos2 = margen.compareDocumentPosition(costoVenta);
@@ -3128,9 +3333,9 @@ describe("FASE F23 — Resize de columnas tipo Excel", () => {
 describe("FASE F22 — Columna 'Merma / Ajuste' independiente", () => {
   it("Header muestra el nuevo label 'Merma / Ajuste' entre 'Costo unit.' y 'Costo Total'", () => {
     render(<SaleCompositionEditableGrid line={makeLine()} onApply={vi.fn()} {...baseProps} />);
-    const costoUnit = screen.getByText("Costo unit.");
+    const costoUnit = screen.getByText("Valor unitario");
     const mermaAjuste = screen.getByText("Merma / Ajuste");
-    const costoTotal = screen.getByText("Costo Total");
+    const costoTotal = screen.getByText("Costo total");
     expect(mermaAjuste).toBeInTheDocument();
     // Orden DOM: Costo unit. → Merma / Ajuste → Costo Total.
     const pos1 = costoUnit.compareDocumentPosition(mermaAjuste);
@@ -3467,13 +3672,13 @@ describe("FASE F20 — Header sin '(% ajuste)' inline; detalle al final del card
     expect(screen.queryByText(/\(\+5%\)/)).toBeNull();
   });
 
-  it("El header muestra 'Valor de costo: ARS X' (post-ajuste, sin el porcentaje)", () => {
+  it("El header muestra 'Costo total línea: ARS X' (post-ajuste, sin el porcentaje)", () => {
     const line = makeLine();
     (line.pricingMeta as any).composition.costAdjustment = {
       kind: "BONUS", type: "PERCENTAGE", value: 5, amount: 100,
     };
     render(<SaleCompositionEditableGrid line={line} onApply={vi.fn()} {...baseProps} />);
-    expect(screen.getByText(/Valor de costo:/)).toBeInTheDocument();
+    expect(screen.getByText(/Costo total línea:/)).toBeInTheDocument();
   });
 });
 
@@ -4364,6 +4569,189 @@ describe("Costo unit. — moneda original + equivalente en moneda doc", () => {
       },
       "ARS", null,
     )).toEqual({ originalCurrencyLabel: "USD", equivalentUnitValue: 38_410.32 });
+
+    // ── Etapa E2 — FIX FX: displayRate divide el equivalente (BASE → doc) ──
+    //
+    // Caso bug: factura USD con cost line EUR. El motor emite `unitValueBase`
+    // en ARS (= moneda base del tenant, NO se convierte a la moneda de
+    // display). Sin el rate del documento, la sub-línea mostraba "USD 50000"
+    // siendo en realidad 50000 ARS (≈ USD 112 a rate 446).
+    expect(resolveItemCurrencyDisplay(
+      {
+        currencyCode:  "EUR",
+        unitValue:     100,
+        unitValueBase: 50_000,     // ARS (1 EUR ≈ 500 ARS), pre-ajuste
+        totalValue:    50_000,
+        quantity:      1,
+      },
+      "USD", null, /* displayRate */ 446,
+    )).toEqual({
+      originalCurrencyLabel: "EUR",
+      equivalentUnitValue:   50_000 / 446,
+    });
+
+    // displayRate = 1 → no convierte (factura en moneda base).
+    expect(resolveItemCurrencyDisplay(
+      {
+        currencyCode:  "USD",
+        unitValue:     100,
+        unitValueBase: 44_600,
+        totalValue:    44_600,
+        quantity:      1,
+      },
+      "ARS", null, /* displayRate */ 1,
+    )).toEqual({
+      originalCurrencyLabel: "USD",
+      equivalentUnitValue:   44_600,
+    });
+
+    // displayRate omitido (compat backward) → no convierte.
+    expect(resolveItemCurrencyDisplay(
+      {
+        currencyCode:  "USD",
+        unitValue:     100,
+        unitValueBase: 44_600,
+        totalValue:    44_600,
+        quantity:      1,
+      },
+      "ARS", null,
+    )).toEqual({
+      originalCurrencyLabel: "USD",
+      equivalentUnitValue:   44_600,
+    });
+
+    // displayRate inválido (0 / NaN / negativo) → no convierte.
+    for (const bad of [0, -1, NaN, Number.POSITIVE_INFINITY]) {
+      expect(resolveItemCurrencyDisplay(
+        {
+          currencyCode:  "USD",
+          unitValue:     100,
+          unitValueBase: 44_600,
+          totalValue:    44_600,
+          quantity:      1,
+        },
+        "ARS", null, bad,
+      )).toEqual({
+        originalCurrencyLabel: "USD",
+        equivalentUnitValue:   44_600,
+      });
+    }
+  });
+
+  // ────────────────────────────────────────────────────────────────────────
+  // Etapa E2 — FIX FX: sub-línea equivalente en factura no-base con cost
+  // line en otra moneda. Cubre HECHURA + PRODUCT + SERVICE.
+  // ────────────────────────────────────────────────────────────────────────
+  describe("Etapa E2 — FIX FX displayRate en sub-líneas equivalentes", () => {
+    it("HECHURA: factura USD + cost line EUR → equivalente dividido por documentFxRate", () => {
+      const line = makeLine();
+      const meta = line.pricingMeta as any;
+      meta.composition.hechuras[0] = {
+        costLineId:    "cl-hechura-eur",
+        lineLabel:     "Mano de obra",
+        quantity:      1,
+        unitValue:     100,        // EUR
+        unitValueBase: 50_000,     // ARS (= 100 × 500 rate EUR/ARS)
+        appliedAmount: 50_000,
+        lineCost:      50_000,
+        currencyCode:  "EUR",
+      };
+      render(
+        <SaleCompositionEditableGrid
+          line={line}
+          currency="USD"
+          onApply={vi.fn()}
+          documentFxRate={446}      // 1 USD = 446 ARS
+          {...baseProps}
+        />,
+      );
+      // 50000 ARS / 446 ARS/USD ≈ 112,11 USD. Aceptamos coma o punto.
+      // (El valor crudo 50.000 aparece legítimamente en otras celdas como
+      // Costo total / Venta total — no es bug, no lo testeamos por ausencia.)
+      expect(screen.getByText(/112[,.]/)).toBeInTheDocument();
+    });
+
+    it("PRODUCT: factura USD + cost line EUR → equivalente dividido por documentFxRate", () => {
+      const line = makeLine();
+      const meta = line.pricingMeta as any;
+      meta.composition.products[0] = {
+        costLineId:      "cl-product-eur",
+        catalogItemId:   "ci-eur",
+        catalogItemCode: "P-EUR",
+        catalogItemName: "Producto EUR",
+        quantity:        1,
+        unitValue:       100,
+        unitValueBase:   50_000,
+        totalValue:      50_000,
+        currencyCode:    "EUR",
+        lineAdjKind:     null, lineAdjType: null, lineAdjValue: null, lineAdjAmount: null,
+        affectsStock:    null,
+      };
+      render(
+        <SaleCompositionEditableGrid
+          line={line}
+          currency="USD"
+          onApply={vi.fn()}
+          documentFxRate={446}
+          {...baseProps}
+        />,
+      );
+      expect(screen.getByText(/112[,.]/)).toBeInTheDocument();
+    });
+
+    it("SERVICE: factura USD + cost line EUR → equivalente dividido por documentFxRate", () => {
+      const line = makeLine();
+      const meta = line.pricingMeta as any;
+      meta.composition.services[0] = {
+        costLineId:      "cl-service-eur",
+        catalogItemId:   "ci-eur-s",
+        catalogItemCode: "S-EUR",
+        catalogItemName: "Servicio EUR",
+        quantity:        1,
+        unitValue:       100,
+        unitValueBase:   50_000,
+        totalValue:      50_000,
+        currencyCode:    "EUR",
+        lineAdjKind:     null, lineAdjType: null, lineAdjValue: null, lineAdjAmount: null,
+        affectsStock:    null,
+      };
+      render(
+        <SaleCompositionEditableGrid
+          line={line}
+          currency="USD"
+          onApply={vi.fn()}
+          documentFxRate={446}
+          {...baseProps}
+        />,
+      );
+      expect(screen.getByText(/112[,.]/)).toBeInTheDocument();
+    });
+
+    it("Factura en moneda base (documentFxRate=1) → comportamiento idéntico al previo (no convierte)", () => {
+      const line = makeLine();
+      const meta = line.pricingMeta as any;
+      meta.composition.hechuras[0] = {
+        costLineId:    "cl-hechura-usd",
+        lineLabel:     "Mano de obra",
+        quantity:      1,
+        unitValue:     100,
+        unitValueBase: 44_600,    // ARS (= 100 × 446)
+        appliedAmount: 44_600,
+        lineCost:      44_600,
+        currencyCode:  "USD",
+      };
+      render(
+        <SaleCompositionEditableGrid
+          line={line}
+          currency="ARS"            // factura en moneda base
+          onApply={vi.fn()}
+          documentFxRate={1}        // base → 1, no convierte
+          {...baseProps}
+        />,
+      );
+      // El equivalente sigue siendo 44.600 (sin división).
+      expect(screen.getAllByText(/44[.,]?600/).length).toBeGreaterThan(0);
+    });
   });
 
   it("Caso doble descuento — con unitValueBase la sub-línea muestra equivalente PRE-ajuste", () => {
@@ -4626,18 +5014,21 @@ describe("Header METALES — gramos de VENTA (paridad cards Simulador)", () => {
   it("con metalSale presente: muestra venta (Oro 8,01 · Plata 3,11), NO costo (4,33 / 1,68)", () => {
     render(<SaleCompositionEditableGrid line={makeMetalsLine(true)} onApply={vi.fn()} {...baseProps} />);
     const header = document.querySelector('[data-group-type="METAL"]')!;
-    expect(header.textContent).toMatch(/·\s*Oro:\s*8,01\s*gr/);
-    expect(header.textContent).toMatch(/·\s*Plata:\s*3,11\s*gr/);
-    // NO debe mostrar el equivalente de costo cuando existe total de venta.
-    expect(header.textContent).not.toMatch(/4,33\s*gr/);
-    expect(header.textContent).not.toMatch(/1,68\s*gr/);
+    // Único chip de METAL = metal PADRE consolidado "Padre: N gr" con los
+    // gramos FINALES de venta (8,01 / 3,11), NO el costo-equiv (4,33 / 1,68).
+    // Ya NO se muestran chips de variante con "=".
+    expect(header.textContent).toMatch(/·\s*Oro:\s*8,01\s*g\b/);
+    expect(header.textContent).toMatch(/·\s*Plata:\s*3,11\s*g\b/);
+    // Anti-regresión "g gr" — sufijo unificado.
+    expect(header.textContent).not.toMatch(/g\s+gr/);
+    expect(header.textContent).not.toMatch(/=/); // sin chips de variante "="
   });
 
   it("sin agregado de venta (factor null): cae a costo-equiv (Oro 4,33 · Plata 1,68)", () => {
     render(<SaleCompositionEditableGrid line={makeMetalsLine(false)} onApply={vi.fn()} {...baseProps} />);
     const header = document.querySelector('[data-group-type="METAL"]')!;
-    expect(header.textContent).toMatch(/·\s*Oro:\s*4,33\s*gr/);
-    expect(header.textContent).toMatch(/·\s*Plata:\s*1,68\s*gr/);
+    expect(header.textContent).toMatch(/·\s*Oro:\s*4,33\s*g\b/);
+    expect(header.textContent).toMatch(/·\s*Plata:\s*1,68\s*g\b/);
   });
 
   it("no afecta el footer financiero (Σ lineCost del grupo intacto)", () => {
@@ -4645,6 +5036,178 @@ describe("Header METALES — gramos de VENTA (paridad cards Simulador)", () => {
     const footer = document.querySelector('[data-group-footer="METAL"]')!;
     // Σ lineCost = 100 + 50 = 150 → el costo del grupo no cambia por el header.
     expect(footer.textContent).toMatch(/ARS\s*150,00/);
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────────────
+// Etapa D' — Header METALES con snapshot canónico de Redondeo Comercial.
+// El chip de gramos debe usar `postGrams` del snapshot cuando el contexto
+// es BREAKDOWN y `appliedToLineCount === 1`. Además debe aparecer el flag
+// visual "red. comercial" indicando que el valor ya viene POST-redondeo.
+// Lectura passthrough — cero matemática.
+// ────────────────────────────────────────────────────────────────────────────
+describe("Header METALES — Etapa D' (Redondeo Comercial PER_DOCUMENT)", () => {
+  // Fixture mínimo de hechura para que CommercialRoundingFooter no crashee
+  // cuando el snapshot trae `breakdown`. El header no la lee, pero el footer
+  // expandible la consume incondicionalmente.
+  const HECHURA_NOOP = {
+    preRoundingSaldoMonetario:  0,
+    postRoundingSaldoMonetario: 0,
+    deltaSaldoMonetario:        0,
+  };
+
+  function makeMetalsLineWithCtx(ctx: any): DocumentLine {
+    const line = makeLine();
+    const meta = line.pricingMeta as any;
+    meta.composition.metals = [
+      { costLineId: "o1", metalVariantId: "v1", metalName: "Oro",
+        variantName: "Oro 24k", purity: 1, purityLabel: "24k",
+        appliedGrams: 1.2, appliedMermaPct: 0, lineCost: 100, quotePrice: 23.1 },
+    ];
+    meta.metalCost = 100;
+    meta.metalSale = 100;          // factor=1 → equivPre = 1,20 g
+    meta.commercialRoundingContext = ctx;
+    return line;
+  }
+
+  it("snapshot BREAKDOWN + appliedToLineCount=1 → usa postGrams y muestra '· red. comercial'", () => {
+    const line = makeMetalsLineWithCtx({
+      scope:              "BREAKDOWN",
+      appliedAt:          "DOCUMENT",
+      appliedToLineCount: 1,
+      totalAdjustment:    0,
+      breakdown: {
+        metals: [{
+          metalParentId: "p-oro", metalParentName: "Oro",
+          preGrams: 1.2, postGrams: 1.0, deltaGrams: -0.2,
+          metalPricePerGram: 0, monetaryEquivalent: 0,
+        }],
+        hechura: HECHURA_NOOP,
+      },
+    });
+    render(<SaleCompositionEditableGrid line={line} onApply={vi.fn()} {...baseProps} />);
+    const header = document.querySelector('[data-group-type="METAL"]')!;
+    expect(header.textContent).toMatch(/Oro:\s*1,00\s*g\b/);    // POST snapshot
+    expect(header.textContent).not.toMatch(/Oro:\s*1,20\s*g/);   // NO pre
+    expect(header.querySelector("[data-tp-commercial-rounding-flag]")).not.toBeNull();
+    expect(header.textContent).toMatch(/red\.\s*comercial/);
+  });
+
+  it("R-COMMERCIAL-ROUNDING-VISIBILITY — multi-línea (appliedToLineCount=3) NO degrada: muestra postGrams + flag", () => {
+    // Regla: appliedToLineCount es metadata informativa (badge). NUNCA debe
+    // ocultar, suprimir o degradar valores comerciales. El header siempre
+    // muestra el resultado comercial final del snapshot cuando existe.
+    const line = makeMetalsLineWithCtx({
+      scope:              "BREAKDOWN",
+      appliedAt:          "DOCUMENT",
+      appliedToLineCount: 3,                                     // multi-línea
+      totalAdjustment:    0,
+      breakdown: {
+        metals: [{
+          metalParentId: "p-oro", metalParentName: "Oro",
+          preGrams: 3.6, postGrams: 3.0, deltaGrams: -0.6,
+          metalPricePerGram: 0, monetaryEquivalent: 0,
+        }],
+        hechura: HECHURA_NOOP,
+      },
+    });
+    render(<SaleCompositionEditableGrid line={line} onApply={vi.fn()} {...baseProps} />);
+    const header = document.querySelector('[data-group-type="METAL"]')!;
+    expect(header.textContent).toMatch(/Oro:\s*3,00\s*g\b/);           // postGrams del snapshot
+    expect(header.textContent).not.toMatch(/Oro:\s*1,20\s*g/);         // NO el PRE de esta línea
+    expect(header.querySelector("[data-tp-commercial-rounding-flag]")).not.toBeNull();
+    expect(header.textContent).toMatch(/red\.\s*comercial/);
+  });
+
+  it("snapshot ausente (legacy) → comportamiento PRE intacto, sin flag", () => {
+    const line = makeMetalsLineWithCtx(null);
+    render(<SaleCompositionEditableGrid line={line} onApply={vi.fn()} {...baseProps} />);
+    const header = document.querySelector('[data-group-type="METAL"]')!;
+    expect(header.textContent).toMatch(/Oro:\s*1,20\s*g\b/);
+    expect(header.querySelector("[data-tp-commercial-rounding-flag]")).toBeNull();
+  });
+
+  it("snapshot UNIFIED → NO swap (la regla solo cubre BREAKDOWN)", () => {
+    const line = makeMetalsLineWithCtx({
+      scope:              "UNIFIED",
+      appliedAt:          "DOCUMENT",
+      appliedToLineCount: 1,
+      totalAdjustment:    0,
+      unified:            { pre: 0, post: 0, adjustment: 0 },
+    });
+    render(<SaleCompositionEditableGrid line={line} onApply={vi.fn()} {...baseProps} />);
+    const header = document.querySelector('[data-group-type="METAL"]')!;
+    expect(header.textContent).toMatch(/Oro:\s*1,20\s*g\b/);
+    expect(header.querySelector("[data-tp-commercial-rounding-flag]")).toBeNull();
+  });
+
+  it("snapshot D' sin postGrams para ese metal (no match por nombre) → no swap parcial, sin flag", () => {
+    const line = makeMetalsLineWithCtx({
+      scope:              "BREAKDOWN",
+      appliedAt:          "DOCUMENT",
+      appliedToLineCount: 1,
+      totalAdjustment:    0,
+      breakdown: {
+        metals: [{
+          metalParentId: "p-platino", metalParentName: "Platino",
+          preGrams: 0, postGrams: 999, deltaGrams: 999,
+          metalPricePerGram: 0, monetaryEquivalent: 0,
+        }],  // ← no matchea "Oro"
+        hechura: HECHURA_NOOP,
+      },
+    });
+    render(<SaleCompositionEditableGrid line={line} onApply={vi.fn()} {...baseProps} />);
+    const header = document.querySelector('[data-group-type="METAL"]')!;
+    expect(header.textContent).toMatch(/Oro:\s*1,20\s*g\b/);          // queda en PRE
+    expect(header.textContent).not.toMatch(/999/);                    // no se filtra el otro metal
+    expect(header.querySelector("[data-tp-commercial-rounding-flag]")).toBeNull();
+  });
+
+  it("anti-regresión 'g gr' — el header nunca debe mostrar ambos sufijos", () => {
+    const line = makeMetalsLineWithCtx({
+      scope:              "BREAKDOWN",
+      appliedAt:          "DOCUMENT",
+      appliedToLineCount: 1,
+      totalAdjustment:    0,
+      breakdown: {
+        metals: [{
+          metalParentId: "p-oro", metalParentName: "Oro",
+          preGrams: 1.2, postGrams: 1.0, deltaGrams: -0.2,
+          metalPricePerGram: 0, monetaryEquivalent: 0,
+        }],
+        hechura: HECHURA_NOOP,
+      },
+    });
+    render(<SaleCompositionEditableGrid line={line} onApply={vi.fn()} {...baseProps} />);
+    const header = document.querySelector('[data-group-type="METAL"]')!;
+    expect(header.textContent).not.toMatch(/g\s+gr/);
+  });
+
+  it("no muestra metalParentId técnico en el chip del header (solo nombre legible)", () => {
+    const line = makeMetalsLineWithCtx({
+      scope:              "BREAKDOWN",
+      appliedAt:          "DOCUMENT",
+      appliedToLineCount: 1,
+      totalAdjustment:    0,
+      breakdown: {
+        metals: [{
+          metalParentId:     "clxyz-internal-uuid-1234",          // ← ID técnico
+          metalParentName:   "Oro",
+          preGrams:          1.2,
+          postGrams:         1.0,
+          deltaGrams:        -0.2,
+          metalPricePerGram: 0,
+          monetaryEquivalent: 0,
+        }],
+        hechura: HECHURA_NOOP,
+      },
+    });
+    render(<SaleCompositionEditableGrid line={line} onApply={vi.fn()} {...baseProps} />);
+    // Auditamos SOLO el header — el footer expandible (Etapa C/D pre-existente)
+    // muestra detalle interno por bloque; este test cubre el header.
+    const header = document.querySelector('[data-group-type="METAL"]')!;
+    expect(header.textContent).not.toMatch(/clxyz/);
+    expect(header.textContent).not.toMatch(/uuid/);
   });
 });
 
@@ -4932,5 +5495,82 @@ describe("Step de Cantidad por tipo + flechitas Merma/Ajuste sin oscilación", (
     vi.advanceTimersByTime(300);
     const ov = (onApply.mock.calls.at(-1)![0].costLineOverrides as any[]).find((o) => o.costLineId === "h1");
     expect(Number(ov.unitValueOverride)).toBeCloseTo(101, 4); // 100 + step 1
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────────────
+// Sub-label "Total" en la columna Cantidad de filas METAL:
+//   "Total: <gr total> gr"  (solo METAL, solo qty > 1)
+// ────────────────────────────────────────────────────────────────────────────
+describe("Columna Cantidad — sub-label 'Total' (METAL)", () => {
+  function metalLine(qty: number, appliedGrams: number): DocumentLine {
+    const line = makeLine();
+    line.quantity = qty;
+    (line.pricingMeta as any).composition.metals[0].appliedGrams = appliedGrams;
+    return line;
+  }
+
+  it("cantidad línea = 2, gramos unit = 1,10 → muestra 'Total: 2,20 gr'", () => {
+    render(<SaleCompositionEditableGrid line={metalLine(2, 1.1)} onApply={vi.fn()} {...baseProps} />);
+    const lbl = screen.getByTestId("metal-qty-total");
+    expect(lbl.textContent).toMatch(/Total:\s*2,20\s*gr/);
+  });
+
+  it("NO muestra el formato viejo '1,10 × 2 = 2,20 gr'", () => {
+    render(<SaleCompositionEditableGrid line={metalLine(2, 1.1)} onApply={vi.fn()} {...baseProps} />);
+    expect(screen.getByTestId("metal-qty-total").textContent).not.toMatch(/×/);
+    expect(screen.queryByText(/1,10\s*×\s*2\s*=/)).toBeNull();
+  });
+
+  it("escala correctamente (cantidad 4, unit 2,50 → 'Total: 10,00 gr')", () => {
+    render(<SaleCompositionEditableGrid line={metalLine(4, 2.5)} onApply={vi.fn()} {...baseProps} />);
+    expect(screen.getByTestId("metal-qty-total").textContent).toMatch(/Total:\s*10,00\s*gr/);
+  });
+
+  it("cantidad línea = 1 → NO muestra el sub-label", () => {
+    render(<SaleCompositionEditableGrid line={metalLine(1, 1)} onApply={vi.fn()} {...baseProps} />);
+    expect(screen.queryByTestId("metal-qty-total")).toBeNull();
+  });
+
+  it("solo aparece en METAL — no en HECHURA/PRODUCT/SERVICE (una sola ocurrencia)", () => {
+    render(<SaleCompositionEditableGrid line={metalLine(3, 1)} onApply={vi.fn()} {...baseProps} />);
+    expect(screen.getAllByTestId("metal-qty-total")).toHaveLength(1);
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────────────
+// Total METALES = Σ(appliedGrams × cantidad de la línea) — NO la suma unitaria.
+// ────────────────────────────────────────────────────────────────────────────
+describe("Footer 'Total metales' — total de cantidad escalado por línea", () => {
+  function multiMetalLine(qty: number): DocumentLine {
+    const line = makeLine();
+    line.quantity = qty;
+    (line.pricingMeta as any).composition.metals = [
+      { costLineId: "m1", metalVariantId: "v1", metalName: "Oro",   purity: 0.75,  purityLabel: "18k", variantName: "Oro 18k",  appliedGrams: 1.10, appliedMermaPct: 0, lineCost: 100, quotePrice: 90 },
+      { costLineId: "m2", metalVariantId: "v2", metalName: "Oro",   purity: 1,     purityLabel: "24k", variantName: "Oro 24k",  appliedGrams: 1.00, appliedMermaPct: 0, lineCost: 100, quotePrice: 100 },
+      { costLineId: "m3", metalVariantId: "v3", metalName: "Plata", purity: 0.925, purityLabel: "925", variantName: "Plata 925", appliedGrams: 1.00, appliedMermaPct: 0, lineCost: 50,  quotePrice: 50 },
+    ];
+    return line;
+  }
+  const fmtQty = (n: number) => formatByType(n, "QUANTITY", { bare: true });
+
+  it("cantidad línea = 2 → Total metales = Σ(1,10 + 1,00 + 1,00) × 2 = 6,20 (no 3,10)", () => {
+    render(<SaleCompositionEditableGrid line={multiMetalLine(2)} onApply={vi.fn()} {...baseProps} />);
+    const footer = document.querySelector('[data-group-footer="METAL"]')!;
+    expect(footer.textContent).toContain(fmtQty(6.2));
+    expect(footer.textContent).not.toContain(fmtQty(3.1)); // ya no la suma unitaria
+  });
+
+  it("cantidad línea = 1 → Total metales = 3,10 (Σ unitaria, ×1)", () => {
+    render(<SaleCompositionEditableGrid line={multiMetalLine(1)} onApply={vi.fn()} {...baseProps} />);
+    const footer = document.querySelector('[data-group-footer="METAL"]')!;
+    expect(footer.textContent).toContain(fmtQty(3.1));
+  });
+
+  it("no afecta el footer 'Total hechuras' (el multiplicador es solo de METAL)", () => {
+    render(<SaleCompositionEditableGrid line={multiMetalLine(2)} onApply={vi.fn()} {...baseProps} />);
+    const hechuraFooter = document.querySelector('[data-group-footer="HECHURA"]')!;
+    // El total de hechuras NO debe contener el total de metales escalado.
+    expect(hechuraFooter.textContent).not.toContain(fmtQty(6.2));
   });
 });

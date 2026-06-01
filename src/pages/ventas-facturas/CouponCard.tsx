@@ -156,8 +156,11 @@ export function CouponCard<D extends Draft>({
   return (
     <TPCard
       title="Cupón de venta"
-      bodyClassName="!p-3"
-      headerClassName="!py-2"
+      // UX.7 — paddings más bajos para que el card se sienta "de
+      // configuración" (menos altura, menos protagonismo) y NO compita
+      // visualmente con el Total del comprobante de abajo.
+      bodyClassName="!p-2.5"
+      headerClassName="!py-1.5"
       collapsible
       open={open}
       onOpenChange={handleOpenChange}

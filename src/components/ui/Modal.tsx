@@ -1,24 +1,19 @@
 // tptech-frontend/src/components/ui/Modal.tsx
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { X } from "lucide-react";
+import { X, Maximize2, Minimize2 } from "lucide-react";
 import { cn } from "./tp";
 
-// ── Iconos estilo Windows ──────────────────────────────────────────────────
+// ── Iconos de comportamiento de ventana ─────────────────────────────────────
+// CAMBIO 2 — iconografía clara de "ventana": Maximize2 (expandir) / Minimize2
+// (restaurar), en lugar de los rectángulos custom estilo Windows que se
+// confundían visualmente. Solo iconografía: mismo tamaño (14), mismos
+// tooltips ("Maximizar"/"Restaurar"), mismo handler (toggleMaximize).
 function IconMaximize() {
-  return (
-    <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" aria-hidden>
-      <rect x="3" y="3" width="10" height="10" />
-    </svg>
-  );
+  return <Maximize2 size={14} aria-hidden />;
 }
 function IconRestore() {
-  return (
-    <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" aria-hidden>
-      <rect x="6" y="3" width="7" height="7" />
-      <rect x="3" y="6" width="7" height="7" />
-    </svg>
-  );
+  return <Minimize2 size={14} aria-hidden />;
 }
 
 // ── Resize handles ─────────────────────────────────────────────────────────

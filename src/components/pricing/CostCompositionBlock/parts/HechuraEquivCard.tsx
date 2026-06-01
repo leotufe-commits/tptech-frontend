@@ -82,7 +82,7 @@ export function HechuraEquivCard(props: HechuraEquivCardProps): React.ReactEleme
           {/* ── Origen ── */}
           {hechuraLineSteps.length > 0 && (
             <div className="border-t border-border/20 pt-1.5 space-y-0">
-              <p className="text-xs font-semibold uppercase tracking-widest text-muted/60 mb-1">Origen</p>
+              <p className={cn(vt.text.groupLabel, vt.colors.formula, "mb-1")}>Origen</p>
               <div className="space-y-1 text-xs">
                 {hechuraLineSteps.map((step, i) => (
                   <CostLineOtherRow key={`heq-${i}`} step={step} display={display} />
@@ -110,8 +110,8 @@ export function HechuraEquivCard(props: HechuraEquivCardProps): React.ReactEleme
                 </span>
               </div>
               <div className="flex items-baseline justify-between gap-2 bg-muted/20 px-2 py-1 rounded mt-1">
-                <span className="text-xs font-bold text-muted/70">Subtotal hechura ajustado</span>
-                <span className="text-xs tabular-nums font-bold text-foreground/70">{fm(hechuraEquiv)}</span>
+                <span className={cn(vt.text.subtotalRow, vt.colors.labelSoft)}>Subtotal hechura ajustado</span>
+                <span className={cn(vt.text.subtotalRow, vt.colors.subtotal, "tabular-nums")}>{fm(hechuraEquiv)}</span>
               </div>
             </div>
           )}
@@ -121,8 +121,8 @@ export function HechuraEquivCard(props: HechuraEquivCardProps): React.ReactEleme
             <div className="space-y-1">
               {hechuraLineSteps.length > 1 && !hasGlobalAdj && (
                 <div className="flex items-baseline justify-between gap-2 bg-muted/20 px-2 py-1 rounded">
-                  <span className="text-xs font-bold text-muted/70">Subtotal</span>
-                  <span className="text-xs tabular-nums font-bold text-foreground/70">{fm(hechuraEquiv)}</span>
+                  <span className={cn(vt.text.subtotalRow, vt.colors.labelSoft)}>Subtotal</span>
+                  <span className={cn(vt.text.subtotalRow, vt.colors.subtotal, "tabular-nums")}>{fm(hechuraEquiv)}</span>
                 </div>
               )}
               {hechuraTaxLines.map((t, ti) => (

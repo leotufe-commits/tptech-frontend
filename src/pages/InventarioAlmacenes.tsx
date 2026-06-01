@@ -31,6 +31,7 @@ import WarehousesTable, { WH_COL_LS_KEY } from "./InventarioAlmacenes/Warehouses
 import WarehouseViewModal from "./InventarioAlmacenes/WarehouseViewModal";
 import WarehouseEditModal from "./InventarioAlmacenes/WarehouseEditModal";
 import { usePersistedTableSort } from "../hooks/usePersistedTableSort";
+import { useAuth } from "../context/AuthContext";
 
 function cleanErrMsg(msg: any) {
   const m = String(msg ?? "").trim();
@@ -43,6 +44,11 @@ function cleanErrMsg(msg: any) {
 }
 
 export default function InventarioAlmacenes() {
+  // El favorito de almacén es PERSONAL por usuario: al cambiar de sesión
+  // (login / quick-switch) hay que recargar la lista para no mostrar el
+  // favorito del usuario anterior (stale).
+  const { user } = useAuth();
+  const currentUserId = user?.id ?? null;
   const [loading, setLoading] = useState(false);
   const [rows, setRows] = useState<WarehouseRow[]>([]);
   const [q, setQ] = useState("");
@@ -113,7 +119,9 @@ export default function InventarioAlmacenes() {
       if (t) clearTimeout(t);
       window.removeEventListener(TPTECH_WAREHOUSES_CHANGED, onChanged as any);
     };
-  }, []);
+    // currentUserId: recarga al cambiar de usuario (favorito personal).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentUserId]);
 
   useEffect(() => {
     function onQuickCreate(e: Event) {
@@ -290,26 +298,42 @@ export default function InventarioAlmacenes() {
     }
   }
 
-  // ✅ FAVORITO
+  // ✅ FAVORITO — patrón alineado con Vendedor / Lista de precios / Canal.
+  // (a) Per-row busy state: NO bloqueamos la fila si OTRA fila está siendo
+  //     procesada (igual que `sellersApi.setFavorite`). El guard solo evita
+  //     doble-click sobre la MISMA fila.
+  // (b) Mutación per-row con exclusión mutua explícita (en vez de
+  //     re-derivar `isFavorite` para todas las filas). Mismo outcome final
+  //     pero código más claro y consistente con el resto del sistema.
+  // (c) El evento global `emitWarehousesChanged` se conserva: lo necesita
+  //     InventoryContext para resincronizar el almacén default del usuario
+  //     en otras pantallas (Factura, picker de stock, etc.) — esto es
+  //     específico de Almacenes (las otras entidades no tienen un context
+  //     equivalente).
   async function favorite(r: WarehouseRow) {
     const active = isRowActive(r);
     if (!active) return;
-    if (busyFavoriteId || busyRowId) return;
+    // Guard solo per-row: si otra fila está procesando, NO bloquea esta.
+    if (busyFavoriteId === r.id || busyRowId === r.id) return;
 
     try {
       setBusyFavoriteId(r.id);
 
-      const out = await warehousesApi.favorite(r.id);
+      await warehousesApi.favorite(r.id);
 
+      // Mutación explícita: marcar la fila objetivo + desmarcar la previa.
+      // Coincide línea por línea con `handleFavorite` de Vendedores.
       setRows((prev) =>
-        prev.map((x) => ({
-          ...x,
-          isFavorite: x.id === out.favoriteWarehouseId,
-        }))
+        prev.map((x) => {
+          if (x.id === r.id) return { ...x, isFavorite: true };
+          if (x.isFavorite) return { ...x, isFavorite: false };
+          return x;
+        })
       );
 
       // Marcar favorito no debe re-ordenar la tabla — el evento se emite
-      // solo para que otros contextos (InventoryContext) actualicen su estado.
+      // solo para que otros contextos (InventoryContext) actualicen su
+      // estado del almacén default.
       skipNextFavRefreshRef.current = true;
       emitWarehousesChanged();
     } catch (e: any) {

@@ -308,9 +308,21 @@ describe("MetalSaleCard — Origen: desglose de gramos auditable (2 pasos)", () 
     expect(screen.getAllByText(/3,11\s*gr/).length).toBeGreaterThanOrEqual(1);
   });
 
-  it("NO muestra cálculo monetario de venta por variante (solo gramos)", () => {
+  it("el detalle POR VARIANTE es solo gramos (sin monetización por variante)", () => {
     const { container } = renderExpanded();
-    // El antiguo "X gr × $/gr = $..." no debe aparecer.
-    expect(container.textContent ?? "").not.toMatch(/gr\s*×\s*\$/);
+    const txt = container.textContent ?? "";
+    // Las filas por variante (factor) NO llevan dinero — siguen siendo gramos.
+    expect(txt).toContain("0,99 gr × factor 1,85 = 1,83 gr");
+    expect(txt).not.toContain("0,99 gr × factor 1,85 = 1,83 gr × $");
+  });
+
+  it("muestra la monetización del metal a NIVEL PADRE (auditoría visual — Obj 2)", () => {
+    const { container } = renderExpanded();
+    const txt = container.textContent ?? "";
+    // Obj 2 (2026-06) — línea informativa de auditoría del valor comercial del
+    // metal: gramos venta × valor comercial/gramo = valor comercial. Reusa
+    // basePricePerGr (= totalCost/saleGr), cero matemática nueva.
+    expect(txt).toContain("8,01 gr × $92,38/gr = $740,00"); // Oro
+    expect(txt).toContain("3,11 gr × $59,52/gr = $185,00"); // Plata
   });
 });

@@ -43,6 +43,7 @@ import {
 } from "../../../components/ui/TPEntitySearchSelect";
 
 import { AddressPickerPopover, type AddressOption } from "./AddressPickerPopover";
+import { formatByType } from "../../../lib/pricing/format";
 import type { ClientSnapshot } from "../../../lib/sales/types";
 import type { CurrencyRow } from "../../../services/valuation";
 import type { SellerRow } from "../../../services/sellers";
@@ -155,7 +156,7 @@ function FXBadge({
     >
       <Coins size={12} className={hasRate ? "text-muted" : "text-amber-500"} />
       <span className="text-[11px] font-bold tabular-nums text-text">
-        {display} {hasRate ? Number(rate).toFixed(2) : "—"}
+        {display} {hasRate ? formatByType(rate, "FX_RATE") : "—"}
       </span>
       {!hasRate && <AlertTriangle size={10} className="text-amber-500" />}
     </button>

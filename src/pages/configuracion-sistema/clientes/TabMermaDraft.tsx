@@ -3,7 +3,7 @@
 // Gestiona overrides de merma en estado local (sin entityId, sin API calls de CRUD).
 // Los datos se persisten una vez guardada la entidad desde EntityEditModal.
 import React, { useEffect, useState, useMemo } from "react";
-import { Plus, Star } from "lucide-react";
+import { Plus } from "lucide-react";
 import { TPButton } from "../../../components/ui/TPButton";
 import { TPField } from "../../../components/ui/TPField";
 import TPNumberInput from "../../../components/ui/TPNumberInput";
@@ -236,12 +236,9 @@ export default function TabMermaDraft({ value, onChange, isClient, isSupplier }:
           <TPTr key={d._localId}>
             {vis.variante && (
               <TPTd>
-                <div className="flex items-center gap-2">
-                  {d._isFavorite && <Star size={11} className="fill-primary text-primary shrink-0" />}
-                  <div>
-                    <div className="font-medium text-text">{d._metalName} — {d._variantName}</div>
-                    <div className="text-xs text-muted">{d._sku} · pureza {(parseFloat(d._purity) * 100).toFixed(0)}%</div>
-                  </div>
+                <div>
+                  <div className="font-medium text-text">{d._metalName} — {d._variantName}</div>
+                  <div className="text-xs text-muted">{d._sku} · pureza {(parseFloat(d._purity) * 100).toFixed(0)}%</div>
                 </div>
               </TPTd>
             )}

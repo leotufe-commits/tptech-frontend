@@ -71,7 +71,7 @@ export function VendedorViewModal({ open, seller, onClose, onAddAttachment, onDe
                     .join(", ") || "—",
                 ],
                 ["Comisión", formatCommission(seller)],
-                ["Favorito", seller.isFavorite ? "Sí ⭐" : "No"],
+                ["Favorito", seller.isFavorite ? "Sí" : "No"],
                 [
                   "Almacenes",
                   seller.warehouses.length === 0

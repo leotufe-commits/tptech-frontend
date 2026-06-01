@@ -63,7 +63,15 @@ import {
 /* =========================
    Página
 ========================= */
-export default function ConfiguracionSistemaItems() {
+export type ConfiguracionSistemaItemsProps = {
+  /** Cuando true, omitimos el TPSectionShell (título/subtítulo/icono).
+   *  Usado al montarse dentro de `ItemsSistemaPage` con tabs — el shell
+   *  exterior ya provee el header común y duplicarlo se ve raro. Default
+   *  false → comportamiento standalone histórico. */
+  embedded?: boolean;
+};
+
+export default function ConfiguracionSistemaItems({ embedded = false }: ConfiguracionSistemaItemsProps = {}) {
   const catalogs: Catalog[] = useMemo(
     () => [
       {
@@ -350,12 +358,22 @@ export default function ConfiguracionSistemaItems() {
     });
   }
 
+  // Helper local — envuelve con TPSectionShell salvo en modo embedded
+  // (tab dentro de ItemsSistemaPage). Cero impacto en lógica interna.
+  const Shell = embedded
+    ? ({ children }: { children: React.ReactNode }) => <>{children}</>
+    : ({ children }: { children: React.ReactNode }) => (
+        <TPSectionShell
+          title="Ítems del sistema"
+          subtitle="Catálogos base usados en combos y selecciones (fiscal, ubicaciones, etc.)."
+          icon={<Tag size={22} />}
+        >
+          {children}
+        </TPSectionShell>
+      );
+
   return (
-    <TPSectionShell
-      title="Ítems del sistema"
-      subtitle="Catálogos base usados en combos y selecciones (fiscal, ubicaciones, etc.)."
-      icon={<Tag size={22} />}
-    >
+    <Shell>
       <div className="grid gap-4 lg:grid-cols-[340px,1fr]">
         {/* ================= LEFT: Catálogos ================= */}
         <aside
@@ -570,6 +588,6 @@ export default function ConfiguracionSistemaItems() {
 
         </div>
       </Modal>
-    </TPSectionShell>
+    </Shell>
   );
 }

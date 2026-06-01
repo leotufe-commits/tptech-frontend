@@ -251,22 +251,46 @@ export function buildPatchedLine(args: {
  *   - `discountAmount`                        → 0  (monto residual "−US$ 0.01"
  *     del cliente anterior; el preview del cliente nuevo lo re-hidrata).
  *
- * NO toca: bonificación/precio MANUAL del operador (`manualOverrides.price/
- * discount`, `pricingMeta.manualPrice`, `pricingMeta.manualDiscount`),
- * cantidad, `unitPrice`, `lineTotal` (los re-hidrata el preview / los
- * conserva "Mantener precios actuales", que NO llama a esta función).
  * Pure — clona, no muta. Si no hay NADA reseteable, devuelve la misma
  * referencia (identidad estable para líneas sin tocar).
+ *
+ * Opción `clearManualOverrides` (default `false`):
+ *   - `false` → comportamiento histórico: NO toca bonificación/precio MANUAL
+ *     del operador. Útil para flujos que solo quieren rehidratar lo heredado
+ *     del cliente anterior.
+ *   - `true`  → la rama "Recalcular precios" pasa esto cuando el operador
+ *     pide explícitamente recalcular: además limpia
+ *       · `pricingMeta.manualDiscount` + `manualOverrides.discount`
+ *       · `pricingMeta.manualDiscountAppliesTo`
+ *       · `pricingMeta.manualPrice`    + `manualOverrides.price`
+ *     y deja `unitPrice = basePrice` (o lo conserva si no hay basePrice),
+ *     para que `buildSalePreviewPayload` mande líneas LIMPIAS y el preview
+ *     del cliente nuevo sea la única fuente de cualquier ajuste comercial.
  */
-export function resetLineForClientChange(line: DocumentLine): DocumentLine {
+export function resetLineForClientChange(
+  line: DocumentLine,
+  options: { clearManualOverrides?: boolean } = {},
+): DocumentLine {
+  const { clearManualOverrides = false } = options;
   const mo = line.manualOverrides;
   const meta = line.pricingMeta as
     | (NonNullable<DocumentLine["pricingMeta"]> & {
         manualTaxAppliesTo?: unknown;
         inheritedDiscount?: unknown;
         inheritedDiscountAppliesTo?: unknown;
+        manualDiscount?: unknown;
+        manualDiscountAppliesTo?: unknown;
+        manualPrice?: unknown;
       })
     | undefined;
+  const hadManualOverrideState =
+    clearManualOverrides && (
+      mo?.discount === true ||
+      mo?.price    === true ||
+      (meta?.manualDiscount ?? null) !== null ||
+      meta?.manualDiscountAppliesTo != null ||
+      (meta?.manualPrice ?? null) !== null
+    );
   const hadResetableState =
     mo?.tax === true ||
     (meta?.taxOverride ?? null) !== null ||
@@ -277,10 +301,16 @@ export function resetLineForClientChange(line: DocumentLine): DocumentLine {
     meta?.inheritedDiscount != null ||
     meta?.inheritedDiscountAppliesTo != null ||
     (typeof line.discountAmount === "number" && line.discountAmount !== 0);
-  if (!hadResetableState) return line;
+  if (!hadResetableState && !hadManualOverrideState) return line;
 
   const nextManualOverrides = mo ? { ...mo } : undefined;
-  if (nextManualOverrides) delete nextManualOverrides.tax;
+  if (nextManualOverrides) {
+    delete nextManualOverrides.tax;
+    if (clearManualOverrides) {
+      delete nextManualOverrides.discount;
+      delete nextManualOverrides.price;
+    }
+  }
 
   const nextMeta = meta ? { ...meta } : undefined;
   if (nextMeta) {
@@ -290,16 +320,74 @@ export function resetLineForClientChange(line: DocumentLine): DocumentLine {
     nextMeta.taxExemptByEntity = undefined;
     (nextMeta as { inheritedDiscount?: unknown }).inheritedDiscount = null;
     (nextMeta as { inheritedDiscountAppliesTo?: unknown }).inheritedDiscountAppliesTo = null;
+    if (clearManualOverrides) {
+      (nextMeta as { manualDiscount?: unknown }).manualDiscount = null;
+      (nextMeta as { manualDiscountAppliesTo?: unknown }).manualDiscountAppliesTo = null;
+      (nextMeta as { manualPrice?: unknown }).manualPrice = null;
+    }
   }
+
+  // En modo `clearManualOverrides`, el `unitPrice` quedaba "congelado" en el
+  // valor calculado con el override manual del cliente anterior. Resetearlo
+  // a `basePrice` (si está disponible) deja que el preview del nuevo cliente
+  // emita el unitPrice correcto. Si no hay basePrice (línea recién creada,
+  // datos parciales) lo dejamos para que el preview lo hidrate. Esto NO es
+  // recálculo: estamos limpiando un valor stale para que el motor recompute.
+  const unitPriceFromBase: Partial<DocumentLine> =
+    clearManualOverrides && typeof meta?.basePrice === "number" && meta.basePrice > 0
+      ? { unitPrice: meta.basePrice }
+      : {};
 
   return {
     ...line,
     taxAmount: 0,
     discountAmount: 0,
+    ...unitPriceFromBase,
     ...(typeof line.lineTotal === "number"
       ? { lineTotalWithTax: line.lineTotal }
       : {}),
     ...(nextManualOverrides ? { manualOverrides: nextManualOverrides } : {}),
     ...(nextMeta ? { pricingMeta: nextMeta } : {}),
+  };
+}
+
+// ─── clearLineExemptionFlag ─────────────────────────────────────────────────
+
+/**
+ * "Mantener precios" con cliente nuevo (P1 #3 — Etapa E2):
+ *
+ * Versión QUIRÚRGICA de `resetLineForClientChange`. Limpia ÚNICAMENTE el
+ * flag `pricingMeta.taxExemptByEntity` para que no quede pegado el estado
+ * "Exento" del cliente anterior cuando el operador eligió mantener los
+ * precios (y por lo tanto el preview se queda cotizando con el cliente
+ * previo).
+ *
+ * NO toca:
+ *   - `taxAmount`         → el impuesto cotizado por el cliente viejo
+ *                            se mantiene tal cual (el operador eligió
+ *                            "Mantener precios").
+ *   - `taxOverride`       → si había override manual, se respeta.
+ *   - `taxBreakdown`      → idem.
+ *   - `discountAmount`    → idem.
+ *   - `inheritedDiscount` → idem.
+ *   - `unitPrice`         → idem.
+ *   - `manualOverrides`   → idem.
+ *
+ * Razón del fix: `taxExemptByEntity` es un atributo del CLIENTE, no del
+ * precio. Al cambiar de cliente exento → no exento manteniendo precios, el
+ * flag heredado del cliente anterior queda inconsistente con el cliente
+ * mostrado en el header. Limpiándolo, el badge "Exento" desaparece y el
+ * input de IVA se reactiva — el operador puede agregar IVA manualmente si
+ * corresponde sin romper los precios cotizados.
+ *
+ * Pure: clona, no muta. Si el flag ya estaba ausente, devuelve la MISMA
+ * referencia (identidad estable para diff/memo).
+ */
+export function clearLineExemptionFlag(line: DocumentLine): DocumentLine {
+  const meta = line.pricingMeta;
+  if (!meta || meta.taxExemptByEntity == null) return line;
+  return {
+    ...line,
+    pricingMeta: { ...meta, taxExemptByEntity: undefined },
   };
 }

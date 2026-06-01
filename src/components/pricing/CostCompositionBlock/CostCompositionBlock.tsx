@@ -160,7 +160,7 @@ export function CostCompositionBlock(props: CostCompositionBlockProps): React.Re
     if (hasBoth) {
       lineRows.push(
         <div key="group-metal" className="space-y-1.5">
-          <p className="text-[9px] font-semibold uppercase tracking-widest text-muted/60">Metales</p>
+          <p className={cn(vt.text.groupLabel, vt.colors.formula)}>Metales</p>
           {metalSteps.map((step: any, i) => {
             const m = step.meta ?? {};
             return (
@@ -179,7 +179,7 @@ export function CostCompositionBlock(props: CostCompositionBlockProps): React.Re
           })}
         </div>,
         <div key="group-other" className="space-y-1.5 border-t border-border/20 pt-1.5">
-          <p className="text-[9px] font-semibold uppercase tracking-widest text-muted/60">Hechura / Otros</p>
+          <p className={cn(vt.text.groupLabel, vt.colors.formula)}>Hechura / Otros</p>
           <div className="space-y-1">
             {otherSteps.map((step: any, i) => {
               const isArticle = step.key === "COST_LINES_PRODUCT" || step.key === "COST_LINES_SERVICE";
@@ -242,7 +242,7 @@ export function CostCompositionBlock(props: CostCompositionBlockProps): React.Re
     if (hasBoth) {
       lineRows.push(
         <div key="group-metal-mmh" className="space-y-1.5">
-          <p className="text-[9px] font-semibold uppercase tracking-widest text-muted/60">Metales</p>
+          <p className={cn(vt.text.groupLabel, vt.colors.formula)}>Metales</p>
           {metalRows}
         </div>,
       );
@@ -268,7 +268,7 @@ export function CostCompositionBlock(props: CostCompositionBlockProps): React.Re
       if (hasBoth) {
         lineRows.push(
           <div key="group-other-mmh" className="space-y-1.5 border-t border-border/20 pt-1.5">
-            <p className="text-[9px] font-semibold uppercase tracking-widest text-muted/60">Hechura / Otros</p>
+            <p className={cn(vt.text.groupLabel, vt.colors.formula)}>Hechura / Otros</p>
             <div className="space-y-1">{hNode}</div>
           </div>,
         );
@@ -346,8 +346,8 @@ export function CostCompositionBlock(props: CostCompositionBlockProps): React.Re
           />
           {showQtyTotal && (
             <div className="flex justify-between items-baseline pt-1.5 mt-1 border-t border-border/30">
-              <span className="text-[11px] text-muted">Total ({qtyForTotal} {qtyForTotal === 1 ? "unidad" : "unidades"})</span>
-              <span className="text-xs tabular-nums font-bold text-text">{fm(qtyTotalCost!)}</span>
+              <span className={cn(vt.text.subLabel, vt.colors.label)}>Total ({qtyForTotal} {qtyForTotal === 1 ? "unidad" : "unidades"})</span>
+              <span className={cn(vt.text.subtotalRow, vt.colors.text, "tabular-nums")}>{fm(qtyTotalCost!)}</span>
             </div>
           )}
         </div>
@@ -356,7 +356,7 @@ export function CostCompositionBlock(props: CostCompositionBlockProps): React.Re
       {/* ── Cards de equivalencia (DESGLOSADO + variant=full) ── */}
       {showCostEquivCards && (
         <div className="pb-1 space-y-3 border-t border-border/20 pt-3 mt-3 mb-4">
-          <p className="text-[9px] font-semibold uppercase tracking-widest text-muted/70">
+          <p className={vt.text.cardTitle}>
             Composición del costo
           </p>
           <div className="grid grid-cols-2 gap-4">

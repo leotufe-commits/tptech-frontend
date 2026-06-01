@@ -80,10 +80,17 @@ export function TPPopover({
       if (e.key === "Escape") onClose();
     }
 
-    document.addEventListener("mousedown", handleDown);
+    // T39 — CAPTURE PHASE (3er arg = true): muchos componentes hijos
+    // (TPNumberInput, TPComboFixed) hacen `stopPropagation()` en mousedown
+    // para no perder foco al clickear. En bubble phase el handler global
+    // nunca recibe el evento → el popover no se cierra al hacer click en
+    // esos controles. En capture corre ANTES de que el hijo pueda detener
+    // la propagación. Mismo patrón que ya usa el kind-menu del editor de
+    // líneas (Bonificación/Recargo).
+    document.addEventListener("mousedown", handleDown, true);
     document.addEventListener("keydown",   handleKey);
     return () => {
-      document.removeEventListener("mousedown", handleDown);
+      document.removeEventListener("mousedown", handleDown, true);
       document.removeEventListener("keydown",   handleKey);
     };
   }, [open, onClose]); // eslint-disable-line react-hooks/exhaustive-deps

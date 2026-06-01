@@ -4,6 +4,15 @@ import { apiFetch } from "../lib/api";
 // Enums (mirror del schema Prisma)
 // ---------------------------------------------------------------------------
 export type EntityType = "PERSON" | "COMPANY";
+/**
+ * @deprecated Fase 3B.8 — preferir `BalanceMode` ("UNIFIED" | "BREAKDOWN")
+ * desde el preview del backend (`SalePreviewResult.balanceMode`) o desde
+ * el movimiento canónico (`BalanceMovementDTO.balanceMode`). El campo
+ * `CommercialEntity.balanceType` queda como configuración legacy — toda
+ * lógica nueva debe leer `balanceMode` (también nullable en la entidad).
+ * El backend resuelve la prioridad R11.4 y usa `balanceType` solo como
+ * fallback histórico via `mapBalanceTypeToMode`.
+ */
 export type BalanceType = "UNIFIED" | "BREAKDOWN";
 export type EntitySourceType = "MANUAL" | "IMPORT_CSV" | "MIGRATION" | "API";
 export type AddressType = "BILLING" | "SHIPPING" | "FISCAL" | "COMMERCIAL" | "OTHER";
@@ -470,7 +479,68 @@ export const commercialEntitiesApi = {
       body: JSON.stringify(body),
       on401: "throw",
     }),
+
+  // ── Fase 3B.7 — Balance movements (modelo canónico Balance Mode) ───────
+  // Lectura NUEVA de CurrentAccountMovement con metalEntries + trazabilidad
+  // sourceDocumentType/Id. Coexiste con `getAccountStatement` (legacy).
+  getBalanceMovements: (
+    entityId: string,
+    params: { from?: string; to?: string; skip?: number; take?: number } = {},
+  ) => {
+    const qs = new URLSearchParams();
+    if (params.from) qs.set("from", params.from);
+    if (params.to)   qs.set("to",   params.to);
+    if (params.skip != null) qs.set("skip", String(params.skip));
+    if (params.take != null) qs.set("take", String(params.take));
+    const query = qs.toString() ? `?${qs.toString()}` : "";
+    return apiFetch<BalanceMovementsListResponse>(
+      `/commercial-entities/${entityId}/balance-movements${query}`,
+      { method: "GET", on401: "throw" },
+    );
+  },
 };
+
+// ─────────────────────────────────────────────────────────────────────────
+// Fase 3B.7 — DTOs de Balance Movements (espejo del backend)
+// ─────────────────────────────────────────────────────────────────────────
+export interface BalanceMovementMetalEntryDTO {
+  id:              string;
+  metalParentId:   string | null;
+  metalParentName: string;
+  gramsOriginal:   number;
+  /** Pureza ponderada. null cuando Σg=0. */
+  purity:          number | null;
+  gramsPure:       number;
+  sourceLineId:    string | null;
+  createdAt:       string;
+}
+
+export interface BalanceMovementDTO {
+  id:                  string;
+  entityId:            string;
+  kind:                "DEBIT" | "CREDIT" | string;
+  source:              string;
+  receiptId:           string | null;
+  paymentAllocationId: string | null;
+  amountBase:          number;
+  amountOriginal:      number;
+  currencyCode:        string;
+  currencyRate:        number;
+  movementDate:        string;
+  createdAt:           string;
+  notes:               string;
+  balanceMode:         "UNIFIED" | "BREAKDOWN";
+  sourceDocumentType:  string | null;
+  sourceDocumentId:    string | null;
+  metalEntries:        BalanceMovementMetalEntryDTO[];
+}
+
+export interface BalanceMovementsListResponse {
+  data:  BalanceMovementDTO[];
+  total: number;
+  skip:  number;
+  take:  number;
+}
 
 // ---------------------------------------------------------------------------
 // Label helpers

@@ -111,7 +111,11 @@ export default function WarehousesTable({
                 <TPRowActions
                   onFavorite={() => onFavorite(r)}
                   isFavorite={r.isFavorite}
-                  busyFavorite={!!busyFav || !active || rowBusy}
+                  // Per-row busy state — alineado con Vendedor / Lista /
+                  // Canal: solo bloquea el botón de ESTA fila cuando se
+                  // está procesando. Antes bloqueaba todos los botones
+                  // mientras CUALQUIER fila estaba en proceso.
+                  busyFavorite={busyFav === r.id || !active || rowBusy}
                   onView={() => onView(r)}
                   onEdit={() => onEdit(r)}
                   onToggle={rowBusy ? undefined : () => onToggleActive(r)}

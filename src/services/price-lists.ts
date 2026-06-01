@@ -42,6 +42,12 @@ export type PriceListRow = {
   isActive: boolean;
   sortOrder: number;
   notes: string;
+  // ── Etapa C-comercial / C10 (POLICY §R-Rounding-14) ─────────────────────
+  // El backend ya los emite (PL_SELECT en `price-lists.service.ts:62-63`);
+  // este row los expone al frontend para que el editor pueda hidratar el
+  // toggle Monetario/Físico al editar una lista existente.
+  commercialRoundingMetalDomain?: "MONETARY" | "PHYSICAL";
+  commercialPhysicalRoundingConfig?: Record<string, unknown> | null;
   deletedAt: string | null;
   createdAt: string;
   updatedAt: string;
@@ -75,6 +81,14 @@ export type PriceListPayload = {
   isActive?: boolean;
   sortOrder?: number;
   notes?: string;
+  // ── Etapa C-comercial / C9 (POLICY §R-Rounding-14) ──────────────────────
+  // Activación canónica del dominio metal del redondeo comercial. El mapper
+  // de la pantalla de Listas (`draftToPayload`) los deriva automáticamente:
+  // lista DESGLOSADA con rounding activo ⇒ PHYSICAL. Resto ⇒ MONETARY (legacy).
+  // El backend C3 ya bifurca el motor cuando recibe `"PHYSICAL"`; acá solo
+  // dejamos de omitirlos.
+  commercialRoundingMetalDomain?: "MONETARY" | "PHYSICAL";
+  commercialPhysicalRoundingConfig?: Record<string, unknown> | null;
 };
 
 /* =========================================================

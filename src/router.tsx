@@ -54,6 +54,7 @@ import PerfilJoyeria from "./pages/PerfilJoyeria";
 
 
 import Cuenta from "./pages/Cuenta";
+import MisPreferencias from "./pages/MisPreferencias";
 import Placeholder from "./pages/Placeholder";
 
 import Usuarios from "./pages/Users";
@@ -67,12 +68,15 @@ import SystemPinSettings from "./pages/configuracion-sistema/SystemPinSettings";
 import SystemThemeSettings from "./pages/configuracion-sistema/SystemThemeSettings";
 import SystemUiCatalog from "./pages/configuracion-sistema/SystemUiCatalog";
 import ConfiguracionSistemaVendedor from "./pages/configuracion-sistema/ConfiguracionSistemaVendedor";
-import ConfiguracionSistemaItems from "./pages/configuracion-sistema/ConfiguracionSistemaItems";
-import ConfiguracionSistemaUnidades from "./pages/configuracion-sistema/ConfiguracionSistemaUnidades";
+// `ConfiguracionSistemaItems/Unidades/Categorias` ya no se montan
+// directamente en router — las rutas legacy redirigen a la pantalla
+// unificada `ItemsSistemaPage` (Fase 3). Las páginas siguen vivas en
+// disco; el contenedor las importa internamente con `embedded={true}`.
 import ConfiguracionSistemaInformes from "./pages/configuracion-sistema/ConfiguracionSistemaInformes";
-import ConfiguracionSistemaCategorias from "./pages/configuracion-sistema/ConfiguracionSistemaCategorias";
-import ConfiguracionSistemaImpuestos from "./pages/configuracion-sistema/ConfiguracionSistemaImpuestos";
-import ConfiguracionSistemaPagos from "./pages/configuracion-sistema/ConfiguracionSistemaPagos";
+// `ConfiguracionSistemaImpuestos/Pagos/CanalesDeVenta` ya no se montan
+// directamente — las rutas legacy redirigen a la pantalla unificada
+// `FinanzasCobrosPage` (Fase 5). Las páginas siguen vivas en disco; el
+// contenedor las importa internamente con `embedded={true}`.
 import ConfiguracionSistemaEnvios from "./pages/configuracion-sistema/ConfiguracionSistemaEnvios";
 import ConfiguracionSistemaListasPrecios from "./pages/configuracion-sistema/ConfiguracionSistemaListasPrecios";
 import ConfiguracionSistemaClientes from "./pages/configuracion-sistema/ConfiguracionSistemaClientes";
@@ -83,12 +87,25 @@ import ConfiguracionSistemaDescuentosCantidad from "./pages/configuracion-sistem
 import ConfiguracionSistemaEtiquetas from "./pages/configuracion-sistema/ConfiguracionSistemaEtiquetas";
 import ConfiguracionSistemaGruposArticulos from "./pages/configuracion-sistema/ConfiguracionSistemaGruposArticulos";
 import ConfiguracionSistemaPoliticaPrecios from "./pages/configuracion-sistema/ConfiguracionSistemaPoliticaPrecios";
-import ConfiguracionSistemaCanalesDeVenta from "./pages/configuracion-sistema/ConfiguracionSistemaCanalesDeVenta";
 import ConfiguracionSistemaCupones from "./pages/configuracion-sistema/ConfiguracionSistemaCupones";
-import FormatoCamposPage from "./pages/configuracion-sistema/FormatoCamposPage";
-import FormatoNumericoPage from "./pages/configuracion-sistema/FormatoNumericoPage";
-import DocumentosHub from "./pages/configuracion-sistema/documentos/DocumentosHub";
+// `FormatoCamposPage` y `FormatoNumericoPage` ya no se montan directamente
+// — las rutas legacy redirigen al contenedor unificado abajo. Las páginas
+// (thin wrappers con shell) siguen existiendo en disco como entry points
+// alternativos para deep-links externos.
+import VisualizacionFormatosPage from "./pages/configuracion-sistema/VisualizacionFormatosPage";
+// Fase 3 — pantalla unificada "Ítems del sistema" (tabs Ítems / Unidades /
+// Categorías). Las rutas legacy /items, /unidades, /categorias redirigen
+// acá conservando ?tab=. Las páginas internas se montan con `embedded`.
+import ItemsSistemaPage from "./pages/configuracion-sistema/ItemsSistemaPage";
+// `DocumentosHub` ya no se monta directamente — vive embebido dentro de
+// la pantalla unificada `DocumentosComprobantesPage` (Fase 4). El editor
+// individual `/documentos/:kind` sí se mantiene como deep route.
 import DocumentTemplateEditor from "./pages/configuracion-sistema/documentos/DocumentTemplateEditor";
+import DocumentosComprobantesPage from "./pages/configuracion-sistema/documentos/DocumentosComprobantesPage";
+// Fase 5 — pantalla unificada "Finanzas y cobros" (tabs Pagos /
+// Impuestos / Cuenta corriente / Canales). Las rutas legacy /pagos,
+// /impuestos, /canales-venta redirigen acá conservando ?tab=.
+import FinanzasCobrosPage from "./pages/configuracion-sistema/FinanzasCobrosPage";
 import DashboardRentabilidad from "./pages/DashboardRentabilidad";
 import PricingSimulator from "./pages/PricingSimulator";
 const PricingCompare = React.lazy(() => import("./pages/dev/PricingCompare"));
@@ -249,6 +266,7 @@ const router = createBrowserRouter([
           // ===== CONFIGURACIÓN =====
           { path: "configuracion/joyeria", element: <PerfilJoyeria /> },
           { path: "configuracion/cuenta", element: <Cuenta /> },
+          { path: "configuracion/mis-preferencias", element: <MisPreferencias /> },
 
           // ✅ USERS list + ✅ USERS view REAL
           { path: "configuracion/usuarios", element: <Usuarios /> },
@@ -278,32 +296,67 @@ const router = createBrowserRouter([
           { path: "proveedores/:id/extracto", element: <EntityAccountStatement /> },
 
           // ✅ NUEVAS SECCIONES (placeholders por ahora)
-          { path: "configuracion-sistema/impuestos", element: <ConfiguracionSistemaImpuestos /> },
-          { path: "configuracion-sistema/pagos", element: <ConfiguracionSistemaPagos /> },
+          // Fase 5 — pantalla unificada "Finanzas y cobros" con tabs.
+          // /impuestos, /pagos, /canales-venta redirigen al contenedor.
+          { path: "configuracion-sistema/finanzas-cobros",
+            element: <FinanzasCobrosPage /> },
+          { path: "configuracion-sistema/impuestos",
+            element: <Navigate to="/configuracion-sistema/finanzas-cobros?tab=impuestos" replace /> },
+          { path: "configuracion-sistema/pagos",
+            element: <Navigate to="/configuracion-sistema/finanzas-cobros?tab=pagos" replace /> },
           { path: "configuracion-sistema/envios", element: <ConfiguracionSistemaEnvios /> },
-          { path: "configuracion-sistema/canales-venta", element: <ConfiguracionSistemaCanalesDeVenta /> },
+          { path: "configuracion-sistema/canales-venta",
+            element: <Navigate to="/configuracion-sistema/finanzas-cobros?tab=canales" replace /> },
           { path: "configuracion-sistema/cupones",       element: <ConfiguracionSistemaCupones /> },
           { path: "configuracion-sistema/listas-precios", element: <ConfiguracionSistemaListasPrecios /> },
           { path: "configuracion-sistema/promociones", element: <ConfiguracionSistemaPromociones /> },
           { path: "configuracion-sistema/descuentos-cantidad", element: <ConfiguracionSistemaDescuentosCantidad /> },
           { path: "configuracion-sistema/politica-precios", element: <ConfiguracionSistemaPoliticaPrecios /> },
-          { path: "configuracion-sistema/categorias", element: <ConfiguracionSistemaCategorias /> },
+          // Legacy → redirige a la pantalla unificada "Ítems del sistema"
+          // (Fase 3). La página standalone sigue importada para fallback
+          // de deep-link directo si alguien la importa desde otro módulo.
+          { path: "configuracion-sistema/categorias",
+            element: <Navigate to="/configuracion-sistema/items-sistema?tab=categorias" replace /> },
           { path: "configuracion-sistema/grupos-articulos", element: <ConfiguracionSistemaGruposArticulos /> },
           { path: "configuracion-sistema/correos", element: <ConfiguracionSistemaCorreos /> },
-          { path: "configuracion-sistema/numeracion", element: <Placeholder title="Numeración de comprobantes" /> },
+          // Legacy → redirige a la pantalla unificada "Documentos y
+          // comprobantes" (Fase 4), tab Numeración.
+          { path: "configuracion-sistema/numeracion",
+            element: <Navigate to="/configuracion-sistema/documentos-comprobantes?tab=numeracion" replace /> },
           { path: "configuracion-sistema/etiquetas", element: <ConfiguracionSistemaEtiquetas /> },
-          { path: "configuracion-sistema/formato-campos",    element: <FormatoCamposPage /> },
-          { path: "configuracion-sistema/formato-numerico",  element: <FormatoNumericoPage /> },
-          { path: "configuracion-sistema/documentos",        element: <DocumentosHub /> },
-          { path: "configuracion-sistema/documentos/:kind",  element: <DocumentTemplateEditor /> },
+          // Fase 2 — pantalla unificada con tabs. Las rutas legacy
+          // redirigen acá conservando la sub-sección via ?tab=...
+          // (deep-links viejos siguen funcionando sin romper).
+          { path: "configuracion-sistema/visualizacion-formatos",
+            element: <VisualizacionFormatosPage /> },
+          { path: "configuracion-sistema/formato-numerico",
+            element: <Navigate to="/configuracion-sistema/visualizacion-formatos?tab=numeros" replace /> },
+          { path: "configuracion-sistema/formato-campos",
+            element: <Navigate to="/configuracion-sistema/visualizacion-formatos?tab=campos" replace /> },
+          // Fase 4 — pantalla unificada "Documentos y comprobantes".
+          // El editor por kind permanece como deep route independiente
+          // (lo abre tanto el hub embebido como deep-links externos).
+          { path: "configuracion-sistema/documentos-comprobantes",
+            element: <DocumentosComprobantesPage /> },
+          { path: "configuracion-sistema/documentos",
+            element: <Navigate to="/configuracion-sistema/documentos-comprobantes?tab=plantillas" replace /> },
+          { path: "configuracion-sistema/documentos/:kind",
+            element: <DocumentTemplateEditor /> },
 
           // ===== IMPORTACIONES =====
           { path: "importaciones",     element: <ImportBatchesPage /> },
           { path: "importaciones/:id", element: <ImportBatchDetailPage /> },
 
-          // ✅ ADMINISTRACIÓN
-          { path: "configuracion-sistema/items", element: <ConfiguracionSistemaItems /> },
-          { path: "configuracion-sistema/unidades", element: <ConfiguracionSistemaUnidades /> },
+          // ✅ ADMINISTRACIÓN — Fase 3: pantalla unificada con tabs.
+          // /items, /unidades, /categorias redirigen al contenedor.
+          // El contenedor preserva otros query params (ej. ?type=...
+          // que usa la tab de Ítems para deep-linkear al catálogo).
+          { path: "configuracion-sistema/items-sistema",
+            element: <ItemsSistemaPage /> },
+          { path: "configuracion-sistema/items",
+            element: <Navigate to="/configuracion-sistema/items-sistema?tab=items" replace /> },
+          { path: "configuracion-sistema/unidades",
+            element: <Navigate to="/configuracion-sistema/items-sistema?tab=unidades" replace /> },
           { path: "configuracion-sistema/informes", element: <ConfiguracionSistemaInformes /> },
 
           // ===== DEV-ONLY =====

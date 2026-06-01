@@ -22,7 +22,6 @@ import { Package } from "lucide-react";
 
 import { cn } from "./tp";
 import TPNumberInput from "./TPNumberInput";
-import { TPBadge } from "./TPBadges";
 import { fmtQty } from "../../lib/document-helpers";
 import type { NumberFormatType } from "../../lib/number-format";
 
@@ -78,6 +77,23 @@ export type TPQuantityFieldProps = {
    * lo pasa quien lo necesita; otras pantallas quedan intactas.
    */
   formatType?: NumberFormatType;
+
+  /**
+   * Opt-in: clase CSS extra que se aplica al `<input>` nativo del
+   * TPNumberInput interno. Pensado para activar variantes visuales
+   * (ej. `tp-input-dense` en líneas operativas de Factura). Sin esto,
+   * comportamiento histórico — el input usa el styling estándar.
+   */
+  inputClassName?: string;
+
+  /**
+   * Opt-in: ocultar las flechas spinner del TPNumberInput interno.
+   * Pensado para líneas operativas alto-volumen (Factura) donde el
+   * operador trabaja por teclado y las flechitas solo añaden ruido
+   * visual. Default `true` — se preservan en otras pantallas.
+   * ArrowUp/ArrowDown del teclado siguen funcionando.
+   */
+  showArrows?: boolean;
 };
 
 export function TPQuantityField({
@@ -95,6 +111,8 @@ export function TPQuantityField({
   className,
   compactInline = false,
   formatType,
+  inputClassName,
+  showArrows = true,
 }: TPQuantityFieldProps) {
   const fallback =
     typeof constraints.default === "number" && constraints.default > 0
@@ -122,17 +140,11 @@ export function TPQuantityField({
   const showPromoChip   = !partial && !!hasPromotion;
   const showQtyDiscChip = !partial && !!hasQuantityDiscount;
 
-  // Paso 1 — el rango Mín/Máx deja de ocupar 2 líneas fijas: pasa a `title`
-  // (hover) del campo. En ERROR el límite ya se comunica vía `errorText`
-  // dentro del TPNumberInput, así que no se pierde información.
-  const rangeTitle =
-    minRaw != null || maxRaw != null
-      ? `Cantidad permitida:${
-          minRaw != null ? ` mín ${fmtQty(minRaw)}${unit ? ` ${unit}` : ""}` : ""
-        }${minRaw != null && maxRaw != null ? " ·" : ""}${
-          maxRaw != null ? ` máx ${fmtQty(maxRaw)}${unit ? ` ${unit}` : ""}` : ""
-        }`
-      : undefined;
+  // T45.2 — Removido el `rangeTitle` (tooltip "Cantidad permitida: mín X").
+  // El sistema acepta decimales (0,01 / 0,50) y el hint persistente
+  // "Mínimo 1 u." era engañoso. El feedback de error sigue funcionando
+  // vía `errorText` cuando el valor es 0, negativo o fuera del rango
+  // efectivo del artículo. Sin hint informativo persistente.
 
   const numberInput = (
     <TPNumberInput
@@ -162,13 +174,14 @@ export function TPQuantityField({
       // Solo se renderiza cuando el caller pasa `onClear`.
       onClear={onClear}
       wrapClassName={compactInline ? "flex-1 min-w-0" : undefined}
+      className={inputClassName}
+      showArrows={showArrows}
     />
   );
 
   return (
     <div
       className={cn("min-w-0", className)}
-      title={compactInline ? rangeTitle : undefined}
     >
       {/* Cantidad = TPNumber con su "X" interna (onClear), MISMO patrón que
           Bonificación e Impuestos. Sin sidecar externo: el campo Precio
@@ -186,35 +199,45 @@ export function TPQuantityField({
                 `errorText` del input.
            Cuando NO hay nada que mostrar, no se renderiza ningún wrapper. */
         <>
+          {/* T29 — Labels compactos unificados (antes TPBadge tone success/
+              danger). Mismo lenguaje visual que "Bonificación acumulada" /
+              "Promo Verano" / "Manual": text-[10px] + color semántico:
+                · Stock > 0 → muted (info neutra)
+                · Stock 0   → rojo (alerta real)
+                · Promo / Desc. cantidad → verde (descuento favorable) */}
           {((typeof totalStock === "number" && Number.isFinite(totalStock)) ||
             showPromoChip ||
             showQtyDiscChip) && (
-            <div className="mt-0.5 flex flex-wrap items-center gap-1.5">
+            <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5">
               {typeof totalStock === "number" && Number.isFinite(totalStock) && (
-                <TPBadge
-                  tone={totalStock > 0 ? "success" : "danger"}
-                  size="sm"
+                <span
+                  className={cn(
+                    "inline-flex items-center gap-1 text-[10px] leading-tight",
+                    totalStock > 0 ? "text-muted" : "font-semibold text-red-500",
+                  )}
                   title="Stock total disponible"
                 >
-                  <Package size={10} className="mr-1 opacity-70" />
+                  <Package size={10} className="opacity-70" />
                   <span className="tabular-nums">
                     Stock {fmtQty(totalStock)}{unit ? ` ${unit}` : ""}
                   </span>
-                </TPBadge>
+                </span>
               )}
               {showPromoChip && (
-                <TPBadge
-                  tone="success"
-                  size="sm"
+                <span
+                  className="text-[10px] not-italic text-emerald-600 dark:text-emerald-400 leading-tight"
                   title="Hay una promoción activa para esta cantidad"
                 >
                   Promo activa
-                </TPBadge>
+                </span>
               )}
               {showQtyDiscChip && (
-                <TPBadge tone="success" size="sm" title="Aplica descuento por cantidad">
+                <span
+                  className="text-[10px] not-italic text-emerald-600 dark:text-emerald-400 leading-tight"
+                  title="Aplica descuento por cantidad"
+                >
                   Desc. x cantidad
-                </TPBadge>
+                </span>
               )}
             </div>
           )}
@@ -230,16 +253,10 @@ export function TPQuantityField({
             </div>
           )}
 
-          {/* Hint línea 1: rango compacto si hay min/max y NO hay error. */}
-          {!hasError && (minRaw != null || maxRaw != null) && (
-            <div className="mt-0.5 text-[10px] leading-tight text-muted">
-              {minRaw != null && maxRaw != null
-                ? `${fmtQty(minRaw)}–${fmtQty(maxRaw)}${unit ? ` ${unit}` : ""}`
-                : minRaw != null
-                  ? `Mín. ${fmtQty(minRaw)}${unit ? ` ${unit}` : ""}`
-                  : `Máx. ${fmtQty(maxRaw!)}${unit ? ` ${unit}` : ""}`}
-            </div>
-          )}
+          {/* T45.2 — Hint persistente de rango Mín./Máx. eliminado.
+              El sistema acepta decimales (0,01 / 0,50) y mostrar
+              "Mín. 1 u." era engañoso. El errorText del TPNumberInput
+              sigue alertando cuando el valor es 0/negativo. */}
 
           {/* Hint línea 2: stock total (informativo). */}
           {typeof totalStock === "number" && Number.isFinite(totalStock) && (
@@ -257,22 +274,25 @@ export function TPQuantityField({
             </div>
           )}
 
-          {/* Chips backend-driven. */}
+          {/* T29 — Labels compactos unificados (mismo estilo que el modo
+              compactInline de Factura). */}
           {(showPromoChip || showQtyDiscChip) && (
-            <div className="mt-0.5 flex flex-wrap items-center gap-1">
+            <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5">
               {showPromoChip && (
-                <TPBadge
-                  tone="success"
-                  size="sm"
+                <span
+                  className="text-[10px] not-italic text-emerald-600 dark:text-emerald-400 leading-tight"
                   title="Hay una promoción activa para esta cantidad"
                 >
                   Promo activa
-                </TPBadge>
+                </span>
               )}
               {showQtyDiscChip && (
-                <TPBadge tone="success" size="sm" title="Aplica descuento por cantidad">
+                <span
+                  className="text-[10px] not-italic text-emerald-600 dark:text-emerald-400 leading-tight"
+                  title="Aplica descuento por cantidad"
+                >
                   Desc. cantidad
-                </TPBadge>
+                </span>
               )}
             </div>
           )}

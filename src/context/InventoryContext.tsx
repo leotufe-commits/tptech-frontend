@@ -3,6 +3,8 @@
 // (UserView, useUsersPage). Las páginas de inventario usan sus propios hooks/api.
 import React, { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import { apiFetch } from "../lib/api";
+import { userPreferencesApi } from "../services/user-preferences";
+import { useAuth } from "./AuthContext";
 
 /* =========================
    Events
@@ -66,6 +68,10 @@ export function InventoryProvider({ children }: { children: ReactNode }) {
   const [warehouses, setWarehouses] = useState<WarehouseRow[]>([]);
   const [loadingWarehouses, setLoadingWarehouses] = useState(false);
   const [favoriteWarehouseId, setFavoriteWarehouseId] = useState<string | null>(null);
+  // Usuario de sesión actual: al cambiar (login / quick-switch) hay que
+  // rehidratar la preferencia personal (almacén por defecto es por-usuario).
+  const { user } = useAuth();
+  const currentUserId = user?.id ?? null;
 
   async function refetch() {
     setLoadingWarehouses(true);
@@ -75,9 +81,26 @@ export function InventoryProvider({ children }: { children: ReactNode }) {
       setWarehouses(rows.map(normRow));
 
       try {
-        const me = await apiFetch("/auth/me", { method: "GET" as any });
-        const fav = (me as any)?.user?.favoriteWarehouseId ?? (me as any)?.favoriteWarehouseId ?? null;
-        setFavoriteWarehouseId(fav ? String(fav) : null);
+        // Fuente de verdad del almacén por defecto: UserPreference
+        // (scope SALES_INVOICE). Fallback legacy a /auth/me solo si la
+        // preferencia aún no tiene almacén (usuarios sin backfill).
+        const pref = await userPreferencesApi.get();
+        let fav: string | null = pref.defaultWarehouseId
+          ? String(pref.defaultWarehouseId)
+          : null;
+        if (!fav) {
+          try {
+            const me = await apiFetch("/auth/me", { method: "GET" as any });
+            const legacy =
+              (me as any)?.user?.favoriteWarehouseId ??
+              (me as any)?.favoriteWarehouseId ??
+              null;
+            fav = legacy ? String(legacy) : null;
+          } catch {
+            // noop
+          }
+        }
+        setFavoriteWarehouseId(fav);
       } catch {
         // noop
       }
@@ -88,10 +111,14 @@ export function InventoryProvider({ children }: { children: ReactNode }) {
     }
   }
 
+  // Rehidratar en montaje y CADA VEZ que cambia el usuario de sesión.
+  // Limpiamos el favorito previo para no mostrar el del usuario anterior
+  // mientras el refetch está en vuelo (evita el stale entre usuarios).
   useEffect(() => {
+    setFavoriteWarehouseId(null);
     void refetch();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [currentUserId]);
 
   useEffect(() => {
     const onChange = () => void refetch();

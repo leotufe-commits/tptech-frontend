@@ -191,6 +191,11 @@ function normalizeCompositionMetals(
       costLineId:      it?.costLineId      ?? null,
       metalVariantId:  it?.metalVariantId  ?? null,
       metalName:       it?.metalName       ?? null,
+      // F1.3 Fase 2.4 — variantName (`MetalVariant.name`, ej. "Oro 18
+      // Kilates"). Backend ya lo expone; el normalizer lo propaga al
+      // contrato del frontend para que el mini desglose pueda mostrar la
+      // sub-línea con el origen real de la variante.
+      variantName:     it?.variantName     ?? null,
       purity:          it?.purity          != null ? Number(it.purity)          : null,
       purityLabel:     it?.purityLabel     ?? null,
       appliedGrams:    it?.appliedGrams    != null && Number.isFinite(Number(it.appliedGrams))
@@ -215,6 +220,7 @@ function normalizeCompositionMetals(
       costLineId:      null,                                  // no disponible en legacy
       metalVariantId:  legacyMetal.appliedVariantId ?? legacyMetal.originalVariantId ?? null,
       metalName:       legacyMetal.metalName        ?? null,
+      variantName:     legacyMetal.variantName      ?? null,  // legacy puede traerlo
       purity:          legacyMetal.purity           ?? null,
       purityLabel:     legacyMetal.purityLabel      ?? null,
       appliedGrams:    legacyMetal.appliedGrams     ?? null,
@@ -364,6 +370,20 @@ function normalizeMetalHechuraBreakdown(raw: any): NormalizedMetalHechuraBreakdo
     metalSaleEstimated:   raw.metalSaleEstimated   != null ? Boolean(raw.metalSaleEstimated)   : undefined,
     hechuraSaleEstimated: raw.hechuraSaleEstimated != null ? Boolean(raw.hechuraSaleEstimated) : undefined,
     source:               raw.source ?? undefined,
+    // Etapa C-comercial / C4-fix + C6 — passthrough puro del redondeo
+    // comercial. Cero matemática nueva: si llegan, viajan; si no, `null`.
+    metalSalePreRounding:
+      raw.metalSalePreRounding    != null ? Number(raw.metalSalePreRounding)    : null,
+    hechuraSalePreRounding:
+      raw.hechuraSalePreRounding  != null ? Number(raw.hechuraSalePreRounding)  : null,
+    metalSaleRoundingDelta:
+      raw.metalSaleRoundingDelta  != null ? Number(raw.metalSaleRoundingDelta)  : null,
+    hechuraSaleRoundingDelta:
+      raw.hechuraSaleRoundingDelta!= null ? Number(raw.hechuraSaleRoundingDelta): null,
+    physical:
+      raw.physical != null && typeof raw.physical === "object"
+        ? raw.physical
+        : null,
   };
 }
 
@@ -1017,6 +1037,21 @@ export function normalizeSalesLine(l: SalePreviewLine): NormalizedPricingLine {
 
     taxBreakdown:    normalizeTaxBreakdown(l.taxBreakdown as any),
     appliedRounding: normalizeAppliedRounding(l.appliedRounding),
+
+    // ── Política comercial por LÍNEA (BUG fix) ─────────────────────────
+    // El backend (`pricing-engine.sale.ts` → `finalize()`) emite `policy`
+    // y `alerts` por cada línea con el resultado del análisis comercial
+    // (LOW_MARGIN, LOSS_SALE, etc. + `policy.blockingAlerts`). Hasta este
+    // fix el normalizador OMITÍA estos campos, por lo que `deriveCommercialLevel`
+    // recibía `undefined` para policy/alerts y siempre caía a "OK" — la línea
+    // con margen -82% nunca escalaba a CRITICAL aunque la config del tenant
+    // tuviera `pricingLowMarginBlockPercent` configurado.
+    //
+    // `normalizePolicy` y `normalizeAlerts` ya existen (líneas ~1089-1099)
+    // y se usan en `normalizeArticlePricingPreview` (líneas 832-833) para
+    // el Simulador. Acá los reutilizamos para Factura.
+    policy: normalizePolicy(l.policy),
+    alerts: normalizeAlerts(l.alerts),
 
     // Exención por entidad — passthrough del motor (per-línea, autoritativo).
     // Sin esto el normalizado quedaba sin el flag → `selectInvoiceLineView`

@@ -9,12 +9,13 @@
 
 import React from "react";
 import { formatByType } from "../../../lib/pricing/format";
+import { vt } from "../../../lib/pricing/visualTokens";
 import { TPCard } from "../../../components/ui/TPCard";
 import { TPField } from "../../../components/ui/TPField";
 import { TPButton } from "../../../components/ui/TPButton";
 import TPInput from "../../../components/ui/TPInput";
 import TPNumberInput from "../../../components/ui/TPNumberInput";
-import TPSelect from "../../../components/ui/TPSelect";
+import TPComboFixed from "../../../components/ui/TPComboFixed";
 import type { DocumentDiscountGlobal } from "../../../lib/document-types";
 
 export type DiscountCardProps = {
@@ -25,10 +26,18 @@ export type DiscountCardProps = {
   /** Formatter de moneda — se inyecta desde el padre para respetar tasa de
    *  display y símbolo de moneda actuales del documento. */
   fmtCurrency: (amount: number) => string;
+  /** Tipo marcado como favorito por el usuario (UserPreference). El combo
+   *  Tipo pinta una estrella en esa opción. `null` = sin favorito. */
+  favoriteType?: "PERCENT" | "AMOUNT" | null;
+  /** Handler para fijar el tipo favorito. Cuando se provee, el combo
+   *  muestra la acción de estrella en cada opción; cuando no, el combo
+   *  funciona normal (sin favorito). El padre persiste vía
+   *  `userPreferencesApi.update({ defaultGlobalDiscountType: value })`. */
+  onSetFavoriteType?: (type: "PERCENT" | "AMOUNT") => void;
 };
 
 export function DiscountCard(props: DiscountCardProps): React.ReactElement {
-  const { value, onPatch, open, onOpenChange, fmtCurrency } = props;
+  const { value, onPatch, open, onOpenChange, fmtCurrency, favoriteType, onSetFavoriteType } = props;
 
   // Opción A — bonificación heredada del cliente (`origin==="CLIENT"`):
   // el `pricing-engine` ya la aplica por `clientId`. NO se edita directo
@@ -46,37 +55,85 @@ export function DiscountCard(props: DiscountCardProps): React.ReactElement {
   return (
     <TPCard
       title="Descuento global"
-      bodyClassName="!p-3"
-      headerClassName="!py-2"
+      // UX.7 — paddings más bajos para que el card se sienta "de
+      // configuración" (menos altura, menos protagonismo) y NO compita
+      // visualmente con el Total del comprobante de abajo.
+      bodyClassName="!p-2.5"
+      headerClassName="!py-1.5"
       collapsible
       open={open}
       onOpenChange={onOpenChange}
       right={
         (() => {
+          // El shape actual de `DocumentDiscountGlobal` modela solo descuentos
+          // (no recargos a nivel documento). Por eso siempre prefijo con `−`.
+          // Si en el futuro se agrega `kind` (BONUS/SURCHARGE) al shape, el
+          // signo debe pasar a derivarse del kind (`vt.colors.surcharge` para `+`).
           const v = value?.value ?? 0;
-          if (!v) return <span className="text-[11px] text-muted">Sin descuento</span>;
+          if (!v) {
+            return (
+              <span
+                data-tp-discount-impact="none"
+                className="text-[11px] text-muted"
+              >
+                Sin descuento
+              </span>
+            );
+          }
           const isPct = (value?.type ?? "PERCENT") === "PERCENT";
+          const formatted = isPct
+            ? `${formatByType(v, "PERCENT", { bare: true })}%`
+            : fmtCurrency(v);
           return (
-            <span className="text-[11px] font-semibold tabular-nums text-amber-500">
-              {isPct ? `${formatByType(v, "PERCENT", { bare: true })}%` : fmtCurrency(v)}
+            <span
+              data-tp-discount-impact="discount"
+              className={`text-[11px] font-semibold tabular-nums ${vt.colors.discount}`}
+            >
+              {"−"}{formatted}
             </span>
           );
         })()
       }
     >
-      <div className="grid grid-cols-2 gap-2">
-        <TPField label="Tipo">
-          <TPSelect
-            value={value?.type ?? "PERCENT"}
-            onChange={(v) => onPatch({ type: (v as "PERCENT" | "AMOUNT") })}
-            options={[
-              { value: "PERCENT", label: "%" },
-              { value: "AMOUNT",  label: "$" },
-            ]}
+      {/* Layout en UNA fila — proporciones (Motivo 5 / Tipo 3 / Valor 4):
+          el Valor numérico recibe la columna más ancha porque su contenido
+          es tabular y necesita aire para que el stepper + la X + los dígitos
+          no se aplasten. El Motivo cede 1 col al Valor (sigue cómodo para
+          un placeholder corto tipo "Fidelidad, promo"). En mobile todo
+          apila (col-span-12). Lógica intacta — solo grid. */}
+      <div className="grid grid-cols-12 gap-2">
+        <TPField label="Motivo" className="col-span-12 sm:col-span-5">
+          <TPInput
+            value={value?.reason ?? ""}
+            onChange={(v: string) => onPatch({ reason: v })}
+            placeholder="Fidelidad, promo, etc."
             disabled={isClientInherited}
           />
         </TPField>
-        <TPField label="Valor">
+        <TPField label="Tipo" className="col-span-6 sm:col-span-3">
+          {/* TPComboFixed soporta `onSetFavorite` + `favoriteValue` para
+              mostrar estrella en cada opción (mismo patrón que vendedores,
+              listas, canales). Persiste la preferencia vía UserPreference. */}
+          <TPComboFixed
+            value={value?.type ?? "PERCENT"}
+            onChange={(v) => onPatch({ type: (v as "PERCENT" | "AMOUNT") })}
+            disabled={isClientInherited}
+            options={[
+              { value: "PERCENT", label: "Porcentaje (%)" },
+              { value: "AMOUNT",  label: "Monto fijo ($)" },
+            ]}
+            favoriteValue={favoriteType ?? null}
+            onSetFavorite={onSetFavoriteType
+              ? (v) => onSetFavoriteType(v as "PERCENT" | "AMOUNT")
+              : undefined
+            }
+          />
+        </TPField>
+        <TPField label="Valor" className="col-span-6 sm:col-span-4">
+          {/* Ajustes locales del TPNumberInput (no se cambia el componente
+              global): `wrapClassName` garantiza un ancho mínimo cómodo en
+              breakpoints intermedios; `className` sube un punto el texto
+              numérico para mejor legibilidad del valor. */}
           <TPNumberInput
             value={value?.value ?? 0}
             onChange={(v) => onPatch({ value: v ?? 0 })}
@@ -85,14 +142,24 @@ export function DiscountCard(props: DiscountCardProps): React.ReactElement {
             min={0}
             max={value?.type === "PERCENT" ? 100 : undefined}
             disabled={isClientInherited}
-          />
-        </TPField>
-        <TPField label="Motivo" className="col-span-2">
-          <TPInput
-            value={value?.reason ?? ""}
-            onChange={(v: string) => onPatch({ reason: v })}
-            placeholder="Fidelidad, promo, etc."
-            disabled={isClientInherited}
+            // R5 (UX) — spinner cleanup: el aside comercial no usa flechas
+            // (operador trabaja por teclado). ArrowUp/ArrowDown siguen
+            // funcionando en el input.
+            showArrows={false}
+            // `min-w-0 w-full`: el input se acomoda al ancho de la
+            // celda grid (col-span-X) sin imponer un piso de 144 px
+            // que provocaba overflow del card en aside angostos.
+            wrapClassName="min-w-0 w-full"
+            className="text-[15px] font-medium tabular-nums"
+            // X interna — limpia el valor a 0 (NO toca `type` ni `reason`).
+            // Coherente con la UX de las celdas de línea (Bonificación,
+            // Impuestos). Solo aparece cuando hay valor > 0 y el campo está
+            // editable (no heredado del cliente).
+            onClear={
+              !isClientInherited && (value?.value ?? 0) > 0
+                ? () => onPatch({ value: 0 })
+                : undefined
+            }
           />
         </TPField>
       </div>

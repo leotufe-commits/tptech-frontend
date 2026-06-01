@@ -113,7 +113,14 @@ function v(colVis: Record<string, boolean>, key: string) {
 /* =========================================================
    Componente principal
 ========================================================= */
-export default function ConfiguracionSistemaCategorias() {
+export type ConfiguracionSistemaCategoriasProps = {
+  /** Cuando true, omitimos el TPSectionShell. Usado al montarse dentro
+   *  de `ItemsSistemaPage` con tabs — el shell exterior ya provee el
+   *  header. Default false → comportamiento standalone. */
+  embedded?: boolean;
+};
+
+export default function ConfiguracionSistemaCategorias({ embedded = false }: ConfiguracionSistemaCategoriasProps = {}) {
   /* ---------- datos ---------- */
   const [rows, setRows] = useState<CategoryRow[]>([]);
   const [priceLists, setPriceLists] = useState<PriceListRow[]>([]);
@@ -648,12 +655,22 @@ export default function ConfiguracionSistemaCategorias() {
     );
   }
 
+  // Helper local — envuelve con TPSectionShell salvo en modo embedded
+  // (tab dentro de ItemsSistemaPage). Cero impacto en lógica interna.
+  const Shell = embedded
+    ? ({ children }: { children: React.ReactNode }) => <>{children}</>
+    : ({ children }: { children: React.ReactNode }) => (
+        <TPSectionShell
+          title="Categorías y Atributos de Artículos"
+          subtitle="Clasificación jerárquica del catálogo"
+          icon={<FolderTree size={22} />}
+        >
+          {children}
+        </TPSectionShell>
+      );
+
   return (
-    <TPSectionShell
-      title="Categorías y Atributos de Artículos"
-      subtitle="Clasificación jerárquica del catálogo"
-      icon={<FolderTree size={22} />}
-    >
+    <Shell>
       <TPTableWrap>
         <TPTableHeader
           left={
@@ -1029,6 +1046,6 @@ export default function ConfiguracionSistemaCategorias() {
         initialView={libInitialView}
         onClose={() => { setLibOpen(false); setLibInitialView("list"); }}
       />
-    </TPSectionShell>
+    </Shell>
   );
 }

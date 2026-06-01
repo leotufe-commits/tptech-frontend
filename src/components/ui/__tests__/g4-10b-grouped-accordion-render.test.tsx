@@ -74,8 +74,10 @@ describe("F1.3 #10-F — resumen chips arriba de la tabla", () => {
   it("baseline correct: chip METALES muestra total gramos (1.30 g del legacy)", () => {
     const line = makeLine();
     render(<LineAdvancedOverridesPanel line={line} {...baseProps} />);
-    // "1.30 g" aparece tanto en el chip como en la fila — al menos 1.
-    expect(screen.getAllByText(/1\.30 g/).length).toBeGreaterThanOrEqual(1);
+    // Region/decimals-agnóstico: METAL_GRAMS preset por default usa 3 decimales
+    // (AR: "1,300 g", US: "1.300 g"). El número 1.30 se renderiza por el preset
+    // del tenant. Aparece en chip + fila.
+    expect(screen.getAllByText(/1[,.]300?\s*g/).length).toBeGreaterThanOrEqual(1);
   });
 });
 

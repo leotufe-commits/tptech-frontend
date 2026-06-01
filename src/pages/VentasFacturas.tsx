@@ -15,7 +15,7 @@
 //   Presupuesto → Orden de venta → Entrega → Factura → Cobro
 // ============================================================================
 
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useBlocker } from "react-router-dom";
 import {
   Receipt,
@@ -44,6 +44,8 @@ import {
   MapPin,
   Tag,
   Mail,
+  LayoutDashboard,
+  LayoutGrid,
   Download,
 } from "lucide-react";
 
@@ -62,11 +64,11 @@ import TPInput from "../components/ui/TPInput";
 import TPNumberInput from "../components/ui/TPNumberInput";
 import TPSelect from "../components/ui/TPSelect";
 import { Modal } from "../components/ui/Modal";
+import { useConfirmDialog } from "../components/ui/TPConfirmDialog";
 import { TPStatusBadge } from "../components/ui/TPStatusBadge";
 import { TPDocumentLineAdvancedEditor } from "../components/ui/TPDocumentLineAdvancedEditor";
 import ConfirmDeleteDialog from "../components/ui/ConfirmDeleteDialog";
 import { TPTotalCell } from "../components/ui/TPTotalCell";
-import SalePricingPanel from "../components/sales/SalePricingPanel";
 import { normalizeSalesPreview } from "../lib/pricing/normalizePricingPreviewResult";
 import { logParity } from "../lib/pricing";
 import { selectInvoiceLineView } from "../lib/sales/selectInvoiceLineView";
@@ -79,13 +81,31 @@ import { buildClientSnapshot } from "../lib/sales/buildClientSnapshot";
 import { resolveClientInheritedDiscount } from "../lib/sales/resolveClientInheritedDiscount";
 import { buildSalePreviewPayload } from "../lib/sales/buildSalePreviewPayload";
 import { buildSaleCreatePayload } from "../lib/sales/buildSaleCreatePayload";
+import { promoteManualAdjustmentChange } from "../lib/sales/promoteManualAdjustmentChange";
+import { applyGlobalPriceListChange } from "../lib/sales/applyGlobalPriceListChange";
+import { applySaleResponseToDraft } from "../lib/sales/applySaleResponseToDraft";
+import {
+  saleRowToSalesInvoice,
+  saleDetailToSalesInvoice,
+  extractApiErrorMessage,
+} from "../lib/sales/saleMapping";
 import { applySalePreviewToDraft } from "../lib/sales/applySalePreviewToDraft";
+// Fase A — política comercial: helper de interpretación (puro, sin
+// matemática) + modal de confirmación reforzada para líneas CRITICAL.
+import {
+  aggregateDocumentStatus,
+  deriveCommercialLevel,
+  deriveCommercialInfo,
+  type CommercialInfo,
+} from "../lib/sales/commercialPolicy";
+import CommercialPolicyConfirmModal from "../components/sales/CommercialPolicyConfirmModal";
 import { useCardCollapse } from "../lib/sales/useCardCollapse";
 import {
   detectManualEdit,
   buildPatchedLine,
   computeManualTax as computeManualTaxLib,
   resetLineForClientChange,
+  clearLineExemptionFlag,
 } from "../lib/sales/patchLineHelpers";
 import {
   normalizeEntityCurrency,
@@ -124,7 +144,8 @@ import { listCurrencies, addCurrencyRate, type CurrencyRow } from "../services/v
 import { useCatalog } from "../hooks/useCatalog";
 import { usePermissions } from "../hooks/usePermissions";
 import { receiptsApi, type CreateReceiptDraftPayload } from "../services/receipts";
-import { documentTemplatesApi } from "../services/document-templates";
+// `documentTemplatesApi` y types relacionados se importan más abajo (junto
+// al fetcher de company para Imprimir).
 import {
   articlesApi,
   type ArticleRow,
@@ -142,13 +163,16 @@ import { salesChannelsApi, type SalesChannelRow } from "../services/sales-channe
 import {
   resolveDefaultWarehouseId,
   resolveDefaultId,
+  resolveDefaultChannelId,
   resolveDefaultCurrencyCode,
+  resolveDefaultGlobalDiscountType,
   resolveCurrencyRate,
   userPreferencesApi,
+  type SalesUserPreference,
 } from "../services/user-preferences";
 import { listUnits, type Unit as UnitRow } from "../services/units";
 import { couponsApi, type ValidateCouponResult } from "../services/coupons";
-import { salesApi, type SaleDocumentTotals, type SalePreviewResult, type SalePreviewLine } from "../services/sales";
+import { salesApi, type SaleDocumentTotals, type SalePreviewResult, type SalePreviewLine, type SaleDetail } from "../services/sales";
 // C5-fix Opcion A — Cliente del endpoint render-only desde el draft.
 // El backend renderea EXACTAMENTE los props que mandamos (mismos que
 // pasa el `<SaleInvoicePrintable>` en window.print()) → paridad
@@ -157,16 +181,66 @@ import { salesDraftPdfApi, type SaleDraftPdfRequest } from "../services/salesDra
 import { taxesApi, type TaxRow } from "../services/taxes";
 import { CouponCard } from "./ventas-facturas/CouponCard";
 import {
-  DiscountCard, ShippingCard, TotalsHeroSection, LinesEditorSection,
+  DiscountCard, ShippingCard, LinesEditorSection,
   AddressPickerPopover, CurrencyFXModal, PaymentCard, InvoiceHeaderForm,
   ObservationsTermsAttachmentsCard,
 } from "./ventas-facturas/InvoiceEditorModal";
+// Fase 1 — layout personalizable (plumbing): el modal itera las cards del
+// aside sobre `layout`. Fase 2 — DnD activable desde la toolbar del modal.
+import { useInvoiceLayout } from "./ventas-facturas/InvoiceEditorModal/layout/useInvoiceLayout";
+import { useInvoiceViewPreset } from "./ventas-facturas/InvoiceEditorModal/layout/useInvoiceViewPreset";
+import { useInvoiceUiPreferences } from "./ventas-facturas/InvoiceEditorModal/layout/useInvoiceUiPreferences";
+import { asideColumnGridStyle } from "../lib/sales/invoiceViewPresets";
+import { InvoiceSettingsModal } from "./ventas-facturas/InvoiceEditorModal/InvoiceSettingsModal";
+// SaleInvoicePrintable vive en `tptech-shared` desde C1 (paridad visual
+// cross-app: el mismo componente lo consume el print del browser y el
+// renderer server-side Puppeteer).
+import SaleInvoicePrintable from "@tptech/shared/document-printables/SaleInvoicePrintable";
+import {
+  documentTemplatesApi,
+  buildLocalDefaultConfig,
+  type DocumentTemplateConfig,
+} from "../services/document-templates";
+import {
+  fetchCompanyFullProfile,
+  fetchPricingPolicyConfig,
+  type CompanyFullProfile,
+} from "../services/company";
+// Layout V2 — `LayoutGridContext` es la SSOT del render del aside en AMBOS
+// modos (edición = drag/resize XY; lectura = posicionamiento absoluto sin
+// handles). Los helpers V1 (`getCardsByRegion`, `v2WidthToV1Width`,
+// `DraggableCard`, `getCardsBySlot`, `LayoutDndContext`) ya NO se usan
+// desde este archivo — quedan en /layout/ como back-compat para
+// consumidores externos.
+import { LayoutGridContext } from "./ventas-facturas/InvoiceEditorModal/layout/v2/LayoutGridContext";
+import { compactVerticallyByRegion } from "./ventas-facturas/InvoiceEditorModal/layout/v2/reflowLayout";
+// F2 — Layouts V2 por preset (COMPACT/CLASSIC/FOCUS) con identidad visual real.
+import {
+  getDefaultLayoutForPreset,
+  MAIN_BELOW_LINES_BY_PRESET,
+} from "./ventas-facturas/InvoiceEditorModal/layout/v2/presetLayouts";
+import type { InvoiceViewPreset } from "../lib/sales/invoiceViewPresets";
+// `DraggableCard` y `LayoutDndContext` (V1 sortable lineal) ya NO se usan
+// desde VentasFacturas — el render del aside pasó por completo al
+// `LayoutGridContext` V2. Los componentes quedan en /layout/ para
+// fallback responsive futuro o consumidores externos.
+import { LayoutEditModeToolbar } from "./ventas-facturas/InvoiceEditorModal/layout/LayoutEditModeToolbar";
+import type { CardId } from "./ventas-facturas/InvoiceEditorModal/layout/types";
+import { compactLayoutByVisibility } from "./ventas-facturas/InvoiceEditorModal/layout/compactLayout";
 import LabelPrintModal, { type LabelItem } from "./article-detail/LabelPrintModal";
 // 1.E parte 2 — Modal reutilizable para enviar la factura por mail.
 import SendInvoiceEmailModal from "../components/sales/SendInvoiceEmailModal";
 import type { WarehouseRow } from "./InventarioAlmacenes/types";
 import { TPDocumentModalFooter } from "../components/ui/TPDocumentModalFooter";
 import TPDocumentTotalsHero from "../components/ui/TPDocumentTotalsHero";
+// Etapa B — Card maestro que fusiona Hero + selector de Balance Mode +
+// summary (UNIFIED/BREAKDOWN). Reemplaza al render manual del case "totals".
+import { TotalDelComprobanteCard } from "../components/sales/TotalDelComprobanteCard";
+import {
+  deriveDocumentMetalsFromLines,
+  buildCommercialMetalValueByParent,
+} from "../components/sales/TotalDelComprobanteCard/helpers";
+import { TPSaleAccountImpactCard } from "../components/sales/TPSaleAccountImpactCard";
 import { composeDocumentPricingDetail } from "../lib/pricing-display-helpers";
 import { TPCollapse } from "../components/ui/TPCollapse";
 import { TPPopover } from "../components/ui/TPPopover";
@@ -698,6 +772,12 @@ type StatusFilter = "ALL" | SalesInvoiceStatus;
 
 export default function VentasFacturas() {
   const [invoices, setInvoices] = useState<SalesInvoice[]>([]);
+  // Etapa 3 — id del Sale persistido en backend para el draft actualmente
+  // abierto en el modal. `null` mientras el operador edita una factura
+  // nueva sin guardar. Tras `salesApi.create()` o `getOne()` se setea al
+  // id real. Sale del state al cerrar el modal.
+  const [persistedSaleId, setPersistedSaleId] = useState<string | null>(null);
+  const [loadingInvoices, setLoadingInvoices] = useState(false);
   const [q, setQ]               = useState("");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("ALL");
   const [clientFilter, setClientFilter] = useState<string>("ALL");
@@ -762,6 +842,25 @@ export default function VentasFacturas() {
     return () => { cancelled = true; };
   }, []);
 
+  // ── Etapa 3 — Listado real desde salesApi.list() ────────────────────────
+  // Reemplaza el estado in-memory previo. Carga al montar y tras cada
+  // acción persistida (create/update/confirm/cancel) via `refreshInvoices`.
+  const refreshInvoices = useCallback(async () => {
+    setLoadingInvoices(true);
+    try {
+      const result = await salesApi.list({ take: 100 });
+      setInvoices(result.data.map(saleRowToSalesInvoice));
+    } catch (e) {
+      toast.error(extractApiErrorMessage(e, "No se pudo cargar la lista de facturas."));
+    } finally {
+      setLoadingInvoices(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void refreshInvoices();
+  }, [refreshInvoices]);
+
   // Snapshot del draft al abrir la modal — se compara contra el draft actual
   // para detectar cambios sin guardar (dirty state). Se setea en `openNew`
   // (y eventualmente al editar) y se limpia al cerrar/guardar.
@@ -804,7 +903,11 @@ export default function VentasFacturas() {
   function closeEditor() {
     setEditorOpen(false);
     setDraft(null);
+    setPersistedSaleId(null);
     initialDraftJsonRef.current = null;
+    // Nota: el state `savedSaleId` (id del Sale persistido) sigue viviendo
+    // dentro de `InvoiceEditorModal` para el flujo legacy de mail. Se borra
+    // naturalmente cuando el modal se desmonta.
   }
 
   function requestCloseEditor() {
@@ -911,7 +1014,12 @@ export default function VentasFacturas() {
     const favWh        = resolveDefaultWarehouseId(parentFavoriteWarehouseId, parentWarehouses);
     const sellerId     = resolveDefaultId(pref?.defaultSellerId, favSeller?.id, parentSellers);
     const listId       = resolveDefaultId(pref?.defaultPriceListId, favList?.id, parentPriceLists);
-    const channelId    = resolveDefaultId(pref?.defaultChannelId, favChannel?.id, parentSalesChannels);
+    // Canal de venta: NO cae a "primer activo" — un canal sin elección
+    // explícita aplicaría recargos/descuentos no pedidos por el operador.
+    // Jerarquía: preferencia del usuario → favorito de joyería → "" (Sin canal).
+    // (El cliente, si tiene canal default, lo resuelve el flujo de cliente en
+    //  otra capa; este helper solo cubre pasos 2-3 de la jerarquía.)
+    const channelId    = resolveDefaultChannelId(pref?.defaultChannelId, favChannel?.id, parentSalesChannels);
     // Moneda como CÓDIGO (no id): UserPreference → moneda base → "ARS".
     const currencyCode = resolveDefaultCurrencyCode(pref?.defaultCurrencyId, parentCurrencies, "ARS");
     // Cotización vigente para esa moneda (mismo flujo que el cambio manual
@@ -946,112 +1054,217 @@ export default function VentasFacturas() {
       channelId:        channelId || undefined,
       couponCode:       undefined,
       shipping:         { methodId: "pickup", cost: 0, address: "", carrier: "" },
-      discountGlobal:   { type: "PERCENT", value: 0, reason: "" },
+      // Tipo predeterminado del descuento global: UserPreference del usuario
+       // → fallback "PERCENT" (default histórico). El valor sigue arrancando
+       // en 0 — solo precargamos la elección del combo Tipo.
+       discountGlobal:   { type: resolveDefaultGlobalDiscountType(pref?.defaultGlobalDiscountType), value: 0, reason: "" },
     };
 
     setDraft(blank);
     setIsNew(true);
     setEditorOpen(true);
+    // Nota: el state `savedSaleId` lo gestiona `InvoiceEditorModal`. Como
+    // el modal se monta de cero (key cambia con cada draft.id distinto),
+    // arranca con id null y crea el Sale on-demand en el primer click de
+    // Descargar PDF / Enviar mail.
     // Snapshot inicial — luego se compara para saber si hay cambios.
     initialDraftJsonRef.current = JSON.stringify(blank);
   }
 
-  function saveDraft() {
+  // ── Etapa 3 — Guardar borrador (DRAFT) en backend real ──────────────────
+  // Si el draft NO está persistido → `salesApi.create()`.
+  // Si está persistido + DRAFT → `salesApi.update()`.
+  // Tras éxito: hidrata el draft con el response (id real, snapshots,
+  // ajustes de documento Etapa 1.1) y refresca el listado.
+  // Devuelve el `SaleDetail` persistido o `null` si falló / validación rota.
+  async function persistDraftAsBackendDraft(): Promise<SaleDetail | null> {
+    if (!draft) return null;
+
+    if (!draft.client.trim() && !draft.clientId) {
+      toast.error("El cliente es obligatorio.");
+      return null;
+    }
+    if (!draft.date) {
+      toast.error("La fecha es obligatoria.");
+      return null;
+    }
+    if (!draft.currency.trim()) {
+      toast.error("La moneda es obligatoria.");
+      return null;
+    }
+
+    const built = buildSaleCreatePayload(draft);
+    if (!built.hasRealLines) {
+      toast.error("Agregá al menos una línea para guardar el borrador.");
+      return null;
+    }
+
+    try {
+      const saved = persistedSaleId
+        ? await salesApi.update(persistedSaleId, built.payload)
+        : await salesApi.create(built.payload);
+      setPersistedSaleId(saved.id);
+      setDraft((prev) => (prev ? applySaleResponseToDraft(prev, saved) : prev));
+      return saved;
+    } catch (e) {
+      toast.error(extractApiErrorMessage(e, "No se pudo guardar el borrador."));
+      return null;
+    }
+  }
+
+  // ── Etapa 3 — Acción del botón "Crear" del modal: guarda y confirma ─────
+  // Si el draft no está persistido, primero `salesApi.create()` y luego
+  // `salesApi.confirm()`. Si ya está persistido como DRAFT, hace update
+  // para asegurar que cualquier edición pendiente entre y después confirma.
+  // 422 con blockingAlerts → modal de riesgo (ya existente).
+  async function saveDraft(): Promise<void> {
     if (!draft) return;
 
-    if (!draft.client.trim())     { toast.error("El cliente es obligatorio.");    return; }
-    if (!draft.date)              { toast.error("La fecha es obligatoria.");      return; }
-    if (!draft.currency.trim())   { toast.error("La moneda es obligatoria.");     return; }
+    const saved = await persistDraftAsBackendDraft();
+    if (!saved) return;
 
-    // Filtrar líneas vacías (placeholders): no se persisten ni validan.
-    // Las cabeceras (HEADER) NO cuentan como artículo para "al menos una
-    // línea" — sí se persisten para preservar el agrupamiento visual.
-    const realLines     = draft.lines.filter((l) => !isEmptyLine(l));
-    const realArticles  = realLines.filter((l) => l.type !== "HEADER");
-    if (realArticles.length === 0) { toast.error("Agregá al menos una línea.");      return; }
-
-    for (const l of realArticles) {
-      if (l.quantity <= 0)      { toast.error(`La cantidad debe ser mayor a 0 (${l.article || "línea"}).`); return; }
-      if (l.unitPrice < 0)      { toast.error(`El precio no puede ser negativo (${l.article || "línea"}).`); return; }
-      if ((l.lineTotal ?? 0) < 0) { toast.error(`El total de línea no puede ser negativo (${l.article || "línea"}).`); return; }
+    // saved es DRAFT por contrato. Si ya estaba CANCELLED el backend rechazaría
+    // el update con 409 (Etapa 1.2). El happy path: pasar a CONFIRMED.
+    try {
+      const confirmed = await salesApi.confirm(saved.id);
+      setDraft((prev) => (prev ? applySaleResponseToDraft(prev, confirmed) : prev));
+      toast.success(
+        `Factura ${confirmed.code} confirmada${
+          confirmed.receipts?.[0]?.code ? ` — N° ${confirmed.receipts[0].code}` : ""
+        }.`,
+      );
+      initialDraftJsonRef.current = null;
+      setEditorOpen(false);
+      setDraft(null);
+      setPersistedSaleId(null);
+      await refreshInvoices();
+    } catch (e: unknown) {
+      const err = e as { status?: number; data?: { blockingAlerts?: string[]; message?: string } };
+      if (err?.status === 422 && Array.isArray(err.data?.blockingAlerts) && err.data!.blockingAlerts!.length > 0) {
+        const codes = err.data!.blockingAlerts!.join(", ");
+        toast.error(`No se puede confirmar: hay alertas críticas (${codes}). Revisá la composición comercial.`);
+        // El draft quedó persistido como DRAFT; el operador puede corregir y
+        // volver a presionar Crear. NO cerramos el modal.
+        await refreshInvoices();
+        return;
+      }
+      toast.error(extractApiErrorMessage(e, "No se pudo confirmar la factura."));
+      // El save SÍ entró (DRAFT persistido). Refrescamos listado.
+      await refreshInvoices();
     }
+  }
 
-    // Fase 6: los totales ya viven en `draft.*` hidratados por salesApi.preview
-    // vía applySalePreviewToDraft. No recalculamos localmente al guardar.
-    if (draft.total < 0) {
-      toast.error("El total no puede ser negativo.");
+  // ── Etapa 3 — Editar borrador: rehidrata el modal con datos reales ──────
+  // Etapa 5 — También se usa para "Ver factura" en sales no-DRAFT. El modal
+  // detecta el status y abre en modo read-only (prop `readOnly`).
+  async function editInvoice(invoice: SalesInvoice) {
+    try {
+      const detail   = await salesApi.getOne(invoice.id);
+      const hydrated = saleDetailToSalesInvoice(detail);
+      setDraft(hydrated);
+      setPersistedSaleId(detail.id);
+      setIsNew(false);
+      setEditorOpen(true);
+      initialDraftJsonRef.current = JSON.stringify(hydrated);
+    } catch (e) {
+      toast.error(extractApiErrorMessage(e, "No se pudo cargar la factura."));
+    }
+  }
+
+  // ── Etapa 3 — Anular factura: pide motivo y captura 409 ─────────────────
+  async function cancelInvoice(invoice: SalesInvoice) {
+    if (invoice.status === "CANCELLED") {
+      toast.info("La factura ya está anulada.");
       return;
     }
-
-    const nextStatus: SalesInvoiceStatus =
-      draft.status === "CANCELLED"
-        ? "CANCELLED"
-        : draft.total <= 0
-        ? "DRAFT"
-        : derivePaymentStatus(draft.total, draft.paidAmount);
-
-    const saved: SalesInvoice = { ...draft, lines: realLines, status: nextStatus };
-
-    setInvoices((prev) => {
-      const exists = prev.some((i) => i.id === saved.id);
-      return exists ? prev.map((i) => (i.id === saved.id ? saved : i)) : [...prev, saved];
-    });
-
-    // TODO (Fase 6): al confirmar factura (status ≠ DRAFT/CANCELLED) →
-    //   · emitir Receipt tipo INVOICE, direction=OUTBOUND via onSaleConfirmed hook
-    //   · crear EntityBalanceEntry({
-    //       entityId: clientId, role: "CLIENT", entryType: "SALE_INVOICE",
-    //       amount: totals.total, currency, documentRef: saved.number,
-    //       breakdownSnapshot: { lines, taxes, deliveryNumber, salesOrderNumber }
-    //     })
-    //   · cargar deuda en la cuenta corriente del cliente
-    //   · respetar moneda + fxRate (cuando se agregue) para conversión a base
-    toast.success(
-      isNew
-        ? `Factura ${saved.number} creada — cuenta corriente próximamente`
-        : `Factura ${saved.number} actualizada`,
+    const note = window.prompt(
+      `Motivo de la anulación de la factura ${invoice.number}:`,
+      "",
     );
+    if (note === null) return;  // operador canceló el prompt
+    try {
+      const cancelled = await salesApi.cancel(invoice.id, note);
+      const ncReceipt = cancelled.receipts?.find((r) => r.type === "CREDIT_NOTE");
+      toast.success(
+        ncReceipt
+          ? `Factura ${cancelled.code} anulada — NC emitida (${ncReceipt.code}).`
+          : `Factura ${cancelled.code} anulada.`,
+      );
+      await refreshInvoices();
+    } catch (e) {
+      toast.error(extractApiErrorMessage(e, "No se pudo anular la factura."));
+    }
+  }
 
-    // Guardado exitoso → limpiamos el snapshot para que no se dispare la
-    // confirmación de salida.
-    initialDraftJsonRef.current = null;
-    setEditorOpen(false);
-    setDraft(null);
+  // ── Etapa 3 — Imprimir / descargar PDF oficial ──────────────────────────
+  async function printInvoice(invoice: SalesInvoice) {
+    if (invoice.status === "DRAFT") {
+      toast.info("El borrador todavía no tiene PDF oficial. Confirmá la factura primero.");
+      return;
+    }
+    try {
+      const { blob, filename } = await salesApi.downloadPdf(invoice.id);
+      const url = URL.createObjectURL(blob);
+      const a   = document.createElement("a");
+      a.href     = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      toast.error(extractApiErrorMessage(e, "No se pudo descargar el PDF."));
+    }
   }
 
   // ── Row actions ──────────────────────────────────────────────────────────
   function rowActions(i: SalesInvoice): TPActionsMenuItem[] {
-    return [
-      {
-        label: "Ver factura",
-        icon: <Eye size={14} />,
-        onClick: () => toast.info(`Ver factura ${i.number} — próximamente`),
-      },
-      {
+    const isDraft     = i.status === "DRAFT";
+    const isCancelled = i.status === "CANCELLED";
+    const items: TPActionsMenuItem[] = [];
+
+    if (isDraft) {
+      items.push({
         label: "Editar",
         icon: <Pencil size={14} />,
-        onClick: () => toast.info(`Editar factura ${i.number} — próximamente`),
-      },
-      { type: "separator" },
-      {
+        onClick: () => void editInvoice(i),
+      });
+    } else {
+      // Etapa 5 — "Ver factura" abre el modal en read-only.
+      items.push({
+        label: "Ver factura",
+        icon: <Eye size={14} />,
+        onClick: () => void editInvoice(i),
+      });
+    }
+
+    items.push({ type: "separator" });
+
+    if (!isDraft && !isCancelled) {
+      items.push({
         label: "Registrar cobro",
         icon: <Wallet size={14} />,
-        // TODO (Fase 6): abrir modal de cobro → crear EntityBalanceEntry de cobro +
-        // actualizar paidAmount + recalcular status via derivePaymentStatus.
         onClick: () => toast.info("Cobro de cliente — próximamente"),
-      },
-      {
+      });
+    }
+
+    if (!isCancelled) {
+      items.push({
         label: "Anular",
         icon: <X size={14} />,
-        onClick: () => toast.info(`Anular factura ${i.number} — próximamente`),
-      },
-      { type: "separator" },
-      {
-        label: "Imprimir",
-        icon: <Printer size={14} />,
-        onClick: () => toast.info("Impresión — próximamente"),
-      },
-    ];
+        onClick: () => void cancelInvoice(i),
+      });
+    }
+
+    items.push({ type: "separator" });
+
+    items.push({
+      label: "Imprimir",
+      icon: <Printer size={14} />,
+      onClick: () => void printInvoice(i),
+    });
+
+    return items;
   }
 
   // ── Render row ───────────────────────────────────────────────────────────
@@ -1201,9 +1414,17 @@ export default function VentasFacturas() {
           isNew={isNew}
           onChange={setDraft}
           onSave={saveDraft}
+          // Etapa C16.4 — inyectamos la persistencia de `Sale` para que el
+          // botón "Guardar borrador" la llame ANTES del Receipt placeholder.
+          onPersistSale={persistDraftAsBackendDraft}
           onClose={requestCloseEditor}
           templateTerms={templateTerms}
           onTemplateTermsChange={setTemplateTerms}
+          // Etapa 5 — read-only granular: factura emitida o anulada no
+          // permite edición visual. El modal sigue abriéndose (operador
+          // puede revisar, imprimir, enviar) pero todos los inputs/botones
+          // de mutación quedan deshabilitados via <fieldset disabled>.
+          readOnly={draft.status !== "DRAFT"}
         />
       )}
 
@@ -1241,19 +1462,345 @@ function InvoiceEditorModal(props: {
   isNew: boolean;
   onChange: (next: SalesInvoice) => void;
   onSave: () => void;
+  /** Etapa C16.4 — Persistencia REAL de la Sale en backend.
+   *  El handler "Guardar borrador" del footer (`saveDraftToBackend`) llama
+   *  PRIMERO esta función para persistir `Sale` + líneas con todos sus
+   *  campos (priceListId, channelId, couponCode, paymentMethodId, manual
+   *  overrides, etc.) ANTES de crear el Receipt placeholder.
+   *  Devuelve `SaleDetail` en éxito o `null` si validación / red falló
+   *  (en cuyo caso la función mostró su propio toast.error). */
+  onPersistSale: () => Promise<SaleDetail | null>;
   onClose: () => void;
   /** footerTerms de la plantilla FACTURA (resuelto en la página). */
   templateTerms: string;
   /** Refresca el footerTerms cacheado tras "Guardar como predeterminado". */
   onTemplateTermsChange: (v: string) => void;
+  /** Etapa 5 — modo solo-lectura. Activado cuando la factura ya fue emitida
+   *  (CONFIRMED / PARTIAL / PAID) o anulada (CANCELLED). El modal sigue
+   *  abriendo con todo el layout y la información visible, pero todos los
+   *  inputs/botones de mutación quedan deshabilitados via `<fieldset
+   *  disabled>`. Las acciones permitidas (Imprimir, Descargar PDF,
+   *  Enviar mail, Etiquetas, Cerrar) viven fuera del fieldset y siguen
+   *  activas. */
+  readOnly?: boolean;
 }) {
-  const { open, draft, isNew, onChange, onSave, onClose, templateTerms, onTemplateTermsChange } = props;
+  const { open, draft, isNew, onChange, onSave, onPersistSale, onClose, templateTerms, onTemplateTermsChange } = props;
+  // Etapa 5 — fuente única de verdad del modo read-only para el modal.
+  // Default = derivar del status del draft (defensa por si el padre olvida
+  // pasar la prop). El padre la pasa explícita y eso prevalece.
+  const isReadOnly = props.readOnly ?? (draft.status !== "DRAFT");
 
   const { can } = usePermissions();
+
+  // Layout personalizable del modal — Fase 1 (plumbing) + Fase 2 (DnD aside).
+  // El hook hidrata desde UserPreference + persiste con debounce. El render
+  // del aside itera sobre `layout.cards` (slot aside) y envuelve cada item
+  // en `<DraggableCard>` cuando `editLayoutMode=true`.
+  const invoiceLayout = useInvoiceLayout(props.open);
+  // Modal de confirmacion reusable (reemplaza window.confirm para no
+  // mostrar el feo prompt nativo "localhost dice..."). Se usa en los 4
+  // gates destructivos: descartar cambios, cerrar con cambios, restaurar
+  // diseno, aplicar plantilla. El JSX del dialog se monta al final del
+  // arbol del componente.
+  const confirmDialog = useConfirmDialog();
+  // UX.15 — Plantillas de vista (Fase 1). El preset define el LAYOUT BASE
+  // (ancho del aside, densidad, etc.); el layout draggable manual del
+  // usuario tiene PRIORIDAD encima. Hidratado al abrir el modal igual
+  // que `useInvoiceLayout`, persistido inmediatamente al cambiar.
+  const invoiceViewPreset = useInvoiceViewPreset(props.open);
+  // UX.20 — Configuraciones finas de UI (densidad, sticky actions, ...).
+  // Ortogonal al preset: el user puede combinar "COMPACT" + density
+  // "COMFORTABLE" + stickyActions false, por ejemplo.
+  const invoiceUiPreferences = useInvoiceUiPreferences(props.open);
+
+  // ── Template "FACTURA" + perfil de empresa para impresión ───────────────
+  // Se carga al abrir el modal. Si el usuario edita la plantilla en
+  // "Configuración del sistema → Documentos → Plantilla: Factura", al
+  // reabrir Factura tomamos el último estado (no cacheamos cross-session).
+  // El fallback es `buildLocalDefaultConfig("FACTURA")` para que Imprimir
+  // funcione incluso si el endpoint no responde.
+  const [printTemplate, setPrintTemplate] = useState<DocumentTemplateConfig>(
+    () => buildLocalDefaultConfig("FACTURA"),
+  );
+  const [printCompany, setPrintCompany]   = useState<CompanyFullProfile>({
+    name: "", legalName: "", logoUrl: "", cuit: "", ivaCondition: "",
+    addressLine: "", phone: "", email: "", website: "",
+  });
+  // Umbral "Margen mínimo recomendado" del tenant — alimenta el chip
+  // comercial de cada línea (deriveCommercialInfo). Es CONFIG del tenant,
+  // no cálculo: el frontend solo lo pasa al helper para que el chip
+  // pueda mostrar "Margen X% (recomendado Y%)" cuando corresponde.
+  // null = no configurado → el helper no muestra el "recomendado".
+  const [recommendedMarginPercent, setRecommendedMarginPercent] = useState<number | null>(null);
+
+  // Contador que se incrementa cuando la política comercial del tenant
+  // cambia (evento global emitido por la pantalla Configuración → Política
+  // comercial). Se incluye en la firma del preview para forzar refetch al
+  // backend — los toggles "Considerar crítico..." impactan el resultado
+  // del motor pero NO forman parte del payload, así que sin este bump
+  // la caché de usePreviewFlow servía datos stale después de cambiar la
+  // política con el modal de Factura ya abierto.
+  //
+  // No invalidamos `previewReqIdRef` desde acá: usePreviewFlow lo bumpea
+  // internamente cada vez que la firma cambia (ver hook, línea ~129).
+  const [policyVersion, setPolicyVersion] = useState(0);
+  useEffect(() => {
+    function handlePolicyChange() {
+      setPolicyVersion(v => v + 1);
+    }
+    window.addEventListener("tptech:pricing-policy-changed", handlePolicyChange);
+    return () => window.removeEventListener("tptech:pricing-policy-changed", handlePolicyChange);
+  }, []);
+
+  useEffect(() => {
+    if (!props.open) return;
+    let cancelled = false;
+    documentTemplatesApi.get("FACTURA", "A4")
+      .then((tpl) => { if (!cancelled) setPrintTemplate(tpl); })
+      .catch(() => { /* silencioso — queda el default local */ });
+    fetchCompanyFullProfile()
+      .then((c) => { if (!cancelled) setPrintCompany(c); })
+      .catch(() => { /* silencioso — queda el default vacío */ });
+    fetchPricingPolicyConfig()
+      .then((p) => {
+        if (cancelled) return;
+        const v = p.pricingLowMarginWarningPercent;
+        setRecommendedMarginPercent(typeof v === "number" && Number.isFinite(v) ? v : null);
+      })
+      .catch(() => { /* silencioso — queda en null y el chip no muestra "recomendado" */ });
+    return () => { cancelled = true; };
+    // `policyVersion` se incluye como dep para que, al recibir el evento
+    // global de cambio de política, también refresquemos el umbral de
+    // margen recomendado además de invalidar el preview cacheado.
+  }, [props.open, policyVersion]);
+  // Estado del modal de Configuración (engranaje en el toolbar).
+  const [settingsModalOpen, setSettingsModalOpen] = useState(false);
+
+  // Modo edición del layout (Fase 2). Se activa desde la toolbar del modal.
+  // En modo lectura (false) los cards se renderizan SIN wrapper de drag —
+  // el modal se ve idéntico al pre-Fase 1. Al cerrar el modal se vuelve a
+  // false (no persiste; es un estado de UI temporal).
+  const [editLayoutMode, setEditLayoutMode] = useState<boolean>(false);
+  useEffect(() => {
+    // Resetear el modo edición cuando se cierra el modal — evita que abra
+    // la próxima factura ya en modo edición sin que el operador lo pida.
+    if (!props.open) setEditLayoutMode(false);
+  }, [props.open]);
+
+  // Etapa 3 — Snapshot pre-edición + "Cancelar cambios".
+  // `enterEditLayoutMode` captura el layout actual ANTES de mutar, y
+  // `cancelEditLayoutChanges` lo restaura (re-emite por setLayout → debounce
+  // re-arma y persistencia escribe el snapshot). Ambos cierran o mantienen
+  // el modo edición según corresponda. Centralizar acá garantiza que
+  // todos los entry-points (modal de Configuración, toolbar del banner)
+  // usen el mismo flujo.
+  const enterEditLayoutMode = useCallback(() => {
+    invoiceLayout.takeSnapshot();
+    setEditLayoutMode(true);
+  }, [invoiceLayout]);
+  // Salir del modo edicion ("Listo"): aplicamos una compactacion vertical
+  // suave del aside antes de salir, para que cualquier hueco voluntario
+  // que el operador dejo durante el diseno libre quede prolijo en modo
+  // lectura. Si el layout ya estaba sin huecos, el compact es idempotente
+  // y no cambia nada visible.
+  const exitEditLayoutMode = useCallback(() => {
+    const compactedCards = compactVerticallyByRegion(
+      invoiceLayout.layoutV2.cards,
+      "aside",
+    );
+    invoiceLayout.setLayoutV2({ version: 2, cards: compactedCards });
+    setEditLayoutMode(false);
+  }, [invoiceLayout]);
+  const cancelEditLayoutChanges = useCallback(async () => {
+    // QW6 — Confirmación destructiva. Evita pérdida accidental de
+    // cambios cuando el operador editó por varios minutos.
+    const ok = await confirmDialog.confirm({
+      title: "Descartar cambios",
+      description: "¿Descartar los cambios realizados en esta sesión?",
+      confirmLabel: "Descartar",
+      cancelLabel: "Seguir editando",
+      tone: "warning",
+    });
+    if (!ok) return;
+    const restored = invoiceLayout.restoreSnapshot();
+    setEditLayoutMode(false);
+    void restored;
+  }, [invoiceLayout, confirmDialog]);
+
+  // Wrapper de `onClose` del modal — si el operador está en modo edición
+  // del layout y/o hay un save pendiente (debounce todavía no disparó),
+  // confirmamos antes de cerrar para evitar perder cambios visibles que
+  // aún no llegaron al backend.
+  const handleModalClose = useCallback(async () => {
+    const inEdit = editLayoutMode;
+    const savePending = invoiceLayout.persistenceStatus === "pending";
+    if (inEdit || savePending) {
+      const ok = await confirmDialog.confirm({
+        title: "Cerrar con cambios",
+        description:
+          "Estás personalizando el layout y puede haber cambios sin "
+          + "guardar. ¿Cerrar de todas formas?",
+        confirmLabel: "Cerrar",
+        cancelLabel: "Seguir editando",
+        tone: "warning",
+      });
+      if (!ok) return;
+    }
+    onClose();
+  }, [editLayoutMode, invoiceLayout.persistenceStatus, onClose, confirmDialog]);
+
+  // Fase A — política comercial: el gate `handleConfirmedSave` y
+  // `acceptCommercialRisk` se declaran MÁS ABAJO, después de definir
+  // `documentCommercialStatus` y `commercialOverrideAccepted`. Acá no
+  // los declaramos para evitar use-before-declaration.
+
+  // Reset del layout — handler local que cierra el modo edición sólo si el
+  // operador toca "Listo"; "Restaurar diseño" mantiene el modo abierto para
+  // que el operador siga ajustando.
+  // QW6 — confirmación destructiva: el reset es irreversible (el snapshot
+  // pre-edit no se preserva tras el reset). Borrar el layout custom y
+  // volver al default debería ser una acción consciente.
+  // F2 — "Restaurar diseño" aplica el layout del PRESET ACTUAL (no el
+  // genérico V2 default). Si el operador está en COMPACT, restaurar
+  // vuelve a la geometría compact-densa, no a la compartida histórica.
+  const handleResetLayout = useCallback(async () => {
+    const ok = await confirmDialog.confirm({
+      title: "Restaurar diseño",
+      description:
+        "¿Restaurar el diseño original? Se perderán los cambios "
+        + "actuales del layout.",
+      confirmLabel: "Restaurar",
+      cancelLabel: "Cancelar",
+      tone: "warning",
+    });
+    if (!ok) return;
+    const currentPreset = invoiceViewPreset.preset ?? "COMPACT";
+    const presetLayout = getDefaultLayoutForPreset(currentPreset);
+    invoiceLayout.setLayoutV2(presetLayout);
+  }, [invoiceLayout, invoiceViewPreset.preset, confirmDialog]);
+
+  // F2 — Cambio de preset: el handler envuelve `invoiceViewPreset.setPreset`
+  // para QUE ADEMÁS aplique el layout V2 correspondiente al nuevo preset.
+  // Esto hace que la diferencia entre los presets sea visualmente
+  // inmediata (no solo cambio de layoutMode CSS).
+  //
+  // Detección de customización: si el layout actual difiere del default
+  // del preset actual (el operador hizo drag/resize), preguntamos antes
+  // de pisar sus cambios. Si está alineado con el default → aplicamos
+  // directo sin molestar.
+  const handlePresetChange = useCallback((nextPreset: InvoiceViewPreset) => {
+    // UX: click directo aplica la plantilla inmediatamente — sin modal
+    // de confirmacion intermedio aunque el operador haya hecho
+    // personalizaciones manuales. La detencion de customizaciones y el
+    // confirm previo se removieron por feedback explicito de producto
+    // (rompian el flujo y agregaban un paso innecesario).
+    invoiceViewPreset.setPreset(nextPreset);
+    invoiceLayout.setLayoutV2(getDefaultLayoutForPreset(nextPreset));
+  }, [invoiceViewPreset, invoiceLayout]);
+
+  // Wrapper de `invoiceUiPreferences.update` que, cuando el patch toca
+  // `visibleCards`, ademas COMPACTA el layout V2 cerrando los huecos que
+  // dejan las cards ocultadas. Las cards recien mostradas se reinsertan
+  // al final del stack visible para que no choquen con la geometria
+  // actual. Persiste el layout nuevo via `setLayoutV2` (que sigue el
+  // mismo debounce de toda la persistencia de layout).
+  const handleUiPatch = useCallback(
+    (patch:
+      | Partial<{ visibleCards: Partial<{
+          accountImpact: boolean; discount: boolean; shipping: boolean;
+          coupon: boolean; totals: boolean; payments: boolean; observations: boolean;
+        }> }>
+    ) => {
+      const patchVc = patch.visibleCards;
+      if (!patchVc) {
+        invoiceUiPreferences.update(patch);
+        return;
+      }
+      // Computar set ANTES y DESPUES.
+      const prev = invoiceUiPreferences.resolved.visibleCards;
+      const next = { ...prev, ...patchVc };
+      invoiceUiPreferences.update(patch);
+
+      // Detectar ids recien mostradas (false -> true).
+      const newlyShown = new Set<CardId>();
+      const VC_KEY_TO_ID: Record<string, CardId> = {
+        discount: "discount", shipping: "shipping", coupon: "coupon",
+        totals: "totals", payments: "payments", observations: "observations",
+        accountImpact: "account-impact",
+      };
+      for (const [k, v] of Object.entries(patchVc)) {
+        if (v === true && (prev as any)[k] === false) {
+          const id = VC_KEY_TO_ID[k];
+          if (id) newlyShown.add(id);
+        }
+      }
+
+      // Construir set de visibles siguiente y compactar.
+      const visibleSet = new Set<CardId>();
+      for (const [k, v] of Object.entries(next)) {
+        if (v && VC_KEY_TO_ID[k]) visibleSet.add(VC_KEY_TO_ID[k]);
+      }
+      const compacted = compactLayoutByVisibility(
+        invoiceLayout.layoutV2,
+        visibleSet,
+        newlyShown,
+      );
+      invoiceLayout.setLayoutV2(compacted);
+    },
+    [invoiceUiPreferences, invoiceLayout],
+  );
+
+  // Container ref del aside — usada por `ResizeHandle` para medir
+  // `clientWidth` y calcular la fracción de drag horizontal. Se asigna en
+  // el JSX más abajo. En modo lectura el ref existe pero nadie lo consulta
+  // (el handle solo se renderiza con `editLayoutMode=true`).
+  const asideRef = useRef<HTMLElement | null>(null);
+
+  // `handleCardResize` (V1 width-only) removido — Etapa 4 reemplazó el
+  // resize discreto V1 por el resize XY 2D del `LayoutGridContext` V2,
+  // que opera directamente sobre setLayoutV2 con x/y/w/h en columnas.
 
   // Id del Receipt persistido (borrador guardado en backend). Habilita
   // adjuntos. Se resetea cuando se abre un comprobante distinto.
   const [savedReceiptId, setSavedReceiptId] = useState<string | null>(null);
+
+  // Tipo favorito del Descuento global (UserPreference). Se hidrata al
+  // montar el modal (lectura fresca de `userPreferencesApi.get()`) y se
+  // persiste cuando el operador toca la estrella en el combo Tipo del card.
+  // Cero afectación a facturas existentes — solo precarga el default de
+  // nuevas (`openNew()` ya aplica `resolveDefaultGlobalDiscountType`).
+  const [favoriteDiscountType, setFavoriteDiscountType] = useState<"PERCENT" | "AMOUNT" | null>(null);
+  // T15 — Cache vivo del UserPreference completo del usuario para que
+  // `handleClientPick` pueda resolver la cadena de fallback (UserPref →
+  // favorito → primera activa) cuando el cliente nuevo NO tiene priceListId.
+  // Antes el frontend mantenía la lista del cliente anterior (bug) porque
+  // `buildClientPatches` solo emitía priceListId si el cliente lo traía
+  // explícitamente.
+  const userPreferenceRef = useRef<SalesUserPreference | null>(null);
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    userPreferencesApi.get()
+      .then((pref) => {
+        if (!cancelled) {
+          setFavoriteDiscountType(pref?.defaultGlobalDiscountType ?? null);
+          userPreferenceRef.current = pref;
+        }
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [open]);
+  async function handleSetFavoriteDiscountType(type: "PERCENT" | "AMOUNT") {
+    // Optimismo de UI: setear local antes del round-trip → la estrella
+    // cambia al instante. Si el update falla, no revertimos (el próximo
+    // open reconciliaría con el servidor).
+    setFavoriteDiscountType(type);
+    try {
+      await userPreferencesApi.update({ defaultGlobalDiscountType: type });
+    } catch {
+      // Silencioso — preferencia es UI-only, no bloquea el flujo.
+    }
+  }
   // Dedupe de guardado en vuelo: evita crear 2 borradores si el usuario
   // dispara guardado manual y auto-guardado por adjunto casi simultáneos.
   const ensureReceiptPromiseRef = useRef<Promise<string | null> | null>(null);
@@ -1279,6 +1826,9 @@ function InvoiceEditorModal(props: {
   const DISCOUNT_CARD_KEY = lsKey("sales", "invoices", "discount-card-expanded");
   const SHIPPING_CARD_KEY = lsKey("sales", "invoices", "shipping-card-expanded");
   const PAYMENT_CARD_KEY  = lsKey("sales", "invoices", "payment-card-expanded");
+  // Etapa A.5 — card "Impacto en cuenta corriente" reintroducida con datos
+  // reales del preview (sin balanceBefore mock). Reutiliza la lsKey histórica
+  // para preservar la preferencia de expansión de usuarios existentes.
   const IMPACT_CARD_KEY   = lsKey("sales", "invoices", "account-impact-card-expanded");
 
   // FASE 8.2.4 — el helper local `readBoolPref` y los 4 pares useState+useEffect
@@ -1366,12 +1916,19 @@ function InvoiceEditorModal(props: {
     // cotización vigente del catálogo para `currencyId` —, pero igual es
     // útil porque mantiene la firma sincronizada con el estado visible y
     // deja la puerta abierta a Fase MM cuando el backend acepte `fxRate`.
-    return JSON.stringify({ ...payload, _fxRate: draft.fxRate });
+    //
+    // `_policyVersion` se incluye para que, cuando el operador cambie la
+    // política comercial del tenant (toggles de "Considerar crítico..."),
+    // la firma cambie y usePreviewFlow vuelva a llamar al backend. La
+    // política NO se envía en el payload — el motor la lee de Jewelry
+    // directamente — pero sin bumpear la firma la caché serviría datos
+    // stale.
+    return JSON.stringify({ ...payload, _fxRate: draft.fxRate, _policyVersion: policyVersion });
     // `pricingDraft` cambia de identidad ante cualquier cambio de `draft` o
     // de `previewClientId`, así que cubre lines/clientId/channel/coupon/
     // shipping/discountGlobal/priceListId. `documentCurrencyId` y `fxRate`
     // van aparte (no son campos directos del payload).
-  }, [pricingDraft, documentCurrencyId, draft.fxRate]);
+  }, [pricingDraft, documentCurrencyId, draft.fxRate, policyVersion]);
 
   // FASE 8.2.4b — hook reutilizable de preview flow.
   // Encapsula: debounce 200ms + anti-stale via `previewReqIdRef` (compartido
@@ -1443,6 +2000,15 @@ function InvoiceEditorModal(props: {
       backendPreview.result.documentTotals
     ) {
       const dt = backendPreview.result.documentTotals;
+      // Manual Adjustment Etapa 1 — `finalTotal` lo emite el service del
+      // backend como engineTotal + ajuste manual. Si no hay ajuste,
+      // finalTotal === dt.total → comportamiento idéntico al previo.
+      // El hero del card SIEMPRE refleja "lo que cobra el cliente"
+      // (POLICY §R-Rounding-7 invariante visual === backend).
+      const finalTotal = (backendPreview.result as any).finalTotal;
+      const totalToUse = typeof finalTotal === "number" && Number.isFinite(finalTotal)
+        ? finalTotal
+        : dt.total;
       return {
         subtotal:       dt.subtotalAfterLineDiscounts,
         discountAmount: round2(
@@ -1454,7 +2020,7 @@ function InvoiceEditorModal(props: {
         // Ajuste de redondeo de la lista de precios (positivo o negativo).
         // Lo expone el motor en `documentTotals.roundingAdjustment`.
         roundingAdjustment: dt.roundingAdjustment ?? 0,
-        total:          dt.total,
+        total:          totalToUse,
         fromBackend:    true,
       };
     }
@@ -1538,6 +2104,89 @@ function InvoiceEditorModal(props: {
       selectInvoiceLineView(l, matchedNormalized[i], signatureMatches),
     );
   }, [draft.lines, matchedNormalized, backendPreview, previewSignature]);
+
+  // ── Fase A — política comercial ──────────────────────────────────────
+  // Derivamos el nivel por línea (OK/WARNING/RISK/CRITICAL) directamente
+  // desde `matchedNormalized` (que ya trae `alerts[]` + `policy` del
+  // motor). El array `commercialLevels` queda paralelo a `draft.lines`
+  // para que la UI pueda pintar el borde lateral por fila.
+  //
+  // CERO matemática: solo lectura de los códigos que emitió el engine.
+  // Si el preview todavía no está disponible (signature stale, error,
+  // etc.), todos los niveles caen a "OK" y la UI no muestra nada.
+  const commercialLevels = useMemo(() => {
+    return matchedNormalized.map((line) => deriveCommercialLevel(line));
+  }, [matchedNormalized]);
+
+  // Mapa `lineId → nivel` para que el editor avanzado pinte el borde
+  // lateral por fila. Solo agregamos niveles ≠ OK al mapa — las líneas
+  // OK no necesitan entry (default = sin borde).
+  const commercialLevelByLineId = useMemo(() => {
+    const out: Record<string, "WARNING" | "RISK" | "CRITICAL"> = {};
+    draft.lines.forEach((line, idx) => {
+      const level = commercialLevels[idx];
+      if (level && level !== "OK") {
+        out[line.id] = level;
+      }
+    });
+    return out;
+  }, [draft.lines, commercialLevels]);
+
+  // Refinamiento Fase A — mapa enriquecido `lineId → CommercialInfo`
+  // (motivo, margen %, código primario). El chip al pie de cada fila lo
+  // consume para mostrar texto comercial accionable. Solo entradas
+  // ≠ OK; cero matemática (todo passthrough del preview backend).
+  const commercialInfoByLineId = useMemo(() => {
+    const out: Record<string, CommercialInfo> = {};
+    draft.lines.forEach((line, idx) => {
+      const info = deriveCommercialInfo(matchedNormalized[idx], {
+        recommendedMarginPercent,
+      });
+      if (info.level !== "OK") {
+        out[line.id] = info;
+      }
+    });
+    return out;
+  }, [draft.lines, matchedNormalized, recommendedMarginPercent]);
+
+  // Resumen consolidado del comprobante. La UI lo usa para mostrar el
+  // badge global en el header del modal y para decidir si el modal de
+  // confirmación reforzada debe abrirse al hacer "Crear".
+  const documentCommercialStatus = useMemo(() => {
+    return aggregateDocumentStatus(matchedNormalized);
+  }, [matchedNormalized]);
+
+  // Modal de confirmación reforzada (se abre solo cuando hay líneas
+  // CRITICAL y el operador toca "Crear"). Un override aceptado en esta
+  // sesión deja al operador confirmar sin volver a preguntar mientras
+  // el modal esté abierto — si edita y cambian las líneas, el flag se
+  // resetea (ver dependency).
+  const [commercialModalOpen, setCommercialModalOpen] = useState(false);
+  const [commercialOverrideAccepted, setCommercialOverrideAccepted] = useState(false);
+  useEffect(() => {
+    // Si el set de líneas críticas cambia, invalidamos el override
+    // previo — el operador debe re-confirmar el riesgo del nuevo estado.
+    setCommercialOverrideAccepted(false);
+  }, [documentCommercialStatus.critical]);
+
+  // Gate sobre `onSave`: si hay críticas y no hay override aceptado,
+  // abrimos el modal de confirmación reforzada en vez de delegar al
+  // save real. NO bloquea — el operador puede confirmar igualmente.
+  const handleConfirmedSave = useCallback(() => {
+    const hasCritical = documentCommercialStatus.critical > 0;
+    if (hasCritical && !commercialOverrideAccepted) {
+      setCommercialModalOpen(true);
+      return;
+    }
+    onSave();
+  }, [documentCommercialStatus.critical, commercialOverrideAccepted, onSave]);
+
+  // Confirmación del modal de riesgo: marca el override y dispara save.
+  const acceptCommercialRisk = useCallback(() => {
+    setCommercialOverrideAccepted(true);
+    setCommercialModalOpen(false);
+    onSave();
+  }, [onSave]);
 
   /**
    * Fase 2 — ajustes globales del documento que la grilla editable
@@ -1946,13 +2595,54 @@ function InvoiceEditorModal(props: {
   }
 
   /**
-   * FASE 8.2.5c — Orchestrator DELGADO de `saveDraftToBackend`.
-   * Delega en `ensureSavedReceiptId` para no duplicar borradores si ya
-   * existe uno (botón "Guardar borrador" + auto-guardado por adjunto).
+   * FASE 8.2.5c — Orchestrator de `saveDraftToBackend`.
+   *
+   * Cadena de persistencia del botón "Guardar borrador":
+   *
+   *   1. `persistDraftAsBackendDraft()` ⇒ `POST /api/sales` o `PUT /api/sales/:id`
+   *      Persiste la `Sale` REAL con todas sus líneas, sus overrides comerciales,
+   *      `priceListId` doc-level (C16), `channelId`, `couponCode`, `paymentMethodId`,
+   *      `paymentInstallments`, `shippingAmount`, `globalDiscount*`,
+   *      `balanceModeOverride`, `manualAdjustmentInput`. Actualiza
+   *      `persistedSaleId` y rehidrata el draft con la respuesta vía
+   *      `applySaleResponseToDraft`. Si falla, la propia función dispara el
+   *      toast de error y devuelve `null` ⇒ abortamos antes del Receipt.
+   *
+   *   2. `ensureSavedReceiptId()` ⇒ `POST /api/receipts` (status=DRAFT).
+   *      Crea el `Receipt` placeholder que la UI usa para adjuntar archivos
+   *      (PDFs/notas) sin esperar al confirm. Es idempotente: si ya hay
+   *      `savedReceiptId`, lo reusa. Dispara el toast de éxito visible al
+   *      operador ("Borrador guardado").
+   *
+   * Razón del orden: si la `Sale` falla (precio/cliente/validación backend),
+   * no tiene sentido crear el Receipt placeholder. Si la `Sale` tiene éxito
+   * pero el Receipt falla, la `Sale` queda persistida y un segundo intento
+   * de "Guardar borrador" reutiliza `persistedSaleId` para hacer `update`
+   * (no duplica) y reintenta el Receipt.
+   *
+   * Audit C16.4 — Pre-fix: el botón saltaba directo al Receipt y la Sale
+   * nunca se persistía, por eso al reabrir aparecía "Lista Unificada" y
+   * los totales divergían del pre-save.
    */
   async function saveDraftToBackend() {
     if (draftSaving) return;
-    await ensureSavedReceiptId();
+    setDraftSaving(true);
+    try {
+      // PRIMERA llamada: persistir la `Sale` real con el flujo `salesApi.create`
+      // o `salesApi.update`. La función vive en el componente padre
+      // (`VentasFacturas`) y se inyecta como prop `onPersistSale`. Si falla
+      // (validación 400, red, etc.), la propia función dispara el toast.error
+      // y devuelve `null`; abortamos antes de crear el Receipt para no dejar
+      // un placeholder huérfano sin Sale subyacente.
+      const saved = await onPersistSale();
+      if (!saved) return;
+      // SEGUNDA llamada: idempotente — crea el `Receipt` placeholder solo si
+      // todavía no existe uno (`savedReceiptId` null). Mantiene los adjuntos
+      // y PDFs funcionando sin cambios.
+      await ensureSavedReceiptId();
+    } finally {
+      setDraftSaving(false);
+    }
   }
 
   /**
@@ -1972,20 +2662,20 @@ function InvoiceEditorModal(props: {
     }
   }
 
-  /** Guarda subject/message del modal de envio como plantilla de email
-   *  tenant-wide (DocumentTemplate.emailSubject/MessageTemplate). El
-   *  operador puede escribir variables {{cliente}} {{numero}} {{joyeria}}
-   *  {{estado}} {{fecha}} que se interpolan al abrir el modal en futuras
-   *  facturas. */
+  /** Parte 2.2 — Guarda subject/message del modal de envio como plantilla
+   *  de email tenant-wide (DocumentTemplate.emailSubject/MessageTemplate).
+   *  El operador puede escribir variables `{{cliente}}`, `{{numero}}`,
+   *  `{{joyeria}}`, `{{estado}}`, `{{fecha}}` que se interpolan al abrir
+   *  el modal en futuras facturas. */
   async function handleSaveEmailTemplateDefaults(payload: { subjectTemplate: string; messageTemplate: string }): Promise<void> {
     try {
-      await documentTemplatesApi.save("FACTURA", {
+      const updated = await documentTemplatesApi.save("FACTURA", {
         emailSubjectTemplate: payload.subjectTemplate,
         emailMessageTemplate: payload.messageTemplate,
       });
-      // Actualizamos el state local: la proxima vez que el modal se abra
-      // (sin recargar pagina), los nuevos defaults ya estan en memoria.
-      setEmailTemplates({ subject: payload.subjectTemplate, message: payload.messageTemplate });
+      // Refrescar el template en memoria para que el proximo "abrir mail"
+      // ya use la version persistida sin hacer GET.
+      setPrintTemplate(updated);
       toast.success("Plantilla de email guardada como predeterminada.");
     } catch (e: unknown) {
       toast.error(e instanceof Error ? e.message : "No se pudo guardar la plantilla.");
@@ -1994,33 +2684,65 @@ function InvoiceEditorModal(props: {
   }
 
   // ── Acciones del documento: imprimir / etiquetas / email ─────────────────
-  const [labelsOpen, setLabelsOpen]         = useState(false);
+  const [labelsOpen, setLabelsOpen]   = useState(false);
   // 1.E parte 2 — Modal "Enviar por mail" (state + flag de envio en curso).
   const [emailModalOpen, setEmailModalOpen] = useState(false);
   const [emailSending,   setEmailSending]   = useState(false);
 
-  // Parte 2.2 — Plantillas de email del tenant. Se cargan al abrir el modal
-  // por primera vez. El operador puede editarlas y "Guardar como
-  // predeterminado" persiste tenant-wide. Variables soportadas en
-  // subject/message: {{cliente}} {{numero}} {{joyeria}} {{estado}} {{fecha}}.
-  const [emailTemplates, setEmailTemplates] = useState<{ subject: string; message: string }>({
-    subject: "",
-    message: "",
-  });
-  useEffect(() => {
-    if (!emailModalOpen) return;
-    let cancelled = false;
-    documentTemplatesApi.get("FACTURA")
-      .then((tpl) => {
-        if (cancelled) return;
-        setEmailTemplates({
-          subject: tpl.emailSubjectTemplate ?? "",
-          message: tpl.emailMessageTemplate ?? "",
-        });
-      })
-      .catch(() => { /* silencioso — modal cae al default state-aware */ });
-    return () => { cancelled = true; };
-  }, [emailModalOpen]);
+  // ── Bug fix — id REAL del Sale persistido en backend ────────────────────
+  // Diferenciamos `draft.id` (UUID local generado por `openNew`) del id
+  // real que devuelve `salesApi.create()`. Sin esto, los endpoints
+  // documentales (`/sales/:id/pdf`, `/sales/:id/send-email`) responden
+  // 404 porque el UUID local no existe en backend.
+  //
+  // El state vive en este componente (no en el padre) porque (a) los
+  // handlers que lo consumen estan aca, (b) al cerrar el modal el padre
+  // hace `setDraft(null)` → el componente entero se desmonta → state se
+  // borra automaticamente, sin reset explicito.
+  //
+  // Idempotencia: `ensureSalePromiseRef` dedupa creates concurrentes
+  // (operador hace doble click rapido) → 1 sola creacion por factura.
+  const [savedSaleId, setSavedSaleId]         = useState<string | null>(null);
+  const [savingSaleDraft, setSavingSaleDraft] = useState(false);
+  const ensureSalePromiseRef = useRef<Promise<string | null> | null>(null);
+
+  /** Garantiza un Sale persistido en backend y devuelve su id.
+   *   · Si ya hay `savedSaleId` → lo devuelve (no duplica).
+   *   · Si hay un create en vuelo → reusa esa promesa (dedupe — evita
+   *     que doble click cree 2 Sales).
+   *   · Si no → arma el payload con `buildSaleCreatePayload` y crea el
+   *     Sale en estado DRAFT via `salesApi.create()`.
+   *  Devuelve `null` (con toast) si no se pudo (sin lineas / error backend).
+   *  No recalcula nada — el payload sale del builder puro. */
+  async function ensurePersistedSaleDraft(): Promise<string | null> {
+    if (savedSaleId) return savedSaleId;
+    if (ensureSalePromiseRef.current) return ensureSalePromiseRef.current;
+
+    const built = buildSaleCreatePayload(draft);
+    if (!built.hasRealLines) {
+      toast.error("Agregá al menos una línea para guardar el borrador.");
+      return null;
+    }
+
+    const p = (async (): Promise<string | null> => {
+      setSavingSaleDraft(true);
+      toast.info("Guardando borrador…");
+      try {
+        const saved = await salesApi.create(built.payload);
+        setSavedSaleId(saved.id);
+        return saved.id;
+      } catch (e: unknown) {
+        const err = e as { message?: string; data?: { message?: string } };
+        toast.error(err?.data?.message || err?.message || "No se pudo guardar el borrador.");
+        return null;
+      } finally {
+        setSavingSaleDraft(false);
+        ensureSalePromiseRef.current = null;
+      }
+    })();
+    ensureSalePromiseRef.current = p;
+    return p;
+  }
   /**
    * Construye los `LabelItem[]` para el modal de etiquetas a partir de las
    * líneas reales de la factura. Filtra placeholders y headers; respeta la
@@ -2052,68 +2774,95 @@ function InvoiceEditorModal(props: {
     return out;
   }, [draft.lines]);
 
-  /** Imprime el modal actual usando window.print(). El navegador genera el PDF. */
+  /** Imprime el comprobante usando la PLANTILLA configurada en
+   *  "Configuración del sistema → Documentos → Plantilla: Factura".
+   *
+   *  Flujo:
+   *   1. Toma el `<SaleInvoicePrintable>` montado oculto en el modal — éste
+   *      ya consume `printTemplate` + `printCompany` + datos REALES del
+   *      draft (líneas, totales, cliente, moneda, observaciones, status).
+   *   2. Copia el INNER HTML del printable a un popup independiente con
+   *      `@page` setup desde el template (tamaño + márgenes) y dispara
+   *      `window.print()` cuando todo (incluido el logo si existe) cargo.
+   *
+   *  Fix bug "popup vacio" — usamos `node.innerHTML` (NO `outerHTML`)
+   *  porque el wrapper externo del printable tiene `position: fixed;
+   *  left: -100000px; top: -100000px` (para esconderlo del viewport
+   *  del modal). Si copiabamos el wrapper, esas inline styles viajaban
+   *  al popup y dejaban el contenido posicionado fuera del area
+   *  visible → about:blank visual + print dialog en pagina en blanco.
+   *
+   *  Si el popup queda bloqueado por el browser, fallback al
+   *  `window.print()` del documento actual. */
+  const printableRef = useRef<HTMLDivElement>(null);
   function handlePrintDocument() {
-    if (typeof window !== "undefined") window.print();
-  }
-
-  // ── Bug fix — id REAL del Sale persistido en backend ────────────────────
-  // Diferenciamos `draft.id` (UUID local generado por `openNew`) del id
-  // real que devuelve `salesApi.create()`. Sin esto, los endpoints
-  // documentales (`/sales/:id/pdf`, `/sales/:id/send-email`) responden
-  // 404 porque el UUID local no existe en backend.
-  //
-  // El state vive en este componente (no en el padre) porque (a) los
-  // handlers que lo consumen estan aca, (b) al cerrar el modal el padre
-  // hace `setDraft(null)` → InvoiceEditorModal se desmonta → state se
-  // borra automaticamente, sin reset explicito.
-  //
-  // Idempotencia: `ensureSalePromiseRef` dedupa creates concurrentes
-  // (operador hace doble click rapido) → 1 sola creacion por factura.
-  const [savedSaleId, setSavedSaleId] = useState<string | null>(null);
-  const ensureSalePromiseRef = useRef<Promise<string | null> | null>(null);
-
-  /** Garantiza un Sale persistido en backend y devuelve su id.
-   *   · Si ya hay `savedSaleId` → lo devuelve (no duplica).
-   *   · Si hay un create en vuelo → reusa esa promesa (dedupe — evita
-   *     que doble click cree 2 Sales).
-   *   · Si no → arma el payload con `buildSaleCreatePayload` y crea el
-   *     Sale en estado DRAFT via `salesApi.create()`.
-   *  Devuelve `null` (con toast) si no se pudo (sin lineas / error backend).
-   *  No recalcula nada — el payload sale del builder puro. */
-  async function ensurePersistedSaleDraft(): Promise<string | null> {
-    if (savedSaleId) return savedSaleId;
-    if (ensureSalePromiseRef.current) return ensureSalePromiseRef.current;
-
-    const built = buildSaleCreatePayload(draft);
-    if (!built.hasRealLines) {
-      toast.error("Agregá al menos una línea para guardar el borrador.");
-      return null;
+    if (typeof window === "undefined") return;
+    const node = printableRef.current;
+    if (!node || !node.innerHTML) {
+      // Fallback al print del modal entero si no hubo render del printable.
+      window.print();
+      return;
     }
-
-    const p = (async (): Promise<string | null> => {
-      toast.info("Guardando borrador…");
-      try {
-        const saved = await salesApi.create(built.payload);
-        setSavedSaleId(saved.id);
-        return saved.id;
-      } catch (e: unknown) {
-        const err = e as { message?: string; data?: { message?: string } };
-        toast.error(err?.data?.message || err?.message || "No se pudo guardar el borrador.");
-        return null;
-      } finally {
-        ensureSalePromiseRef.current = null;
-      }
-    })();
-    ensureSalePromiseRef.current = p;
-    return p;
+    const w = window.innerWidth >= 800 ? 800 : window.innerWidth;
+    const h = window.innerHeight >= 600 ? 900 : window.innerHeight;
+    const popup = window.open("", "tptech-invoice-print", `width=${w},height=${h}`);
+    if (!popup) {
+      // Popup bloqueado — fallback al print directo del modal.
+      window.print();
+      return;
+    }
+    const pageRule = `@page { size: ${printTemplate.pageWidthMm}mm ${printTemplate.pageHeightMm}mm; margin: 0; }`;
+    // Title del popup state-aware (lo usa el browser al guardar como PDF).
+    const docTitle = (draft.status === "DRAFT" ? "Borrador" : "Factura") + " " + (draft.number || "");
+    popup.document.open();
+    popup.document.write(`<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>${docTitle}</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body { background: #fff; }
+    ${pageRule}
+    @media print { * { -webkit-print-color-adjust: exact; print-color-adjust: exact; } }
+  </style>
+</head>
+<body>
+<div style="width: ${printTemplate.pageWidthMm}mm; margin: 0 auto;">${node.innerHTML}</div>
+<script>
+(function() {
+  function go() { try { window.focus(); window.print(); } catch (e) {} }
+  function waitImages() {
+    var imgs = document.images;
+    if (!imgs || imgs.length === 0) { return Promise.resolve(); }
+    var pending = [];
+    for (var i = 0; i < imgs.length; i++) {
+      var img = imgs[i];
+      if (img.complete && img.naturalWidth > 0) continue;
+      pending.push(new Promise(function (resolve) {
+        img.addEventListener("load",  resolve, { once: true });
+        img.addEventListener("error", resolve, { once: true });
+      }));
+    }
+    return Promise.all(pending);
+  }
+  function start() { waitImages().then(function() { setTimeout(go, 50); }); }
+  // document.write puede ejecutar este script ANTES o DESPUES de que
+  // window.onload haya disparado. Cubrimos ambos casos:
+  if (document.readyState === "complete") start();
+  else window.addEventListener("load", start, { once: true });
+})();
+</script>
+</body>
+</html>`);
+    popup.document.close();
   }
 
   /** C5-fix Opcion A — Arma el request para el endpoint render-only.
    *  Reusa EXACTAMENTE las mismas props que se pasan al
-   *  `<SaleInvoicePrintable>` en el render de impresion. Si esto se
-   *  desincroniza con aquello, Imprimir ≠ Descargar/Mail → bug de
-   *  paridad. */
+   *  `<SaleInvoicePrintable>` en el render de impresion (linea 6399
+   *  aprox). Si esto se desincroniza con aquello, Imprimir ≠
+   *  Descargar/Mail → bug de paridad. */
   function buildDraftPdfRequest(): SaleDraftPdfRequest {
     const docKey = draft.number || "VTA";
     const filenameBase =
@@ -2182,12 +2931,21 @@ function InvoiceEditorModal(props: {
    *
    *  C5-fix Opcion A — Mismo helper que el download: backend renderea
    *  el draft tal cual lo recibe y adjunta el mismo buffer. Garantiza
-   *  que el adjunto == archivo descargado. */
+   *  que el adjunto == archivo descargado.
+   *
+   *  E2 — Antes de enviar, persistimos el draft via
+   *  `ensurePersistedSaleDraft()` para obtener un `saleId` real. El
+   *  backend ahora rechaza envíos sin `saleId` (emails huérfanos
+   *  rompen el historial documental). Si el draft no se puede
+   *  persistir (sin líneas, etc.), abortamos con el toast que ya
+   *  emite el helper. */
   async function handleEmailSubmit(payload: { to: string; subject: string; message: string }): Promise<void> {
     setEmailSending(true);
     try {
+      const saleId = await ensurePersistedSaleDraft();
+      if (!saleId) return;   // ensurePersistedSaleDraft ya mostró el toast.
       const req = buildDraftPdfRequest();
-      const out = await salesDraftPdfApi.sendDraftByEmail({ ...req, ...payload });
+      const out = await salesDraftPdfApi.sendDraftByEmail({ ...req, ...payload, saleId });
       toast.success(out?.message || "Factura enviada correctamente.");
       setEmailModalOpen(false);
     } catch (e: unknown) {
@@ -2681,7 +3439,9 @@ function InvoiceEditorModal(props: {
   type LineOverridePatch = {
     taxOverride?:           { mode: "PERCENT" | "AMOUNT"; value: number; appliesTo?: AppliesToScope } | null;
     manualPrice?:           number | null;
-    manualDiscount?:        { mode: "PERCENT" | "AMOUNT"; value: number; appliesTo?: AppliesToScope } | null;
+    // `kind` opcional (default BONUS): "BONUS" resta, "SURCHARGE" suma.
+    // El motor backend aplica; frontend no calcula.
+    manualDiscount?:        { mode: "PERCENT" | "AMOUNT"; value: number; appliesTo?: AppliesToScope; kind?: "BONUS" | "SURCHARGE" } | null;
     gramsOverride?:         number | null;
     mermaPercentOverride?:  number | null;
     metalVariantIdOverride?: string | null;
@@ -2862,10 +3622,19 @@ function InvoiceEditorModal(props: {
    * Devuelve true si son equivalentes — usado para hacer idempotente al
    * `applyLineOverrides` cuando el blur emite el mismo valor que ya está
    * persistido.
+   *
+   * IMPORTANTE: el `kind` (BONUS/SURCHARGE) cuenta como parte de la
+   * identidad del override de descuento. Si el operador cambia solo el
+   * tipo (Bonificación ⇄ Recargo) sin tocar value/mode/appliesTo, el
+   * patch debe procesarse: el motor recalcula precio (suma vs resta) y
+   * el `previewSignature` debe cambiar para disparar `salesApi.preview`.
+   * Sin incluir `kind` aquí, el guard descartaba el patch como "igual" y
+   * la UI se quedaba sin recalcular (label/optimistic cambiaban, pero el
+   * unitPrice/total no).
    */
   function sameTypedOverride(
-    a: { mode: "PERCENT" | "AMOUNT"; value: number; appliesTo?: AppliesToScope } | null | undefined,
-    b: { mode: "PERCENT" | "AMOUNT"; value: number; appliesTo?: AppliesToScope } | null | undefined,
+    a: { mode: "PERCENT" | "AMOUNT"; value: number; appliesTo?: AppliesToScope; kind?: "BONUS" | "SURCHARGE" } | null | undefined,
+    b: { mode: "PERCENT" | "AMOUNT"; value: number; appliesTo?: AppliesToScope; kind?: "BONUS" | "SURCHARGE" } | null | undefined,
   ): boolean {
     if (a === b) return true;
     if (a == null && b == null) return true;
@@ -2873,7 +3642,10 @@ function InvoiceEditorModal(props: {
     return (
       a.mode === b.mode &&
       a.value === b.value &&
-      (a.appliesTo ?? "TOTAL") === (b.appliesTo ?? "TOTAL")
+      (a.appliesTo ?? "TOTAL") === (b.appliesTo ?? "TOTAL") &&
+      // `kind` solo aplica al descuento. En taxOverride el caller no lo
+      // setea → ambos lados quedan undefined y la comparación pasa OK.
+      ((a as any).kind ?? "BONUS") === ((b as any).kind ?? "BONUS")
     );
   }
 
@@ -4091,10 +4863,33 @@ function InvoiceEditorModal(props: {
       // del último escaneo puede traer datos más recientes que el
       // anterior). Idempotente si es el mismo ítem.
       setPickedItemForLine(draft.lines[existingIdx].id, item);
-      // Incrementar cantidad. Solo ajustamos qty + recomputamos
-      // subtotal/lineTotal local con los unitarios actuales para reflejo
-      // visual; el refetch async pisa con los valores reales del backend
-      // (que reaplica desc por cantidad / promo con la nueva qty).
+      // ── Optimistic patch (Etapa A — auditoría VentasFacturas:4823) ─────
+      // Al escanear el mismo artículo otra vez, incrementamos qty +1. El
+      // backend va a recalcular descuentos por cantidad / promo / cliente
+      // con la nueva qty; ese resultado llega ~100-500 ms más tarde via el
+      // próximo `usePreviewFlow`.
+      //
+      // Mientras tanto, marcamos la línea con `pricingMeta.partial = true`
+      // (CONTRATO con `selectInvoiceLineView` y el editor: las celdas con
+      // partial=true muestran estado "actualizando…" y NO se usan como
+      // fuente de verdad para totales). Para que el header de la fila
+      // muestre algo coherente mientras viaja el preview, sustituimos
+      // `subtotal` / `lineTotal` por una ESTIMACIÓN derivada de qty x precio
+      // unitario actual menos descuento actual. NO es un cálculo de
+      // pricing (no toca lista, promo, cliente, impuesto, redondeo,
+      // composición) — solo escala los valores ya autorizados por el
+      // backend por el delta de cantidad.
+      //
+      // POLICY §R-Rounding-9 / CLAUDE.md frontend: la regla "no recalcular
+      // pricing en frontend" se respeta porque (1) el partial=true es la
+      // señal explícita de que estos números son temporales, (2) el preview
+      // siguiente los pisa byte-a-byte, y (3) NO se persisten — el draft
+      // se guarda solo cuando el operador confirma o aprieta guardar, y en
+      // ese punto el preview ya respondió.
+      //
+      // Si en el futuro este patrón causa drift visible (ej. en escaneo de
+      // ráfaga), la solución correcta es bajar el debounce del preview, no
+      // moverle estos cálculos al backend (sería una llamada extra por tecla).
       nextLines = draft.lines.map((l, i) => {
         if (i !== existingIdx) return l;
         const newQty = (l.quantity || 0) + 1;
@@ -4302,6 +5097,28 @@ function InvoiceEditorModal(props: {
       addDaysISO,
     });
 
+    // T15 — Resolver el priceListId con cadena de fallback completa cuando
+    // el cliente nuevo NO trae uno explícito:
+    //   1) `autoPatch.priceListId` (default comercial del cliente).
+    //   2) `UserPreference.defaultPriceListId` (preferencia del usuario).
+    //   3) Favorito de la joyería (`isFavorite`).
+    //   4) Primer activo disponible.
+    //
+    // Antes (bug): si el paso 1 era null, `buildClientPatches` no emitía
+    // `priceListId` en el `pricingPatch` y el merge `{...cur, ...pricingPatch}`
+    // conservaba la lista del cliente ANTERIOR (`cur.priceListId`).
+    // Ahora siempre emitimos un valor resuelto (o "" si no hay ninguna lista
+    // válida en el catálogo). Cero recálculo de precios: solo selección de
+    // qué priceListId mandar al motor en el próximo preview.
+    const favList = priceLists.find((p) => p.isFavorite && p.isActive && !p.deletedAt);
+    const resolvedPriceListId =
+      autoPatch.priceListId ||
+      resolveDefaultId(
+        userPreferenceRef.current?.defaultPriceListId,
+        favList?.id,
+        priceLists,
+      );
+
     // Split disjunto identidad vs. pricing — fuente única en
     // `buildClientPatches` (pura + testeada). `clientDataPatch` NUNCA mueve
     // el `previewSignature`; `pricingPatch` SOLO lista/moneda/fx.
@@ -4312,7 +5129,11 @@ function InvoiceEditorModal(props: {
       sellerId:        entity.sellerId ?? "",
       canonicalTerm,
       dueDate,
-      autoPriceListId: autoPatch.priceListId ?? null,
+      // T15 — siempre pasamos el id RESUELTO (puede ser "" si el catálogo
+      // no tiene ninguna lista activa). El helper lo emite tal cual en el
+      // patch → el merge en "Recalcular" lo aplica sobre `cur.priceListId`,
+      // pisando la lista del cliente anterior.
+      autoPriceListId: resolvedPriceListId,
       // Target resuelto (propia del cliente o base) → autoritativo en
       // Recalcular; nunca queda la moneda del cliente anterior.
       currency:        targetCurrency,
@@ -4483,13 +5304,20 @@ function InvoiceEditorModal(props: {
       ...cur,
       ...clientDataPatch,
       ...pricingPatch,
-      // "Recalcular" = el cliente nuevo es AUTORITATIVO: reseteamos el
-      // estado de IMPUESTO y de BONIFICACIÓN HEREDADA del cliente anterior
-      // (override/taxAmount/taxBreakdown/exención + inheritedDiscount/
-      // discountAmount) para que no quede pegado (ej. IVA 21% al volver a un
-      // cliente exento, o "Cliente −US$ 0.01" stale). El preview del cliente
-      // nuevo es la única fuente. Precio/bonificación MANUAL NO se tocan.
-      lines: cur.lines.map(resetLineForClientChange),
+      // "Recalcular" = el cliente nuevo es AUTORITATIVO. Reseteamos:
+      //   · estado de IMPUESTO y BONIFICACIÓN HEREDADA del cliente anterior
+      //     (override/taxAmount/taxBreakdown/exención + inheritedDiscount/
+      //     discountAmount).
+      //   · `clearManualOverrides: true` → además limpia el override MANUAL
+      //     del operador (`manualDiscount`, `manualPrice`, flags
+      //     `manualOverrides.{discount,price,tax}`, `manualDiscountAppliesTo`,
+      //     `manualTaxAppliesTo`). Esos overrides fueron decididos bajo la
+      //     condición comercial del cliente VIEJO y no tienen sentido bajo
+      //     el cliente nuevo — el operador eligió "Recalcular precios"
+      //     justamente para dejar que el motor aplique las reglas del nuevo.
+      // El preview del cliente nuevo se vuelve la única fuente: bonificación
+      // heredada, recargo heredado, exención fiscal, lista propia, etc.
+      lines: cur.lines.map((l) => resetLineForClientChange(l, { clearManualOverrides: true })),
     };
     const pend = pendingClientDetailRef.current;
     if (pend && pend.clientId === nextClient.id) {
@@ -4545,7 +5373,16 @@ function InvoiceEditorModal(props: {
     // "sin cliente" cuando no había cliente previo.
     setPreviewClientId(cur.clientId ?? null);
 
-    const base: SalesInvoice = { ...cur, ...clientDataPatch };
+    // P1 #3 — Etapa E2: limpieza quirúrgica del flag fiscal stale.
+    // `taxExemptByEntity` es atributo del CLIENTE (no del precio). Si el
+    // cliente cambió pero el preview se queda con el cliente previo (para
+    // mantener precios), el flag heredado del cliente anterior queda
+    // pegado. `clearLineExemptionFlag` solo borra ese flag, sin tocar
+    // taxAmount/taxOverride/breakdown/precios (esos son los "precios" que
+    // queremos mantener). Identidad estable: si la línea no tenía el
+    // flag, devuelve la misma referencia.
+    const baseLines = cur.lines.map(clearLineExemptionFlag);
+    const base: SalesInvoice = { ...cur, lines: baseLines, ...clientDataPatch };
     const pend = pendingClientDetailRef.current;
     if (pend && pend.clientId === nextClient.id) {
       // Solo snapshot/dirección — NO bonif. heredada (no se hereda en keep).
@@ -4561,17 +5398,16 @@ function InvoiceEditorModal(props: {
   }
 
   const balance = Math.max(0, effectiveTotals.total - draft.paidAmount);
-  // Mock de saldo previo del cliente — Fase 7 traerá el saldo real de la
-  // cuenta corriente. Hoy arrancamos en 0 para que el bloque "Impacto" sea
-  // visible y consistente.
-  const balanceBefore = 0;
-  const balanceAfter  = balanceBefore + (effectiveTotals.total - draft.paidAmount);
+  // Etapa A.3 — `balanceBefore=0` / `balanceAfter` eliminados junto al card
+  // account-impact: el saldo real lo expondrá el backend en
+  // `balanceBreakdown.monetaryBalance`. Mientras tanto, el saldo del cobro
+  // se muestra en PaymentCard como `balance` (= total − paidAmount).
 
   return (
     <>
     <Modal
       open={open}
-      onClose={onClose}
+      onClose={handleModalClose}
       // 1.A — Titulo dinamico segun estado del comprobante.
       //   DRAFT             → "Borrador <Sale.code>" (numero interno del draft).
       //   Confirmado (no    → "Factura N° <Receipt.code>" si existe la
@@ -4598,103 +5434,394 @@ function InvoiceEditorModal(props: {
           : `Número ${draft.number}`
       }
       maxWidth="7xl"
-      className="!max-w-[1500px] w-[96vw]"
+      // Ancho del modal: lectura usa el ancho calibrado (1760px / 98vw).
+      // En modo edicion (drag/resize de cards) el operador necesita
+      // mas canvas disponible para reordenar — pasamos a 99vw sin
+      // tope maximo: el grid del aside puede usar toda la pantalla.
+      className={cn(
+        editLayoutMode
+          ? "!max-w-none w-[99vw]"
+          : "!max-w-[1760px] w-[98vw]",
+      )}
+      // Reduce el padding lateral del body en edit mode para ganar
+      // unos 24px extra a cada lado del canvas del grid.
+      bodyClassName={editLayoutMode ? "!px-3" : undefined}
       resizable
       maximizable
       maximizedMode="embedded"
       modalKey="ventas-facturas-editor"
-      onEnter={onSave}
-      footer={
-        <TPDocumentModalFooter
-          isNew={isNew}
-          onCancel={onClose}
-          onSave={onSave}
-          cancelIcon={<X size={14} />}
-          onSaveDraft={saveDraftToBackend}
-          draftSaving={draftSaving}
-          extraActions={
-            <>
-              <TPButton
-                variant="ghost"
-                onClick={handlePrintDocument}
+      onEnter={isReadOnly ? undefined : handleConfirmedSave}
+      headerRight={
+        /* Indicador "Recalculando…" + botón "Personalizar layout" + botón
+           "Configuración de vista". El loader es passive: solo aparece cuando
+           `previewStatus === "loading"`. El botón "Personalizar layout" es el
+           ATAJO DIRECTO al modo edición (drag/resize del aside) — antes vivía
+           escondido dentro del modal de Configuración → Vista/Layout, lo que
+           hacía que el operador no encontrara cómo personalizar. Cuando
+           `editLayoutMode` ya está activo, el botón se oculta (la toolbar
+           sticky del banner ya expone Listo/Restaurar/Cancelar). Orden
+           visual: [↻] [▦ Personalizar] [⚙ config] [⛶] [✕]. */
+        <>
+          {/* Refinamiento Fase A — badge "Política comercial".
+              Más prominente que el chip discreto original: prefijo
+              "Política comercial:" + conteos legibles. Solo se muestra
+              cuando hay al menos UNA línea evaluada y NO está todo en
+              OK (cero ruido en facturas vacías o limpias).
+              Color cambia según el peor caso (CRITICAL rojo / RISK
+              naranja / WARNING amarillo). */}
+          {documentCommercialStatus.evaluated > 0
+            && documentCommercialStatus.worst !== "OK" && (() => {
+            // Armar la frase: "1 crítica · 2 advertencias" según conteos.
+            const parts: string[] = [];
+            if (documentCommercialStatus.critical > 0) {
+              parts.push(`${documentCommercialStatus.critical} crítica${documentCommercialStatus.critical === 1 ? "" : "s"}`);
+            }
+            if (documentCommercialStatus.risk > 0) {
+              parts.push(`${documentCommercialStatus.risk} con riesgo`);
+            }
+            if (documentCommercialStatus.warning > 0) {
+              parts.push(`${documentCommercialStatus.warning} advertencia${documentCommercialStatus.warning === 1 ? "" : "s"}`);
+            }
+            return (
+              <span
+                className={cn(
+                  "inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-[12px] font-semibold border shadow-sm",
+                  documentCommercialStatus.critical > 0
+                    ? "border-red-400/70 bg-red-50 text-red-700 dark:border-red-700/60 dark:bg-red-950/40 dark:text-red-300"
+                    : documentCommercialStatus.risk > 0
+                    ? "border-orange-400/70 bg-orange-50 text-orange-700 dark:border-orange-700/60 dark:bg-orange-950/40 dark:text-orange-300"
+                    : "border-amber-400/70 bg-amber-50 text-amber-700 dark:border-amber-700/60 dark:bg-amber-950/40 dark:text-amber-300",
+                )}
                 title={
-                  draft.status === "DRAFT"
-                    ? "Imprimir BORRADOR (vista operativa con sello)"
-                    : draft.status === "CANCELLED"
-                      ? "Imprimir comprobante ANULADO (vista operativa con sello)"
-                      : "Imprimir documento (factura)"
+                  `Estado comercial del comprobante — ${documentCommercialStatus.ok} OK`
+                  + ` · ${documentCommercialStatus.warning} margen bajo`
+                  + ` · ${documentCommercialStatus.risk} riesgo`
+                  + ` · ${documentCommercialStatus.critical} crítico`
                 }
-                iconLeft={<Printer size={14} />}
+                data-tp-invoice-commercial-status-badge={documentCommercialStatus.worst}
+                aria-label="Estado comercial del comprobante"
               >
-                Imprimir
-              </TPButton>
-              {/* 1.E — Descarga del PDF OFICIAL server-side. Solo
-                  cualquier estado — DRAFT y CANCELLED descargan con el
-                  watermark BORRADOR / ANULADA renderado server-side por
-                  `renderInvoicePdf`. El sello visual es la proteccion
-                  comercial, no el bloqueo del sistema. */}
-              <TPButton
-                variant="ghost"
-                onClick={handleDownloadOfficialPdf}
-                title={
-                  draft.status === "DRAFT"
-                    ? "Descargar PDF (BORRADOR)"
-                    : draft.status === "CANCELLED"
-                      ? "Descargar PDF de la factura anulada."
-                      : "Descargar PDF de la factura"
-                }
-                iconLeft={<Download size={14} />}
-              >
-                Descargar PDF
-              </TPButton>
-              <TPButton
-                variant="ghost"
-                onClick={() => setLabelsOpen(true)}
-                disabled={labelItems.length === 0}
-                title={labelItems.length === 0 ? "Sin artículos para etiquetar" : "Imprimir etiquetas de los artículos"}
-                iconLeft={<Tag size={14} />}
-              >
-                Etiquetas
-              </TPButton>
-              {/* Envia el PDF por mail. Disponible en cualquier estado —
-                  el subject/body del modal cambian segun status (BORRADOR /
-                  ANULADA / final). El PDF adjunto lleva el watermark
-                  correspondiente. */}
-              <TPButton
-                variant="ghost"
-                onClick={() => setEmailModalOpen(true)}
-                title={
-                  draft.status === "DRAFT"
-                    ? "Enviar borrador por mail."
-                    : draft.status === "CANCELLED"
-                      ? "Enviar factura anulada."
-                      : "Enviar factura por mail."
-                }
-                iconLeft={<Mail size={14} />}
-              >
-                Enviar por mail
-              </TPButton>
-            </>
-          }
-          summary={
-            <div className="flex items-center gap-2 text-xs text-muted">
-              <span>
-                Subtotal: <span className="font-semibold text-text">{mFmt(effectiveTotals.subtotal)}</span>
-                <span className="mx-2 text-border">·</span>
-                Impuestos: <span className="font-semibold text-text">{mFmt(effectiveTotals.taxAmount)}</span>
-                <span className="mx-2 text-border">·</span>
-                Total: <span className="font-bold text-primary">{mFmt(effectiveTotals.total)}</span>
+                <AlertTriangle size={12} aria-hidden />
+                <span className="hidden sm:inline">Política comercial:</span>
+                <span>{parts.join(" · ")}</span>
               </span>
-              <TPTechPricingLoader
-                active={previewStatus === "loading"}
-                label="Recalculando…"
-              />
-            </div>
-          }
-        />
+            );
+          })()}
+          <TPTechPricingLoader
+            active={previewStatus === "loading"}
+            label="Recalculando…"
+          />
+          {/* "Personalizar layout" — shortcut REMOVIDO del header superior
+              (ajuste UX). El acceso sigue disponible desde Configuración de
+              vista (engranaje a la derecha). Se conserva intacta toda la
+              maquinaria layout/v2: handlers, presets, dialogs, edit mode,
+              persistencia. Solo cambia el punto de entrada visual. */}
+          <TPIconButton
+            onClick={() => setSettingsModalOpen(true)}
+            title="Configuración de vista"
+            aria-label="Configuración de vista"
+            className="h-9 w-9"
+            data-tp-invoice-settings-button
+          >
+            {/* CAMBIO 1 — icono de "Plantillas de pantalla / layout de cards"
+                (LayoutDashboard) en vez del engranaje genérico (Settings), que
+                se confundía con configuración general. Solo iconografía:
+                handler / estado / tooltip / tamaño / posición sin cambios. */}
+            <LayoutDashboard size={16} aria-hidden />
+          </TPIconButton>
+        </>
+      }
+      footerClassName="backdrop-blur-sm bg-card/85 !border-border/60 px-6 py-3"
+      footer={
+        <>
+          {/* UX.20 — Modal de Configuración. Vive fuera del JSX del footer
+              (es un overlay propio) pero su estado se toggle desde el botón
+              ⚙ del header del Modal contenedor. Centraliza preset, cards
+              visibles, sticky actions y acciones del comprobante
+              (Imprimir / Etiquetas / Enviar). */}
+          <InvoiceSettingsModal
+            open={settingsModalOpen}
+            onClose={() => setSettingsModalOpen(false)}
+            preset={invoiceViewPreset.preset}
+            onPresetChange={handlePresetChange}
+            onResetLayout={handleResetLayout}
+            onEnterEditMode={enterEditLayoutMode}
+            uiPreferences={invoiceUiPreferences.resolved}
+            onUiPatch={handleUiPatch}
+            // Etapa 5 — "Mis vistas". El hook expone todo el CRUD; el
+            // modal solo es el render. Aplicar un preset reemplaza el
+            // layoutV2 actual y persiste con debounce.
+            presets={invoiceLayout.presets}
+            onSavePresetAs={invoiceLayout.savePresetAs}
+            onApplyPreset={invoiceLayout.applyPreset}
+            onRenamePreset={invoiceLayout.renamePreset}
+            onDuplicatePreset={invoiceLayout.duplicatePreset}
+            onDeletePreset={invoiceLayout.deletePreset}
+            onSetDefaultPreset={invoiceLayout.setDefaultPresetId}
+          />
+          {/* Footer ejecutivo — herramientas frecuentes (Imprimir / Etiquetas /
+              Enviar) en variante ghost a la izquierda, separadas por un
+              divider vertical de las CTA del documento (Cancelar / Borrador /
+              Crear). El modal de Configuración (⚙) queda solo para layout y
+              comportamiento visual. */}
+          <TPDocumentModalFooter
+            isNew={isNew}
+            onCancel={handleModalClose}
+            onSave={handleConfirmedSave}
+            cancelIcon={<X size={14} />}
+            cancelLabel="Cerrar"
+            onSaveDraft={saveDraftToBackend}
+            draftSaving={draftSaving}
+            hideDetailedTotals={true}
+            readOnly={isReadOnly}
+            extraActions={
+              <>
+                <TPButton
+                  variant="ghost"
+                  onClick={handlePrintDocument}
+                  title={
+                    draft.status === "DRAFT"
+                      ? "Imprimir BORRADOR (vista operativa con sello)"
+                      : draft.status === "CANCELLED"
+                        ? "Imprimir comprobante ANULADO (vista operativa con sello)"
+                        : "Imprimir documento (factura)"
+                  }
+                  iconLeft={<Printer size={14} />}
+                  className="h-8 text-xs"
+                >
+                  Imprimir
+                </TPButton>
+                {/* Pivot funcional — disponible en cualquier estado. DRAFT y
+                    CANCELLED descargan con watermark BORRADOR / ANULADA
+                    renderado server-side por renderInvoicePdf. */}
+                <TPButton
+                  variant="ghost"
+                  onClick={handleDownloadOfficialPdf}
+                  title={
+                    draft.status === "DRAFT"
+                      ? "Descargar PDF (BORRADOR)"
+                      : draft.status === "CANCELLED"
+                        ? "Descargar PDF de la factura anulada."
+                        : "Descargar PDF de la factura"
+                  }
+                  iconLeft={<Download size={14} />}
+                  className="h-8 text-xs"
+                >
+                  Descargar PDF
+                </TPButton>
+                <TPButton
+                  variant="ghost"
+                  onClick={() => setLabelsOpen(true)}
+                  disabled={labelItems.length === 0}
+                  title={labelItems.length === 0 ? "Sin artículos para etiquetar" : "Imprimir etiquetas de los artículos"}
+                  iconLeft={<Tag size={14} />}
+                  className="h-8 text-xs"
+                >
+                  Etiquetas
+                </TPButton>
+                {/* Pivot funcional — disponible en cualquier estado. El
+                    subject/body del modal son state-aware (BORRADOR /
+                    ANULADA / final). El PDF adjunto lleva el watermark. */}
+                <TPButton
+                  variant="ghost"
+                  onClick={() => setEmailModalOpen(true)}
+                  title={
+                    draft.status === "DRAFT"
+                      ? "Enviar borrador por mail."
+                      : draft.status === "CANCELLED"
+                        ? "Enviar factura anulada."
+                        : "Enviar factura por mail."
+                  }
+                  iconLeft={<Mail size={14} />}
+                  className="h-8 text-xs"
+                >
+                  Enviar por mail
+                </TPButton>
+                {/* Divider vertical: separa herramientas frecuentes de las
+                    CTA del documento. */}
+                <span
+                  aria-hidden
+                  className="mx-1 h-5 w-px bg-border/60 shrink-0"
+                />
+              </>
+            }
+          />
+        </>
       }
     >
       <div className="space-y-3">
+        {/* Etapa 5 — Banner READ-ONLY: comprobante ya emitido o anulado.
+            Visible solo cuando `isReadOnly` está activo. Muestra qué tipo
+            de documento es (CONFIRMED vs CANCELLED), el número oficial
+            (Receipt.code) y la fecha de confirmación/anulación. El banner
+            NO bloquea acciones — coexiste con el footer (Imprimir /
+            Descargar PDF / Enviar por mail / Cerrar siguen activos).
+            Las CTAs de mutación quedan ocultas por `readOnly` del footer
+            y los inputs internos por el `<fieldset disabled>` envolvente. */}
+        {isReadOnly && (() => {
+          const isCancelled = draft.status === "CANCELLED";
+          const palette = isCancelled
+            ? "border-red-500/30 bg-red-500/10 text-red-700 dark:text-red-300"
+            : "border-blue-500/30 bg-blue-500/10 text-blue-700 dark:text-blue-300";
+          return (
+            <div
+              className={cn(
+                "flex items-start gap-3 rounded-md border px-3 py-2 text-[12px]",
+                palette,
+              )}
+              role="status"
+              data-tp-invoice-readonly-banner
+            >
+              <span aria-hidden className="mt-0.5 shrink-0">
+                <Eye size={14} />
+              </span>
+              <div className="flex flex-col gap-0.5 min-w-0">
+                <span className="font-semibold uppercase tracking-wider text-[11px]">
+                  {isCancelled
+                    ? "Comprobante anulado — solo lectura"
+                    : "Documento emitido — solo lectura"}
+                </span>
+                <span className="opacity-80">
+                  {draft.officialNumber
+                    ? `Factura N° ${draft.officialNumber}`
+                    : `Borrador ${draft.number}`}
+                  {draft.client && ` · ${draft.client}`}
+                </span>
+                <span className="opacity-70 text-[11px]">
+                  {isCancelled
+                    ? "La factura fue anulada. Podés imprimirla o enviarla pero no editarla."
+                    : "La factura fue emitida. Podés imprimirla, enviarla por mail o anularla — la edición está bloqueada."}
+                </span>
+              </div>
+            </div>
+          );
+        })()}
+        {/* Etapa 5 — Bloqueo de edición a nivel HTML estándar. El fieldset
+            con `disabled` propaga a TODOS los descendientes input/button/
+            select/textarea sin necesidad de cambiar cada componente. La
+            clase `contents` neutraliza el display block del fieldset para
+            que el `space-y-3` del wrapper externo siga funcionando.
+            Sub-componentes custom que renderean inputs nativos heredan
+            disabled automáticamente; los pocos que no respetan disabled
+            del ancestor pueden recibir la prop `readOnly` explícita en
+            iteraciones futuras (no se descubrió ninguno aún en QA). */}
+        <fieldset
+          disabled={isReadOnly}
+          className="contents"
+          data-tp-invoice-readonly-fieldset={isReadOnly ? "true" : "false"}
+        >
+        {/* Banner contextual del MODO EDICIÓN del layout. Solo se renderiza
+            mientras `editLayoutMode === true` — fuera de ese modo el footer
+            queda 100% limpio (solo Cancelar/Borrador/Crear). El banner es
+            sticky-top para que el operador siempre tenga acceso a
+            [Restaurar diseño] y [Listo] mientras arrastra cards. */}
+        {editLayoutMode && (
+          <div
+            className="sticky top-0 z-10 -mx-6 -mt-4 mb-1 flex items-center justify-between gap-3 border-b border-primary/40 bg-card/90 px-6 py-2.5 backdrop-blur-sm shadow-[0_2px_8px_-4px_rgba(0,0,0,0.12)]"
+            data-tp-invoice-edit-layout-banner
+          >
+            <div className="flex items-center gap-3 min-w-0">
+              {/* Chip identitario — comunica al operador que entró a una
+                  zona donde el layout se puede arrastrar/redimensionar. */}
+              <span
+                className="inline-flex items-center gap-1.5 rounded-md border border-primary/50 bg-primary/10 px-2 py-1 text-[10px] font-bold uppercase tracking-wider text-primary"
+                aria-hidden
+              >
+                <LayoutGrid size={12} aria-hidden />
+                Personalizar layout
+              </span>
+              <div className="hidden flex-col leading-tight sm:flex min-w-0">
+                <span className="text-[13px] font-semibold text-text">
+                  Personalizá tu vista
+                </span>
+                <span className="text-[11px] text-muted truncate">
+                  Arrastrá los cards para ordenarlos. Usá las esquinas o
+                  bordes para cambiar el tamaño. Los cambios se guardan
+                  automáticamente.
+                </span>
+              </div>
+            </div>
+            <LayoutEditModeToolbar
+              editing={true}
+              onEnter={enterEditLayoutMode}
+              onExit={exitEditLayoutMode}
+              onReset={handleResetLayout}
+              onCancelChanges={cancelEditLayoutChanges}
+              persistenceStatus={invoiceLayout.persistenceStatus}
+            />
+          </div>
+        )}
+        {/* UX.17 — Render condicional al `layoutMode` resuelto del preset.
+            Tres estructuras posibles (el aside dinámico y el resto del
+            contenido NO cambia — solo se reorganiza el grid):
+              · TWO_COLS_FROM_TOP (COMPACT / CUSTOM)  → Header + Líneas +
+                Observaciones en col izq desde arriba; aside en col der
+                desde la misma altura del Header.
+              · STACKED_FULL_WIDTH (CLASSIC)          → Header + Líneas
+                full-width arriba; debajo grid 2-cols con Observaciones
+                (izq) + aside (der).
+              · SINGLE_COLUMN (Una columna)           → todo apilado en una
+                sola columna full-width; Observaciones queda al final.
+            Implementación CSS Grid pura:
+              - col-izq tiene `lg:col-span-2` cuando STACKED → ocupa toda
+                la fila superior y empuja Observaciones+aside a la fila 2.
+              - Observaciones se renderea en uno de 3 lugares (col izq,
+                celda separada, o al final) según el modo. Para evitar
+                duplicar el JSX usamos la variable `observationsJsx` abajo.
+              - SINGLE_COLUMN setea `forceSingleColumn=true` → omitimos
+                `lg:grid-cols-[...]` y el grid queda en `grid-cols-1`.
+            Cero cambio en el contenido funcional — solo CSS de placement. */}
+        {(() => {
+          const layoutMode = invoiceViewPreset.resolved.layoutMode;
+          // Observaciones a renderear — reutilizable en cualquier slot del
+          // grid (el contenido y los handlers son idénticos en todos los
+          // modos, solo cambia DÓNDE se posiciona).
+          const observationsJsx = (
+            <TPCollapse
+              open={extrasOpen}
+              onToggle={() => setExtrasOpen((v) => !v)}
+              iconLeft={<FileText size={14} />}
+              title="Observaciones, términos y adjuntos"
+              description="Contenido extendido del comprobante — opcional"
+            >
+              <ObservationsTermsAttachmentsCard
+                notes={draft.notes}
+                onNotesChange={(v) => patch("notes", v)}
+                terms={draft.terms}
+                onTermsChange={(v) => patch("terms", v)}
+                templateTerms={templateTerms}
+                canSaveAsDefault={can("COMPANY_SETTINGS:EDIT")}
+                onSaveAsDefault={handleSaveTermsAsDefault}
+                receiptId={savedReceiptId}
+                onEnsureReceiptId={ensureSavedReceiptId}
+              />
+            </TPCollapse>
+          );
+          return (
+        <div
+          className={cn(
+            // Gap uniforme 8 px (= CARD_GAP_Y_PX desde spacing.ts).
+            // Sincronizar con la columna interna (`space-y-2` abajo) y
+            // con el grid del aside (`GRID_MARGIN = [8, 8]`) para que
+            // todos los gaps visuales sean identicos en las 3 plantillas.
+            "grid grid-cols-1 gap-2 lg:items-start",
+            !invoiceViewPreset.resolved.forceSingleColumn
+              && "lg:grid-cols-[1fr_var(--invoice-aside-col)]",
+          )}
+          style={asideColumnGridStyle(invoiceViewPreset.resolved)}
+        >
+          {/* COLUMNA IZQUIERDA — Header + Líneas (+ Observaciones según modo).
+              `min-w-0` evita que el grid interno de Líneas
+              (`min-w-[1460px]` + overflow-x-auto) infle la columna y
+              rompa la grid principal.
+              `lg:col-span-2` cuando CLASSIC (STACKED_FULL_WIDTH) → la
+              fila superior ocupa toda la grilla; Observations y aside
+              caen a una segunda fila debajo. */}
+          <div className={cn(
+            // 8 px gap (alineado con CARD_GAP_Y_PX). Antes era 12.
+            "space-y-2 min-w-0",
+            layoutMode === "STACKED_FULL_WIDTH" && "lg:col-span-2",
+          )}>
         {/* FASE 8.2.2b — Cabecera migrada a <InvoiceHeaderForm>.
             Cero lógica comercial: callbacks semánticos cerrados sobre los
             handlers del padre (handleClientPick, handlePaymentTermChange,
@@ -4802,11 +5929,18 @@ function InvoiceEditorModal(props: {
                 grid de columnas que las líneas pero SIN la columna drag
                 (14px) inicial — así el combo arranca en X=0 del card.
                 Mantiene el ancho equivalente al combo de Artículo
-                (minmax 420px / 1.575fr) gracias al solver de grid. */}
+                (minmax 420px / 1.575fr) gracias al solver de grid.
+                UX.11/12 — proporciones recalibradas en paralelo con
+                `TPDocumentLineAdvancedEditor`. Líneas pasó de 8 a 7
+                columnas (UX.12: acciones movidas DENTRO del bloque Total,
+                ya no son columna separada). El quick-add ahora tiene
+                6 columnas (sin drag de 14px y sin la columna fantasma
+                "auto" del final). Última columna ampliada a 200px para
+                matchear el Total ensanchado del editor. */}
             {showQuickSearch && (
               <div className={cn(
                 "mb-3 grid grid-cols-1 items-end gap-x-2",
-                "lg:grid-cols-[minmax(420px,1.575fr)_minmax(110px,0.45fr)_minmax(220px,0.85fr)_minmax(130px,0.5fr)_minmax(130px,0.5fr)_minmax(180px,auto)_auto]",
+                "lg:grid-cols-[minmax(420px,1.575fr)_minmax(110px,0.45fr)_minmax(200px,0.85fr)_minmax(130px,0.5fr)_minmax(130px,0.5fr)_minmax(200px,auto)]",
               )}>
                 {/* Combo ARTÍCULO — empieza en el borde izquierdo del card.
                     `scanMode` enforce-a match EXACTO al presionar Enter:
@@ -4839,8 +5973,9 @@ function InvoiceEditorModal(props: {
                   />
                 </div>
 
-                {/* Columnas restantes vacías — placeholder para el solver. */}
-                <div className="hidden lg:block" />
+                {/* Columnas restantes vacías — placeholder para el solver.
+                    5 placeholders alinean las cols 2-6 (qty, prec, bonif,
+                    iva, total) del editor de líneas. */}
                 <div className="hidden lg:block" />
                 <div className="hidden lg:block" />
                 <div className="hidden lg:block" />
@@ -4944,14 +6079,13 @@ function InvoiceEditorModal(props: {
                   <button
                     type="button"
                     onClick={() => {
-                      // Marcar "Sin lista" como decisión EXPLÍCITA del
-                      // operador para que el useEffect de favoritos no
-                      // re-aplique la lista favorita. Reset global lo limpia.
-                      onChange({
-                        ...draft,
-                        priceListId: undefined,
-                        priceListExplicitlyCleared: true,
-                      });
+                      // P0.1 (H1) — Unificado bajo `applyGlobalPriceListChange`.
+                      // El helper limpia `priceListIdOverride` de TODAS las
+                      // líneas (sin esto, las líneas con override quedaban
+                      // ancladas a la lista vieja) y setea
+                      // `priceListExplicitlyCleared = true` (sin esto, el
+                      // useEffect de favoritos re-aplicaba la favorita).
+                      onChange(applyGlobalPriceListChange(draft, null));
                       setListPopOpen(false);
                     }}
                     className={cn(
@@ -4972,12 +6106,11 @@ function InvoiceEditorModal(props: {
                     <button
                       type="button"
                       onClick={() => {
-                        // Decisión nueva sobreescribe el flag de "Sin lista".
-                        onChange({
-                          ...draft,
-                          priceListId: p.id,
-                          priceListExplicitlyCleared: false,
-                        });
+                        // P0.1 (H1) — Mismo helper canónico que el editor de
+                        // líneas (VentasFacturas.tsx:6407-6409). Antes este
+                        // path NO limpiaba `priceListIdOverride` y las líneas
+                        // con override quedaban con precio sin actualizar.
+                        onChange(applyGlobalPriceListChange(draft, p.id));
                         setListPopOpen(false);
                       }}
                       className={cn(
@@ -5217,6 +6350,12 @@ function InvoiceEditorModal(props: {
               </div>
             </TPPopover>
 
+            {/* (Franja resumen comercial sobre la tabla eliminada — la
+                 alerta por línea vive ahora INTEGRADA en el bloque
+                 "Total línea c/imp." de cada fila, y el resumen del
+                 documento se mantiene en el badge del header y en el
+                 Total card del aside. Evitamos el "banner aparte" que
+                 competía contra la lectura natural.) */}
             {/* FASE 8.2.2 — Editor de líneas extraído a <LinesEditorSection>.
                 Wrapper presentacional: passthrough de callbacks + empty state.
                 Sin lógica comercial. */}
@@ -5254,7 +6393,25 @@ function InvoiceEditorModal(props: {
               setLineTaxOverride={setLineTaxOverride}
               applyLineOverrides={applyLineOverrides}
               clearLineOverrides={clearLineOverrides}
-              onChangePriceList={(id) => onChange({ ...draft, priceListId: id ?? undefined })}
+              // BUG FIX — selector global de lista de precios.
+              //
+              // Antes: `onChange({ ...draft, priceListId: id ?? undefined })`
+              // solo cambiaba la lista del documento; las líneas que tenían
+              // `priceListIdOverride` quedaban ancladas a la lista vieja y
+              // seguían mostrando el badge "Línea" + precio sin actualizar.
+              //
+              // Ahora delegamos al helper puro `applyGlobalPriceListChange`,
+              // que cambia `draft.priceListId` y LIMPIA
+              // `priceListIdOverride`/`priceListOverride` de TODAS las líneas.
+              // El preview se dispara solo (usePreviewFlow observa `draft`),
+              // y el motor recalcula precio + descuentos + impuestos +
+              // redondeos + promociones contra la lista global nueva.
+              // Si después el operador vuelve a cambiar una línea
+              // puntualmente, el badge "Línea" reaparece solo en esa línea
+              // (`onChangeLinePriceList` abajo sigue intacto).
+              onChangePriceList={(id) =>
+                onChange(applyGlobalPriceListChange(draft, id))
+              }
               onChangeLinePriceList={(lineId, priceListId) => {
                 // Override de lista por línea: persiste en
                 // `line.priceListIdOverride` + `line.priceListOverride=true`.
@@ -5277,179 +6434,567 @@ function InvoiceEditorModal(props: {
               focusSignal={focusLineBump}
               editorScopeRef={editorScopeRef}
               previewLoading={previewStatus === "loading"}
+              // Etapa E2 — FIX FX para sub-líneas equivalentes en facturas
+              // no-base. `draft.fxRate` es siempre el rate "unidades base por
+              // 1 unidad de la moneda del documento" (= 1 si la moneda es la
+              // base del tenant). `displayRate` del memo no sirve acá porque
+              // se trunca a 1 cuando `currencyConverted=true`, pero
+              // `unitValueBase` del backend SIEMPRE viene en base.
+              documentFxRate={draft.fxRate}
+              // UX.19 — passthrough del énfasis del Total línea desde el
+              // preset. CLASSIC tiene `EMPHASIZED` (líneas full-width →
+              // aprovecha ancho extra). El resto: `STANDARD`.
+              lineTotalEmphasis={invoiceViewPreset.resolved.lineTotalEmphasis}
+              // Posicion de la mini-toolbar de acciones de linea
+              // (expandir/restablecer/eliminar/menu). En CLASSIC va
+              // INLINE al lado del label "Total linea c/ imp." (look
+              // ERP tradicional). En COMPACT y ONE_LINE queda al pie
+              // del bloque del total (comportamiento actual).
+              inlineLineActions={invoiceViewPreset.resolved.preset === "CLASSIC"}
+              // Sticky-actions: lo gobierna SOLO el preset ahora. El
+              // toggle "Mantener acciones visibles" del modal de
+              // Configuracion se elimino con el layout V2 (auto-grow
+              // hace que las cards entren completas y el scroll
+              // horizontal en la fila ya no es la pesadilla que era).
+              stickyLineActions={invoiceViewPreset.resolved.stickyLineActions}
+              // Fase A — política comercial: borde lateral por fila según
+              // el nivel derivado de `policy.blockingAlerts` + `alerts[]`.
+              commercialLevelByLineId={commercialLevelByLineId}
+              // Refinamiento: chip al pie con motivo + margen % por fila.
+              commercialInfoByLineId={commercialInfoByLineId}
             />
           </TPCard>
 
-        {/* ── Zona inferior — grid 2 columnas:
-            izquierda  : Observaciones, términos y adjuntos
-            derecha    : Descuento global · Envío · Cupón · Totales (Hero)
-
-            El cupón se ubica arriba del Hero Total; ambos comparten la
-            columna derecha con Descuento global y Envío. La columna
-            derecha se ensanchó (~25%) a 420–540px para que Descuento
-            global y los cards inferiores no queden angostos respecto a
-            Observaciones. Todos los cards del aside heredan ese ancho
-            (mismo `space-y-3`). */}
-        <div className="grid grid-cols-1 gap-3 lg:grid-cols-[1fr_minmax(420px,540px)] lg:items-start">
-          {/* Observaciones, términos y adjuntos — columna izquierda */}
-          <TPCollapse
-            open={extrasOpen}
-            onToggle={() => setExtrasOpen((v) => !v)}
-            iconLeft={<FileText size={14} />}
-            title="Observaciones, términos y adjuntos"
-            description="Contenido extendido del comprobante — opcional"
-          >
-            <ObservationsTermsAttachmentsCard
-              notes={draft.notes}
-              onNotesChange={(v) => patch("notes", v)}
-              terms={draft.terms}
-              onTermsChange={(v) => patch("terms", v)}
-              templateTerms={templateTerms}
-              canSaveAsDefault={can("COMPANY_SETTINGS:EDIT")}
-              onSaveAsDefault={handleSaveTermsAsDefault}
-              receiptId={savedReceiptId}
-              onEnsureReceiptId={ensureSavedReceiptId}
-            />
-          </TPCollapse>
-
-          {/* Aside derecho: Descuento global → Envío → Cupón → Totales */}
-          <aside className="space-y-3">
-            {/* FASE 8.2 — Cards extraídos a ./ventas-facturas/InvoiceEditorModal/.
-                Sin lógica comercial: solo passthrough de value/onPatch. */}
-            <DiscountCard
-              value={draft.discountGlobal}
-              onPatch={patchDiscountGlobal}
-              open={discountOpen}
-              onOpenChange={setDiscountOpen}
-              fmtCurrency={mFmt}
-            />
-            <ShippingCard
-              value={draft.shipping}
-              onPatch={patchShipping}
-              open={shippingOpen}
-              onOpenChange={setShippingOpen}
-              fmtCurrency={mFmt}
-            />
-
-            {/* Cupón de venta — justo arriba del Hero Total. Solo manda
-                couponCode al backend; el motor aplica el descuento si el
-                cupón es válido. Frontend NO calcula nada. */}
-            <CouponCard
-              draft={draft}
-              onChange={onChange}
-              clientId={selectedClient?.id}
-              onApplied={() => { /* draft.couponCode ya está en deps de previewSignature → recálculo automático */ }}
-            />
-
-            {/* FASE 8.2.2 — Hero migrado a <TotalsHeroSection>.
-                Sin lógica: passthrough de pricingDetail (computado en este
-                componente) + indicador discreto durante el PRIMER fetch. */}
-            <TotalsHeroSection
-              composition={pricingDetail}
-              currency={currencyDisplay}
-              displayRate={displayRate}
-              viewMode={viewMode}
-              onViewModeChange={setViewMode}
-              previewStatus={previewStatus}
-              hasResponse={backendPreview != null}
-              previewStale={previewStatus === "error" && backendPreview != null}
-            />
-
-            {/* FASE 8.2.3 — Cobro migrado a <PaymentCard>.
-                Sin lógica: state `payments[]` + sync a `draft.paidAmount`
-                permanecen en este componente. La card es presentacional. */}
-            <PaymentCard
-              payments={payments}
-              effectiveTotal={effectiveTotals.total}
-              totalCobrado={totalCobrado}
-              balance={balance}
-              open={paymentOpen}
-              onOpenChange={setPaymentOpen}
-              onAddPayment={addPayment}
-              onUpdatePayment={updatePayment}
-              onRemovePayment={removePayment}
-              paymentMethodOptions={PAYMENT_METHOD_MOCK_OPTIONS}
-              depositOptions={DEPOSIT_MOCK_OPTIONS}
-              currencyOptions={CURRENCY_MOCK_OPTIONS.map(c => ({ value: c.id, label: c.label }))}
-              fmtCurrency={mFmt}
-            />
-
-            {/* Impacto en cuenta corriente (colapsable) */}
-            <TPCard
-              title="Impacto cta. cte."
-              bodyClassName="!p-3"
-              headerClassName="!py-2"
-              collapsible
-              open={impactOpen}
-              onOpenChange={setImpactOpen}
-              right={
-                <span className="text-[11px]">
-                  <span className="text-muted">Saldo después </span>
-                  <span className={cn(
-                    "font-semibold tabular-nums",
-                    balanceAfter > 0 ? "text-red-500" : balanceAfter < 0 ? "text-emerald-500" : "text-text"
-                  )}>
-                    {mFmt(balanceAfter)}
-                  </span>
-                </span>
-              }
-            >
-              <div className="space-y-1.5 text-[11px]">
-                <div className="flex justify-between">
-                  <span className="text-muted">Saldo antes</span>
-                  <span className="tabular-nums font-semibold text-text">{mFmt(balanceBefore)}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-muted">Impacto</span>
-                  <span className="tabular-nums font-semibold text-amber-500">{mFmt(effectiveTotals.total - draft.paidAmount)}</span>
-                </div>
-                <div className="flex justify-between border-t border-border/60 pt-1.5">
-                  <span className="font-semibold text-text">Saldo después</span>
-                  <span className={cn(
-                    "tabular-nums font-bold",
-                    balanceAfter > 0 ? "text-red-500" : balanceAfter < 0 ? "text-emerald-500" : "text-text"
-                  )}>
-                    {mFmt(balanceAfter)}
-                  </span>
-                </div>
-              </div>
-            </TPCard>
-          </aside>
-        </div>
-
-        {/* ── Panel de validación pricing (paso 7 — Factura V1) ────────────
-            Colapsable, no intrusivo. Lee `backendPreview.result` y lo pasa
-            por `normalizeSalesPreview` para mostrar documentTotals,
-            metalHechuraBreakdown y taxBreakdown alineados con el Simulador.
-            El render principal de la factura (aside con totales) sigue
-            intacto — este panel es solo capa de validación. */}
-        <details className="rounded-md border border-border/60 bg-surface/30 px-3 py-2">
-          <summary className="cursor-pointer text-[11px] font-semibold uppercase tracking-wider text-muted hover:text-text">
-            Validación pricing (motor)
-            <TPTechPricingLoader
-              active={previewStatus === "loading"}
-              label="Recalculando…"
-              className="ml-2"
-            />
-            {previewStatus === "error" && <span className="ml-2 font-normal text-red-500">error</span>}
-          </summary>
-          <div className="mt-2">
-            <SalePricingPanel
-              result={
-                backendPreview && backendPreview.signature === previewSignature
-                  ? backendPreview.result
-                  : null
-              }
-              emptyText={
-                previewStatus === "loading"
-                  ? "Esperando respuesta del backend…"
-                  : previewStatus === "error"
-                    ? "El último preview falló. Editá una línea para reintentar."
-                    : "Sin datos del backend todavía."
-              }
-            />
+          {/* MAIN-BELOW-LINES (inline) — cards de la region
+              "mainBelowLines" del layout V2 persistido. SSOT del default
+              vive en `MAIN_BELOW_LINES_BY_PRESET`, pero el layout
+              concreto (incluyendo vistas guardadas) puede override esa
+              region por card. Aca leemos directamente del `layoutV2.cards`
+              para que vistas personalizadas restauren la region exacta.
+              En CLASSIC (STACKED_FULL_WIDTH), Observations NO va aca
+              porque la col-izq es full width (col-span-2) y dejaria
+              Observations arriba con el aside vacio al lado. CLASSIC
+              renderea Observations como celda separada del grid mas
+              abajo, para que quede en la fila 2 al lado del aside. */}
+          {(() => {
+            if (layoutMode === "STACKED_FULL_WIDTH") return null;
+            const mainCards = invoiceLayout.layoutV2.cards
+              .filter((c) => c.region === "mainBelowLines")
+              .sort((a, b) => a.y - b.y);
+            if (mainCards.length === 0) return null;
+            const vc = invoiceUiPreferences.resolved.visibleCards;
+            return (
+              <>
+                {mainCards.map((c) => {
+                  if (c.id === "observations") {
+                    if (vc.observations === false) return null;
+                    return <React.Fragment key={c.id}>{observationsJsx}</React.Fragment>;
+                  }
+                  return null;
+                })}
+              </>
+            );
+          })()}
           </div>
-        </details>
+
+          {/* MAIN-BELOW-LINES (celda separada en STACKED) — solo CLASSIC.
+              Cuando la col-izq es col-span-2 (fila 1 full width con
+              Datos+Lineas), este <div> cae como segundo hijo del grid
+              en la fila 2 col 1, alineado verticalmente con el aside
+              que va a fila 2 col 2. Resultado visual:
+                Fila 1: [ Datos + Lineas             ]   ← col-izq full
+                Fila 2: [ Observations | aside cards ]
+              `min-w-0` evita que Observations infle la columna.
+              Lee de `layoutV2.cards` con region="mainBelowLines" para
+              que vistas guardadas restauren la region exacta. */}
+          {(() => {
+            if (layoutMode !== "STACKED_FULL_WIDTH") return null;
+            const mainCards = invoiceLayout.layoutV2.cards
+              .filter((c) => c.region === "mainBelowLines")
+              .sort((a, b) => a.y - b.y);
+            const hasObservations = mainCards.some((c) => c.id === "observations");
+            if (!hasObservations) return null;
+            const vc = invoiceUiPreferences.resolved.visibleCards;
+            if (vc.observations === false) return null;
+            return (
+              <div className="min-w-0 space-y-2">
+                {observationsJsx}
+              </div>
+            );
+          })()}
+
+          {/* Aside derecho: render dinámico — itera `layout.cards` del slot
+              "aside" en el orden definido por el layout. El DEFAULT_LAYOUT
+              replica el orden histórico. En modo edición (`editLayoutMode`),
+              cada card se envuelve en `<DraggableCard>` y el bucket entero
+              en `<LayoutDndContext>`. En modo lectura ambos wrappers se
+              omiten → el modal se ve idéntico al pre-Fase 2.
+              UX.9 — el <aside> ahora es la SEGUNDA columna de la grid
+              global (alineada con el Header). Antes vivía en una grid
+              interna que solo cubría la zona inferior. */}
+          <aside
+            ref={asideRef}
+            // Container del aside — ÚNICO HIJO es `<LayoutGridContext>` que
+            // posiciona las cards en absoluto sobre su propia grilla. NO
+            // aplicamos flex / space-y / gap al `<aside>` porque solo hay
+            // un hijo (el grid) y cualquier display alternativo crea ruido
+            // visual o interfiere con el cálculo de `clientWidth` del
+            // ResizeObserver del LayoutGridContext.
+            //   · Lectura: container neutro — el grid V2 dibuja el layout.
+            //   · Edición: agregamos un ring discreto + fondo dotted como
+            //     "affordance" de superficie editable. La grilla guía
+            //     desaparece al salir.
+            // El operador percibe que el aside es una superficie viva sin
+            // que el CSS pelee con el posicionamiento absoluto del grid.
+            className={editLayoutMode
+              ? "relative rounded-md p-2 ring-1 ring-dashed ring-primary/20 [background-image:radial-gradient(circle,_var(--tw-shadow-color)_1px,_transparent_1px)] [background-size:16px_16px] shadow-primary/20"
+              : "relative"}
+            data-tp-invoice-aside-edit-mode={editLayoutMode || undefined}
+          >
+            {/* FASE 8.2 — Cards extraídos a ./ventas-facturas/InvoiceEditorModal/.
+                Sin lógica comercial: solo passthrough de value/onPatch.
+                Fase 2 — render envuelto en DnD condicional al modo edición.
+                Fase 3 — resize por card con widths discretos. */}
+            {(() => {
+              // Dispatcher por id → JSX exacto del card. Cero cambio comercial:
+              // los props son los mismos que en el render hardcoded histórico.
+              const renderAsideCard = (id: CardId): React.ReactNode => {
+                // UX.21 — filtro `visibleCards`: si el usuario ocultó un
+                // card desde Configuración, devolver null aquí lo elimina
+                // del render dinámico SIN romper el layout (el flex/space-y
+                // del aside maneja huecos automáticamente). El `getCardsBySlot`
+                // sigue trayéndolos en su orden persistido — solo el
+                // dispatcher decide no renderizarlos.
+                const vc = invoiceUiPreferences.resolved.visibleCards;
+                const togKey =
+                  id === "account-impact" ? "accountImpact" :
+                  id === "discount"     ? "discount"     :
+                  id === "shipping"     ? "shipping"     :
+                  id === "coupon"       ? "coupon"       :
+                  id === "totals"       ? "totals"       :
+                  id === "payments"     ? "payments"     :
+                  id === "observations" ? "observations" :
+                  null;
+                if (togKey && vc[togKey] === false) return null;
+                switch (id) {
+                  case "discount":
+                    return (
+                      <DiscountCard
+                        value={draft.discountGlobal}
+                        onPatch={patchDiscountGlobal}
+                        open={discountOpen}
+                        onOpenChange={setDiscountOpen}
+                        fmtCurrency={mFmt}
+                        favoriteType={favoriteDiscountType}
+                        onSetFavoriteType={handleSetFavoriteDiscountType}
+                      />
+                    );
+                  case "shipping":
+                    return (
+                      <ShippingCard
+                        value={draft.shipping}
+                        onPatch={patchShipping}
+                        open={shippingOpen}
+                        onOpenChange={setShippingOpen}
+                        fmtCurrency={mFmt}
+                        // Conversion FX para que la tarifa del carrier
+                        // (persistida en BASE) se hidrate en moneda DOC
+                        // cuando el comprobante NO esta en base.
+                        documentFxRate={
+                          typeof draft.fxRate === "number" && draft.fxRate > 0
+                            ? draft.fxRate
+                            : 1
+                        }
+                        // Moneda DOC para formatear el cost del header
+                        // SIN doble conversion. El cost del draft ya esta
+                        // en moneda DOC; pasandole el code de DOC, el
+                        // header lo muestra con el prefijo correcto.
+                        documentCurrencyCode={currencyDisplay}
+                        // Moneda BASE para el helper "Tarifa: ARS X"
+                        // cuando el comprobante esta en otra moneda y
+                        // el operador quiere ver la tarifa original del
+                        // catalogo lado a lado con el valor convertido.
+                        baseCurrencyCode={
+                          currencies.find((c) => c.isBase)?.code
+                        }
+                      />
+                    );
+                  case "coupon":
+                    // Cupón de venta — solo manda couponCode al backend.
+                    return (
+                      <CouponCard
+                        draft={draft}
+                        onChange={onChange}
+                        clientId={selectedClient?.id}
+                        onApplied={() => { /* draft.couponCode ya está en deps de previewSignature → recálculo automático */ }}
+                      />
+                    );
+                  case "totals":
+                    // Etapa B — Card maestro "Total del comprobante".
+                    // Fusiona Hero + selector de Balance Mode + summary de
+                    // balance (UNIFIED/BREAKDOWN) en una única pieza
+                    // jerárquica. Cero matemática: passthrough del preview.
+                    // El TPBalanceModeSelector queda integrado INLINE en el
+                    // header del card (ya no flota suelto).
+                    //
+                    // UX.7 — `className="mt-2"` agrega ~8px adicionales sobre
+                    // el `space-y-3` base del aside → SEPARACIÓN JERÁRQUICA
+                    // entre los cards de configuración (Discount/Shipping/
+                    // Coupon) y el Total. En modo edición el aside usa
+                    // `flex-wrap gap-3` y el mt-2 queda absorbido por el
+                    // gap del flex → cero impacto en el layout draggable.
+                    return (
+                      <TotalDelComprobanteCard
+                        className="mt-2"
+                        totalDocument={effectiveTotals.total}
+                        currencyCode={
+                          backendPreview?.result?.responseCurrencyCode
+                            ?? backendPreview?.result?.balanceBreakdown?.monetaryBalance?.currencyCode
+                            ?? currencyDisplay
+                        }
+                        balanceMode={backendPreview?.result?.balanceMode}
+                        balanceModeSource={backendPreview?.result?.balanceModeSource}
+                        balanceBreakdown={backendPreview?.result?.balanceBreakdown ?? null}
+                        balanceModeOverride={draft.balanceModeOverride ?? null}
+                        onBalanceModeOverrideChange={(next) => {
+                          onChange({ ...draft, balanceModeOverride: next });
+                        }}
+                        overrideDisabled={draft.status !== "DRAFT"}
+                        channelName={pricingDetail.channelName}
+                        priceListName={backendPreview?.result?.appliedPriceListName ?? null}
+                        // Etapa UX-Comercial (2026-05-30 — POLICY §R-Rounding-16) —
+                        // Valor comercial agregado del metal del documento.
+                        // Passthrough EXACTO de `documentTotals.metalCostSubtotal`
+                        // que el motor emite (suma de `line.metalCost × qty`
+                        // por línea METAL). Con este prop, el card cambia
+                        // Patrimonio Metálico de valor físico (valuationMonetary)
+                        // a valor comercial (metalCost) — Patrimonio + Saldo =
+                        // Total sin METAL_MARGIN visible en el detalle.
+                        commercialMetalValueSum={
+                          (backendPreview?.result as any)?.documentTotals?.metalCostSubtotal ?? null
+                        }
+                        // Etapa UX.32 (2026-05-30) — desglose por metal padre
+                        // del valor comercial (Σ lineCost × qty agregado por
+                        // metalName). Agregación pura — sin recalcular nada
+                        // del motor. Invariante: Σ valores === metalCostSubtotal
+                        // (verificado E2E qty=1, 3, 7).
+                        commercialMetalValueByParent={
+                          buildCommercialMetalValueByParent(
+                            (backendPreview?.result as any)?.lines ?? [],
+                          )
+                        }
+                        // Etapa UX-Saldo — mapa lineId → nombre del artículo
+                        // para resolver el "Origen" del Patrimonio Metálico.
+                        // Passthrough puro desde el preview: cada línea aporta
+                        // su `id` y su `articleName` (o description como
+                        // fallback). Sin matemática, sin lookup adicional.
+                        lineArticleNames={
+                          ((backendPreview?.result as any)?.lines ?? []).reduce(
+                            (acc: Record<string, string>, ln: any) => {
+                              const id = typeof ln?.id === "string" ? ln.id : null;
+                              if (!id) return acc;
+                              const name = (typeof ln?.articleName === "string" && ln.articleName.trim())
+                                || (typeof ln?.description === "string" && ln.description.trim())
+                                || (typeof ln?.articleCode  === "string" && ln.articleCode.trim())
+                                || null;
+                              if (name) acc[id] = name;
+                              return acc;
+                            },
+                            {} as Record<string, string>,
+                          )
+                        }
+                        // METALES — consolidación por metal padre desde
+                        // `composition.metals[]` + `metalHechuraBreakdown` de las
+                        // líneas. Usa los MISMOS helpers que el mini desglose por
+                        // línea (`buildMetalParentSaleLines` + `computeMetalSaleFactor`)
+                        // → PARIDAD EXACTA línea ↔ documento (gramos LADO VENTA
+                        // con `metalSaleFactor`, monto = Σ `lineSale` × qty).
+                        // El card prefiere esta fuente derivada; el
+                        // `balanceBreakdown.metals[]` del backend queda como
+                        // fallback para snapshots sin `lines`.
+                        documentMetals={deriveDocumentMetalsFromLines(
+                          backendPreview?.result?.lines ?? [],
+                        )}
+                        // Bucket HECHURA puro — fallback cuando el backend no
+                        // popula `monetaryBalance.components[]` con group=HECHURA.
+                        // El helper deriva Σ `hechuraSale × quantity` desde las
+                        // líneas (paridad línea↔documento). Passthrough puro
+                        // del campo que el motor ya emitió per línea, igual
+                        // patrón que `documentMetals`.
+                        hechuraLines={backendPreview?.result?.lines ?? []}
+                        // Etapa UX-Tax — filas síntesis del desglose
+                        // monetario: passthrough EXACTO de `documentTotals`
+                        // (cero recálculo). `subtotalCommercial` cierra la
+                        // sección "Construcción comercial"; `taxableBase`
+                        // queda destacada como la base sobre la que el
+                        // motor calculó los impuestos (POLICY §Tax.1
+                        // paso 11). Si el preview aún no respondió, los
+                        // dos quedan undefined y el card omite las filas.
+                        subtotalCommercial={backendPreview?.result?.documentTotals?.subtotalAfterLineDiscounts ?? null}
+                        taxableBase={backendPreview?.result?.documentTotals?.taxableBase ?? null}
+                        // POLICY §R-Rounding-3 — passthrough EXACTO del
+                        // `documentRoundingApplied` que emite el motor en
+                        // Etapa 1B. El card lo usa para distinguir
+                        // "Redondeo del comprobante" (modifica el total)
+                        // vs "Redondeo de lista" (ya absorbido en líneas).
+                        // Cuando es `null` y aún así viene un component
+                        // ROUNDING_MONETARY en el breakdown, el card lo
+                        // marca como rounding de lista (informativo).
+                        documentRoundingApplied={backendPreview?.result?.documentTotals?.documentRoundingApplied ?? null}
+                        // Manual Adjustment Etapa A — passthrough EXACTO del
+                        // engineTotal + snapshot del ajuste manual del preview.
+                        // Hero usa `totalDocument` (`= finalTotal` cuando hay
+                        // ajuste). El editor del card consume `manualAdjustmentDraft`
+                        // (la intención del operador, persistida en el draft)
+                        // y emite `onManualAdjustmentChange` que dispara un
+                        // nuevo preview. POLICY §R-Rounding-9: cero matemática
+                        // local — el monto del ajuste vive en `draft.manualAdjustment`,
+                        // viaja en `buildSalePreviewPayload`, y vuelve como
+                        // snapshot del backend para renderizar.
+                        engineTotal={(backendPreview?.result as any)?.engineTotal ?? null}
+                        manualAdjustment={(backendPreview?.result as any)?.manualAdjustment ?? null}
+                        // Etapa 3A — campos canónicos top-level (backend Etapa 1+2).
+                        // Reference aliasing: comparten objeto con los legacy. El card
+                        // los prefiere; los legacy quedan como fallback. Cuando el frontend
+                        // se migre completo, los legacy se eliminan.
+                        manualAdjustmentSnapshot={(backendPreview?.result as any)?.manualAdjustmentSnapshot ?? null}
+                        documentRoundingSnapshot={(backendPreview?.result as any)?.documentRoundingSnapshot ?? null}
+                        // Etapa D' — Snapshot del redondeo COMERCIAL PER_DOCUMENT.
+                        // Vive dentro de `documentTotals.commercialDocumentRoundingApplied`
+                        // (mismo lugar que el SaleDocumentTotals devuelve). Cuando la
+                        // lista opera en PER_LINE_LEGACY el campo es null/undefined →
+                        // la sub-sección del diagnóstico muestra el placeholder legacy.
+                        commercialDocumentRoundingSnapshot={
+                          (backendPreview?.result as any)?.documentTotals?.commercialDocumentRoundingApplied ?? null
+                        }
+                        // F1 — Aplana por flatMap puro las entries del redondeo
+                        // COMERCIAL PHYSICAL de todas las líneas del preview. Cada
+                        // entry conserva preGrams/postGrams/deltaGrams/monetaryEquivalent
+                        // del backend (cero matemática frontend — sólo concat).
+                        // Cuando todas las líneas son MONETARY o no hay redondeo
+                        // PHYSICAL activo, el array queda vacío y el bloque del card
+                        // no se renderiza (degradación segura).
+                        //
+                        // El backend emite `postGrams` POR UNIDAD del metal padre.
+                        // Inyectamos `quantity` desde la línea de origen para que el
+                        // agregador del card (`aggregateCommercialPostGrams`) pueda
+                        // escalar a gramos TOTALES del documento — paridad con el
+                        // monto monetario del balance, que sí viene ya × cantidad.
+                        commercialPhysicalRoundedMetals={
+                          ((backendPreview?.result as any)?.lines ?? []).flatMap(
+                            (ln: any) => {
+                              const metals = ln?.appliedRounding?.physical?.metals ?? [];
+                              const qty = ln?.quantity;
+                              return metals.map((m: any) => ({ ...m, quantity: qty }));
+                            },
+                          )
+                        }
+                        manualAdjustmentDraft={draft.manualAdjustment ?? null}
+                        onManualAdjustmentChange={(next) => {
+                          // El card emite la INTENCIÓN del operador (UNIFIED
+                          // o BREAKDOWN). El draft la persiste tal cual.
+                          //
+                          // Auto-promoción a BREAKDOWN: si el operador edita
+                          // ajuste manual con scope="BREAKDOWN" y el draft NO
+                          // tiene un `balanceModeOverride` explícito, lo
+                          // promovemos automáticamente. Sin esto, el backend
+                          // resuelve UNIFIED por jerarquía R11.4 y los guards
+                          // de previewSale/confirmSale tiran 400 ("scope=
+                          // BREAKDOWN no compatible con modo UNIFIED").
+                          //
+                          // Regla 100% reversible — el operador puede volver
+                          // a UNIFIED clickeando el selector inline.
+                          //
+                          // Lógica encapsulada en helper PURO:
+                          // `lib/sales/promoteManualAdjustmentChange.ts`.
+                          onChange(promoteManualAdjustmentChange(draft, next as any));
+                        }}
+                        manualAdjustmentDisabled={draft.status !== "DRAFT"}
+                        // Refinamiento Fase A — bloque de estado comercial
+                        // al pie del card. Usa los conteos agregados por
+                        // `aggregateDocumentStatus` (cero matemática nueva).
+                        commercialStatus={documentCommercialStatus}
+                      />
+                    );
+                  case "payments":
+                    // FASE 8.2.3 — Cobro migrado a <PaymentCard>.
+                    return (
+                      <PaymentCard
+                        payments={payments}
+                        effectiveTotal={effectiveTotals.total}
+                        totalCobrado={totalCobrado}
+                        balance={balance}
+                        open={paymentOpen}
+                        onOpenChange={setPaymentOpen}
+                        onAddPayment={addPayment}
+                        onUpdatePayment={updatePayment}
+                        onRemovePayment={removePayment}
+                        paymentMethodOptions={PAYMENT_METHOD_MOCK_OPTIONS}
+                        depositOptions={DEPOSIT_MOCK_OPTIONS}
+                        currencyOptions={CURRENCY_MOCK_OPTIONS.map(c => ({ value: c.id, label: c.label }))}
+                        fmtCurrency={mFmt}
+                      />
+                    );
+                  case "account-impact":
+                    // Etapa A.5 — Card "Impacto en cuenta corriente" limpio.
+                    // Read-only, sin mock, sin matemática nueva: passthrough
+                    // del `balanceMode`/`balanceBreakdown` del preview + draft
+                    // local (`paidAmount`, `balance` ya calculado). Mientras
+                    // el backend no exponga saldo previo real de CC, el card
+                    // muestra una nota informativa explícita.
+                    return (
+                      <TPCard
+                        title="Impacto en cuenta corriente"
+                        bodyClassName="!p-3"
+                        headerClassName="!py-2"
+                        collapsible
+                        open={impactOpen}
+                        onOpenChange={setImpactOpen}
+                      >
+                        <TPSaleAccountImpactCard
+                          totalDocument={effectiveTotals.total}
+                          paidAmount={draft.paidAmount}
+                          balancePending={balance}
+                          currencyCode={
+                            backendPreview?.result?.responseCurrencyCode
+                              ?? backendPreview?.result?.balanceBreakdown?.monetaryBalance?.currencyCode
+                          }
+                          balanceMode={backendPreview?.result?.balanceMode}
+                          balanceBreakdown={backendPreview?.result?.balanceBreakdown ?? null}
+                        />
+                      </TPCard>
+                    );
+                  case "observations":
+                    // Observaciones / Términos / Adjuntos — integrada al
+                    // aside como una card configurable más. JSX reutilizado
+                    // de `observationsJsx` (mismo TPCollapse + mismos
+                    // handlers; cero cambio de comportamiento ni de
+                    // persistencia del comprobante).
+                    return observationsJsx;
+                  // Otras `CardId` (header/lines) NO viven en el slot
+                  // "aside" — el filter por slot las descarta antes.
+                  default:
+                    return null;
+                }
+              };
+              // Etapa 4 fix — `LayoutGridContext` es la SSOT del render
+              // del aside en AMBOS modos:
+              //   · readOnly={true}  (lectura) → posiciona las cards con
+              //     x/y/w/h del V2 persistido, SIN handles ni DnD.
+              //   · readOnly={false} (edición) → DnD XY libre + resize +
+              //     previews + commit a `setLayoutV2`.
+              //
+              // Constraint & Balance fix — regionOriginX / regionColumns
+              // se calculan DINÁMICAMENTE de las cards aside del layout
+              // actual. Antes estaban hardcoded (8, 4), lo que rompía
+              // CLASSIC (cards a x=7, w=5) y FOCUS (cards a x=9, w=3).
+              // Ahora cada preset declara su propia anchura del aside
+              // implicitamente en las posiciones de sus cards, y el
+              // GridContext la respeta.
+              const asideCards = invoiceLayout.layoutV2.cards
+                .filter((c) => c.region === "aside");
+              // Cuando el preset declara `forceSingleColumn` (CLASSIC,
+              // ONE_LINE), el aside HTML se monta DEBAJO de Líneas con
+              // ancho completo (asideColumnCss="1fr"). Para que las
+              // cards posicionadas con coords absolutas del preset
+              // (ej. CLASSIC en x=7, w=5) se vean a la derecha sobre
+              // ese fondo full-width, el grid del aside tiene que ser
+              // de 12 columnas también — si lo recortáramos al ancho
+              // efectivo de las cards, todo se apretaría a la izquierda.
+              // En TWO_COLS_FROM_TOP (COMPACT) mantenemos el cálculo
+              // dinámico: el grid se ajusta al ancho del aside lateral.
+              const isFullWidthAside = invoiceViewPreset.resolved.forceSingleColumn;
+              const asideOriginX = isFullWidthAside
+                ? 0
+                : (asideCards.length > 0
+                    ? Math.min(...asideCards.map((c) => c.x))
+                    : 8);
+              const asideMaxRight = asideCards.length > 0
+                ? Math.max(...asideCards.map((c) => c.x + c.w))
+                : 12;
+              const asideColumns = isFullWidthAside
+                ? 12
+                : Math.max(1, asideMaxRight - asideOriginX);
+              return (
+                <LayoutGridContext
+                  layout={invoiceLayout.layoutV2}
+                  region="aside"
+                  regionOriginX={asideOriginX}
+                  regionColumns={asideColumns}
+                  onLayoutChange={invoiceLayout.setLayoutV2}
+                  renderCard={(id) => renderAsideCard(id)}
+                  readOnly={!editLayoutMode}
+                />
+              );
+            })()}
+
+          </aside>
+
+          {/* Observaciones ahora vive dentro del <aside> (último ítem por
+              default) como una card más del layout configurable. El render
+              hardcoded para SINGLE_COLUMN se eliminó. */}
+        </div>
+          );
+        })()}
+
+        {/* Panel "Validación pricing (motor)" removido de la UI de Factura
+            de ventas (era un panel técnico de debug). El componente
+            `SalePricingPanel`, sus tests, y los helpers asociados
+            (`normalizeSalesPreview`, etc.) siguen vivos en el codebase para
+            uso interno (logParity en background, debugging puntual, etc.). */}
+
+        {/* Printable oculto — se monta para que `handlePrintDocument` pueda
+            copiar su `outerHTML` a una ventana popup y disparar el print.
+            Consume el template configurado en "Configuración del sistema →
+            Documentos → Plantilla: Factura" + perfil real del tenant +
+            datos del draft. Mantiene `aria-hidden` para no contaminar
+            screen readers ni tab order; `position: fixed` fuera del viewport
+            para que no afecte el layout del modal. */}
+        <div
+          ref={printableRef}
+          aria-hidden="true"
+          style={{
+            position: "fixed",
+            left: "-100000px",
+            top:  "-100000px",
+            width: `${printTemplate.pageWidthMm}mm`,
+            pointerEvents: "none",
+          }}
+        >
+          <SaleInvoicePrintable
+            config={printTemplate}
+            company={printCompany}
+            documentNumber={draft.number || ""}
+            documentDate={draft.date || ""}
+            clientName={draft.clientSnapshot?.name || draft.client || ""}
+            clientTaxId={
+              draft.clientSnapshot?.documentNumber
+                ? `${draft.clientSnapshot.documentType || "Doc"}: ${draft.clientSnapshot.documentNumber}`
+                : undefined
+            }
+            clientAddress={draft.clientSnapshot?.address}
+            lines={draft.lines}
+            totals={{
+              subtotal:       effectiveTotals.subtotal,
+              discountAmount: effectiveTotals.discountAmount ?? 0,
+              taxAmount:      effectiveTotals.taxAmount,
+              total:          effectiveTotals.total,
+            }}
+            currencyCode={currencyDisplay}
+            fxRate={typeof draft.fxRate === "number" ? draft.fxRate : 1}
+            notes={draft.notes}
+            terms={draft.terms}
+            sellerName={undefined}
+            warehouseName={whLabel !== "Sin almacén" ? whLabel : undefined}
+            paymentTermName={draft.paymentTerm || undefined}
+            // 1.E — Estado para decidir si renderear sello (BORRADOR / ANULADA).
+            // Confirmados (PENDING/PARTIAL/PAID) imprimen limpios.
+            status={draft.status}
+          />
+        </div>
+        {/* Etapa 5 — cierre del fieldset disabled abierto justo después del
+            banner READ-ONLY. */}
+        </fieldset>
       </div>
     </Modal>
 
@@ -5511,18 +7056,12 @@ function InvoiceEditorModal(props: {
       items={labelItems}
     />
 
-    {/* ── 1.E parte 2 — Modal: Enviar factura por mail ──────────────────── */}
-    {/*  `jewelryName` queda en `null` por ahora — cuando este modal se
-         monte en el mismo arbol que el printable HTML (que carga
-         `fetchCompanyFullProfile()`), se va a pasar `printCompany.legalName
-         || printCompany.name`. Por ahora el subject/body simplemente
-         omiten el nombre de la joyeria sin romper. */}
+    {/* ── 1.E parte 2 + Parte 2.2 — Modal: Enviar factura por mail ──────── */}
     <SendInvoiceEmailModal
       open={emailModalOpen}
       loading={emailSending}
-      // DRAFT usa Sale.code (`draft.number`); confirmados usan Receipt.code
-      // (`officialNumber`). Mantiene paridad con el filename del PDF y el
-      // watermark renderizado server-side.
+      // DRAFT usa Sale.code; confirmados usan Receipt.code. Paridad con
+      // el filename del PDF y el watermark server-side.
       invoiceNumber={
         draft.status === "DRAFT"
           ? draft.number
@@ -5531,12 +7070,12 @@ function InvoiceEditorModal(props: {
       status={draft.status}
       customerEmail={draft.clientSnapshot?.email ?? null}
       customerName={draft.clientSnapshot?.name ?? draft.client ?? null}
-      jewelryName={null}
+      jewelryName={printCompany.legalName || printCompany.name || null}
       invoiceDate={draft.date ?? null}
       // Parte 2.2 — plantillas tenant-wide persistidas en DocumentTemplate.
-      // Si estan vacias, el modal cae al default state-aware hardcoded.
-      defaultSubjectTemplate={emailTemplates.subject}
-      defaultMessageTemplate={emailTemplates.message}
+      // Si estan vacias el modal cae al default state-aware hardcoded.
+      defaultSubjectTemplate={printTemplate.emailSubjectTemplate ?? null}
+      defaultMessageTemplate={printTemplate.emailMessageTemplate ?? null}
       onClose={() => setEmailModalOpen(false)}
       onSubmit={handleEmailSubmit}
       onSaveAsTemplate={handleSaveEmailTemplateDefaults}
@@ -5725,6 +7264,37 @@ function InvoiceEditorModal(props: {
       onUpdateSystemChange={setFxUpdateSystem}
       onApply={applyFx}
     />
+
+    {/* Fase A — política comercial: modal de confirmación reforzada.
+        Solo se abre cuando el operador toca "Crear" y el comprobante
+        tiene líneas CRITICAL (margen bloqueante, precio cero, pérdida,
+        etc.). NO bloquea: ofrece "Volver y revisar" o "Confirmar
+        igualmente". Cero matemática — passthrough de `policy` y
+        `alerts` del pricing-engine. */}
+    <CommercialPolicyConfirmModal
+      open={commercialModalOpen}
+      onClose={() => setCommercialModalOpen(false)}
+      onConfirm={acceptCommercialRisk}
+      criticalLines={
+        matchedNormalized.flatMap((line, idx) => {
+          if (!line) return [];
+          if (deriveCommercialLevel(line) !== "CRITICAL") return [];
+          const draftLine = draft.lines[idx];
+          // Label preferido: nombre del artículo del catálogo. Cae a
+          // descripción manual y, por último, al número de línea.
+          const label = draftLine?.article
+            || draftLine?.manualDescription
+            || draftLine?.title
+            || `Línea ${idx + 1}`;
+          return [{ label, line }];
+        })
+      }
+    />
+
+    {/* Modal de confirmacion reusable — reemplaza window.confirm para
+        los 4 gates destructivos del editor (descartar cambios, cerrar
+        con cambios pendientes, restaurar diseno, aplicar plantilla). */}
+    {confirmDialog.dialog}
     </>
   );
 }

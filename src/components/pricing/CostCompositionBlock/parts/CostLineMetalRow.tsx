@@ -5,13 +5,20 @@
 //
 //   L1: nombre del metal padre            ............  Costo total (motor)
 //   L2: código · nombre variante
-//   ── Costo unit.   → SOLO base: gr × precio/gr BASE (sin merma)
-//   ── Merma/Ajuste  → nivel A: "Merma X,XX %"  (valor ingresado)
-//                       nivel B: impacto monetario (solo si el motor lo emite)
+//   ── Costo unit.   → gr × precio/gr EFECTIVO (con merma) = Costo total
+//   ── Merma/Ajuste  → "Merma X,XX %"  (solo el valor ingresado, contexto)
 //
-// REGLA CRÍTICA (POLICY R4.5): read-only. El precio/gr mostrado es el BASE
-// (pre-merma) que emite el motor (`quotePrice`); la merma NO se funde en él.
-// El total y el impacto vienen del motor — el frontend NO recalcula.
+// LECTURA (decisión de producto 2026-06): el "Costo unit." muestra el costo
+// por gramo EFECTIVO (`total / gr`, el mismo "Valor unitario" de la tabla
+// inferior, que YA incluye la merma) y el `= Costo total`, de modo que la
+// fórmula multiplique EXACTO al total mostrado. La merma queda como contexto
+// (solo el %), sin volver a sumar su impacto monetario (ya está dentro del
+// valor unitario efectivo). Antes se mostraba el precio/gr BASE pre-merma + el
+// impacto aparte, lo que daba una fórmula que no cerraba contra el total.
+//
+// REGLA CRÍTICA (POLICY R6 / R4.5): read-only. `unitEffective = total / gr` es
+// el total del motor EXPRESADO COMO TASA — NO recalcula el costo. El total
+// sigue siendo el del motor; el frontend NO inventa ni revierte nada.
 // ============================================================================
 
 import React from "react";
@@ -66,31 +73,29 @@ export function CostLineMetalRow(props: CostLineMetalRowProps): React.ReactEleme
         <p className={cn(vt.text.hint, "font-semibold", vt.colors.labelSoft)}>{variantDesc}</p>
       )}
 
-      {/* Costo unit. — SOLO base (precio/gr PRE-merma) */}
-      {tri.base.unit != null && grStr != null && (
-        <div className={cn(vt.row.flexBetween, vt.colors.formula)}>
-          <span className={vt.text.label}>Costo unit.</span>
-          <span className={cn(vt.text.formulaCompact, "tabular-nums")}>
-            {grStr} gr × {fm(tri.base.unit)}/gr
-          </span>
-        </div>
+      {/* Costo unit. — precio/gr EFECTIVO (con merma) = Costo total.
+          unitEffective = total / gr (passthrough del total como tasa); cae al
+          base solo si no hay qty para dividir (legacy). La fórmula cierra exacto
+          contra el Costo total mostrado en L1.
+          JERARQUÍA — explica el ORIGEN del valor → alineado a la IZQUIERDA, gris
+          suave secundario, un solo color (no naranja), sin competir con el total
+          principal (L1, que sigue a la derecha). */}
+      {(tri.base.unitEffective ?? tri.base.unit) != null && grStr != null && (
+        <p className={cn(vt.text.formulaCompact, vt.colors.label, "tabular-nums text-left")}>
+          {grStr} gr × {fm((tri.base.unitEffective ?? tri.base.unit) as number)}/gr = {fm(tri.total)}
+        </p>
       )}
 
-      {/* Merma / Ajuste — nivel A (ingresado) + nivel B (impacto motor) */}
+      {/* Merma / Ajuste — SOLO el valor ingresado (contexto). El impacto
+          monetario NO se muestra aparte: ya está incluido en el valor unitario
+          efectivo de arriba (evita el doble conteo visual). Color gris
+          secundario (no naranja): es contexto informativo, no un ajuste que
+          deba destacarse. */}
       {tri.adjust && (
         <div className={cn(vt.row.flexBetween)}>
           <span className={cn(vt.text.label, vt.colors.label)}>Merma / Ajuste</span>
-          <span className="flex flex-col items-end leading-tight">
-            <span className={cn(vt.text.adjInput, vt.colors.surcharge)}>
-              {tri.adjust.inputLabel}
-            </span>
-            {tri.adjust.impact != null && (
-              <span className={cn(vt.text.adjImpact, vt.colors.surcharge)}>
-                {/* La merma SIEMPRE aumenta el costo → signo "+".
-                    Magnitud = |impacto| emitido por el motor (no se recalcula). */}
-                +{fm(Math.abs(tri.adjust.impact))}
-              </span>
-            )}
+          <span className={cn(vt.text.adjInput, vt.colors.labelSoft, "leading-tight")}>
+            {tri.adjust.inputLabel}
           </span>
         </div>
       )}

@@ -323,7 +323,13 @@ const IMP_COLS: TPColDef[] = [
 /* =========================================================
    Página principal
 ========================================================= */
-export default function ConfiguracionSistemaImpuestos() {
+export type ConfiguracionSistemaImpuestosProps = {
+  /** Cuando true, omitimos el TPSectionShell. Usado al montarse dentro
+   *  de `FinanzasCobrosPage` con tabs. Default false → standalone. */
+  embedded?: boolean;
+};
+
+export default function ConfiguracionSistemaImpuestos({ embedded = false }: ConfiguracionSistemaImpuestosProps = {}) {
   /* ---- estado principal ---- */
   const [rows, setRows] = useState<TaxRow[]>([]);
   const [loading, setLoading] = useState(false);
@@ -611,12 +617,21 @@ export default function ConfiguracionSistemaImpuestos() {
   /* =========================================================
      RENDER
   ========================================================= */
+  // Helper local — envuelve con TPSectionShell salvo en modo embedded.
+  const Shell = embedded
+    ? ({ children }: { children: React.ReactNode }) => <>{children}</>
+    : ({ children }: { children: React.ReactNode }) => (
+        <TPSectionShell
+          title="Impuestos y Tributos"
+          subtitle="Configurá los impuestos aplicables a las ventas"
+          icon={<Receipt size={22} />}
+        >
+          {children}
+        </TPSectionShell>
+      );
+
   return (
-    <TPSectionShell
-      title="Impuestos y Tributos"
-      subtitle="Configurá los impuestos aplicables a las ventas"
-      icon={<Receipt size={22} />}
-    >
+    <Shell>
       <TPTableKit
         rows={filteredRows}
         columns={IMP_COLS}
@@ -808,10 +823,24 @@ export default function ConfiguracionSistemaImpuestos() {
                     setFixedAmountNum(null);
                   }}
                   disabled={busySave}
-                  options={(Object.keys(CALC_TYPE_LABELS) as TaxCalculationType[]).map((k) => ({
-                    value: k,
-                    label: CALC_TYPE_LABELS[k],
-                  }))}
+                  // Decisión funcional: solo se OFRECEN los 2 modos simples
+                  // (Porcentaje, Monto fijo). El combinado "Porcentaje + Monto
+                  // fijo" se OCULTA del alta/edición porque genera confusión.
+                  // El backend lo sigue soportando para no romper impuestos
+                  // legacy: si el row guardado ya tiene PERCENTAGE_PLUS_FIXED,
+                  // se muestra como "(actual)" para preservar el dato; al
+                  // cambiar a uno simple desaparece y no se puede re-elegir.
+                  options={(() => {
+                    const SIMPLE: TaxCalculationType[] = ["PERCENTAGE", "FIXED_AMOUNT"];
+                    const opts = SIMPLE.map((k) => ({ value: k, label: CALC_TYPE_LABELS[k] }));
+                    if (draft.calculationType && !SIMPLE.includes(draft.calculationType)) {
+                      opts.push({
+                        value: draft.calculationType,
+                        label: `${CALC_TYPE_LABELS[draft.calculationType] ?? draft.calculationType} (actual)`,
+                      });
+                    }
+                    return opts;
+                  })()}
                 />
               </TPField>
 
@@ -1051,6 +1080,6 @@ export default function ConfiguracionSistemaImpuestos() {
       </Modal>
 
       <ConfirmDeleteDialog {...deleteDialogProps} />
-    </TPSectionShell>
+    </Shell>
   );
 }

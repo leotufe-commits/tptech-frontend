@@ -87,7 +87,7 @@ export function MetalEquivCard(props: MetalEquivCardProps): React.ReactElement {
       {/* ── Origen (expandible) ── */}
       {expanded && (
         <div className="border-t border-border/20 pt-1.5">
-          <p className="text-xs font-semibold uppercase tracking-widest text-muted/60 mb-1">Origen</p>
+          <p className={cn(vt.text.groupLabel, vt.colors.formula, "mb-1")}>Origen</p>
           <div className="space-y-1">
             {padre.variants.map((v, vi) => {
               const qStr  = v.grams    != null ? formatGrams(v.grams) : null;
@@ -174,8 +174,8 @@ export function MetalEquivCard(props: MetalEquivCardProps): React.ReactElement {
                 </span>
               </div>
               <div className="flex items-baseline justify-between gap-2 bg-muted/20 px-2 py-1 rounded mt-1">
-                <span className="text-xs font-bold text-muted/70">Subtotal</span>
-                <span className="text-xs tabular-nums font-bold text-foreground/70">{fm(totalValue)}</span>
+                <span className={cn(vt.text.subtotalRow, vt.colors.labelSoft)}>Subtotal</span>
+                <span className={cn(vt.text.subtotalRow, vt.colors.subtotal, "tabular-nums")}>{fm(totalValue)}</span>
               </div>
             </>
           ) : (
@@ -183,8 +183,8 @@ export function MetalEquivCard(props: MetalEquivCardProps): React.ReactElement {
               className="flex items-baseline justify-between gap-2 bg-muted/20 px-2 py-1 rounded"
               title={purePrice != null ? `${totalGrStr} gr × ${fm(purePrice)}/gr = ${fm(totalValue)}` : undefined}
             >
-              <span className="text-xs font-bold text-muted/70">Subtotal</span>
-              <span className="text-xs tabular-nums font-bold text-foreground/70">{fm(totalValue)}</span>
+              <span className={cn(vt.text.subtotalRow, vt.colors.labelSoft)}>Subtotal</span>
+              <span className={cn(vt.text.subtotalRow, vt.colors.subtotal, "tabular-nums")}>{fm(totalValue)}</span>
             </div>
           )}
         </div>

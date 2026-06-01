@@ -31,10 +31,29 @@ export type MetalSaleCardProps = {
   expanded:        boolean;
   onToggle:        () => void;
   display:         PricingStepsDisplay;
+  /** Override post-redondeo PHYSICAL del snapshot comercial
+   *  (`metalHechuraBreakdown.physical.metals[i].postGrams` matchado por
+   *  `metalParentId`/`metalParentName`). Cuando se provee, reemplaza el
+   *  display principal de gramos (cabecera + Total auditable) con el valor
+   *  post-redondeo. Si está ausente, se mantiene el cálculo actual
+   *  (`padre.totalEquivGr × metalSaleFactor`). Cero matemática nueva:
+   *  passthrough del snapshot ya emitido por el backend. */
+  postGramsOverride?: number | null;
+  /** Redondeo Comercial PER_DOCUMENT de ESTE metal (line-autonomous): gramos
+   *  pre→post, delta y su impacto monetario (`deltaGrams × valor comercial/gramo`).
+   *  Passthrough estricto de `lineCommercialRoundingMetals[]`. Cuando hay delta,
+   *  el card muestra el origen "1,36125 g → 1,40 g · +AR$ 9.675". `null`/sin
+   *  delta ⇒ no se muestra el bloque. */
+  commercialRounding?: {
+    preGrams:       number;
+    postGrams:      number;
+    deltaGrams:     number;
+    monetaryImpact: number;
+  } | null;
 };
 
 export function MetalSaleCard(props: MetalSaleCardProps): React.ReactElement {
-  const { padre, metalSaleFactor, marginPct, expanded, onToggle, display } = props;
+  const { padre, metalSaleFactor, marginPct, expanded, onToggle, display, postGramsOverride = null, commercialRounding = null } = props;
   const fm  = (v: number) => formatMoneyDisplay(v, display.rate, display.symbol);
   const fmM3 = (n: number) => formatGrams(n, 3);
 
@@ -46,7 +65,13 @@ export function MetalSaleCard(props: MetalSaleCardProps): React.ReactElement {
   const saleGrStr = saleGramsTotal != null ? formatGrams(saleGramsTotal) : null;
   const totalGrStr = formatGrams(padre.totalEquivGr);
   const spg = padre.totalEquivGr > 0.0001 ? padre.totalCost / padre.totalEquivGr : null;
-  const displayGrStr = saleGrStr ?? totalGrStr;
+  // Display principal: priorizar postGrams del snapshot PHYSICAL cuando esté
+  // disponible (paridad con aside "Total del comprobante" / MetalsSummary).
+  // El detalle pre→post→delta vive en `CommercialPhysicalRoundingBlock`.
+  const hasPostGramsOverride =
+    postGramsOverride != null && Number.isFinite(postGramsOverride) && postGramsOverride > 0;
+  const postGrStr = hasPostGramsOverride ? formatGrams(postGramsOverride as number) : null;
+  const displayGrStr = postGrStr ?? saleGrStr ?? totalGrStr;
 
   const firstSku = padre.variants[0]?.sku ?? null;
   const collapsedSummary = padre.variants.length > 0
@@ -88,7 +113,7 @@ export function MetalSaleCard(props: MetalSaleCardProps): React.ReactElement {
       {/* ── Origen (expandible) ── */}
       {expanded && padre.variants.length > 0 && (
         <div className="border-t border-border/20 pt-1.5">
-          <p className={cn(vt.text.label, "font-semibold uppercase tracking-widest mb-1", vt.colors.formula)}>Origen</p>
+          <p className={cn(vt.text.groupLabel, vt.colors.formula, "mb-1")}>Origen</p>
           <div className="space-y-1.5">
             {padre.variants.map((v, vi) => {
               // PASO 1 — equivalente de COSTO (gramos × ley [× merma]).
@@ -137,9 +162,26 @@ export function MetalSaleCard(props: MetalSaleCardProps): React.ReactElement {
               );
             })}
           </div>
-          {/* Total auditable: Σ de los gramos finales por variante. */}
+          {/* Redondeo comercial de GRAMOS — ajuste secundario de la construcción
+              de gramos. El +Δg va a la DERECHA, alineado con los gramos de las
+              variantes y el Total, para que se lea:  1,36 gr / +0,04 gr / 1,40 gr.
+              El impacto MONETARIO no va acá (va en la construcción del valor,
+              abajo). Passthrough del backend; solo si hay delta real. */}
+          {commercialRounding && Math.abs(commercialRounding.deltaGrams) > 1e-9 && (
+            <div
+              className={cn(vt.row.flexBetween, vt.text.formulaCompact, vt.colors.label, "tabular-nums mt-1.5")}
+              data-tp-metal-commercial-rounding
+            >
+              <span>Redondeo comercial</span>
+              <span className="font-semibold">
+                {commercialRounding.deltaGrams > 0 ? "+" : ""}{formatGrams(commercialRounding.deltaGrams)} gr
+              </span>
+            </div>
+          )}
+          {/* TOTAL — gramos finales (post-redondeo). Único valor alineado a la
+              DERECHA del detalle (es un total, no un origen). */}
           <div className={cn(vt.row.flexBetween, vt.text.subLabel, "tabular-nums border-t border-border/20 pt-1.5 mt-1.5")}>
-            <span className={cn("min-w-0 truncate", vt.colors.label)}>
+            <span className={cn("min-w-0 truncate font-semibold", vt.colors.label)}>
               Total{padre.variants.length > 1 ? (
                 <span className={cn("ml-1 font-mono text-[10px]", vt.colors.labelSoft)}>
                   {padre.variants
@@ -154,6 +196,32 @@ export function MetalSaleCard(props: MetalSaleCardProps): React.ReactElement {
             </span>
             <span className={cn("shrink-0 font-bold", vt.colors.subtotal)}>{displayGrStr} gr</span>
           </div>
+          {/* Monetización del metal (construcción del VALOR, alineada a la
+              IZQUIERDA, gris secundario):
+                valor base   = gramos venta × valor comercial/gramo (= padre.totalCost)
+                + redondeo   = impacto monetario del redondeo comercial (backend)
+                = valor final
+              `basePricePerGr` (= totalCost/saleGr) y `padre.totalCost` ya están
+              calculados; el "final" es la suma display de dos valores backend
+              (misma moneda — displayRate=1 en el Simulador). Cero recálculo de
+              pricing: solo muestra "base + ajuste = resultado". */}
+          {saleGrStr != null && basePricePerGr != null && (
+            <div className="mt-1 space-y-px">
+              <p className={cn(vt.text.formulaCompact, vt.colors.label, "text-left")}>
+                {saleGrStr} gr × {fm(basePricePerGr)}/gr = {fm(padre.totalCost)}
+              </p>
+              {commercialRounding && Math.abs(commercialRounding.monetaryImpact) > 0.005 && (
+                <>
+                  <p className={cn(vt.text.formulaCompact, vt.colors.label, "text-left")}>
+                    Redondeo comercial: {commercialRounding.monetaryImpact > 0 ? "+" : ""}{fm(commercialRounding.monetaryImpact)}
+                  </p>
+                  <p className={cn(vt.text.formulaCompact, vt.colors.label, "text-left font-semibold")}>
+                    Total: {fm(padre.totalCost + commercialRounding.monetaryImpact)}
+                  </p>
+                </>
+              )}
+            </div>
+          )}
         </div>
       )}
 

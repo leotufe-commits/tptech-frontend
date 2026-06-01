@@ -49,7 +49,20 @@ const baseProps = {
   editorScopeRef: React.createRef<HTMLDivElement | null>(), previewLoading: false,
 };
 
-describe("Label de Bonificación = monto del motor (sin cliente)", () => {
+// ⚠️ TESTS LEGACY — el contrato visual cambió.
+// El label inline "−$X" pegado al TPNumber de Bonificación fue ELIMINADO en
+// el refactor de UX (consolidación de badges/montos en
+// `<SaleLineDiscountSummary>`). El monto del motor sigue siendo respetado,
+// pero ahora vive en el bloque resumen colapsable debajo del TPNumber, NO
+// como label suelto en la celda.
+//
+// Tests de reemplazo (verifican que el monto del motor se muestra y NO se
+// recalcula en frontend) están en:
+//   · `src/components/sales/__tests__/SaleLineDiscountSummary.test.tsx`
+//   · `src/lib/pricing/display/__tests__/saleLineDiscountSourcesDisplay.test.ts`
+//
+// Estos describe quedan skipeados como referencia histórica.
+describe.skip("Label de Bonificación = monto del motor (sin cliente) — REEMPLAZADO por SaleLineDiscountSummary tests", () => {
   it("muestra el discountAmount del motor (TOTAL → −$100)", () => {
     render(<LinesEditorSection {...(baseProps as any)}
       lines={[line("L1", 100, "TOTAL")]} />);

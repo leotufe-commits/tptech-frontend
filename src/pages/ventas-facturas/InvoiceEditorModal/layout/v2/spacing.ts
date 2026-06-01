@@ -32,14 +32,18 @@ export const GRID_ROW_HEIGHT_PX = 20;
  * izquierda (Datos / Lineas / Observaciones) y por el grid principal
  * que separa el area main del aside lateral.
  *
- * Tailwind equivalente: `gap-2` / `space-y-2` (= 8 px).
+ * Tailwind equivalente: `gap-1.5` / `space-y-1.5` (= 6 px).
  *
- * Reducido de 12 a 8 (2026-05-25 — pedido producto "cierre layout"):
- * cards mas pegados visualmente, sin huecos exagerados. La densidad
- * uniforme de 8px funciona para los 3 presets (CLASICA, COMPACTO,
- * UNA LINEA) sin necesidad de overrides por plantilla.
+ * Reduccion 2026-05-26 (pedido producto "spacing colapsado mas tight"):
+ * de 8 a 6 px. Con 6 cards colapsados en el aside ahorra ~12 px de aire
+ * total. Combinado con el fix del stability gate (reflow ahora commitea
+ * en la 1ra medicion post-animacion), los cards quedan visualmente
+ * agrupados como un bloque coherente sin sentirse cramped.
+ *
+ * Funciona uniforme en los 3 presets (CLASICA, COMPACTO, UNA LINEA) —
+ * sin overrides por plantilla.
  */
-export const CARD_GAP_Y_PX = 8;
+export const CARD_GAP_Y_PX = 6;
 
 /**
  * Gap horizontal entre cards (px). Se aplica cuando dos cards comparten
@@ -48,7 +52,7 @@ export const CARD_GAP_Y_PX = 8;
  *
  * Mismo valor que el gap vertical para consistencia visual.
  */
-export const CARD_GAP_X_PX = 8;
+export const CARD_GAP_X_PX = 6;
 
 /**
  * Padding interno del CONTENEDOR del grid de cards (no del card en si).
@@ -70,11 +74,11 @@ export const GRID_CONTAINER_PADDING: [number, number] = [
 /**
  * Clases Tailwind para los gaps. Mantener sincronizadas con las
  * constantes en px arriba — un cambio en `CARD_GAP_Y_PX` debe
- * reflejarse aqui (8 → `gap-2`, 12 → `gap-3`, 16 → `gap-4`).
+ * reflejarse aqui (4 → `gap-1`, 6 → `gap-1.5`, 8 → `gap-2`, 12 → `gap-3`).
  */
-export const TW_CARD_GAP_Y = "space-y-2"; // 8 px
-export const TW_CARD_GAP_X = "gap-2";     // 8 px
-export const TW_GRID_GAP    = "gap-2";    // 8 px
+export const TW_CARD_GAP_Y = "space-y-1.5"; // 6 px
+export const TW_CARD_GAP_X = "gap-1.5";     // 6 px
+export const TW_GRID_GAP    = "gap-1.5";    // 6 px
 
 /**
  * Padding interno UNIFICADO de los cards del modal de Factura. Pasar

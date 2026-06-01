@@ -71,6 +71,18 @@ type Props = {
   onClear?: () => void;
 
   /**
+   * Etiqueta accesible y tooltip de la X. Permite al caller comunicar
+   * SEMÁNTICA específica del contexto: ej. "Restaurar descuento automático"
+   * cuando la X limpia un override y vuelve al cálculo automático del
+   * motor (vs. "Limpiar valor" cuando es solo borrar el campo).
+   *
+   * Default: "Limpiar valor" / "Limpiar" — back-compat con todos los usos
+   * existentes del componente.
+   */
+  clearAriaLabel?: string;
+  clearTitle?:     string;
+
+  /**
    * Modo compacto: flechas más chicas y padding reducido para que el valor
    * se vea sin solapar el spinner cuando el input es estrecho (ej. líneas
    * de comprobante con columnas de 90–150px).
@@ -153,6 +165,8 @@ export default function TPNumberInput({
   onKeyDown,
   suffix,
   onClear,
+  clearAriaLabel,
+  clearTitle,
   compact = false,
 }: Props) {
   const innerRef = useRef<HTMLInputElement | null>(null);
@@ -393,16 +407,40 @@ export default function TPNumberInput({
             setIsEditing(false);
 
             const raw = String(draft ?? "");
+            // BLUR IDEMPOTENTE — el TAB/focus no debe ser nunca una
+            // mutación. Solo emitimos `onChange` si el operador realmente
+            // cambió el valor respecto al último que vimos. Antes este
+            // handler emitía SIEMPRE (apply → onChange) aunque el draft
+            // fuera idéntico a `value`, lo que provocaba bugs como:
+            // navegar con TAB sobre un campo precargado (ej. Bonificación
+            // heredada del cliente) → el caller interpretaba el blur como
+            // edición y marcaba override manual con el mismo valor → el
+            // motor reemplazaba la composición auto por un manual con
+            // base de cálculo distinta → el valor terminaba cayendo a 0.
             if (raw.trim() === "" || raw === "-") {
-              lastEmittedRef.current = null;
-              onChange(null);
+              // Empty/transient. Solo emitir `null` si había un valor
+              // previo (el operador borró el campo a propósito). Si ya
+              // era null/empty, NO re-emitir — focus+blur sin cambios
+              // no dispara nada.
+              if (lastEmittedRef.current !== null) {
+                lastEmittedRef.current = null;
+                onChange(null);
+              }
               setDraft("");
               return;
             }
 
             const n = parseDraft(raw);
             if (Number.isFinite(n)) {
-              apply(n);
+              const last = lastEmittedRef.current;
+              // Tolerancia mínima para diferencias de float al re-parsear
+              // un draft formateado (ej: "10,00" ↔ 10). Suficiente para
+              // 2-4 decimales en moneda; no enmascara cambios reales.
+              const isSameAsLast =
+                typeof last === "number" && Math.abs(n - last) < 1e-9;
+              if (!isSameAsLast) {
+                apply(n);
+              }
               setDraft(formatDraft(n));
             } else {
               if (typeof value === "number" && Number.isFinite(value)) {
@@ -500,8 +538,8 @@ export default function TPNumberInput({
                 hasSuffix               ? (compact ? "1.5rem"  : "2rem"   ) :
                                           (compact ? "0.25rem" : "0.5rem" ),
             }}
-            aria-label="Limpiar valor"
-            title="Limpiar"
+            aria-label={clearAriaLabel ?? "Limpiar valor"}
+            title={clearTitle ?? "Limpiar"}
           >
             <XIcon className={compact ? "h-3 w-3" : "h-3.5 w-3.5"} />
           </button>

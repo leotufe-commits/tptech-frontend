@@ -125,8 +125,44 @@ type SupplierInvoice = {
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers
+//
+// ⚠️  DEUDA TÉCNICA POC — NO COPIAR A NUEVAS PANTALLAS
+//
+// `calcLineSubtotal`, `calcLineTotal`, `computeGlobalDiscount` y
+// `recomputeTotals` calculan totales del documento en frontend. Esto VIOLA
+// la regla de única fuente de verdad: el `pricing-engine` del backend es el
+// único autorizado a calcular precios, descuentos, impuestos, redondeos y
+// totales (ver CLAUDE.md raíz, POLICY R6 del motor).
+//
+// Excepción temporal permitida SOLO en estas 5 pantallas POC sin backend
+// preview todavía:
+//   - VentasPresupuestos.tsx
+//   - VentasOrdenes.tsx
+//   - VentasNotasCredito.tsx
+//   - ComprasFacturasProveedor.tsx (este archivo)
+//   - ComprasNotasCreditoProveedor.tsx
+//
+// Eliminar el cálculo hoy dejaría la UI sin totales hasta que existan los
+// endpoints. La excepción está vigilada por
+// `src/pages/__tests__/no-frontend-document-math.guard.test.ts` — cualquier
+// archivo nuevo que reintroduzca estos helpers (o sus nombres) hace fallar
+// el guard.
+//
+// POC temporal: cálculo local permitido solo hasta implementar backend preview.
+// No copiar a nuevas pantallas.
+// Debe eliminarse cuando exista el endpoint de preview del documento.
+//
+// TODO(D3-backend-preview): reemplazar por backend preview.
+//   Cuando exista el endpoint de preview para Factura de Proveedor, eliminar
+//   estos helpers, hidratar totales desde el response del motor vía el
+//   patrón `usePreviewFlow` + builder/applier de Compras (espejo del de
+//   Ventas), y remover esta pantalla de la whitelist del guard.
 // ─────────────────────────────────────────────────────────────────────────────
 
+/**
+ * ⚠️  Deuda POC — ver bloque de cabecera de "Helpers" arriba.
+ * TODO(D3-backend-preview): mover a backend preview.
+ */
 function calcLineSubtotal(l: Pick<DocumentLine, "quantity" | "unitPrice" | "discountAmount">): number {
   const qty  = Number.isFinite(l.quantity) ? l.quantity : 0;
   const cost = Number.isFinite(l.unitPrice) ? l.unitPrice : 0;
@@ -134,6 +170,10 @@ function calcLineSubtotal(l: Pick<DocumentLine, "quantity" | "unitPrice" | "disc
   return Math.max(0, qty * cost - disc);
 }
 
+/**
+ * ⚠️  Deuda POC — ver bloque de cabecera de "Helpers" arriba.
+ * TODO(D3-backend-preview): mover a backend preview.
+ */
 function calcLineTotal(l: Pick<DocumentLine, "quantity" | "unitPrice" | "discountAmount" | "taxAmount">): number {
   const tax = l.taxAmount !== undefined && Number.isFinite(l.taxAmount) ? l.taxAmount : 0;
   return Math.max(0, calcLineSubtotal(l) + tax);
@@ -142,6 +182,9 @@ function calcLineTotal(l: Pick<DocumentLine, "quantity" | "unitPrice" | "discoun
 /**
  * Calcula el monto de descuento global en la moneda del documento.
  * PERCENT → `value` % del subtotal. AMOUNT → `value` directo.
+ *
+ * ⚠️  Deuda POC — ver bloque de cabecera de "Helpers" arriba.
+ * TODO(D3-backend-preview): mover a backend preview.
  */
 function computeGlobalDiscount(subtotal: number, d?: DocumentDiscountGlobal): number {
   if (!d || !Number.isFinite(d.value) || d.value <= 0) return 0;
@@ -149,6 +192,10 @@ function computeGlobalDiscount(subtotal: number, d?: DocumentDiscountGlobal): nu
   return Math.max(0, d.value);
 }
 
+/**
+ * ⚠️  Deuda POC — ver bloque de cabecera de "Helpers" arriba.
+ * TODO(D3-backend-preview): mover a backend preview.
+ */
 function recomputeTotals(
   lines: DocumentLine[],
   discountGlobal?: DocumentDiscountGlobal,

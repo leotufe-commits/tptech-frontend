@@ -1,21 +1,47 @@
 // tptech-frontend/src/pages/ConfiguracionSistema.tsx
-import React, { useMemo } from "react";
+// ============================================================================
+// Configuración del sistema — Fase 1 de reorganización UX/UI.
+//
+// Estructura visual en 4 secciones (de más usado a más técnico):
+//
+//   1. CONFIGURACIÓN RÁPIDA — Datos empresa, mis preferencias, tema,
+//      visualización y formatos, correos. Punto de entrada limpio.
+//
+//   2. MOTOR COMERCIAL — Listas, promociones, cupones, descuentos por
+//      cantidad, política de precios, impuestos, canales de venta.
+//      Sección estratégica destacada (highlight visual).
+//
+//   3. OPERACIÓN DIARIA — Pagos, envíos, vendedores, plantillas PDF,
+//      numeración, etiquetas.
+//
+//   4. ADMINISTRACIÓN AVANZADA — Usuarios, roles, PIN, informes,
+//      rentabilidad, ítems del sistema. COLAPSABLE por default —
+//      contenido técnico que el operador frecuente no necesita ver.
+//
+// Cards agrupados visualmente (1 card → 2+ rutas):
+//   · "Visualización y formatos" → Formato numérico + Formato de campos.
+//   · "Ítems del sistema"        → Items + Unidades + Categorías.
+//
+// Rutas eliminadas del menú visual (siguen vivas en el sidebar / router):
+//   · /divisas
+//   · /inventario/almacenes
+//
+// Cero cambios en rutas, permisos, lógica o backend. Solo composición
+// visual: jerarquía, spacing, agrupación.
+// ============================================================================
+
+import React, { useMemo, useState } from "react";
 import { NavLink, useLocation } from "react-router-dom";
 import {
   KeyRound,
   ChevronRight,
+  ChevronDown,
   Palette,
   Users,
   Shield,
   Building2,
-  Landmark,
-  Boxes,
-  Receipt,
-  CreditCard,
   Truck,
   Tags,
-  Layers,
-  Hash,
   Printer,
   Store,
   Database,
@@ -28,8 +54,10 @@ import {
   TrendingUp,
   Sliders,
   FileText,
-  ArrowUpDown,
   Ticket,
+  Eye,
+  Settings2,
+  Wallet,
 } from "lucide-react";
 
 function cn(...classes: Array<string | false | null | undefined>) {
@@ -39,6 +67,8 @@ function cn(...classes: Array<string | false | null | undefined>) {
 function isActivePath(pathname: string, to: string) {
   return pathname === to || pathname.startsWith(to + "/");
 }
+
+// ─── Badges ──────────────────────────────────────────────────────────────────
 
 function Pill({ children }: { children: React.ReactNode }) {
   return (
@@ -56,6 +86,8 @@ function PricingBadge() {
     </span>
   );
 }
+
+// ─── Card individual (1 ruta) ────────────────────────────────────────────────
 
 function CardLink({
   to,
@@ -77,10 +109,10 @@ function CardLink({
       to={to}
       className={cn(
         "group flex flex-col rounded-2xl border border-border bg-card p-4",
-        "shadow-[0_1px_0_0_rgba(0,0,0,0.05)] transition-all duration-150",
-        "hover:bg-surface2 hover:shadow-[0_6px_18px_rgba(0,0,0,0.09)] hover:-translate-y-px",
+        "shadow-[0_1px_0_0_rgba(0,0,0,0.04)] transition-all duration-150",
+        "hover:bg-surface2 hover:shadow-[0_6px_18px_rgba(0,0,0,0.08)] hover:-translate-y-px",
         "focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-primary/20",
-        active && "ring-1 ring-primary/20 bg-surface2"
+        active && "ring-1 ring-primary/20 bg-surface2",
       )}
     >
       <div className="flex items-start justify-between gap-3">
@@ -107,52 +139,171 @@ function CardLink({
   );
 }
 
+// ─── Card agrupado (N rutas) — mismo footprint que CardLink, expone sub-links
+// ────────────────────────────────────────────────────────────────────────────
+// Usado para presentar visualmente como UNA SOLA card lo que son varias
+// pantallas relacionadas (ej. Formato numérico + Formato de campos).
+
+function GroupedCardLink({
+  title,
+  desc,
+  icon,
+  badge,
+  links,
+  pathname,
+}: {
+  title: string;
+  desc: string;
+  icon: React.ReactNode;
+  badge?: React.ReactNode;
+  links: Array<{ to: string; label: string }>;
+  pathname: string;
+}) {
+  // Strip query string del link antes de comparar — sub-chips pueden
+  // incluir `?tab=...` (deep-link a tab), pero `pathname` solo trae
+  // la ruta sin query.
+  const active = links.some((l) => isActivePath(pathname, l.to.split("?")[0]));
+  return (
+    <div
+      className={cn(
+        "flex flex-col rounded-2xl border border-border bg-card p-4",
+        "shadow-[0_1px_0_0_rgba(0,0,0,0.04)] transition-shadow duration-150",
+        active && "ring-1 ring-primary/20 bg-surface2",
+      )}
+    >
+      <div className="flex items-start gap-3 min-w-0">
+        <div className="grid h-10 w-10 shrink-0 place-items-center rounded-xl border border-border bg-surface2 text-primary">
+          {icon}
+        </div>
+
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-sm font-semibold text-text truncate">{title}</span>
+            {badge}
+          </div>
+          <p className="text-xs text-muted mt-0.5 line-clamp-2 leading-relaxed">{desc}</p>
+        </div>
+      </div>
+
+      {/* Sub-links inline — chips clickeables con flecha discreta. */}
+      <ul className="mt-3 grid gap-1.5">
+        {links.map((l) => (
+          <li key={l.to}>
+            <NavLink
+              to={l.to}
+              className={cn(
+                "group/sub flex items-center justify-between gap-2 rounded-lg border border-transparent",
+                "bg-surface2/50 hover:bg-surface2 hover:border-border px-2.5 py-1.5",
+                "text-[12px] font-medium text-text transition-colors",
+                "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30",
+              )}
+            >
+              <span className="truncate">{l.label}</span>
+              <ChevronRight
+                size={13}
+                className="shrink-0 text-muted/60 transition-transform group-hover/sub:translate-x-0.5"
+              />
+            </NavLink>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+// ─── Sección ────────────────────────────────────────────────────────────────
+
 function SectionHeader({
   title,
   desc,
   highlight,
+  collapsible,
+  collapsed,
+  onToggle,
+  cardCount,
 }: {
   title: string;
   desc?: string;
   highlight?: boolean;
+  collapsible?: boolean;
+  collapsed?: boolean;
+  onToggle?: () => void;
+  cardCount?: number;
 }) {
-  return (
-    <div className={cn("flex items-start gap-3", highlight && "")}>
+  const headerContent = (
+    <>
       <div
         className={cn(
           "w-1 self-stretch rounded-full shrink-0 mt-0.5",
-          highlight ? "bg-primary" : "bg-border"
+          highlight ? "bg-primary" : "bg-border",
         )}
       />
-      <div className="min-w-0">
+      <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2.5 flex-wrap">
-          <h2
-            className={cn(
-              "text-base font-bold leading-tight",
-              highlight ? "text-text" : "text-text"
-            )}
-          >
-            {title}
-          </h2>
+          <h2 className="text-base font-bold leading-tight text-text">{title}</h2>
           {highlight && <PricingBadge />}
+          {collapsible && typeof cardCount === "number" && (
+            <span
+              className="inline-flex items-center rounded-full bg-surface2 px-2 py-0.5 text-[11px] font-medium text-muted"
+              aria-label={`${cardCount} opciones`}
+            >
+              {cardCount}
+            </span>
+          )}
         </div>
         {desc && (
           <p className="text-sm text-muted mt-0.5 max-w-xl leading-relaxed">{desc}</p>
         )}
       </div>
-    </div>
+      {collapsible && (
+        <ChevronDown
+          size={18}
+          className={cn(
+            "shrink-0 self-start mt-1 text-muted transition-transform duration-200",
+            !collapsed && "rotate-180",
+          )}
+          aria-hidden
+        />
+      )}
+    </>
   );
+
+  if (collapsible) {
+    return (
+      <button
+        type="button"
+        onClick={onToggle}
+        className={cn(
+          "flex items-start gap-3 w-full text-left",
+          "rounded-lg hover:bg-surface2/40 px-2 -mx-2 py-1 -my-1 transition-colors",
+          "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30",
+        )}
+        aria-expanded={!collapsed}
+      >
+        {headerContent}
+      </button>
+    );
+  }
+  return <div className="flex items-start gap-3">{headerContent}</div>;
 }
 
 function Section({
   title,
   desc,
   highlight,
+  collapsible,
+  collapsed,
+  onToggle,
+  cardCount,
   children,
 }: {
   title: string;
   desc?: string;
   highlight?: boolean;
+  collapsible?: boolean;
+  collapsed?: boolean;
+  onToggle?: () => void;
+  cardCount?: number;
   children: React.ReactNode;
 }) {
   if (highlight) {
@@ -160,6 +311,24 @@ function Section({
       <section className="rounded-2xl border border-primary/15 bg-primary/[0.025] p-5 space-y-4">
         <SectionHeader title={title} desc={desc} highlight />
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">{children}</div>
+      </section>
+    );
+  }
+
+  if (collapsible) {
+    return (
+      <section className="rounded-2xl border border-border/60 bg-card/50 p-5 space-y-4">
+        <SectionHeader
+          title={title}
+          desc={desc}
+          collapsible
+          collapsed={collapsed}
+          onToggle={onToggle}
+          cardCount={cardCount}
+        />
+        {!collapsed && (
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4">{children}</div>
+        )}
       </section>
     );
   }
@@ -172,7 +341,10 @@ function Section({
   );
 }
 
-type Card = {
+// ─── Datos del menú ─────────────────────────────────────────────────────────
+
+type SingleCard = {
+  kind?: "single";
   to: string;
   title: string;
   desc: string;
@@ -180,22 +352,46 @@ type Card = {
   badge?: React.ReactNode;
 };
 
+type GroupedCard = {
+  kind: "grouped";
+  title: string;
+  desc: string;
+  icon: React.ReactNode;
+  badge?: React.ReactNode;
+  /** Rutas internas del grupo — se muestran como sub-chips dentro de la card. */
+  links: Array<{ to: string; label: string }>;
+};
+
+type Card = SingleCard | GroupedCard;
+
 type SectionCfg = {
   title: string;
   desc?: string;
   highlight?: boolean;
+  /** Sección colapsable (se renderea con header clickeable y `<details>`-like
+   *  comportamiento). Default false. */
+  collapsible?: boolean;
+  /** Default collapsed cuando es colapsable. */
+  defaultCollapsed?: boolean;
   cards: Card[];
 };
 
 export default function ConfiguracionSistema() {
   const { pathname } = useLocation();
 
+  // Estado de colapso por sección (key = section.title). Default colapsado
+  // para "Administración avanzada" (definido en la sección via
+  // defaultCollapsed: true), expandido para las demás.
+  const [collapsed, setCollapsed] = useState<Record<string, boolean>>(() => ({
+    "Administración avanzada": true,
+  }));
+
   const sections: SectionCfg[] = useMemo(
     () => [
-      // ── 1. Configuración del negocio ──────────────────────────────────────────
+      // ── 1. Configuración rápida ──────────────────────────────────────────
       {
-        title: "Configuración del negocio",
-        desc: "Datos generales, comunicación, monedas y formatos de la joyería.",
+        title: "Configuración rápida",
+        desc: "Lo que solés ajustar en el día a día: tu empresa, tus preferencias y cómo se ve el sistema.",
         cards: [
           {
             to: "/configuracion/joyeria",
@@ -204,42 +400,141 @@ export default function ConfiguracionSistema() {
             icon: <Building2 size={18} />,
           },
           {
-            to: "/configuracion-sistema/correos",
-            title: "Correos del sistema",
-            desc: "Remitente, firma, logo y datos de contacto para emails.",
-            icon: <Mail size={18} />,
-          },
-          {
-            to: "/divisas",
-            title: "Divisas",
-            desc: "Monedas y tipos de cambio para operar en multi-moneda.",
-            icon: <Landmark size={18} />,
-          },
-          {
-            to: "/configuracion-sistema/formato-campos",
-            title: "Formato de campos",
-            desc: "Estilo de visualización de teléfonos y documentos en los formularios internos.",
+            to: "/configuracion/mis-preferencias",
+            title: "Mis preferencias",
+            desc: "Valores por defecto al crear facturas (almacén, vendedor, lista, canal, moneda). Por usuario.",
             icon: <Sliders size={18} />,
           },
           {
-            to: "/configuracion-sistema/formato-numerico",
-            title: "Formato numérico",
-            desc: "Región (1.000,00 o 1,000.00) y decimales por tipo de dato. Solo visual, no afecta cálculos.",
-            icon: <Hash size={18} />,
+            to: "/configuracion-sistema/tema",
+            title: "Tema",
+            desc: "Elegí el estilo visual del sistema (claro / oscuro).",
+            icon: <Palette size={18} />,
+          },
+          // Grupo visual: pantalla unificada con tabs Números/Campos.
+          // Cada sub-link apunta a la misma ruta con `?tab=...` para que
+          // la pantalla abra ya posicionada en la sección elegida.
+          {
+            kind: "grouped",
+            title: "Visualización y formatos",
+            desc: "Cómo se muestran números, montos, teléfonos y documentos en toda la app.",
+            icon: <Eye size={18} />,
+            links: [
+              { to: "/configuracion-sistema/visualizacion-formatos?tab=numeros", label: "Números (formato regional, decimales)" },
+              { to: "/configuracion-sistema/visualizacion-formatos?tab=campos",  label: "Campos (teléfono, documento)" },
+            ],
           },
           {
-            to: "/inventario/almacenes",
-            title: "Almacenes",
-            desc: "Alta y gestión de almacenes, activación y favoritos.",
-            icon: <Boxes size={18} />,
+            to: "/configuracion-sistema/correos",
+            title: "Correos del sistema",
+            desc: "Remitente, firma, logo y datos de contacto para emails enviados.",
+            icon: <Mail size={18} />,
           },
         ],
       },
 
-      // ── 2. Usuarios y acceso ──────────────────────────────────────────────────
+      // ── 2. Motor comercial ───────────────────────────────────────────────
       {
-        title: "Usuarios y acceso",
-        desc: "Control de accesos, permisos y bloqueo del sistema.",
+        title: "Motor comercial",
+        desc: "Cómo se calculan los precios, los descuentos, los impuestos y los canales de venta. Núcleo del negocio.",
+        highlight: true,
+        cards: [
+          {
+            to: "/configuracion-sistema/listas-precios",
+            title: "Listas de precios",
+            desc: "Márgenes y reglas de aplicación por cliente o categoría.",
+            icon: <Tags size={18} />,
+          },
+          {
+            to: "/configuracion-sistema/promociones",
+            title: "Promociones",
+            desc: "Descuentos por tiempo o evento, con prioridad máxima en el POS.",
+            icon: <BadgePercent size={18} />,
+          },
+          {
+            to: "/configuracion-sistema/cupones",
+            title: "Cupones de descuento",
+            desc: "Códigos por evento, cliente o campaña — se aplican al confirmar la venta.",
+            icon: <Ticket size={18} />,
+          },
+          {
+            to: "/configuracion-sistema/descuentos-cantidad",
+            title: "Descuentos por cantidad",
+            desc: "Tramos de descuento automáticos según unidades vendidas.",
+            icon: <PackagePlus size={18} />,
+          },
+          {
+            to: "/configuracion-sistema/politica-precios",
+            title: "Política comercial",
+            desc: "Márgenes recomendados, riesgos a advertir y confirmación reforzada al cerrar ventas.",
+            icon: <ShieldAlert size={18} />,
+          },
+          // Grupo visual: pantalla unificada "Finanzas y cobros" con
+          // tabs (Pagos / Impuestos / Cuenta corriente / Canales).
+          // Centraliza el dominio financiero/comercial — el operador
+          // accede a TODO lo que tiene que ver con cobrar, facturar,
+          // calcular impuestos y administrar saldo desde un solo lugar.
+          {
+            kind: "grouped",
+            title: "Finanzas y cobros",
+            desc: "Pagos, impuestos, cuenta corriente y canales — cómo TPTech cobra y maneja el flujo financiero.",
+            icon: <Wallet size={18} />,
+            links: [
+              { to: "/configuracion-sistema/finanzas-cobros?tab=pagos",            label: "Pagos y cobros (medios, condiciones, cuotas)" },
+              { to: "/configuracion-sistema/finanzas-cobros?tab=impuestos",        label: "Impuestos (IVA, percepciones, retenciones)" },
+              { to: "/configuracion-sistema/finanzas-cobros?tab=cuenta-corriente", label: "Cuenta corriente (deuda y saldo)" },
+              { to: "/configuracion-sistema/finanzas-cobros?tab=canales",          label: "Canales de venta (Local, Web, Mayorista, etc.)" },
+            ],
+          },
+        ],
+      },
+
+      // ── 3. Operación diaria ──────────────────────────────────────────────
+      {
+        title: "Operación diaria",
+        desc: "Parámetros del día a día: despacho, comprobantes, vendedores y etiquetas.",
+        cards: [
+          {
+            to: "/configuracion-sistema/envios",
+            title: "Envíos y logística",
+            desc: "Transportistas, métodos de envío y costos.",
+            icon: <Truck size={18} />,
+          },
+          {
+            to: "/configuracion-sistema/vendedor",
+            title: "Vendedores",
+            desc: "Comisiones, objetivos y reglas comerciales por vendedor.",
+            icon: <Store size={18} />,
+          },
+          // Grupo visual: pantalla unificada "Documentos y comprobantes"
+          // con 2 tabs (Plantillas PDF / Numeración). La tab "Vista previa"
+          // fue eliminada en Fase A — el editor de plantillas ya muestra
+          // el preview en vivo (idéntico al PDF final para FACTURA).
+          {
+            kind: "grouped",
+            title: "Documentos y comprobantes",
+            desc: "Cómo se ven y numeran facturas, presupuestos, remitos y demás comprobantes.",
+            icon: <FileText size={18} />,
+            links: [
+              { to: "/configuracion-sistema/documentos-comprobantes?tab=plantillas", label: "Plantillas PDF (diseño y estilo)" },
+              { to: "/configuracion-sistema/documentos-comprobantes?tab=numeracion", label: "Numeración (series, prefijos, próximo número)" },
+            ],
+          },
+          {
+            to: "/configuracion-sistema/etiquetas",
+            title: "Impresión de etiquetas",
+            desc: "Diseño e impresión de etiquetas para artículos.",
+            icon: <Printer size={18} />,
+          },
+        ],
+      },
+
+      // ── 4. Administración avanzada (colapsable) ──────────────────────────
+      {
+        title: "Administración avanzada",
+        desc: "Accesos, permisos, catálogos técnicos e informes internos. No se necesitan a diario.",
+        collapsible: true,
+        defaultCollapsed: true,
         cards: [
           {
             to: "/configuracion/usuarios",
@@ -260,148 +555,10 @@ export default function ConfiguracionSistema() {
             icon: <KeyRound size={18} />,
             badge: <Pill>2 niveles</Pill>,
           },
-        ],
-      },
-
-      // ── 3. Ventas y precios ───────────────────────────────────────────────────
-      {
-        title: "Ventas y precios",
-        desc: "Definí cómo se calculan los precios, descuentos, promociones y reglas de control.",
-        highlight: true,
-        cards: [
-          {
-            to: "/configuracion-sistema/listas-precios",
-            title: "Listas de precios",
-            desc: "Márgenes y reglas de aplicación por cliente o categoría.",
-            icon: <Tags size={18} />,
-          },
-          {
-            to: "/configuracion-sistema/promociones",
-            title: "Promociones",
-            desc: "Descuentos por tiempo o evento, con prioridad máxima en el POS.",
-            icon: <BadgePercent size={18} />,
-          },
-          {
-            to: "/configuracion-sistema/descuentos-cantidad",
-            title: "Descuentos por cantidad",
-            desc: "Tramos de descuento automáticos según unidades vendidas.",
-            icon: <PackagePlus size={18} />,
-          },
-          {
-            to: "/configuracion-sistema/politica-precios",
-            title: "Política de precios",
-            desc: "Alertas de margen y bloqueos de confirmación de ventas.",
-            icon: <ShieldAlert size={18} />,
-          },
-          {
-            to: "/configuracion-sistema/canales-venta",
-            title: "Canales de venta",
-            desc: "Configurá recargos o descuentos por canal de venta (Mercado Libre, Mayorista, etc.).",
-            icon: <ArrowUpDown size={18} />,
-          },
-          {
-            to: "/configuracion-sistema/cupones",
-            title: "Cupones de descuento",
-            desc: "Códigos de descuento por evento, cliente o campaña — se aplican al confirmar la venta.",
-            icon: <Ticket size={18} />,
-          },
-        ],
-      },
-
-      // ── 4. Productos e inventario ─────────────────────────────────────────────
-      {
-        title: "Productos e inventario",
-        desc: "Estructura, clasificación y organización del catálogo de artículos.",
-        cards: [
-          {
-            to: "/configuracion-sistema/categorias",
-            title: "Categorías de artículos",
-            desc: "Jerarquía del catálogo, atributos por categoría y lista de precios por defecto.",
-            icon: <Layers size={18} />,
-          },
-          {
-            to: "/configuracion-sistema/unidades",
-            title: "Unidades",
-            desc: "Unidades de venta, peso, dimensión y volumen — clasificadas por tipo.",
-            icon: <Sliders size={18} />,
-          },
-        ],
-      },
-
-      // ── 5. Operación diaria ───────────────────────────────────────────────────
-      {
-        title: "Operación diaria",
-        desc: "Parámetros del día a día: vendedores, cobros, envíos e impuestos.",
-        cards: [
-          {
-            to: "/configuracion-sistema/vendedor",
-            title: "Vendedor",
-            desc: "Comisiones, objetivos y reglas comerciales por vendedor.",
-            icon: <Store size={18} />,
-          },
-          {
-            to: "/configuracion-sistema/pagos",
-            title: "Pagos y cobros",
-            desc: "Medios de pago, condiciones, recargos y cuotas.",
-            icon: <CreditCard size={18} />,
-          },
-          {
-            to: "/configuracion-sistema/envios",
-            title: "Envíos y logística",
-            desc: "Transportistas, métodos de envío y costos.",
-            icon: <Truck size={18} />,
-          },
-          {
-            to: "/configuracion-sistema/impuestos",
-            title: "Impuestos y tributos",
-            desc: "Alícuotas, percepciones, retenciones y configuración fiscal.",
-            icon: <Receipt size={18} />,
-          },
-        ],
-      },
-
-      // ── 6. Documentos e impresión ─────────────────────────────────────────────
-      {
-        title: "Documentos e impresión",
-        desc: "Plantillas, numeración e impresión de comprobantes y etiquetas.",
-        highlight: true,
-        cards: [
-          {
-            to: "/configuracion-sistema/documentos",
-            title: "Plantillas de documentos PDF",
-            desc: "Encabezado, columnas, secciones y estilo de facturas, presupuestos, remitos y más.",
-            icon: <FileText size={18} />,
-          },
-          {
-            to: "/configuracion-sistema/numeracion",
-            title: "Numeración de comprobantes",
-            desc: "Series, prefijos y numeración por tipo de documento.",
-            icon: <Hash size={18} />,
-          },
-          {
-            to: "/configuracion-sistema/etiquetas",
-            title: "Impresión de etiquetas",
-            desc: "Diseño e impresión de etiquetas para artículos.",
-            icon: <Printer size={18} />,
-          },
-        ],
-      },
-
-      // ── 7. Análisis y sistema ─────────────────────────────────────────────────
-      {
-        title: "Análisis y sistema",
-        desc: "Catálogos base del sistema, reportes y análisis del negocio.",
-        cards: [
-          {
-            to: "/configuracion-sistema/items?type=DOCUMENT_TYPE",
-            title: "Ítems del sistema",
-            desc: "Catálogos utilizados en combos y selecciones de todo el sistema.",
-            icon: <Database size={18} />,
-          },
           {
             to: "/configuracion-sistema/informes",
             title: "Informes",
-            desc: "Reportes, estadísticas y análisis del negocio.",
+            desc: "Reportes internos, estadísticas y análisis del negocio.",
             icon: <BarChart3 size={18} />,
           },
           {
@@ -410,55 +567,98 @@ export default function ConfiguracionSistema() {
             desc: "Análisis de márgenes, costos y rentabilidad por artículo y período.",
             icon: <TrendingUp size={18} />,
           },
-        ],
-      },
-
-      // ── 8. Apariencia ─────────────────────────────────────────────────────────
-      {
-        title: "Apariencia",
-        desc: "Preferencias visuales del sistema.",
-        cards: [
+          // Grupo visual: pantalla unificada "Ítems del sistema" con
+          // tabs (Ítems / Unidades / Categorías). Cada sub-link apunta
+          // a la misma ruta con `?tab=...` y preserva `?type=...` para
+          // que la tab de Ítems abra ya posicionada en un catálogo.
           {
-            to: "/configuracion-sistema/tema",
-            title: "Tema",
-            desc: "Elegí el estilo visual del sistema.",
-            icon: <Palette size={18} />,
+            kind: "grouped",
+            title: "Ítems del sistema",
+            desc: "Catálogos base, unidades y categorías que estructuran la app.",
+            icon: <Database size={18} />,
+            links: [
+              { to: "/configuracion-sistema/items-sistema?tab=items&type=DOCUMENT_TYPE", label: "Ítems (tipos de documento, estados, etc.)" },
+              { to: "/configuracion-sistema/items-sistema?tab=unidades",                 label: "Unidades (venta, peso, volumen)" },
+              { to: "/configuracion-sistema/items-sistema?tab=categorias",               label: "Categorías de artículos" },
+            ],
           },
         ],
       },
     ],
-    []
+    [],
   );
+
+  const renderCard = (c: Card) => {
+    if (c.kind === "grouped") {
+      return (
+        <GroupedCardLink
+          key={c.title}
+          title={c.title}
+          desc={c.desc}
+          icon={c.icon}
+          badge={c.badge}
+          links={c.links}
+          pathname={pathname}
+        />
+      );
+    }
+    return (
+      <CardLink
+        key={c.to}
+        to={c.to}
+        title={c.title}
+        desc={c.desc}
+        icon={c.icon}
+        badge={c.badge}
+        active={isActivePath(pathname, c.to)}
+      />
+    );
+  };
 
   return (
     <div className="p-6 w-full max-w-screen-2xl">
       {/* Page header */}
-      <div className="mb-10">
-        <p className="text-xs font-medium text-muted uppercase tracking-wider mb-1">
-          Configuración
-        </p>
-        <h1 className="text-2xl font-bold text-text">Configuración del sistema</h1>
-        <p className="text-sm text-muted mt-1.5 max-w-xl">
-          Administrá la estructura de la empresa, accesos de usuarios y preferencias del sistema.
-        </p>
+      <div className="mb-10 flex items-start gap-3">
+        <div className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl border border-border bg-surface2 text-primary">
+          <Settings2 size={20} aria-hidden />
+        </div>
+        <div className="min-w-0">
+          <p className="text-xs font-medium text-muted uppercase tracking-wider mb-1">
+            Configuración
+          </p>
+          <h1 className="text-2xl font-bold text-text leading-tight">Configuración del sistema</h1>
+          <p className="text-sm text-muted mt-1.5 max-w-2xl leading-relaxed">
+            Centro de control de la joyería. Empezá por <span className="font-medium text-text">Configuración rápida</span>; el resto se profundiza a medida que lo necesites.
+          </p>
+        </div>
       </div>
 
-      <div className="space-y-12">
-        {sections.map((s) => (
-          <Section key={s.title} title={s.title} desc={s.desc} highlight={s.highlight}>
-            {s.cards.map((c) => (
-              <CardLink
-                key={c.to}
-                to={c.to}
-                title={c.title}
-                desc={c.desc}
-                icon={c.icon}
-                badge={c.badge}
-                active={isActivePath(pathname, c.to)}
-              />
-            ))}
-          </Section>
-        ))}
+      <div className="space-y-10">
+        {sections.map((s) => {
+          const isCollapsed =
+            s.collapsible
+              ? (collapsed[s.title] ?? s.defaultCollapsed ?? false)
+              : false;
+          return (
+            <Section
+              key={s.title}
+              title={s.title}
+              desc={s.desc}
+              highlight={s.highlight}
+              collapsible={s.collapsible}
+              collapsed={isCollapsed}
+              onToggle={() =>
+                setCollapsed((prev) => ({
+                  ...prev,
+                  [s.title]: !(prev[s.title] ?? s.defaultCollapsed ?? false),
+                }))
+              }
+              cardCount={s.cards.length}
+            >
+              {s.cards.map(renderCard)}
+            </Section>
+          );
+        })}
       </div>
     </div>
   );

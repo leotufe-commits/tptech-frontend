@@ -65,7 +65,9 @@ describe("F1.4 #11-E.1 — bloque AJUSTES GLOBALES", () => {
     render(<LineAdvancedOverridesPanel line={line} {...baseProps} />);
     expect(screen.getByText("Ajustes globales")).toBeInTheDocument();
     expect(screen.getByText(/Bonificación global/)).toBeInTheDocument();
-    expect(screen.getByText(/25\.00%/)).toBeInTheDocument();
+    // Region-agnóstico: el preset del tenant gobierna decimales y separadores
+    // (PERCENT default = "25,00 %" en AR, "25.00 %" en US).
+    expect(screen.getByText(/25[,.]00\s*%/)).toBeInTheDocument();
     // Monto formateado con prefijo "−" en emerald.
     const minus = screen.getByText(/^−/);
     expect(minus.className).toMatch(/emerald/);

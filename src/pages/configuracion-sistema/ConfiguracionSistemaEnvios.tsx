@@ -1318,7 +1318,7 @@ export default function ConfiguracionSistemaEnvios() {
             )}
 
             <DetailRow label="Favorito">
-              {viewTarget.isFavorite ? "Sí ⭐" : "No"}
+              {viewTarget.isFavorite ? "Sí" : "No"}
             </DetailRow>
 
             <DetailRow label="Tipo">
