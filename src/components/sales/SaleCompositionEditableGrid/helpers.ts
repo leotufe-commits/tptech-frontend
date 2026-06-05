@@ -136,7 +136,17 @@ export function sumGroupLineSaleDisplay(
     const lineCost = lineCostRaw != null && Number.isFinite(Number(lineCostRaw))
       ? Number(lineCostRaw)
       : null;
-    const lineSaleRaw = (it as any)?.lineSale ?? null;
+    // RECETA BASE — la composición usa por fila el MISMO valor que muestra el
+    // detalle: `lineSalePreRounding` (PRE redondeo físico/comercial del metal) y
+    // cae a `lineSale` cuando no existe (hechura/productos/servicios = margen, ya
+    // PRE; o metal sin redondeo). Así el footer = Σ filas detalle POR
+    // CONSTRUCCIÓN — mismo origen, cero diferencia. El redondeo vive en el
+    // Resumen Comercial, nunca acá.
+    const lineSalePre = (it as any)?.lineSalePreRounding;
+    const lineSaleRaw =
+      lineSalePre != null && Number.isFinite(Number(lineSalePre))
+        ? lineSalePre
+        : ((it as any)?.lineSale ?? null);
     const canonicalSale = lineSaleRaw != null && Number.isFinite(Number(lineSaleRaw))
       ? Number(lineSaleRaw)
       : null;

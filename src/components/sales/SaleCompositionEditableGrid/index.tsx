@@ -42,6 +42,8 @@ import {
   resolveSaleForRowDisplay,
   resolveMarginForRowDisplay,
   buildMetalParentSaleTotals,
+  resolveCommercialPostGrams,
+  pickLineCommercialRoundingMetals,
   computeMetalSaleFactor,
   type CurrencyByIdMap,
 } from "../../../lib/pricing/display/saleCompositionDisplay";
@@ -69,7 +71,6 @@ import { Row } from "./parts/EditableRow";
 import { EmptyState } from "./parts/EmptyState";
 import { CostAdjustmentDetailSection } from "./parts/CostAdjustmentDetailSection";
 import { GlobalAdjustmentsBlock } from "./parts/GlobalAdjustmentsBlock";
-import { CommercialRoundingFooter } from "./parts/CommercialRoundingFooter";
 
 // Importar la versión "bare" del % para el sub-line "Aj. global" — se mantiene
 // adentro del componente principal (cero matemática nueva).
@@ -604,7 +605,7 @@ export function SaleCompositionEditableGrid({
               // ("Padre: N gr"), gramos finales (pureza × merma × margen) ×
               // cantidad de la línea. Las variantes con "=" se eliminaron.
               const equivGramsByMetalPre = buildMetalParentSaleTotals(metals as any[], metalSaleFactor)
-                .map((m) => ({ name: m.name, grams: m.saleEquivGr * qSafe }));
+                .map((m) => ({ name: m.name, metalParentId: m.metalParentId, grams: m.saleEquivGr * qSafe }));
               // Etapa D' (cierre conceptual) — swap pre → POST-redondeo
               // comercial cuando exista `commercialRoundingContext` BREAKDOWN
               // con metal físico.
@@ -624,30 +625,26 @@ export function SaleCompositionEditableGrid({
               // REGLA DE ORO: backend calcula `postGrams`. Frontend solo lee
               // y reemplaza el valor `grams` del chip por el del snapshot
               // — cero recálculo, cero matemática.
-              const crCtx = (meta as any)?.commercialRoundingContext as
-                | NonNullable<(typeof meta extends { commercialRoundingContext?: infer C } ? C : never)>
-                | null
-                | undefined;
-              const crHasBreakdown =
-                !!crCtx
-                && crCtx.scope === "BREAKDOWN"
-                && crCtx.appliedAt === "DOCUMENT"
-                && Array.isArray(crCtx.breakdown?.metals)
-                && crCtx.breakdown!.metals.length > 0;
-              const equivGramsByMetal = crHasBreakdown
+              // Fuente del Redondeo Comercial POR LÍNEA (prioridad: PER_DOCUMENT
+              // per-línea → PHYSICAL per-línea `appliedRounding.physical.metals`
+              // → doc-level legacy). MISMA fuente que el footer.
+              const crMetalsSource = pickLineCommercialRoundingMetals(meta);
+              const equivGramsByMetal = crMetalsSource.length > 0
                   ? equivGramsByMetalPre.map((entry) => {
-                      const override = crCtx!.breakdown!.metals.find(
-                        (m: any) => m.metalParentName === entry.name,
+                      // Match por `metalParentId` (canónico); fallback por
+                      // nombre solo para snapshots legacy. Passthrough: el FE
+                      // solo reemplaza `grams` por el `postGrams` del snapshot.
+                      const post = resolveCommercialPostGrams(
+                        { metalParentId: entry.metalParentId, name: entry.name },
+                        crMetalsSource,
                       );
-                      return override
-                        ? { name: entry.name, grams: override.postGrams }
-                        : entry;
+                      return post != null ? { ...entry, grams: post } : entry;
                     })
                   : equivGramsByMetalPre;
               // Si al menos un metal del chip fue reemplazado por su postGrams
               // del snapshot, marcamos el flag visual "red. comercial".
               const commercialRoundingActive =
-                crHasBreakdown
+                crMetalsSource.length > 0
                 && equivGramsByMetal.some((after, i) => after.grams !== equivGramsByMetalPre[i]?.grams);
               return (
                 <TypeGroupHeader
@@ -729,7 +726,16 @@ export function SaleCompositionEditableGrid({
               // (passthrough exacto: lineCost × metalSale/metalCost). Para
               // snapshots legacy sin este campo, fallback a `metalSaleCanonical`
               // (válido solo cuando count===1, sino "—").
-              const metalLineSale = (m as any)?.lineSale;
+              // F1.6 — la fila DETALLE de Composición muestra la receta BASE:
+              // prioriza `lineSalePreRounding` (venta del cost-line PRE redondeo
+              // físico/comercial del metal) y cae a `lineSale` (POST) cuando no
+              // existe — así la fila coincide con el footer (que ya usa el agregado
+              // PRE). El redondeo vive en el Resumen Comercial / card, no acá.
+              const metalLineSalePre = (m as any)?.lineSalePreRounding;
+              const metalLineSale =
+                metalLineSalePre != null && Number.isFinite(Number(metalLineSalePre))
+                  ? metalLineSalePre
+                  : (m as any)?.lineSale;
               const canonicalSale: number | null =
                 metalLineSale != null && Number.isFinite(Number(metalLineSale))
                   ? Number(metalLineSale)
@@ -1606,16 +1612,11 @@ export function SaleCompositionEditableGrid({
         <GlobalAdjustmentsBlock data={globalAdjustments} currency={currency} />
       )}
 
-      {/* ── Etapa D' (cierre conceptual) — Footer del Redondeo Comercial
-            PER_DOCUMENT. CIERRE de la cadena comercial del artículo.
-            PASSTHROUGH puro — todos los valores vienen del snapshot
-            `line.pricingMeta.commercialRoundingContext` que el backend
-            replicó en esta línea. Cero matemática FE.
-            null cuando la lista opera en PER_LINE_LEGACY o mixed-list. */}
-      <CommercialRoundingFooter
-        context={meta?.commercialRoundingContext ?? null}
-        currency={currency}
-      />
+      {/* ── Card "REDONDEO COMERCIAL" debajo de la composición — ELIMINADO
+            (solo render). La info del redondeo comercial vive ahora ÚNICAMENTE
+            en el Resumen Comercial del Artículo + el Total del comprobante.
+            El snapshot `commercialRoundingContext` sigue intacto en el draft;
+            solo se quitó este render duplicado. */}
     </div>
     </TableLayoutContext.Provider>
   );
