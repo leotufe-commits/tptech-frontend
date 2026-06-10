@@ -93,6 +93,14 @@ export function applySalePreviewToDraft(
   // ya consume `pricingMeta.taxExemptByEntity` (badge "Exento" + deshabilita).
   const clientTaxExempt = (preview as any)?.clientTaxExempt === true;
 
+  // Listas mixtas (2026-06-03) — `appliedPriceListId === "MIXED"` ⇒ el motor
+  // entró en MIXED_LIST_FALLBACK (redondeo comercial PER_DOCUMENT desactivado).
+  // Valor doc-level replicado en cada línea (mismo patrón que
+  // `commercialRoundingContext`) para que el resumen comercial de la línea NO
+  // caiga al camino visual legacy `appliedRounding.physical` (ver
+  // `pickLineCommercialRoundingMetals`). Passthrough puro — cero cálculo.
+  const priceListMixed = (preview as any)?.appliedPriceListId === "MIXED";
+
   let realIdx = 0;
   const previewLines = preview.lines;
   const updatedLines: DocumentLine[] = draft.lines.map((line) => {
@@ -141,6 +149,20 @@ export function applySalePreviewToDraft(
         baseSource:              pl.pricingSnapshot?.baseSource,
         appliedPriceListId:      pl.appliedPriceListId,
         appliedPriceListName:    pl.appliedPriceListName,
+        // Modo de la lista aplicada A ESTA LÍNEA (passthrough del motor).
+        appliedPriceListMode:    (pl as any).appliedPriceListMode ?? null,
+        // Modo de saldo EXPLÍCITO de la línea (propiedad de la línea, NO del
+        // documento). DESGLOSADA ⟺ lista METAL_HECHURA. Sobrevive a
+        // MIXED_LIST_FALLBACK → la línea conserva su layout aunque el documento
+        // tenga listas mixtas. `isLineDesglosadaView` lo consume como fuente
+        // única. Cero matemática — solo mapeo de presentación.
+        lineBalanceMode:
+          (pl as any).appliedPriceListMode === "METAL_HECHURA"
+            ? "BREAKDOWN"
+            : (typeof (pl as any).appliedPriceListMode === "string"
+                && (pl as any).appliedPriceListMode.length > 0
+                ? "UNIFIED"
+                : null),
         appliedPromotionId:      pl.appliedPromotionId,
         appliedPromotionName:    pl.appliedPromotionName,
         basePrice:               pl.basePrice,
@@ -195,15 +217,28 @@ export function applySalePreviewToDraft(
         // Snapshot COMERCIAL PHYSICAL por metal padre. `null` cuando la
         // lista operó MONETARY (legacy) o cuando no hay metales en la línea.
         commercialPhysical:      pl.metalHechuraBreakdown?.physical ?? null,
+        // Redondeo aplicado por la lista de precios (incluye
+        // `physical.metals[].postGrams` PER_LINE). MISMO snapshot que
+        // `commercialPhysical`; lo propagamos para que el card lea la fuente
+        // canónica que usa el footer (`appliedRounding.physical.metals`).
+        // Passthrough puro.
+        appliedRounding:         (pl as any).appliedRounding ?? null,
         // Etapa D' (cierre conceptual) — VISTA del Redondeo Comercial
-        // PER_DOCUMENT replicada por el backend en esta línea.
-        // PASSTHROUGH puro — el card de artículo (`RoundingTaxSection`)
-        // la usa para mostrar el cierre de la cadena comercial. `null`
-        // cuando la lista del documento opera en PER_LINE_LEGACY o
-        // mixed-list (NO_SHARED_LIST). REGLA DE ORO: si está en
-        // `preview.lines[i]`, debe pasar al draft tal cual — cero
-        // recálculo, cero inferencia.
+        // PER_DOCUMENT (canónico) replicada por el backend en esta línea.
+        // PASSTHROUGH puro — el card del artículo
+        // (`TPDocumentLineAdvancedEditor` → `SaleCompositionEditableGrid` →
+        // `CommercialRoundingFooter`) la usa para mostrar el cierre de la
+        // cadena comercial. (El antiguo `RoundingTaxSection` se eliminó en
+        // FASE 12.8 — no referenciarlo.) `null` cuando la lista del documento
+        // opera en PER_LINE_LEGACY (compat) o mixed-list (NO_SHARED_LIST).
+        // REGLA DE ORO: si está en `preview.lines[i]`, debe pasar al draft
+        // tal cual — cero recálculo, cero inferencia.
         commercialRoundingContext: (pl as any).commercialRoundingContext ?? null,
+        // Listas mixtas — doc-level replicado por línea. Cuando true, el
+        // resumen comercial de la línea NO usa el fallback legacy
+        // `appliedRounding.physical` (UI consistente; el banner explica la
+        // desactivación del redondeo comercial a nivel comprobante).
+        priceListMixed,
         // Opción δ (R-COMMERCIAL-METAL-VISIBLE) — Impacto $ del Redondeo
         // Comercial PER_DOCUMENT distribuido a ESTA línea (backend SSOT).
         // Permite computar Metal Visible = metalSale × qty + impact.
@@ -220,6 +255,34 @@ export function applySalePreviewToDraft(
         // MONETARIO del Resumen lo muestra directo). Passthrough estricto.
         lineMonetarySaldoPostCommercialRounding:
           (pl as any).lineMonetarySaldoPostCommercialRounding ?? null,
+        // Opción B — Resumen Comercial AUTÓNOMO de la línea (inmune a otras
+        // líneas). El card del artículo usa SIEMPRE estos para cumplir el
+        // contrato "mismo artículo = mismo Resumen". Separados del prorrateo
+        // documental (`metalRoundingMonetaryImpact`) y del saldo PER_DOCUMENT,
+        // que siguen alimentando el footer. Passthrough estricto.
+        lineOwnMetalRoundingMonetaryImpact:
+          (pl as any).lineOwnMetalRoundingMonetaryImpact ?? null,
+        lineOwnHechuraRoundingMonetaryImpact:
+          (pl as any).lineOwnHechuraRoundingMonetaryImpact ?? null,
+        lineOwnMonetarySaldoPostCommercialRounding:
+          (pl as any).lineOwnMonetarySaldoPostCommercialRounding ?? null,
+        lineOwnTotalWithTaxPostCommercialRounding:
+          (pl as any).lineOwnTotalWithTaxPostCommercialRounding ?? null,
+        // FASE 1.5 (2026-06-03) — Contrato único `lineCommercialSummary`.
+        // El backend lo emite por línea (`buildLineCommercialSummary`); el
+        // `TPDocumentLineAdvancedEditor` ya lo lee de `pricingMeta` para mostrar
+        // el MONETARIO (`lineSummary.monetary.amount`). Sin esta propagación, en
+        // producción la línea caía a un fallback por RESTA que diverge del
+        // contrato que el footer suma → desfase (ej. 16,12 en mixto). Passthrough
+        // ESTRICTO: la línea y el footer leen ahora el MISMO campo. Cero
+        // matemática FE — solo se copia el objeto del preview tal cual.
+        lineCommercialSummary:
+          (pl as any).lineCommercialSummary ?? null,
+        // FASE 1 (display-only) — resumen comercial AUTÓNOMO por línea (line-local,
+        // inmune a otras líneas / modo del documento). El card lo prioriza sobre
+        // `lineCommercialSummary` legacy. Passthrough estricto.
+        lineCommercialDisplaySummary:
+          (pl as any).lineCommercialDisplaySummary ?? null,
         // Gramos comerciales POST por línea y metal padre (display-only). El
         // Resumen Comercial del Artículo los usa para los gramos del metal —
         // son PER-LÍNEA, así que no acumulan al sumar varias líneas del mismo

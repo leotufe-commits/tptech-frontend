@@ -206,8 +206,8 @@ describe("TotalDelComprobanteCard — selector inline", () => {
         overrideDisabled
       />,
     );
-    const btn = screen.getByTestId("balance-mode-selector-badge");
-    expect((btn as HTMLButtonElement).disabled).toBe(true);
+    const seg = screen.getByTestId("balance-mode-segment-unified");
+    expect((seg as HTMLButtonElement).disabled).toBe(true);
   });
 });
 
@@ -243,7 +243,9 @@ describe("TotalDelComprobanteCard — modo UNIFIED", () => {
     );
     fireEvent.click(screen.getByTestId("total-card-composicion-toggle"));
     expect(screen.getByTestId("total-card-composicion-body")).toBeTruthy();
-    expect(screen.getByTestId("total-card-group-HECHURA")).toBeTruthy();
+    // Etapa 2F — en UNIFICADO la sección COMPOSICIÓN (HECHURA) se oculta; el
+    // detalle se enfoca en la cuenta monetaria (impuestos / ajustes / etc.).
+    expect(screen.queryByTestId("total-card-group-HECHURA")).toBeNull();
     expect(screen.getByTestId("total-card-group-TAX")).toBeTruthy();
   });
 
@@ -528,9 +530,8 @@ describe("TotalDelComprobanteCard — selector cambia modo", () => {
         onBalanceModeOverrideChange={onChange}
       />,
     );
-    // Abre el popover y selecciona "Unificado".
-    fireEvent.click(screen.getByTestId("balance-mode-selector-badge"));
-    fireEvent.click(screen.getByTestId("balance-mode-option-unified"));
+    // Control segmentado — click directo en el segmento "Unificado".
+    fireEvent.click(screen.getByTestId("balance-mode-segment-unified"));
     expect(onChange).toHaveBeenCalledWith("UNIFIED");
 
     // El padre vuelve a renderizar con balanceMode=UNIFIED + override=UNIFIED.
@@ -545,8 +546,8 @@ describe("TotalDelComprobanteCard — selector cambia modo", () => {
         onBalanceModeOverrideChange={onChange}
       />,
     );
-    // Badge "Manual" visible cuando el modo fue elegido manualmente.
-    expect(screen.getByTestId("balance-mode-override-tag")).toBeTruthy();
+    // Origen "Manual" visible cuando el modo fue elegido manualmente.
+    expect(screen.getByTestId("balance-mode-origin").textContent).toContain("Manual");
     // El bloque METALES del modo BREAKDOWN ya no aparece como sección de saldo:
     // en UNIFIED se rotula como "Informativo" cuando hay metales (acá no hay).
     expect(screen.queryByTestId("total-card-metals-section")).toBeNull();
@@ -565,8 +566,7 @@ describe("TotalDelComprobanteCard — selector cambia modo", () => {
         onBalanceModeOverrideChange={onChange}
       />,
     );
-    fireEvent.click(screen.getByTestId("balance-mode-selector-badge"));
-    fireEvent.click(screen.getByTestId("balance-mode-option-breakdown"));
+    fireEvent.click(screen.getByTestId("balance-mode-segment-breakdown"));
     expect(onChange).toHaveBeenCalledWith("BREAKDOWN");
 
     rerender(
@@ -586,10 +586,10 @@ describe("TotalDelComprobanteCard — selector cambia modo", () => {
     // `total-card-metals-caption` legacy; nos atamos al testid del wrapper.
     expect(screen.getByTestId("total-card-metals-section")).toBeTruthy();
     expect(screen.getByText(/^metales$/i)).toBeTruthy();
-    expect(screen.getByTestId("balance-mode-override-tag")).toBeTruthy();
+    expect(screen.getByTestId("balance-mode-origin").textContent).toContain("Manual");
   });
 
-  it("(3) elegir Automático dispara override=null y oculta el badge MANUAL", () => {
+  it("(3) elegir Automático dispara override=null y oculta el origen MANUAL", () => {
     const onChange = vi.fn();
     const { rerender } = render(
       <TotalDelComprobanteCard
@@ -602,11 +602,11 @@ describe("TotalDelComprobanteCard — selector cambia modo", () => {
         onBalanceModeOverrideChange={onChange}
       />,
     );
-    // Arranca con override manual → badge visible.
-    expect(screen.getByTestId("balance-mode-override-tag")).toBeTruthy();
+    // Arranca con override manual → Origen "Manual" + link de reset visible.
+    expect(screen.getByTestId("balance-mode-origin").textContent).toContain("Manual");
 
-    fireEvent.click(screen.getByTestId("balance-mode-selector-badge"));
-    fireEvent.click(screen.getByTestId("balance-mode-option-auto"));
+    // Override manual activo → link "Volver a automático" disponible.
+    fireEvent.click(screen.getByTestId("balance-mode-reset"));
     expect(onChange).toHaveBeenCalledWith(null);
 
     // Padre re-renderiza con override=null y source resuelto por backend.
@@ -621,7 +621,9 @@ describe("TotalDelComprobanteCard — selector cambia modo", () => {
         onBalanceModeOverrideChange={onChange}
       />,
     );
-    expect(screen.queryByTestId("balance-mode-override-tag")).toBeNull();
+    // Sin override → el Origen ya no dice "Manual" y el link de reset desaparece.
+    expect(screen.getByTestId("balance-mode-origin").textContent).not.toContain("Manual");
+    expect(screen.queryByTestId("balance-mode-reset")).toBeNull();
   });
 });
 
@@ -630,12 +632,14 @@ describe("TotalDelComprobanteCard — selector cambia modo", () => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe("TotalDelComprobanteCard — MetalsSummary nunca dice 'sin metales' cuando hay", () => {
-  it("(4) UNIFIED con documentMetals → muestra lista, NO el mensaje vacío", () => {
+  it("(4) BREAKDOWN con documentMetals → muestra lista, NO el mensaje vacío", () => {
+    // Etapa 2D — el bloque METALES solo se renderiza en DESGLOSADO. El test
+    // conserva su intención (lista, sin mensaje vacío) en BREAKDOWN.
     render(
       <TotalDelComprobanteCard
         totalDocument={1210}
         currencyCode="ARS"
-        balanceMode="UNIFIED"
+        balanceMode="BREAKDOWN"
         balanceBreakdown={bdUnified()}
         balanceModeOverride={null}
         onBalanceModeOverrideChange={noopChange}
@@ -675,7 +679,7 @@ describe("TotalDelComprobanteCard — MetalsSummary nunca dice 'sin metales' cua
       <TotalDelComprobanteCard
         totalDocument={1000}
         currencyCode="ARS"
-        balanceMode="UNIFIED"
+        balanceMode="BREAKDOWN"
         balanceBreakdown={bdUnified()}
         balanceModeOverride={null}
         onBalanceModeOverrideChange={noopChange}
@@ -960,19 +964,14 @@ describe("TotalDelComprobanteCard — PARIDAD línea ↔ documento (metales LADO
     expect(screen.queryByTestId("total-card-metal-oro-amount")).toBeNull();
   });
 
-  it("(9) UNIFIED con metales → bloque METALES presente sin caption legacy ni monto por padre (Etapa UX.30)", () => {
-    // Etapa UX.30 (2026-05-30):
-    //   (a) `total-card-metals-caption` legacy ("Informativo" / "Saldo en
-    //       metales") eliminado — el header "METALES" + el contexto del
-    //       balance ya transmiten el rol del bloque.
-    //   (b) Monto por padre (`total-card-metal-oro-amount`) oculto — era
-    //       valuationMonetary físico, confundía. El valor agregado va al pie
-    //       como "Valor comercial del metal" via `commercialMetalValueSum`.
+  it("(9) BREAKDOWN con metales → bloque METALES presente sin caption legacy ni monto por padre (Etapa UX.30)", () => {
+    // Etapa 2D — el bloque METALES solo se renderiza en DESGLOSADO; el test
+    // conserva su intención (sin caption legacy ni monto por padre) en BREAKDOWN.
     render(
       <TotalDelComprobanteCard
         totalDocument={50000}
         currencyCode="ARS"
-        balanceMode="UNIFIED"
+        balanceMode="BREAKDOWN"
         balanceBreakdown={bdUnified()}
         balanceModeOverride={null}
         onBalanceModeOverrideChange={noopChange}
@@ -1022,24 +1021,23 @@ describe("TotalDelComprobanteCard — PARIDAD línea ↔ documento (metales LADO
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe("TotalDelComprobanteCard — Etapa UX-Tax v2 labels ('Total hechura' / 'Patrimonio metálico')", () => {
-  it("título del bloque desglose: header dice 'Hechura total' (UX.33 — label unificado en ambos modos), toggle dice 'Ver detalle financiero'", () => {
-    // UX.33 (2026-05-30) — Label unificado a "Hechura total" en BREAKDOWN
-    // y UNIFIED (antes era "Total hechura" / "Saldo monetario" según modo).
-    // El TOGGLE (`total-card-composicion-toggle`) tiene texto independiente
-    // ("Ver detalle financiero" / "Ocultar detalle financiero").
+  it("título del bloque desglose (BREAKDOWN): header dice 'Monetario (saldo)', toggle dice 'Ver detalle financiero'", () => {
+    // Etapa 2F-C — el header "Monetario (saldo)" solo se renderiza en BREAKDOWN
+    // (en UNIFICADO se oculta por duplicar el TOTAL). El TOGGLE
+    // (`total-card-composicion-toggle`) tiene texto independiente.
     render(
       <TotalDelComprobanteCard
-        totalDocument={1210}
+        totalDocument={50000}
         currencyCode="ARS"
-        balanceMode="UNIFIED"
-        balanceBreakdown={bdUnified()}
+        balanceMode="BREAKDOWN"
+        balanceBreakdown={bdBreakdown()}
         balanceModeOverride={null}
         onBalanceModeOverrideChange={noopChange}
       />,
     );
     const headerRow = screen.getByTestId("total-card-hechura-row");
-    expect(headerRow.textContent).toMatch(/hechura total/i);
-    expect(headerRow.textContent).not.toMatch(/saldo monetario/i);
+    expect(headerRow.textContent).toMatch(/monetario \(saldo\)/i);
+    expect(headerRow.textContent).not.toMatch(/hechura total/i);
     expect(headerRow.textContent).not.toMatch(/saldo en moneda/i);
     expect(headerRow.textContent).not.toMatch(/^composici[oó]n/i);
     // Toggle: texto separado, propio del control.
@@ -1047,13 +1045,16 @@ describe("TotalDelComprobanteCard — Etapa UX-Tax v2 labels ('Total hechura' / 
     expect(toggle.textContent).toMatch(/detalle financiero/i);
   });
 
-  it("el grupo HECHURA NO muestra sub-encabezado 'Base monetaria' dentro del bloque 'Total hechura' (Etapa UX-Tax v2)", () => {
+  it("el grupo HECHURA NO muestra sub-encabezado 'Base monetaria' (sección COMPOSICIÓN, BREAKDOWN)", () => {
+    // Etapa 2F — la sección COMPOSICIÓN (HECHURA) solo se renderiza en
+    // DESGLOSADO; en UNIFICADO se oculta. El test conserva su intención
+    // (HECHURA sin sub-encabezado "Base monetaria") en BREAKDOWN.
     render(
       <TotalDelComprobanteCard
-        totalDocument={1210}
+        totalDocument={50000}
         currencyCode="ARS"
-        balanceMode="UNIFIED"
-        balanceBreakdown={bdUnified()}
+        balanceMode="BREAKDOWN"
+        balanceBreakdown={bdBreakdown()}
         balanceModeOverride={null}
         onBalanceModeOverrideChange={noopChange}
       />,
@@ -1578,7 +1579,7 @@ describe("TotalDelComprobanteCard — importe en el header de 'Total hechura'", 
     expect(headerAmount.textContent).toMatch(/[−-]\s*65[.,]?000/);
   });
 
-  it("(6) UNIFIED también muestra el importe del bucket monetario en el header", () => {
+  it("(6) UNIFIED — NO muestra header 'Monetario (saldo)' (Etapa 2F-C); el total es único en el hero", () => {
     render(
       <TotalDelComprobanteCard
         totalDocument={1210}
@@ -1592,11 +1593,13 @@ describe("TotalDelComprobanteCard — importe en el header de 'Total hechura'", 
         onBalanceModeOverrideChange={noopChange}
       />,
     );
-    const headerAmount = screen.getByTestId("total-card-monetary-header-amount");
-    expect(headerAmount.textContent).toMatch(/1[.,]?210/);
+    // Etapa 2F-C — el header "Monetario (saldo)" se oculta en UNIFICADO (duplicaba el TOTAL).
+    expect(screen.queryByTestId("total-card-monetary-header-amount")).toBeNull();
+    // El total vive ÚNICAMENTE en el hero del card.
+    expect(screen.getByTestId("total-card-amount").textContent).toMatch(/1[.,]?210/);
   });
 
-  it("(7) header visible con sección COLAPSADA (default UNIFIED)", () => {
+  it("(7) UNIFIED — detalle COLAPSADO por default + sin header de saldo duplicado (2F-C)", () => {
     render(
       <TotalDelComprobanteCard
         totalDocument={1210}
@@ -1612,8 +1615,8 @@ describe("TotalDelComprobanteCard — importe en el header de 'Total hechura'", 
     );
     // UNIFIED arranca colapsado → no hay body.
     expect(screen.queryByTestId("total-card-composicion-body")).toBeNull();
-    // Pero el importe del header SÍ está visible.
-    expect(screen.getByTestId("total-card-monetary-header-amount")).toBeTruthy();
+    // Etapa 2F-C — el header "Monetario (saldo)" NO se renderiza en UNIFICADO.
+    expect(screen.queryByTestId("total-card-monetary-header-amount")).toBeNull();
   });
 
   it("(8) BREAKDOWN — importe del header siempre visible aunque el desglose esté cerrado (Etapa UX-premium v3)", () => {
@@ -1654,15 +1657,14 @@ describe("TotalDelComprobanteCard — importe en el header de 'Total hechura'", 
   });
 
   // ──────────────────────────────────────────────────────────────────────────
-  // Bug fix — el header en UNIFIED ya no muestra el Total del comprobante
-  // (que el motor devuelve en `monetaryBalance.amount` para UNIFIED). Ahora
-  // hace la resta visual `total − Σ documentMetals.monetaryAmount` para
-  // mostrar SOLO el bucket no metálico. Cero matemática de pricing.
+  // Etapa 1 (Opción B) — en UNIFICADO el saldo monetario ES el TOTAL completo
+  // del documento. Los metales son informativos (gramos) y NO se descuentan
+  // del saldo. (Reemplaza el comportamiento previo "total − Σ metales".)
+  // En BREAKDOWN el header sigue siendo `total − Σ valuationMonetary`.
   // ──────────────────────────────────────────────────────────────────────────
 
-  it("(11) UNIFIED con metales → header NO muestra el total del comprobante", () => {
-    // Caso del print: total 488.473,97 ; metales valorizados 381.562,50
-    // → saldo monetario esperado ≈ 106.911,47 (no 488.473,97 que ES el total).
+  it("(11) UNIFIED con metales → saldo = total completo (metal informativo)", () => {
+    // Etapa 1: el metal no se resta; el saldo es el total del documento.
     render(
       <TotalDelComprobanteCard
         totalDocument={488473.97}
@@ -1678,15 +1680,14 @@ describe("TotalDelComprobanteCard — importe en el header de 'Total hechura'", 
         ]}
       />,
     );
-    const headerAmount = screen.getByTestId("total-card-monetary-header-amount");
-    // Defensa explícita contra la regresión: NO debe mostrar 488.473,97.
-    expect(headerAmount.textContent).not.toMatch(/488[.,]?473/);
-    // SÍ debe mostrar 106.911,47 (488473,97 − 381562,50).
-    expect(headerAmount.textContent).toMatch(/106[.,]?911[.,]?47/);
+    // Etapa 2F-C — en UNIFICADO el total vive en el hero (no hay header de saldo).
+    const headerAmount = screen.getByTestId("total-card-amount");
+    // Total COMPLETO (no 106.911,47, que era total − metal).
+    expect(headerAmount.textContent).toMatch(/488[.,]?473[.,]?97/);
+    expect(headerAmount.textContent).not.toMatch(/106[.,]?911/);
   });
 
-  it("(12) UNIFIED → saldo = totalDocument − Σ documentMetals.monetaryAmount", () => {
-    // Múltiples padres con monetaryAmount → suma antes de restar.
+  it("(12) UNIFIED con metales → saldo = totalDocument (no resta metal)", () => {
     render(
       <TotalDelComprobanteCard
         totalDocument={1000000}
@@ -1703,10 +1704,10 @@ describe("TotalDelComprobanteCard — importe en el header de 'Total hechura'", 
         ]}
       />,
     );
-    const headerAmount = screen.getByTestId("total-card-monetary-header-amount");
-    // 1.000.000 − (800.000 + 100.000) = 100.000
-    expect(headerAmount.textContent).toMatch(/100[.,]?000/);
-    expect(headerAmount.textContent).not.toMatch(/1[.,]?000[.,]?000/);
+    // Etapa 2F-C — total en el hero (sin header de saldo en UNIFICADO).
+    const headerAmount = screen.getByTestId("total-card-amount");
+    // Total completo (1.000.000), no 100.000 (total − metal).
+    expect(headerAmount.textContent).toMatch(/1[.,]?000[.,]?000/);
   });
 
   it("(13) UNIFIED sin metales → saldo = totalDocument (no se resta nada)", () => {
@@ -1724,7 +1725,8 @@ describe("TotalDelComprobanteCard — importe en el header de 'Total hechura'", 
         // documentMetals NO se pasa → resolvedMetals = []
       />,
     );
-    const headerAmount = screen.getByTestId("total-card-monetary-header-amount");
+    // Etapa 2F-C — total en el hero (sin header de saldo en UNIFICADO).
+    const headerAmount = screen.getByTestId("total-card-amount");
     expect(headerAmount.textContent).toMatch(/1[.,]?210/);
   });
 
@@ -1784,9 +1786,9 @@ describe("TotalDelComprobanteCard — importe en el header de 'Total hechura'", 
     expect(headerAmount.textContent).not.toMatch(/1[.,]?000[.,]?000/);
   });
 
-  it("(16) UNIFIED con monetaryAmount null en un metal → ese metal se omite de la Σ", () => {
-    // Snapshot legacy: un metal sin `lineSale` → monetaryAmount = null en el
-    // shape derivado. El header NO debe restar nada por ese padre.
+  it("(16) UNIFIED con metales (incl. monetaryAmount null) → saldo = total completo", () => {
+    // Etapa 1 — en UNIFICADO los metales son informativos y no se restan del
+    // saldo, sin importar si traen monetaryAmount o null. Saldo = total.
     render(
       <TotalDelComprobanteCard
         totalDocument={500000}
@@ -1803,9 +1805,11 @@ describe("TotalDelComprobanteCard — importe en el header de 'Total hechura'", 
         ]}
       />,
     );
-    const headerAmount = screen.getByTestId("total-card-monetary-header-amount");
-    // 500.000 − 200.000 (solo oro) = 300.000
-    expect(headerAmount.textContent).toMatch(/300[.,]?000/);
+    // Etapa 2F-C — total en el hero (sin header de saldo en UNIFICADO).
+    const headerAmount = screen.getByTestId("total-card-amount");
+    // Total completo (500.000), no 300.000 (total − metal).
+    expect(headerAmount.textContent).toMatch(/500[.,]?000/);
+    expect(headerAmount.textContent).not.toMatch(/300[.,]?000/);
   });
 
   it("(17) UNIFIED soporta negativos (descuento mayor a base, sin metales)", () => {
@@ -1822,8 +1826,8 @@ describe("TotalDelComprobanteCard — importe en el header de 'Total hechura'", 
         onBalanceModeOverrideChange={noopChange}
       />,
     );
-    const headerAmount = screen.getByTestId("total-card-monetary-header-amount");
-    expect(headerAmount.className).toMatch(/text-red-500/);
+    // Etapa 2F-C — el total negativo vive en el hero (sin header de saldo en UNIFICADO).
+    const headerAmount = screen.getByTestId("total-card-amount");
     expect(headerAmount.textContent).toMatch(/[−-]\s*5[.,]?000/);
   });
 
@@ -2014,12 +2018,13 @@ describe("TotalDelComprobanteCard — Etapa UX (filtro de ceros + cierre Total f
     );
     // Abrir el desglose para inspeccionar las filas (UNIFIED default colapsado).
     fireEvent.click(screen.getByTestId("total-card-composicion-toggle"));
-    // Filas con amount distinto a 0 → visibles.
-    expect(screen.getByTestId("total-card-component-HECHURA")).toBeTruthy();
+    // Fila con amount distinto a 0 (no-COMMERCIAL) → visible.
     expect(screen.getByTestId("total-card-component-TAX")).toBeTruthy();
-    // Filas con amount === 0 → ocultas.
+    // Filas con amount === 0 → ocultas (filtro de ceros).
     expect(screen.queryByTestId("total-card-component-SHIPPING")).toBeNull();
     expect(screen.queryByTestId("total-card-component-COUPON")).toBeNull();
+    // Etapa 2F — HECHURA (COMPOSICIÓN) oculto en UNIFICADO, independiente del amount.
+    expect(screen.queryByTestId("total-card-component-HECHURA")).toBeNull();
   });
 
   it("(a2) grupo cuyo único componente tiene amount === 0 NO renderiza header de grupo", () => {
@@ -2077,8 +2082,9 @@ describe("TotalDelComprobanteCard — Etapa UX (filtro de ceros + cierre Total f
     const discountRow = screen.getByTestId("total-card-component-DISCOUNT_MANUAL");
     expect(discountRow).toBeTruthy();
     expect(discountRow.textContent).toContain("Bonificación");
-    // Color de descuento aplicado (token semántico).
-    const amountSpan = discountRow.querySelector("span:last-child");
+    // Color de descuento aplicado (token semántico). El monto es el ÚLTIMO
+    // hijo directo del <li> (el label+origen viven en el span-columna previo).
+    const amountSpan = discountRow.lastElementChild;
     expect(amountSpan?.className).toMatch(/text-red-500/);
   });
 
@@ -2190,7 +2196,7 @@ describe("TotalDelComprobanteCard — Etapa UX (filtro de ceros + cierre Total f
     );
     fireEvent.click(screen.getByTestId("total-card-composicion-toggle"));
     const discountAmount = screen.getByTestId("total-card-component-DISCOUNT_MANUAL")
-      .querySelector("span:last-child");
+      .lastElementChild;
     expect(discountAmount?.className).toMatch(/text-red-500/);
     // El descuento NO toma el acento `text-primary` del total.
     expect(discountAmount?.className).not.toMatch(/text-primary/);
@@ -2708,15 +2714,16 @@ describe("POLICY §R-Rounding-7 — Σ visible === hero (invariante)", () => {
     render(<TotalDelComprobanteCard {...props} />);
     openDetalle();
     const heroAmount   = screen.getByTestId("total-card-amount");
-    const headerAmount = screen.getByTestId("total-card-monetary-header-amount");
     const hasMetals    = (props.balanceBreakdown?.metals?.length ?? 0) > 0;
+    expect(tx(heroAmount)).toBeTruthy();
     if (hasMetals) {
-      // BREAKDOWN con metales: header del bloque ≠ hero por contrato visual.
-      expect(tx(heroAmount)).toBeTruthy();
+      // BREAKDOWN con metales: header del bloque presente (≠ hero por contrato).
+      const headerAmount = screen.getByTestId("total-card-monetary-header-amount");
       expect(tx(headerAmount)).toBeTruthy();
     } else {
-      // UNIFIED puro / sin metales: header del bloque coincide con el hero.
-      expect(tx(headerAmount)).toBe(tx(heroAmount));
+      // Etapa 2F-C — UNIFICADO: el header de saldo se OCULTA (duplicaba el hero).
+      // El hero es el ÚNICO monto visible; no hay header que comparar.
+      expect(screen.queryByTestId("total-card-monetary-header-amount")).toBeNull();
     }
   }
 

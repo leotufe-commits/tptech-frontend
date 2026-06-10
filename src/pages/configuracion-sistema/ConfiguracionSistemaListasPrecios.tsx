@@ -1566,15 +1566,18 @@ function PriceListViewContent({ row }: { row: PriceListRow }) {
         </div>
       </div>
 
-      {/* Redondeo comercial — dominio LISTA: se aplica sobre el precio comercial
-          ANTES de impuestos. Distinto del "Redondeo financiero" del comprobante
-          (POLICY §R-Rounding-12). */}
+      {/* Redondeo comercial — dominio LISTA (precio comercial del artículo).
+          Distinto del "Redondeo financiero" del comprobante (POLICY
+          §R-Rounding-12). El MOMENTO depende del alcance de la lista:
+          PER_DOCUMENT (canónico) redondea el saldo comercial DESPUÉS de
+          impuestos; PER_LINE (compat legacy) redondea el componente ANTES de
+          impuestos. El alcance no se edita desde esta vista. */}
       {hasRounding && (
         <div className="rounded-lg bg-surface border border-border/50 p-3 space-y-3">
           <div className="space-y-0.5">
             <p className="text-xs font-semibold text-muted uppercase tracking-wide">Redondeo comercial</p>
             <p className="text-[10px] text-muted/70 italic">
-              Se aplica sobre el precio comercial antes de impuestos.
+              Se aplica sobre el precio comercial del artículo (no sobre el total del comprobante).
             </p>
           </div>
           {item("Aplica en", ROUNDING_TARGET_LABELS[row.roundingTarget])}

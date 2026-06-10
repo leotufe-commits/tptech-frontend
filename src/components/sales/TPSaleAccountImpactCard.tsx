@@ -65,12 +65,10 @@ export function TPSaleAccountImpactCard({
   originLabel = "Factura de venta",
   className,
 }: TPSaleAccountImpactCardProps): ReactElement {
-  // Modo efectivo: prop explícita o inferido del breakdown. Si nada, UNIFIED.
-  const mode: "UNIFIED" | "BREAKDOWN" =
-    balanceMode ??
-    (balanceBreakdown && balanceBreakdown.metals.length > 0
-      ? "BREAKDOWN"
-      : "UNIFIED");
+  // Modo de saldo (SSOT) — lector puro del `balanceMode` del backend. NO se
+  // infiere desde la presencia de metales: mostrar metales NO cambia el modo.
+  // Coherente con `TotalDelComprobanteCard` (mismo `balanceMode` del preview).
+  const mode: "UNIFIED" | "BREAKDOWN" = balanceMode ?? "UNIFIED";
 
   // Moneda de display: prop > breakdown > "".
   const displayCurrency =

@@ -141,6 +141,48 @@ describe("applySalePreviewToDraft — transporte de commercialRoundingContext", 
     expect((out.lines[0] as any).pricingMeta?.commercialRoundingContext).toBeNull();
   });
 
+  it("lineBalanceMode — METAL_HECHURA → BREAKDOWN (propiedad de línea desde appliedPriceListMode)", () => {
+    const preview = makePreview(null);
+    (preview.lines[0] as any).appliedPriceListMode = "METAL_HECHURA";
+    const out = applySalePreviewToDraft(makeDraft(), preview);
+    const meta = (out.lines[0] as any).pricingMeta;
+    expect(meta?.appliedPriceListMode).toBe("METAL_HECHURA");
+    expect(meta?.lineBalanceMode).toBe("BREAKDOWN");
+  });
+
+  it("lineBalanceMode — MARGIN_TOTAL → UNIFIED", () => {
+    const preview = makePreview(null);
+    (preview.lines[0] as any).appliedPriceListMode = "MARGIN_TOTAL";
+    const out = applySalePreviewToDraft(makeDraft(), preview);
+    expect((out.lines[0] as any).pricingMeta?.lineBalanceMode).toBe("UNIFIED");
+  });
+
+  it("lineBalanceMode — independiente de listas mixtas (BREAKDOWN aunque doc MIXED)", () => {
+    // El documento está en listas mixtas (appliedPriceListId=MIXED) pero ESTA
+    // línea usa lista desglosada → conserva BREAKDOWN.
+    const preview = makePreview(null);
+    (preview as any).appliedPriceListId = "MIXED";
+    (preview.lines[0] as any).appliedPriceListMode = "METAL_HECHURA";
+    const out = applySalePreviewToDraft(makeDraft(), preview);
+    const meta = (out.lines[0] as any).pricingMeta;
+    expect(meta?.priceListMixed).toBe(true);          // doc mixto
+    expect(meta?.lineBalanceMode).toBe("BREAKDOWN");   // pero la línea sigue desglosada
+  });
+
+  it("listas mixtas — replica priceListMixed=true por línea (appliedPriceListId top-level === MIXED)", () => {
+    const preview = makePreview(null);
+    (preview as any).appliedPriceListId = "MIXED";
+    const out = applySalePreviewToDraft(makeDraft(), preview);
+    expect((out.lines[0] as any).pricingMeta?.priceListMixed).toBe(true);
+  });
+
+  it("lista única — priceListMixed=false (appliedPriceListId top-level distinto de MIXED)", () => {
+    const preview = makePreview(null);
+    (preview as any).appliedPriceListId = "pl-doc";
+    const out = applySalePreviewToDraft(makeDraft(), preview);
+    expect((out.lines[0] as any).pricingMeta?.priceListMixed).toBe(false);
+  });
+
   it("metadata appliedToLineCount viene del backend, NUNCA del frontend", () => {
     // El backend cuenta líneas y emite appliedToLineCount: N.
     // El frontend NUNCA hace `lines.length` para inferirlo.

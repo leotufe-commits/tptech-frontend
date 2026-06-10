@@ -15,6 +15,12 @@ import {
   buildMetalParentSaleLines,
   buildMetalParentLineWeights,
   computeMetalSaleFactor,
+  resolveCommercialPostGrams,
+  pickLineCommercialRoundingMetals,
+  resolveCommercialMonetaryImpact,
+  resolveCommercialHechuraImpact,
+  resolveLineBalanceMode,
+  isLineDesglosadaView,
 } from "../saleCompositionDisplay";
 import { buildMetalPadreMap } from "../../../../components/pricing/CostCompositionBlock/helpers";
 import type { PricingStepResult } from "../../../../services/articles";
@@ -339,6 +345,38 @@ describe("buildMetalParentSaleLines — mini desglose de Factura (paridad Simula
     expect(r[0].saleAmountLine).toBeCloseTo(381562.5, 6);
   });
 
+  it("propaga metalParentId al output (identidad para match por ID en el card)", () => {
+    const r = buildMetalParentSaleLines(
+      [{ metalName: "Oro Fino", metalParentId: "metal-oro-fino", purity: 0.75, appliedGrams: 1.1, appliedMermaPct: 0, lineSale: 50000 }],
+      1,
+      1.85,
+    );
+    expect(r).toHaveLength(1);
+    expect(r[0].metalParentId).toBe("metal-oro-fino");
+  });
+
+  it("metalParentId null cuando el item no lo trae (snapshot legacy → fallback por nombre)", () => {
+    const r = buildMetalParentSaleLines(
+      [{ metalName: "Oro Fino", purity: 0.75, appliedGrams: 1.1, appliedMermaPct: 0, lineSale: 50000 }],
+      1,
+      1.85,
+    );
+    expect(r[0].metalParentId).toBeNull();
+  });
+
+  it("varias variantes del mismo padre comparten metalParentId (primer id no-nulo)", () => {
+    const r = buildMetalParentSaleLines(
+      [
+        { metalName: "Oro Fino", metalParentId: "metal-oro", purity: 0.75,  appliedGrams: 1.0, appliedMermaPct: 0, lineSale: 10000 },
+        { metalName: "Oro Fino", metalParentId: "metal-oro", purity: 0.585, appliedGrams: 0.5, appliedMermaPct: 0, lineSale: 5000 },
+      ],
+      1,
+      null,
+    );
+    expect(r).toHaveLength(1);
+    expect(r[0].metalParentId).toBe("metal-oro");
+  });
+
   it("un padre con lineSale → saleAmountLine = Σ lineSale × qty (valor de VENTA con margen)", () => {
     const r = buildMetalParentSaleLines(
       [{ metalName: "Oro Fino", purity: 0.75, appliedGrams: 1.1, appliedMermaPct: 0, lineSale: 50000 }],
@@ -585,6 +623,472 @@ describe("buildMetalParentSaleLines — mini desglose de Factura (paridad Simula
       );
       expect(r[0].variants).toHaveLength(1);
       expect(r[0].variants[0].label).toBe("Oro 18k");
+    });
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// buildMetalParentSaleTotals — propaga metalParentId (chip "Metales" del grid)
+// ─────────────────────────────────────────────────────────────────────────────
+describe("buildMetalParentSaleTotals — propaga metalParentId", () => {
+  it("propaga metalParentId al output", () => {
+    const r = buildMetalParentSaleTotals(
+      [{ metalName: "Oro Fino", metalParentId: "metal-oro-fino", purity: 0.75, appliedGrams: 1.1, appliedMermaPct: 0 }],
+      1.85,
+    );
+    expect(r).toHaveLength(1);
+    expect(r[0].metalParentId).toBe("metal-oro-fino");
+  });
+
+  it("metalParentId null cuando el item no lo trae (snapshot legacy)", () => {
+    const r = buildMetalParentSaleTotals(
+      [{ metalName: "Oro Fino", purity: 0.75, appliedGrams: 1.1, appliedMermaPct: 0 }],
+      1.85,
+    );
+    expect(r[0].metalParentId).toBeNull();
+  });
+
+  it("varias variantes del mismo padre comparten metalParentId (primer id no-nulo)", () => {
+    const r = buildMetalParentSaleTotals(
+      [
+        { metalName: "Oro Fino", metalParentId: "metal-oro", purity: 0.75,  appliedGrams: 1.0, appliedMermaPct: 0 },
+        { metalName: "Oro Fino", metalParentId: "metal-oro", purity: 0.585, appliedGrams: 0.5, appliedMermaPct: 0 },
+      ],
+      null,
+    );
+    expect(r).toHaveLength(1);
+    expect(r[0].metalParentId).toBe("metal-oro");
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// resolveCommercialPostGrams — match por ID (canónico) + fallback por nombre
+// ─────────────────────────────────────────────────────────────────────────────
+describe("resolveCommercialPostGrams — match por ID con fallback legacy por nombre", () => {
+  const snap = [
+    { metalParentId: "metal-oro",   metalParentName: "Oro Fino", postGrams: 1.40 },
+    { metalParentId: "metal-plata", metalParentName: "Plata",    postGrams: 5.00 },
+  ];
+
+  it("match por ID aunque el nombre visible sea DISTINTO → postGrams del snapshot (1,40)", () => {
+    const g = resolveCommercialPostGrams({ metalParentId: "metal-oro", name: "ORO (AU)" }, snap);
+    expect(g).toBe(1.40);
+  });
+
+  it("fallback legacy por nombre cuando el target NO tiene metalParentId", () => {
+    const g = resolveCommercialPostGrams({ metalParentId: null, name: "Plata" }, snap);
+    expect(g).toBe(5.00);
+  });
+
+  it("prioriza ID sobre nombre (ignora el fallback si el id matchea)", () => {
+    const snap2 = [{ metalParentId: "metal-oro", metalParentName: "OTRO NOMBRE", postGrams: 1.40 }];
+    const g = resolveCommercialPostGrams({ metalParentId: "metal-oro", name: "no-matchea-nombre" }, snap2);
+    expect(g).toBe(1.40);
+  });
+
+  it("sin match (ni id ni nombre) → null (el caller usa el crudo)", () => {
+    const g = resolveCommercialPostGrams({ metalParentId: "metal-platino", name: "Platino" }, snap);
+    expect(g).toBeNull();
+  });
+
+  it("snapshot vacío → null", () => {
+    expect(resolveCommercialPostGrams({ metalParentId: "x", name: "y" }, [])).toBeNull();
+  });
+
+  it("postGrams inválido (no número) → null", () => {
+    const g = resolveCommercialPostGrams(
+      { metalParentId: "metal-oro", name: "Oro Fino" },
+      [{ metalParentId: "metal-oro", metalParentName: "Oro Fino", postGrams: null }],
+    );
+    expect(g).toBeNull();
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// pickLineCommercialRoundingMetals — fuente por prioridad (PER_DOC → PHYSICAL
+// per-línea → doc-level legacy)
+// ─────────────────────────────────────────────────────────────────────────────
+describe("pickLineCommercialRoundingMetals — selección de fuente por línea", () => {
+  it("lineCommercialRoundingMetals null PERO appliedRounding.physical.metals presente → usa physical", () => {
+    const meta = {
+      lineCommercialRoundingMetals: null,
+      commercialRoundingContext:    null,
+      appliedRounding: {
+        physical: { metals: [{ metalParentId: "metal-oro", metalParentName: "Oro Fino", postGrams: 1.4 }] },
+      },
+    };
+    const src = pickLineCommercialRoundingMetals(meta);
+    expect(src).toHaveLength(1);
+    expect(src[0].metalParentId).toBe("metal-oro");
+    expect(src[0].postGrams).toBe(1.4);
+  });
+
+  it("commercialPhysical.metals como alias cuando appliedRounding ausente", () => {
+    const meta = {
+      lineCommercialRoundingMetals: null,
+      commercialPhysical: { metals: [{ metalParentId: "metal-oro", metalParentName: "Oro Fino", postGrams: 1.4 }] },
+    };
+    const src = pickLineCommercialRoundingMetals(meta);
+    expect(src[0].postGrams).toBe(1.4);
+  });
+
+  it("prioridad: lineCommercialRoundingMetals gana sobre physical", () => {
+    const meta = {
+      lineCommercialRoundingMetals: [{ metalParentId: "metal-oro", postGrams: 1.5 }],
+      appliedRounding: { physical: { metals: [{ metalParentId: "metal-oro", postGrams: 1.4 }] } },
+    };
+    const src = pickLineCommercialRoundingMetals(meta);
+    expect(src[0].postGrams).toBe(1.5);  // PER_DOCUMENT per-línea
+  });
+
+  it("doc-level legacy: commercialRoundingContext.breakdown.metalsPostGrams cuando no hay per-línea", () => {
+    const meta = {
+      commercialRoundingContext: {
+        breakdown: { metalsPostGrams: [{ metalParentId: "metal-oro", postGrams: 1.4 }] },
+      },
+    };
+    const src = pickLineCommercialRoundingMetals(meta);
+    expect(src[0].postGrams).toBe(1.4);
+  });
+
+  it("ninguna fuente → [] (el caller usa el crudo)", () => {
+    expect(pickLineCommercialRoundingMetals({})).toEqual([]);
+    expect(pickLineCommercialRoundingMetals(null)).toEqual([]);
+  });
+
+  // ── Listas mixtas (2026-06-03) — GRAMOS SIEMPRE; impacto $ legacy bloqueado ─
+  it("listas mixtas (priceListMixed=true) + physical → SIGUE alimentando los gramos (1,40)", () => {
+    // El metal comercial visible NO se suprime: en MIXED_LIST_FALLBACK los
+    // gramos siguen viniendo de `appliedRounding.physical`. La supresión de la
+    // capa MONETARIA legacy se hace en los resolvers de impacto, no acá.
+    const meta = {
+      priceListMixed: true,
+      lineCommercialRoundingMetals: null,
+      commercialRoundingContext: null,
+      appliedRounding: {
+        physical: { metals: [{ metalParentId: "metal-oro", metalParentName: "Oro Fino", postGrams: 1.4 }] },
+      },
+    };
+    const src = pickLineCommercialRoundingMetals(meta);
+    expect(src).toHaveLength(1);
+    expect(src[0].postGrams).toBe(1.4);  // gramos conservados
+  });
+
+  it("single (priceListMixed=false) + physical → gramos (1,40) — back-compat", () => {
+    const meta = {
+      priceListMixed: false,
+      lineCommercialRoundingMetals: null,
+      appliedRounding: { physical: { metals: [{ metalParentId: "metal-oro", postGrams: 1.4 }] } },
+    };
+    expect(pickLineCommercialRoundingMetals(meta)[0].postGrams).toBe(1.4);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Listas mixtas (2026-06-03) — bloqueo de la CAPA MONETARIA legacy
+// (`allowPerLineLegacy: false`). Los gramos NO se ven afectados.
+// ─────────────────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// lineBalanceMode — modo DESGLOSADA/UNIFICADA como propiedad EXPLÍCITA de línea
+// (2026-06-03). NO debe inferirse del estado documental (commercialRoundingContext).
+// ─────────────────────────────────────────────────────────────────────────────
+describe("resolveLineBalanceMode / isLineDesglosadaView — propiedad de línea", () => {
+  it("lineBalanceMode explícito BREAKDOWN → desglosada (aunque commercialRoundingContext sea null)", () => {
+    // Caso MIXED_LIST_FALLBACK: el doc no emite commercialRoundingContext, pero
+    // la línea trae su lineBalanceMode explícito → conserva layout desglosado.
+    const meta = { lineBalanceMode: "BREAKDOWN", commercialRoundingContext: null, lineMonetarySaldoPostCommercialRounding: null };
+    expect(resolveLineBalanceMode(meta)).toBe("BREAKDOWN");
+    expect(isLineDesglosadaView(meta)).toBe(true);
+  });
+
+  it("lineBalanceMode explícito UNIFIED → unificada (gana sobre cualquier contexto doc)", () => {
+    const meta = { lineBalanceMode: "UNIFIED", commercialRoundingContext: { scope: "BREAKDOWN" } };
+    expect(resolveLineBalanceMode(meta)).toBe("UNIFIED");
+    expect(isLineDesglosadaView(meta)).toBe(false);
+  });
+
+  it("deriva de appliedPriceListMode: METAL_HECHURA → BREAKDOWN", () => {
+    const meta = { appliedPriceListMode: "METAL_HECHURA" };
+    expect(resolveLineBalanceMode(meta)).toBe("BREAKDOWN");
+    expect(isLineDesglosadaView(meta)).toBe(true);
+  });
+
+  it("deriva de appliedPriceListMode: MARGIN_TOTAL → UNIFIED", () => {
+    const meta = { appliedPriceListMode: "MARGIN_TOTAL" };
+    expect(resolveLineBalanceMode(meta)).toBe("UNIFIED");
+    expect(isLineDesglosadaView(meta)).toBe(false);
+  });
+
+  it("sin señal de línea → fallback legacy (commercialRoundingContext.scope)", () => {
+    expect(isLineDesglosadaView({ commercialRoundingContext: { scope: "BREAKDOWN" } })).toBe(true);
+    expect(isLineDesglosadaView({ lineMonetarySaldoPostCommercialRounding: 185500 })).toBe(true);
+    expect(isLineDesglosadaView({})).toBe(false);
+    expect(isLineDesglosadaView(null)).toBe(false);
+  });
+
+  // Escenarios A–D — el modo es per-línea, independiente del estado documental.
+  it("A) Desglosada + Desglosada → ambas desglosadas", () => {
+    const l1 = { lineBalanceMode: "BREAKDOWN" };
+    const l2 = { lineBalanceMode: "BREAKDOWN" };
+    expect(isLineDesglosadaView(l1)).toBe(true);
+    expect(isLineDesglosadaView(l2)).toBe(true);
+  });
+
+  it("B) Unificada + Unificada → ambas unificadas", () => {
+    const l1 = { lineBalanceMode: "UNIFIED" };
+    const l2 = { lineBalanceMode: "UNIFIED" };
+    expect(isLineDesglosadaView(l1)).toBe(false);
+    expect(isLineDesglosadaView(l2)).toBe(false);
+  });
+
+  it("C) Desglosada + Unificada (mixto) → cada línea su layout, con commercialRoundingContext null en ambas", () => {
+    // Documento en MIXED_LIST_FALLBACK: commercialRoundingContext null en las dos
+    // líneas. Aun así, cada una conserva su modo por su propiedad explícita.
+    const desglosada = { lineBalanceMode: "BREAKDOWN", commercialRoundingContext: null };
+    const unificada  = { lineBalanceMode: "UNIFIED",   commercialRoundingContext: null };
+    expect(isLineDesglosadaView(desglosada)).toBe(true);
+    expect(isLineDesglosadaView(unificada)).toBe(false);
+  });
+
+  it("D) Unificada + Desglosada (mixto, invertido) → cada línea su layout", () => {
+    const unificada  = { lineBalanceMode: "UNIFIED",   commercialRoundingContext: null };
+    const desglosada = { lineBalanceMode: "BREAKDOWN", commercialRoundingContext: null };
+    expect(isLineDesglosadaView(unificada)).toBe(false);
+    expect(isLineDesglosadaView(desglosada)).toBe(true);
+  });
+});
+
+describe("resolveCommercialMonetaryImpact / resolveCommercialHechuraImpact — bloqueo legacy en mixto", () => {
+  it("metal: monetaryEquivalent (PER_LINE) se BLOQUEA con allowPerLineLegacy=false", () => {
+    expect(resolveCommercialMonetaryImpact({ monetaryEquivalent: 9675 }, { allowPerLineLegacy: false })).toBeNull();
+  });
+
+  it("metal: monetaryEquivalent se MUESTRA por default (single-list / back-compat)", () => {
+    expect(resolveCommercialMonetaryImpact({ monetaryEquivalent: 9675 })).toBe(9675);
+  });
+
+  it("metal: monetaryImpact (PER_DOCUMENT) se MUESTRA aunque allowPerLineLegacy=false", () => {
+    expect(resolveCommercialMonetaryImpact({ monetaryImpact: 100 }, { allowPerLineLegacy: false })).toBe(100);
+  });
+
+  it("hechura: hechuraSaleRoundingDelta (PER_LINE) se BLOQUEA con allowPerLineLegacy=false", () => {
+    expect(resolveCommercialHechuraImpact({ hechuraSaleRoundingDelta: 24.79 }, { allowPerLineLegacy: false })).toBeNull();
+  });
+
+  it("hechura: hechuraSaleRoundingDelta se MUESTRA por default (back-compat)", () => {
+    expect(resolveCommercialHechuraImpact({ hechuraSaleRoundingDelta: 24.79 })).toBe(24.79);
+  });
+
+  it("hechura: hechuraRoundingMonetaryImpact (PER_DOCUMENT) se MUESTRA aunque allowPerLineLegacy=false", () => {
+    expect(resolveCommercialHechuraImpact({ hechuraRoundingMonetaryImpact: 50 }, { allowPerLineLegacy: false })).toBe(50);
+  });
+
+  it("integración: physical + resolveCommercialPostGrams por ID (nombre distinto) → 1,40", () => {
+    const meta = {
+      appliedRounding: {
+        physical: { metals: [{ metalParentId: "metal-oro", metalParentName: "Oro Fino", postGrams: 1.4 }] },
+      },
+    };
+    const src = pickLineCommercialRoundingMetals(meta);
+    // El card muestra "ORO (AU)" pero matchea por id → 1,40.
+    const g = resolveCommercialPostGrams({ metalParentId: "metal-oro", name: "ORO (AU)" }, src);
+    expect(g).toBe(1.4);
+  });
+
+  it("fallback legacy: sin metalParentId en target, match por nombre contra physical", () => {
+    const meta = {
+      appliedRounding: {
+        physical: { metals: [{ metalParentId: "metal-oro", metalParentName: "Oro Fino", postGrams: 1.4 }] },
+      },
+    };
+    const src = pickLineCommercialRoundingMetals(meta);
+    const g = resolveCommercialPostGrams({ metalParentId: null, name: "Oro Fino" }, src);
+    expect(g).toBe(1.4);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// resolveCommercialMonetaryImpact — impacto $ del Redondeo Comercial
+// (monetaryImpact ?? monetaryEquivalent)
+// ─────────────────────────────────────────────────────────────────────────────
+describe("resolveCommercialMonetaryImpact — monetaryImpact ?? monetaryEquivalent", () => {
+  it("PER_LINE PHYSICAL: lee monetaryEquivalent (+7.256,25)", () => {
+    const r = resolveCommercialMonetaryImpact({ monetaryEquivalent: 7256.25 });
+    expect(r).toBe(7256.25);
+  });
+
+  it("PER_DOCUMENT: sigue leyendo monetaryImpact", () => {
+    const r = resolveCommercialMonetaryImpact({ monetaryImpact: 24.79 });
+    expect(r).toBe(24.79);
+  });
+
+  it("prioridad: monetaryImpact gana sobre monetaryEquivalent (compat PER_DOCUMENT)", () => {
+    const r = resolveCommercialMonetaryImpact({ monetaryImpact: 24.79, monetaryEquivalent: 999 });
+    expect(r).toBe(24.79);
+  });
+
+  it("sin impacto (ninguno finito) → null (el card oculta la fila)", () => {
+    expect(resolveCommercialMonetaryImpact({})).toBeNull();
+    expect(resolveCommercialMonetaryImpact(null)).toBeNull();
+    expect(resolveCommercialMonetaryImpact({ monetaryImpact: null, monetaryEquivalent: null })).toBeNull();
+    expect(resolveCommercialMonetaryImpact({ monetaryEquivalent: NaN })).toBeNull();
+  });
+
+  it("integración PER_LINE PHYSICAL: picker + impacto monetario por ID → 7.256,25 (con deltaGrams)", () => {
+    const meta = {
+      appliedRounding: {
+        physical: {
+          metals: [{
+            metalParentId:   "metal-oro",
+            metalParentName: "Oro Fino",
+            preGrams:        1.3613,
+            postGrams:       1.4,
+            deltaGrams:      0.0387,
+            monetaryEquivalent: 7256.25,
+          }],
+        },
+      },
+    };
+    const src = pickLineCommercialRoundingMetals(meta);
+    const crMetal = src.find((x) => x.metalParentId === "metal-oro");
+    // Gramos finales (1,40) y delta (+0,0387 ≈ +0,04 g en desglosado).
+    expect(crMetal?.postGrams).toBe(1.4);
+    expect(crMetal?.deltaGrams).toBeCloseTo(0.0387, 4);
+    // Impacto monetario (UNIFICADO muestra solo esto; DESGLOSADO grams + esto).
+    expect(resolveCommercialMonetaryImpact(crMetal)).toBe(7256.25);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// resolveCommercialHechuraImpact — redondeo MONETARIO comercial del bucket
+// hechura/saldo (hechuraRoundingMonetaryImpact ?? hechuraSaleRoundingDelta)
+// ─────────────────────────────────────────────────────────────────────────────
+describe("resolveCommercialHechuraImpact — hechuraRoundingMonetaryImpact ?? hechuraSaleRoundingDelta", () => {
+  it("PER_LINE: lee hechuraSaleRoundingDelta (+24,79)", () => {
+    const r = resolveCommercialHechuraImpact({ hechuraSaleRoundingDelta: 24.79 });
+    expect(r).toBe(24.79);
+  });
+
+  it("PER_LINE: delta negativo (-16,12)", () => {
+    const r = resolveCommercialHechuraImpact({ hechuraSaleRoundingDelta: -16.12 });
+    expect(r).toBe(-16.12);
+  });
+
+  it("PER_DOCUMENT: sigue leyendo hechuraRoundingMonetaryImpact", () => {
+    const r = resolveCommercialHechuraImpact({ hechuraRoundingMonetaryImpact: 24.79 });
+    expect(r).toBe(24.79);
+  });
+
+  it("prioridad: hechuraRoundingMonetaryImpact gana sobre hechuraSaleRoundingDelta", () => {
+    const r = resolveCommercialHechuraImpact({ hechuraRoundingMonetaryImpact: 24.79, hechuraSaleRoundingDelta: 999 });
+    expect(r).toBe(24.79);
+  });
+
+  it("sin impacto → null (la fila no se renderiza)", () => {
+    expect(resolveCommercialHechuraImpact({})).toBeNull();
+    expect(resolveCommercialHechuraImpact(null)).toBeNull();
+    expect(resolveCommercialHechuraImpact({ hechuraRoundingMonetaryImpact: null, hechuraSaleRoundingDelta: null })).toBeNull();
+    expect(resolveCommercialHechuraImpact({ hechuraSaleRoundingDelta: NaN })).toBeNull();
+  });
+
+  it("es independiente del impacto del METAL (no altera el físico)", () => {
+    // El helper de hechura lee SOLO campos de hechura; el de metal SOLO los de metal.
+    const meta = { hechuraSaleRoundingDelta: 24.79, monetaryEquivalent: 7256.25 };
+    expect(resolveCommercialHechuraImpact(meta)).toBe(24.79);
+    expect(resolveCommercialMonetaryImpact(meta)).toBe(7256.25);
+  });
+});
+
+// ═════════════════════════════════════════════════════════════════════════════
+// CONTRATO INMUTABLE — REDONDEO COMERCIAL (guard de regresión)
+//
+// Blinda las 4 reglas que NO se negocian (ver CLAUDE.md raíz §"REDONDEO
+// COMERCIAL — REGLAS INMUTABLES"). Si alguna pantalla vuelve a leer campos
+// crudos o invierte la prioridad, estos asserts fallan.
+//   1. PER_DOCUMENT prioritizado sobre PER_LINE (legacy fallback).
+//   2. PER_LINE solo como fallback cuando el canónico no vino.
+//   3. Match por metalParentId ANTES que por nombre.
+//   4. Passthrough puro — el frontend NO recalcula (devuelve el valor backend tal cual).
+// ═════════════════════════════════════════════════════════════════════════════
+describe("CONTRATO INMUTABLE — redondeo comercial (guard)", () => {
+  describe("1. PER_DOCUMENT prioritizado sobre PER_LINE", () => {
+    it("hechura/saldo: hechuraRoundingMonetaryImpact gana sobre hechuraSaleRoundingDelta", () => {
+      expect(resolveCommercialHechuraImpact({
+        hechuraRoundingMonetaryImpact: 24.79,   // PER_DOCUMENT (canónico)
+        hechuraSaleRoundingDelta:      -4.5,     // PER_LINE (legacy)
+      })).toBe(24.79);
+    });
+    it("metal: monetaryImpact (PER_DOCUMENT) gana sobre monetaryEquivalent (PER_LINE)", () => {
+      expect(resolveCommercialMonetaryImpact({
+        monetaryImpact:     9675,     // PER_DOCUMENT
+        monetaryEquivalent: 7256.25,  // PER_LINE PHYSICAL
+      })).toBe(9675);
+    });
+    it("gramos: lineCommercialRoundingMetals (PER_DOCUMENT) gana sobre appliedRounding.physical (PER_LINE)", () => {
+      const picked = pickLineCommercialRoundingMetals({
+        lineCommercialRoundingMetals: [{ metalParentId: "au", postGrams: 1.4 }],
+        appliedRounding: { physical: { metals: [{ metalParentId: "au", postGrams: 1.2 }] } },
+      });
+      expect(picked).toHaveLength(1);
+      expect(picked[0].postGrams).toBe(1.4); // el PER_DOCUMENT, no el 1.2 PER_LINE
+    });
+  });
+
+  describe("2. PER_LINE solo como fallback (cuando el canónico no vino)", () => {
+    it("hechura: cae a hechuraSaleRoundingDelta si no hay impacto PER_DOCUMENT", () => {
+      expect(resolveCommercialHechuraImpact({ hechuraSaleRoundingDelta: -4.5 })).toBe(-4.5);
+    });
+    it("metal: cae a monetaryEquivalent si no hay monetaryImpact", () => {
+      expect(resolveCommercialMonetaryImpact({ monetaryEquivalent: 7256.25 })).toBe(7256.25);
+    });
+    it("gramos: cae a appliedRounding.physical.metals si no hay lineCommercialRoundingMetals", () => {
+      const picked = pickLineCommercialRoundingMetals({
+        appliedRounding: { physical: { metals: [{ metalParentId: "au", postGrams: 1.4 }] } },
+      });
+      expect(picked).toHaveLength(1);
+      expect(picked[0].postGrams).toBe(1.4);
+    });
+  });
+
+  describe("3. Match por metalParentId ANTES que por nombre", () => {
+    it("matchea por id aunque el nombre difiera (id es la identidad canónica)", () => {
+      const g = resolveCommercialPostGrams(
+        { metalParentId: "au", name: "NOMBRE_DISTINTO" },
+        [{ metalParentId: "au", metalParentName: "Oro", postGrams: 1.4 }],
+      );
+      expect(g).toBe(1.4);
+    });
+    it("usa el nombre SOLO como fallback legacy cuando no hay id en el target", () => {
+      const g = resolveCommercialPostGrams(
+        { metalParentId: null, name: "Oro" },
+        [{ metalParentName: "Oro", postGrams: 1.4 }],
+      );
+      expect(g).toBe(1.4);
+    });
+    it("no cruza metales: id que no matchea → null (el caller usa su valor crudo)", () => {
+      const g = resolveCommercialPostGrams(
+        { metalParentId: "ag", name: "Plata" },
+        [{ metalParentId: "au", metalParentName: "Oro", postGrams: 1.4 }],
+      );
+      expect(g).toBeNull();
+    });
+  });
+
+  describe("4. Passthrough puro — el frontend NO recalcula", () => {
+    it("hechura: devuelve el número backend EXACTO (sin redondear ni transformar)", () => {
+      expect(resolveCommercialHechuraImpact({ hechuraRoundingMonetaryImpact: 24.793117 })).toBe(24.793117);
+    });
+    it("gramos: devuelve postGrams del snapshot EXACTO", () => {
+      expect(resolveCommercialPostGrams(
+        { metalParentId: "au", name: "Oro" },
+        [{ metalParentId: "au", postGrams: 1.3961 }],
+      )).toBe(1.3961);
+    });
+    it("sin dato → null/[] (no inventa un valor)", () => {
+      expect(resolveCommercialHechuraImpact({})).toBeNull();
+      expect(resolveCommercialMonetaryImpact({})).toBeNull();
+      expect(pickLineCommercialRoundingMetals({})).toEqual([]);
+      expect(resolveCommercialPostGrams({ metalParentId: "au", name: "Oro" }, [])).toBeNull();
     });
   });
 });

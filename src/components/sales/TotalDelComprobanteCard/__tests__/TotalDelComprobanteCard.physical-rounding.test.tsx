@@ -274,15 +274,14 @@ describe("TotalDelComprobanteCard — Bug 1: Patrimonio metálico", () => {
     expect(section.textContent).toContain("Oro Fino");
     expect(section.textContent).toContain("1,000");
 
-    // I1 — La sub-fila del redondeo físico DEBE aparecer cuando hay capa 16 activa.
-    const physicalRow = screen.queryByTestId("total-card-metal-physical-row");
+    // Etapa 2C — la sub-fila del redondeo financiero vive ahora en la
+    // composición FINAL del metal (testid `-financial`), con preGrams → postGrams.
+    const physicalRow = screen.queryByTestId("total-card-metal-oro-fino-financial");
     expect(physicalRow).toBeTruthy();
-    // Y debe mostrar la transformación canónica preGrams → postGrams.
     expect(physicalRow!.textContent).toMatch(/1[.,]?044.*→.*1[.,]?000/);
 
     // El bloque entero debe contener TANTO 1,000 (fila principal) COMO
-    // 1,044 (sub-fila de redondeo) — son ambas valores legítimos del nuevo
-    // contrato visual.
+    // 1,044 (sub-fila de redondeo) — ambos valores legítimos.
     expect(section.textContent).toContain("1,044");
   });
 });
@@ -422,7 +421,11 @@ describe("Opción C — Patrimonio Metálico físico (no metalGramsSale)", () =>
   });
 
   // ── CASO C ───────────────────────────────────────────────────────────────
-  it("(C) metalGramsSale (1.068) NUNCA aparece en el render del Patrimonio Metálico", () => {
+  it("(C) Etapa 2D: SIN redondeo físico → el footer muestra displayGrams (lado venta = card)", () => {
+    // Etapa 2D REVIERTE "Opción C" para el caso SIN redondeo físico: el footer
+    // muestra los mismos gramos que el card (lado venta, `documentMetals`), para
+    // paridad Card↔Footer. El físico (`grams`) se conserva internamente para
+    // ajuste manual / cuenta corriente (no para este display).
     render(
       <TotalDelComprobanteCard
         totalDocument={170156}
@@ -430,20 +433,22 @@ describe("Opción C — Patrimonio Metálico físico (no metalGramsSale)", () =>
         balanceMode="BREAKDOWN"
         balanceBreakdown={balancePhysicalGold()}
         onBalanceModeOverrideChange={noop}
-        documentMetals={docMetalsSaleSide}       // 1.068 — Opción C lo debe ignorar
-        // No redondeo financiero, no comercial → caso A puro
+        documentMetals={docMetalsSaleSide}       // 1.068 — lado venta = lo que ve el card
       />,
     );
     const section = screen.getByTestId("total-card-metals-section");
     expect(section.textContent).toContain("Oro Fino");
-    // El format del tenant muestra 3 decimales: 0.9075 → "0,908" (HALF UP).
-    // Lo importante es que NO aparezca el valor lado venta (1,068).
-    expect(section.textContent).toContain("0,908");    // físico redondeado a display
-    expect(section.textContent).not.toContain("1,068"); // ← lado venta NUNCA
-    expect(section.textContent).not.toContain("1,067"); // ni alguna variante
+    // displayGrams (lado venta) = 1,068 — paridad con el card.
+    expect(section.textContent).toContain("1,068");
+    // El físico 0,908 NO se muestra como gramo principal (vive en `grams`).
+    expect(section.textContent).not.toContain("0,908");
   });
 
-  it("(C-bis) con comercial PHYSICAL activo → render muestra postGrams (1,000), nunca 1,068 ni 0,907", () => {
+  it("(C-bis) con comercial PHYSICAL activo → el gramo PRINCIPAL = displayGrams (1,068), el físico vive en la sub-fila (fix mixtas 2026-06)", () => {
+    // Nuevo contrato (SSOT card↔footer): aun con redondeo físico activo, el
+    // gramo PRINCIPAL del patrimonio = displayGrams (lado venta = card = 1,068).
+    // El físico redondeado (1,000) queda en la sub-fila del redondeo, NO como
+    // gramo grande. Esto corrige el bug de listas mixtas (footer caía a físico).
     render(
       <TotalDelComprobanteCard
         totalDocument={187500}
@@ -455,17 +460,12 @@ describe("Opción C — Patrimonio Metálico físico (no metalGramsSale)", () =>
         commercialPhysicalRoundedMetals={commercialPhysicalSnapshot}
       />,
     );
-    const section = screen.getByTestId("total-card-metals-section");
-    expect(section.textContent).toContain("1,000");
-    expect(section.textContent).not.toContain("1,068");
-    // 0,907 puede aparecer en la sub-fila del redondeo comercial (F1) que
-    // muestra "0,9075 → 1,000". Eso es OK — la sub-fila es informativa.
-    // Lo que NUNCA debe pasar es que el monto principal del patrimonio sea 0,907.
-    // Verificamos con la fila principal específica:
+    // Fila principal = displayGrams (lado venta, card parity = 1,068).
     const mainRow = screen.getByTestId("total-card-metal-oro-fino");
-    // La fila principal contiene el valor primario (1,000) — la sub-fila I1
-    // del redondeo financiero NO se renderiza acá porque el redondeo es comercial.
-    expect(mainRow.textContent).toContain("1,000");
+    expect(mainRow.textContent).toContain("1,068");
+    // El físico redondeado (1,000) ya NO es el gramo principal (queda en `grams`
+    // interno para cuenta corriente / sub-filas / tooltips, no en el número grande).
+    expect(mainRow.textContent).not.toContain("1,000");
   });
 });
 

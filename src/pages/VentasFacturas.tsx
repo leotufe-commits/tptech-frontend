@@ -239,7 +239,15 @@ import { TotalDelComprobanteCard } from "../components/sales/TotalDelComprobante
 import {
   deriveDocumentMetalsFromLines,
   buildCommercialMetalValueByParent,
+  buildMetalSaleByParent,
+  buildMetalSalePreByParent,
+  buildVisibleGramsByParent,
+  sumLineCommercialMonetary,
+  sumLineCommercialMonetaryRoundingImpact,
+  sumLineCommercialMetalRoundingImpact,
+  groupLineCommercialMetalRoundingByParent,
 } from "../components/sales/TotalDelComprobanteCard/helpers";
+import { buildComponentTraces } from "../components/sales/TotalDelComprobanteCard/traceability";
 import { TPSaleAccountImpactCard } from "../components/sales/TPSaleAccountImpactCard";
 import { composeDocumentPricingDetail } from "../lib/pricing-display-helpers";
 import { TPCollapse } from "../components/ui/TPCollapse";
@@ -2231,6 +2239,45 @@ function InvoiceEditorModal(props: {
       : null;
 
     return { channel, coupon, payment, shipping, globalDiscount };
+  }, [backendPreview, previewSignature, draft.shipping, draft.discountGlobal]);
+
+  /**
+   * Trazabilidad de auditoría por componente del footer (Origen · Base ×
+   * regla · Impacto). Passthrough puro del preview + draft — `buildComponentTraces`
+   * solo PROYECTA datos ya emitidos por el backend a la estructura `ComponentTrace`
+   * (las únicas operaciones son de display: ya hay precedente con el % efectivo
+   * de IVA/descuento). Cuando un dato literal no existe todavía en backend, el
+   * trace queda `PARTIAL` y declara el campo faltante. Solo se computa cuando la
+   * firma del backend matchea el draft (sino los amounts no son confiables).
+   */
+  const componentTraces = useMemo(() => {
+    if (!backendPreview || backendPreview.signature !== previewSignature) return undefined;
+    const r  = backendPreview.result as any;
+    const dt = r?.documentTotals;
+    if (!dt) return undefined;
+    return buildComponentTraces({
+      couponResult:          r.couponResult ?? null,
+      channelResult:         r.channelResult ?? null,
+      taxAmount:             dt.taxAmount ?? null,
+      taxableBase:           dt.taxableBase ?? null,
+      subtotalCommercial:    dt.subtotalAfterLineDiscounts ?? null,
+      lines:                 r.lines ?? [],
+      shippingAmount:        dt.shippingAmount ?? null,
+      shippingDraft: draft.shipping
+        ? {
+            mode:       (draft.shipping as any).mode ?? null,
+            value:      (draft.shipping as any).value ?? (draft.shipping as any).cost ?? null,
+            methodName: (draft.shipping as any).methodName ?? (draft.shipping as any).label ?? null,
+          }
+        : null,
+      globalDiscountAmount:  dt.globalDiscountAmount ?? null,
+      draftDiscountGlobal: draft.discountGlobal
+        ? { type: draft.discountGlobal.type, value: draft.discountGlobal.value, reason: draft.discountGlobal.reason ?? null }
+        : null,
+      clientCommercialRules: r.clientCommercialRules ?? null,
+      documentRounding:      r.documentRoundingSnapshot ?? dt.documentRoundingApplied ?? null,
+      manualAdjustment:      r.manualAdjustmentSnapshot ?? r.manualAdjustment ?? null,
+    });
   }, [backendPreview, previewSignature, draft.shipping, draft.discountGlobal]);
 
   // FASE 8.2.4 — los 4 useEffect que persistían discountOpen/shippingOpen/
@@ -6662,6 +6709,11 @@ function InvoiceEditorModal(props: {
                         overrideDisabled={draft.status !== "DRAFT"}
                         channelName={pricingDetail.channelName}
                         priceListName={backendPreview?.result?.appliedPriceListName ?? null}
+                        // Aviso UI listas mixtas (2026-06-03) — passthrough puro
+                        // del preview: "MIXED" ⇒ el backend entró en
+                        // MIXED_LIST_FALLBACK (redondeo comercial PER_DOCUMENT
+                        // desactivado). Cero cálculo; solo dispara el aviso.
+                        priceListMixed={backendPreview?.result?.appliedPriceListId === "MIXED"}
                         // Etapa UX-Comercial (2026-05-30 — POLICY §R-Rounding-16) —
                         // Valor comercial agregado del metal del documento.
                         // Passthrough EXACTO de `documentTotals.metalCostSubtotal`
@@ -6682,6 +6734,56 @@ function InvoiceEditorModal(props: {
                           buildCommercialMetalValueByParent(
                             (backendPreview?.result as any)?.lines ?? [],
                           )
+                        }
+                        // Fase 1 (2026-06) — VENTA del metal por padre (con
+                        // margen), misma fuente canónica que `documentMetals`
+                        // (`saleAmountLine`). El card lo prioriza sobre el COSTO
+                        // para mostrar el valor comercial real. Passthrough puro.
+                        metalSaleByParent={
+                          buildMetalSaleByParent(backendPreview?.result?.lines ?? [])
+                        }
+                        // Fix listas mixtas — base PRE-redondeo (= "Valor comercial"
+                        // del card). El footer consolida `final = base + redondeo`
+                        // sin doble conteo (base ya NO es post-redondeo).
+                        metalSalePreByParent={
+                          buildMetalSalePreByParent(backendPreview?.result?.lines ?? [])
+                        }
+                        // SSOT card ↔ footer — gramo PRINCIPAL de METALES =
+                        // el MISMO gramo visible que el card del artículo
+                        // (Σ `visibleGrams` ?? `gramsEquivLine`). Evita que el
+                        // footer reinterprete el patrimonio metálico (antes
+                        // mostraba `saleEquivGr`, divergiendo del card cuando
+                        // la lista aplica redondeo comercial PER_DOCUMENT).
+                        metalVisibleGramsByParent={
+                          buildVisibleGramsByParent(backendPreview?.result?.lines ?? [])
+                        }
+                        // FASE 1 — Footer "Monetario (saldo)": Σ del MONETARIO
+                        // por línea (`lineCommercialSummary.monetary.amount`).
+                        // Misma fuente que el Resumen Comercial de la línea →
+                        // paridad línea↔footer. Passthrough puro (Σ).
+                        commercialMonetarySaldoSum={
+                          sumLineCommercialMonetary(backendPreview?.result?.lines ?? [])
+                        }
+                        // Redondeo comercial monetario — Σ del impacto por línea
+                        // (`lineCommercialSummary.monetary.roundingImpact`). Mismo
+                        // contrato/fuente que el saldo de arriba. Passthrough puro
+                        // (Σ). El card muestra Valor comercial → Redondeo → Valor
+                        // redondeado bajo "Monetario (saldo)" cuando es != 0. En
+                        // listas Unificadas el contrato trae 0 ⇒ no se muestra.
+                        commercialMonetaryRoundingImpactSum={
+                          sumLineCommercialMonetaryRoundingImpact(backendPreview?.result?.lines ?? [])
+                        }
+                        // Footer MIXED "REDONDEOS COMERCIALES" (fila Metal) +
+                        // Opción 1 de METALES. Σ del impacto $ del redondeo
+                        // comercial del metal por línea
+                        // (`lineCommercialSummary.metals.byParent[].roundingImpact`)
+                        // y su mapa por padre. Solo se usan cuando NO hay
+                        // snapshot document-level (lista mixta). Passthrough puro.
+                        commercialMetalRoundingImpactSum={
+                          sumLineCommercialMetalRoundingImpact(backendPreview?.result?.lines ?? [])
+                        }
+                        commercialRoundingByParentFromLines={
+                          groupLineCommercialMetalRoundingByParent(backendPreview?.result?.lines ?? [])
                         }
                         // Etapa UX-Saldo — mapa lineId → nombre del artículo
                         // para resolver el "Origen" del Patrimonio Metálico.
@@ -6789,6 +6891,10 @@ function InvoiceEditorModal(props: {
                             },
                           )
                         }
+                        // Trazabilidad de auditoría por componente: cada tooltip
+                        // ⓘ del desglose reconstruye la cuenta completa
+                        // (Origen · Base × regla · Impacto). Passthrough puro.
+                        componentTraces={componentTraces}
                         manualAdjustmentDraft={draft.manualAdjustment ?? null}
                         onManualAdjustmentChange={(next) => {
                           // El card emite la INTENCIÓN del operador (UNIFIED

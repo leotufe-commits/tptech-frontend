@@ -21,7 +21,39 @@
 import type { ReactElement } from "react";
 import { formatByType } from "../../../../lib/pricing/format";
 import { vt } from "../../../../lib/pricing/visualTokens";
+import { OriginTooltip } from "./OriginTooltip";
+import { TraceTooltipBody } from "./TraceTooltipBody";
+import type { ComponentTrace } from "../traceability";
 import type { DocumentMetalSummaryItem } from "../types";
+import type { MetalFinalRow, MetalPhysicalImpactDetail } from "../helpers";
+
+/** Construye el trace de auditoría de UN metal padre (modo DESGLOSADO) desde su
+ *  composición final. PASSTHROUGH puro — proyecta los montos ya emitidos por el
+ *  backend a la estructura `ComponentTrace`. El tooltip muestra la cuenta:
+ *  gramos finales (note) · Valor comercial (Antes) → Valor final metal (Después)
+ *  · Redondeo comercial (Impacto). */
+function buildMetalTrace(
+  row: MetalFinalRow,
+  metalName: string,
+  grams: number,
+  priceListName?: string | null,
+): ComponentTrace {
+  // Origen = nombre real de la lista aplicada (no un genérico técnico).
+  const listName =
+    typeof priceListName === "string" && priceListName.trim().length > 0
+      ? priceListName.trim()
+      : "Lista de precios";
+  return {
+    kind:  "METAL",
+    title: metalName,
+    origin: { sourceType: "PRICE_LIST", sourceName: listName },
+    note:  `Gramos finales de venta: ${formatByType(grams, "METAL_GRAMS")} g`,
+    preValue:  row.baseCommercialValue,
+    postValue: row.finalMetalValue,
+    impact:    row.commercialRoundingImpact,
+    completeness: "COMPLETE",
+  };
+}
 
 /** Subset del snapshot del redondeo físico de UN metal padre. Passthrough
  *  EXACTO de `documentRoundingSnapshot.breakdown.metalPhysical.metals[i]`. */
@@ -64,6 +96,26 @@ export interface MetalsSummaryProps {
    *  (= `commercialMetalValueSum` del orchestrator). Si no coincide es BUG
    *  de derivación en el caller. */
   commercialMetalValueByParent?: Readonly<Record<string, number>>;
+  /** Opción 1 (2026-06) — impacto $ del REDONDEO COMERCIAL por metal padre.
+   *  Mapa `metalName → monetaryEquivalent` derivado por el caller desde
+   *  `commercialDocumentRoundingSnapshot.breakdown.metals[]`. Passthrough puro:
+   *  el componente compone "Valor final = Valor comercial + Redondeo" SIN
+   *  recalcular el redondeo (los dos sumandos ya vienen finales del backend).
+   *  Cuando falta (UNIFIED / sin snapshot / delta ~0) no se muestran las
+   *  sub-filas y el bloque queda idéntico al previo (degradación segura). */
+  commercialRoundingByParent?: Readonly<Record<string, number>>;
+  /** Etapa 2C — composición FINAL por metal padre (DESGLOSADO). Cuando llega
+   *  una fila para un metal, ES LA FUENTE CANÓNICA del display: se renderiza
+   *  Valor comercial · Redondeo comercial · Redondeo financiero · Ajuste manual
+   *  · Valor final metal, y se SUPRIMEN los bloques legacy
+   *  (`commercialMetalValueByParent` / `commercialRoundingByParent` /
+   *  `physicalRoundedMetals`) para ese metal — evita doble render. Cuando NO
+   *  llega (UNIFICADO / callers viejos), el componente cae al comportamiento
+   *  previo (degradación segura). Todos los montos son passthrough del backend. */
+  finalRows?: ReadonlyArray<MetalFinalRow>;
+  /** Nombre de la lista de precios aplicada — alimenta el "Origen" del tooltip
+   *  de trazabilidad de cada metal. Passthrough del card. */
+  priceListName?: string | null;
 }
 
 /** Match por id (prioridad) o nombre normalizado. Cero matemática — solo
@@ -117,12 +169,32 @@ function resolveOriginArticleNames(
   return out;
 }
 
+/** Busca la fila final (Etapa 2C) de un metal por id (canónico) o nombre. */
+function findFinalRow(
+  item: DocumentMetalSummaryItem,
+  rows: ReadonlyArray<MetalFinalRow> | undefined,
+): MetalFinalRow | undefined {
+  if (!rows || rows.length === 0) return undefined;
+  const id = item.id ?? "";
+  const nameNorm = (item.name ?? "").trim().toLowerCase();
+  for (const r of rows) {
+    if (r.metalParentId != null && id.length > 0 && r.metalParentId === id) return r;
+  }
+  for (const r of rows) {
+    if ((r.metalParentName ?? "").trim().toLowerCase() === nameNorm) return r;
+  }
+  return undefined;
+}
+
 export function MetalsSummary({
   metals,
   currencyCode,
   physicalRoundedMetals,
   lineArticleNames,
   commercialMetalValueByParent,
+  commercialRoundingByParent,
+  finalRows,
+  priceListName,
 }: MetalsSummaryProps): ReactElement {
   if (metals.length === 0) {
     return (
@@ -140,7 +212,10 @@ export function MetalsSummary({
       data-testid="total-card-metals"
     >
       {metals.map((m) => {
-        const physical = findPhysicalDetail(m, physicalRoundedMetals);
+        // Etapa 2C — fila final canónica del metal (si llega). Cuando existe,
+        // ES la fuente del display: suprime los bloques legacy para no duplicar.
+        const fr = findFinalRow(m, finalRows);
+        const physical = fr ? undefined : findPhysicalDetail(m, physicalRoundedMetals);
         const showPhysical = hasPhysicalDelta(physical);
         return (
           <li
@@ -151,12 +226,32 @@ export function MetalsSummary({
           >
             {/* Fila principal: nombre del padre · gramos (primario). */}
             <div className="flex items-baseline justify-between gap-3">
-              <span className="text-[15px] font-medium text-text">
+              <span className="text-[15px] font-medium text-text inline-flex items-center">
                 {m.name}
+                {/* Tooltip de trazabilidad del metal — solo cuando hay
+                    composición final (DESGLOSADO con datos del backend). */}
+                {fr && currencyCode && (
+                  <OriginTooltip
+                    title={m.name}
+                    body={
+                      <TraceTooltipBody
+                        trace={buildMetalTrace(fr, m.name, m.displayGrams ?? m.grams, priceListName)}
+                        currency={currencyCode}
+                      />
+                    }
+                  />
+                )}
               </span>
               <span className="tabular-nums">
                 <span className="text-[15px] font-semibold text-text">
-                  {formatByType(m.grams, "METAL_GRAMS")}
+                  {/* GRAMO CANÓNICO = `displayGrams` (= `gramsEquivLine` /
+                      `saleEquivGr` del card del artículo: metal padre equivalente
+                      con pureza + merma + margen). SSOT compartida con el
+                      Simulador y el card de línea → card y footer muestran el
+                      MISMO gramo. Fallback legacy: `grams` (físico) cuando el
+                      caller no derivó displayGrams. Passthrough — cero recálculo,
+                      sin saleValue/cotización. */}
+                  {formatByType(m.displayGrams ?? m.grams, "METAL_GRAMS")}
                 </span>
                 <span className="ml-1.5 text-[10px] font-normal uppercase tracking-wider text-muted/60">
                   gr
@@ -178,20 +273,31 @@ export function MetalsSummary({
             {showPhysical && physical && (
               <PhysicalRoundingRow detail={physical} currencyCode={currencyCode} />
             )}
+            {/* Etapa 2C — composición FINAL del metal (DESGLOSADO). Fuente
+                canónica: Valor comercial · Redondeo comercial · Redondeo
+                financiero · Ajuste manual · Valor final metal. Passthrough puro
+                de los `monetaryEquivalent` ya emitidos por el backend. Cuando
+                existe, suprime los bloques legacy de abajo (gate `!fr`). */}
+            {fr && currencyCode && (
+              <MetalFinalComposition row={fr} metalId={m.id} currencyCode={currencyCode} />
+            )}
             {/* Etapa UX.32 (2026-05-30) — sub-fila terciaria "Valor comercial"
                 por metal padre. Lookup contra `commercialMetalValueByParent`
                 por `m.name` (= `metalName` con el que se agrega en el caller).
                 Tipografía pequeña/secundaria para no competir con el Total ni
                 con el Saldo Monetario.
 
-                UX.32.b (2026-05-30) — solo se renderiza cuando hay MÁS DE UN
-                metal padre. Con un único padre, el "Valor comercial" por
-                padre es idéntico al total agregado del header del bloque
-                METALES (no aporta información, solo ruido visual). Con N≥2
-                padres, el desglose por padre sí es útil porque el operador
-                ve cuánto vale cada metal individual. */}
+                Ajuste 2026-06 — se muestra el "Valor comercial" por metal en
+                TODOS los casos (incluido 1 metal). Decisión explícita del
+                operador para poder auditar "Metal comercial + Hechura = Base"
+                directo en cada fila. Antes (UX.32.b) se ocultaba con 1 metal
+                porque duplicaba el total del header del bloque; ese total sigue
+                en el header — la fila per-padre lo expone al lado de los gramos.
+                Passthrough puro del campo `commercialMetalValueByParent` ya
+                provisto por el caller — cero recálculo, cero margen aplicado
+                en el frontend. */}
             {(() => {
-              if (metals.length <= 1) return null;
+              if (fr) return null; // Etapa 2C — la composición canónica ya lo cubre.
               if (!commercialMetalValueByParent || !currencyCode) return null;
               const value = commercialMetalValueByParent[m.name];
               if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) return null;
@@ -200,13 +306,56 @@ export function MetalsSummary({
                   className="mt-0.5 flex items-baseline justify-between gap-2"
                   data-testid={`total-card-metal-${m.id}-commercial-value`}
                 >
-                  <span className="text-[10px] uppercase tracking-wider text-muted/55">
-                    Valor comercial
+                  <span className="text-[11px] text-muted/70">
+                    Valor de venta metal
                   </span>
-                  <span className="tabular-nums text-[11px] text-muted/75">
+                  <span className="tabular-nums text-[12px] font-medium text-muted/85">
                     {currencyCode} {formatByType(value, "MONEY")}
                   </span>
                 </div>
+              );
+            })()}
+            {/* Opción 1 (2026-06) — Redondeo comercial + Valor final POR metal
+                padre, inmediatamente debajo de "Valor comercial". Secuencia que
+                refleja el flujo mental: comercial (pre) → redondeo (delta) →
+                final (post). PASSTHROUGH: el "Valor final" es la composición de
+                dos valores YA finales del backend (Valor comercial + delta), no
+                un recálculo del redondeo. Se omite cuando no hay delta
+                significativo (UNIFIED / sin snapshot / ~0) → queda solo "Valor
+                comercial", idéntico al previo. Negativos: signo − + color
+                discount, NUNCA clamp. */}
+            {(() => {
+              if (fr) return null; // Etapa 2C — la composición canónica ya lo cubre.
+              if (!commercialMetalValueByParent || !commercialRoundingByParent || !currencyCode) return null;
+              const comercial = commercialMetalValueByParent[m.name];
+              const delta     = commercialRoundingByParent[m.name];
+              if (typeof comercial !== "number" || !Number.isFinite(comercial) || comercial <= 0) return null;
+              if (typeof delta !== "number" || !Number.isFinite(delta) || Math.abs(delta) <= 0.005) return null;
+              const finalValue = Math.round((comercial + delta) * 100) / 100;
+              const sign = delta > 0 ? "+ " : "− ";
+              return (
+                <>
+                  <div
+                    className="mt-0.5 flex items-baseline justify-between gap-2"
+                    data-testid={`total-card-metal-${m.id}-commercial-rounding`}
+                  >
+                    <span className="text-[11px] text-muted/70">Redondeo comercial</span>
+                    <span
+                      className={`tabular-nums text-[12px] font-medium ${delta < 0 ? vt.colors.discount : "text-muted/85"}`}
+                    >
+                      {sign}{currencyCode} {formatByType(Math.abs(delta), "MONEY")}
+                    </span>
+                  </div>
+                  <div
+                    className="mt-0.5 flex items-baseline justify-between gap-2"
+                    data-testid={`total-card-metal-${m.id}-commercial-final`}
+                  >
+                    <span className="text-[11px] font-medium text-muted/80">Valor final metal</span>
+                    <span className="tabular-nums text-[12px] font-semibold text-text">
+                      {currencyCode} {formatByType(finalValue, "MONEY")}
+                    </span>
+                  </div>
+                </>
               );
             })()}
             {/* Etapa UX-Saldo — Sub-fila "Origen". Lista los artículos que
@@ -252,6 +401,153 @@ export function MetalsSummary({
           sub-fila terciaria. Resultado: Σ_padres == header del bloque
           (invariante verificado E2E con qty=1, 3, 7). */}
     </ul>
+  );
+}
+
+/** Etapa 2C — Composición FINAL de UN metal padre (modo DESGLOSADO).
+ *  Renderiza, en orden:
+ *    Valor de venta metal ARS base
+ *    Redondeo comercial   ±ARS   (si ≠ 0)
+ *    Redondeo financiero  pre→post g · Δ Δg · ARS ppg/g   ±ARS equiv  (si existe)
+ *    Ajuste manual        pre→post g · Δ Δg · ARS ppg/g   ±ARS equiv  (si existe)
+ *    Valor final metal    ARS finalMetalValue
+ *  PASSTHROUGH puro — todos los montos vienen del backend (cero recálculo,
+ *  sin clamp, negativos preservados). */
+function MetalFinalComposition({
+  row,
+  metalId,
+  currencyCode,
+}: {
+  row:          MetalFinalRow;
+  metalId:      string;
+  currencyCode: string;
+}): ReactElement {
+  const EPS = 0.005;
+  const EPS_GRAMS = 1e-9;
+  const showCommercialRounding = Math.abs(row.commercialRoundingImpact) > EPS;
+  // Gate del redondeo financiero físico: solo si hay impacto REAL (Δgramos o
+  // equivalente monetario significativo). Evita filas ruido "1,10 → 1,10 · Δ 0".
+  const showFinancial =
+    !!row.financial &&
+    (Math.abs(row.financial.deltaGrams) > EPS_GRAMS ||
+      Math.abs(row.financial.monetaryEquivalent) > EPS);
+  return (
+    <>
+      {/* Valor de venta del metal (base, pre-redondeos). En DESGLOSADO el metal
+          es patrimonio que se cobra al cliente → el label refleja "venta". */}
+      <div
+        className="mt-0.5 flex items-baseline justify-between gap-2"
+        data-testid={`total-card-metal-${metalId}-commercial-value`}
+      >
+        <span className="text-[11px] text-muted/70">Valor de venta metal</span>
+        <span className="tabular-nums text-[12px] font-medium text-muted/85">
+          {currencyCode} {formatByType(row.baseCommercialValue, "MONEY")}
+        </span>
+      </div>
+
+      {/* Redondeo comercial (monetario), solo si ≠ 0. */}
+      {showCommercialRounding && (
+        <div
+          className="mt-0.5 flex items-baseline justify-between gap-2"
+          data-testid={`total-card-metal-${metalId}-commercial-rounding`}
+        >
+          <span className="text-[11px] text-muted/70">Redondeo comercial</span>
+          <span
+            className={`tabular-nums text-[12px] font-medium ${row.commercialRoundingImpact < 0 ? vt.colors.discount : "text-muted/85"}`}
+          >
+            {row.commercialRoundingImpact > 0 ? "+ " : "− "}{currencyCode} {formatByType(Math.abs(row.commercialRoundingImpact), "MONEY")}
+          </span>
+        </div>
+      )}
+
+      {/* Redondeo financiero (físico): pre→post · Δ · ppg · equivalente.
+          Solo si hay impacto REAL (gate `showFinancial`). */}
+      {showFinancial && row.financial && (
+        <MetalPhysicalImpactRow
+          label="Redondeo financiero"
+          detail={row.financial}
+          currencyCode={currencyCode}
+          testId={`total-card-metal-${metalId}-financial`}
+          metalId={metalId}
+        />
+      )}
+
+      {/* Ajuste manual (físico): pre→post · Δ · ppg · equivalente. El ajuste
+          es del METAL (físico) — su equivalente $ se suma al valor final, pero
+          NO se mueve a hechura. */}
+      {row.manual && (
+        <MetalPhysicalImpactRow
+          label="Ajuste manual"
+          detail={row.manual}
+          currencyCode={currencyCode}
+          testId={`total-card-metal-${metalId}-manual`}
+          metalId={metalId}
+        />
+      )}
+
+      {/* Valor final metal = base + comercial + financiero + manual. */}
+      <div
+        className="mt-0.5 flex items-baseline justify-between gap-2"
+        data-testid={`total-card-metal-${metalId}-final`}
+      >
+        <span className="text-[11px] font-medium text-muted/80">Valor final metal</span>
+        <span
+          className={`tabular-nums text-[12px] font-semibold ${row.finalMetalValue < 0 ? vt.colors.discount : "text-text"}`}
+        >
+          {currencyCode} {formatByType(row.finalMetalValue, "MONEY")}
+        </span>
+      </div>
+    </>
+  );
+}
+
+/** Sub-fila física de un mecanismo (redondeo financiero / ajuste manual) sobre
+ *  un metal padre. Muestra `preGrams → postGrams · Δ deltaGrams · ppg/g` y el
+ *  `monetaryEquivalent` a la derecha. Passthrough EXACTO — sin cálculo. */
+function MetalPhysicalImpactRow({
+  label,
+  detail,
+  currencyCode,
+  testId,
+  metalId,
+}: {
+  label:        string;
+  detail:       MetalPhysicalImpactDetail;
+  currencyCode: string;
+  testId:       string;
+  metalId:      string;
+}): ReactElement {
+  const ppg = Number.isFinite(detail.metalPricePerGram) ? detail.metalPricePerGram : null;
+  return (
+    <div
+      className="mt-0.5 pl-3 border-l border-border/15 flex items-baseline justify-between gap-3 text-[11px]"
+      data-testid={testId}
+      data-tp-metal-id={metalId}
+    >
+      <span className="text-muted/80 truncate flex-1">
+        <span className="text-[10px] uppercase tracking-wider text-muted/60 mr-1">{label}</span>
+        <span className="tabular-nums">
+          {formatByType(detail.preGrams, "METAL_GRAMS")} → {formatByType(detail.postGrams, "METAL_GRAMS")} g
+        </span>
+        {" · "}
+        <span className="tabular-nums text-muted/70">
+          Δ {formatByType(detail.deltaGrams, "METAL_GRAMS")} g
+        </span>
+        {ppg != null && (
+          <>
+            {" · "}
+            <span className="tabular-nums text-muted/70">
+              {currencyCode} {formatByType(ppg, "MONEY")}/g
+            </span>
+          </>
+        )}
+      </span>
+      <span
+        className={`tabular-nums ${detail.monetaryEquivalent < 0 ? vt.colors.discount : "text-text"}`}
+      >
+        {currencyCode} {formatByType(detail.monetaryEquivalent, "MONEY")}
+      </span>
+    </div>
   );
 }
 

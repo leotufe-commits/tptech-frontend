@@ -255,12 +255,30 @@ describe("TPSaleAccountImpactCard — modo BREAKDOWN", () => {
     expect(screen.queryByTestId("account-impact-breakdown")).toBeNull();
   });
 
-  it("inferencia: sin balanceMode + metals=[oro, plata] → BREAKDOWN (muestra desglose)", () => {
+  it("SSOT: sin balanceMode + metals=[oro, plata] → UNIFIED (NO se infiere desde metales)", () => {
+    // SSOT 2026-06-03 — el modo es lector puro de `balanceMode`. Sin ese prop,
+    // default UNIFIED. La presencia de metales NO cambia el modo (eliminada la
+    // inferencia `balanceBreakdown.metals.length>0 → BREAKDOWN`). Cuando el
+    // backend manda BREAKDOWN, el desglose aparece (ver test siguiente).
     render(
       <TPSaleAccountImpactCard
         totalDocument={50000}
         paidAmount={0}
         balancePending={50000}
+        balanceBreakdown={breakdownWithMetals}
+      />,
+    );
+    expect(screen.getByTestId("account-impact-mode").textContent).toBe("Unificado");
+    expect(screen.queryByTestId("account-impact-breakdown")).toBeNull();
+  });
+
+  it("SSOT: balanceMode=BREAKDOWN explícito + metals → BREAKDOWN (muestra desglose)", () => {
+    render(
+      <TPSaleAccountImpactCard
+        totalDocument={50000}
+        paidAmount={0}
+        balancePending={50000}
+        balanceMode="BREAKDOWN"
         balanceBreakdown={breakdownWithMetals}
       />,
     );

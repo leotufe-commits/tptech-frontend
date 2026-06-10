@@ -33,7 +33,7 @@
 
 import type { ReactElement } from "react";
 import { useState } from "react";
-import { Plus, X as XIcon } from "lucide-react";
+import { Plus, X as XIcon, ChevronDown } from "lucide-react";
 import TPNumberInput from "../../../ui/TPNumberInput";
 import { vt } from "../../../../lib/pricing/visualTokens";
 import { formatByType } from "../../../../lib/pricing/format";
@@ -107,6 +107,35 @@ function fmtGrams(g: number): string {
   return `${formatByType(g, "METAL_GRAMS")} gr`;
 }
 
+/** Etapa 2E — gramos con signo tipográfico (+ / −) para el "Ajuste resultante".
+ *  Display puro: el valor es la resta `targetGrams − preGrams`. */
+function fmtSignedGrams(g: number): string {
+  const sign = g > 0 ? "+" : g < 0 ? "−" : "";
+  return `${sign}${formatByType(Math.abs(g), "METAL_GRAMS")} gr`;
+}
+
+// Etapa 2E — Umbrales del warning de "ajuste inusualmente grande" (UX de
+// seguridad anti-tipeo). Comparación 100% frontend, NO bloqueante, sin backend.
+// Constantes locales del componente — ajustables sin tocar contratos.
+const ADJUST_WARN_ABS_GRAMS = 5;   // |delta| > 5 g → inusual
+const ADJUST_WARN_RATIO     = 3;   // nuevo ≥ 3× actual ó ≤ 1/3 del actual → inusual
+
+/** ¿El ajuste (preGrams → targetGrams) es "inusualmente grande"? Dispara el
+ *  warning visual. Cualquiera de los criterios alcanza:
+ *    · |delta| absoluto supera `ADJUST_WARN_ABS_GRAMS`, o
+ *    · el nuevo valor es ≥ `ADJUST_WARN_RATIO`× o ≤ 1/ratio del actual.
+ *  Comparación pura — no es cálculo comercial. */
+function isLargeMetalAdjustment(preGrams: number, targetGrams: number): boolean {
+  if (!Number.isFinite(preGrams) || !Number.isFinite(targetGrams)) return false;
+  const delta = targetGrams - preGrams;
+  if (Math.abs(delta) > ADJUST_WARN_ABS_GRAMS) return true;
+  if (preGrams > EPS_GRAMS) {
+    const ratio = targetGrams / preGrams;
+    if (ratio >= ADJUST_WARN_RATIO || ratio <= 1 / ADJUST_WARN_RATIO) return true;
+  }
+  return false;
+}
+
 // ─────────────────────────────────────────────────────────────────────────
 // Componente principal
 // ─────────────────────────────────────────────────────────────────────────
@@ -165,62 +194,101 @@ export function ManualAdjustmentSection(props: ManualAdjustmentSectionProps): Re
     );
   }
 
+  // Resumen compacto para el header colapsado: el impacto neto del ajuste.
+  // Passthrough — `totals.totalMonetaryAdjustment` ya viene del backend.
+  const collapsedDelta =
+    hasSnapshot && snapshot
+      ? snapshot.totals?.totalMonetaryAdjustment ?? null
+      : null;
+
   return (
     <section
       className="border-t border-border/20 pt-3 border-l-2 border-primary/40 pl-3 space-y-2"
       data-testid="total-card-manual-adjustment"
       data-tp-manual-scope={snapshot?.scope ?? (mode === "BREAKDOWN" ? "BREAKDOWN" : "UNIFIED")}
     >
-      <div className="flex items-baseline justify-between gap-2">
-        <h4 className="text-xs font-bold uppercase tracking-[0.16em] text-text">
-          Ajuste manual{mode === "BREAKDOWN" ? " desglosado" : ""}
-        </h4>
-        <span className="text-[10px] uppercase tracking-wider text-muted/70 italic">
-          Intervención humana
+      {/* Header colapsable — click abre/cierra (comportamiento simétrico con el
+          resto de los bloques desplegables del card). */}
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        aria-expanded={open}
+        aria-controls="total-card-manual-adjustment-body"
+        className="flex w-full items-baseline justify-between gap-2 text-left"
+        data-testid="total-card-manual-adjustment-header"
+      >
+        <span className="inline-flex items-center gap-1.5">
+          <ChevronDown
+            size={13}
+            aria-hidden="true"
+            className={`shrink-0 text-muted/70 transition-transform ${open ? "rotate-180" : ""}`}
+          />
+          <span className="text-xs font-bold uppercase tracking-[0.16em] text-text">
+            Ajuste manual{mode === "BREAKDOWN" ? " desglosado" : ""}
+          </span>
         </span>
-      </div>
-      <p className="text-[10px] text-muted/70 italic">
-        Intervención humana sobre el total final.
-      </p>
+        {/* Colapsado con contenido → muestra el impacto neto como resumen.
+            Expandido → caption "Intervención humana". */}
+        {!open && collapsedDelta != null && Number.isFinite(collapsedDelta) ? (
+          <span
+            className={`tabular-nums text-[11px] font-semibold ${collapsedDelta < 0 ? vt.colors.discount : "text-text"}`}
+            data-testid="total-card-manual-adjustment-collapsed-summary"
+          >
+            {fmtMoney(collapsedDelta, displayCurrency || "")}
+          </span>
+        ) : (
+          <span className="text-[10px] uppercase tracking-wider text-muted/70 italic">
+            Intervención humana
+          </span>
+        )}
+      </button>
 
-      {editable && (
-        <div className="space-y-2">
-          {mode === "BREAKDOWN" ? (
-            <BreakdownEditor
-              draft={(isBreakdownDraft ? (draft as ManualAdjustmentDraftBreakdown) : null) ?? null}
-              metals={breakdownMetals ?? []}
-              displayCurrency={displayCurrency}
-              disabled={disabled}
-              onChange={onChange!}
-            />
-          ) : (
-            <UnifiedEditor
-              draft={(isUnifiedDraft ? (draft as ManualAdjustmentDraftUnified) : null) ?? null}
-              displayCurrency={displayCurrency}
-              disabled={disabled}
-              onChange={onChange!}
-            />
+      {open && (
+        <div id="total-card-manual-adjustment-body" className="space-y-2">
+          <p className="text-[10px] text-muted/70 italic">
+            Intervención humana sobre el total final.
+          </p>
+
+          {editable && (
+            <div className="space-y-2">
+              {mode === "BREAKDOWN" ? (
+                <BreakdownEditor
+                  draft={(isBreakdownDraft ? (draft as ManualAdjustmentDraftBreakdown) : null) ?? null}
+                  metals={breakdownMetals ?? []}
+                  displayCurrency={displayCurrency}
+                  disabled={disabled}
+                  onChange={onChange!}
+                />
+              ) : (
+                <UnifiedEditor
+                  draft={(isUnifiedDraft ? (draft as ManualAdjustmentDraftUnified) : null) ?? null}
+                  displayCurrency={displayCurrency}
+                  disabled={disabled}
+                  onChange={onChange!}
+                />
+              )}
+
+              {/* Motivo opcional — colapsado por defecto. */}
+              <ReasonEditor
+                reasonOpen={reasonOpen}
+                setReasonOpen={setReasonOpen}
+                draft={draft as ManualAdjustmentDraft}
+                mode={mode}
+                disabled={disabled}
+                onChange={onChange!}
+              />
+            </div>
           )}
 
-          {/* Motivo opcional — colapsado por defecto. */}
-          <ReasonEditor
-            reasonOpen={reasonOpen}
-            setReasonOpen={setReasonOpen}
-            draft={draft as ManualAdjustmentDraft}
-            mode={mode}
-            disabled={disabled}
-            onChange={onChange!}
-          />
+          {/* Display del snapshot del backend — passthrough exacto. */}
+          {hasSnapshot && engineTotal != null && (
+            <SnapshotDisplay
+              snapshot={snapshot!}
+              engineTotal={engineTotal}
+              displayCurrency={displayCurrency || ""}
+            />
+          )}
         </div>
-      )}
-
-      {/* Display del snapshot del backend — passthrough exacto. */}
-      {hasSnapshot && engineTotal != null && (
-        <SnapshotDisplay
-          snapshot={snapshot!}
-          engineTotal={engineTotal}
-          displayCurrency={displayCurrency || ""}
-        />
       )}
     </section>
   );
@@ -382,32 +450,72 @@ function BreakdownEditor(props: {
           typeof entry?.targetGrams === "number" && Number.isFinite(entry.targetGrams)
             ? entry.targetGrams
             : null;
+        // Etapa 2E — Δ en vivo (display puro): targetGrams − preGrams. Solo se
+        // muestra cuando el operador ingresó un valor que difiere del actual.
+        const hasTargetValue = typeof value === "number" && Number.isFinite(value);
+        const deltaPreview = hasTargetValue
+          ? Math.round((value - ref.preGrams) * 10000) / 10000
+          : null;
+        const showDelta = deltaPreview != null && Math.abs(deltaPreview) > EPS_GRAMS;
+        const showWarning = hasTargetValue && isLargeMetalAdjustment(ref.preGrams, value);
         return (
           <div
             key={`${ref.metalParentId ?? "null"}-${ref.metalParentName}`}
-            className="flex items-center gap-2"
+            className="space-y-1"
             data-testid="total-card-manual-adjustment-metal-row"
             data-tp-metal-id={ref.metalParentId ?? ""}
           >
-            <div className="flex-1 min-w-0">
-              <div className="text-[11px] text-text truncate">{ref.metalParentName}</div>
-              <div className="text-[10px] text-muted/70 tabular-nums">
-                Actual: {fmtGrams(ref.preGrams)}
+            <div className="flex items-center gap-2">
+              <div className="flex-1 min-w-0">
+                <div className="text-[11px] text-text truncate">{ref.metalParentName}</div>
+                <div className="text-[10px] text-muted/70 tabular-nums">
+                  Actual: {fmtGrams(ref.preGrams)}
+                </div>
+              </div>
+              <div className="w-32">
+                <TPNumberInput
+                  value={value}
+                  onChange={(n) => handleMetalChange(ref, n)}
+                  formatType="METAL_GRAMS"
+                  placeholder={fmtGrams(ref.preGrams)}
+                  disabled={disabled}
+                  onClear={value != null ? () => handleMetalChange(ref, null) : undefined}
+                  clearAriaLabel={`Quitar ajuste de ${ref.metalParentName}`}
+                  clearTitle="Quitar"
+                  aria-label={`Gramos finales de ${ref.metalParentName}`}
+                />
               </div>
             </div>
-            <div className="w-32">
-              <TPNumberInput
-                value={value}
-                onChange={(n) => handleMetalChange(ref, n)}
-                formatType="METAL_GRAMS"
-                placeholder={fmtGrams(ref.preGrams)}
-                disabled={disabled}
-                onClear={value != null ? () => handleMetalChange(ref, null) : undefined}
-                clearAriaLabel={`Quitar ajuste de ${ref.metalParentName}`}
-                clearTitle="Quitar"
-                aria-label={`Gramos finales de ${ref.metalParentName}`}
-              />
-            </div>
+            {/* Etapa 2E — "Ajuste resultante" en vivo (display-only, NO se envía
+                ni persiste; el backend recalcula deltaGrams = target − pre). */}
+            {showDelta && (
+              <div
+                className="flex items-baseline justify-between gap-2 pl-0.5"
+                data-testid="total-card-manual-adjustment-delta-preview"
+                data-tp-metal-id={ref.metalParentId ?? ""}
+              >
+                <span className="text-[10px] uppercase tracking-wider text-muted/60">
+                  Ajuste resultante
+                </span>
+                <span
+                  className={`tabular-nums text-[11px] font-medium ${deltaPreview! < 0 ? vt.colors.discount : "text-text"}`}
+                >
+                  {fmtSignedGrams(deltaPreview!)}
+                </span>
+              </div>
+            )}
+            {/* Etapa 2E — Warning no bloqueante de ajuste inusual (anti-tipeo). */}
+            {showWarning && (
+              <div
+                className="flex items-start gap-1 text-[10px] leading-snug text-amber-600 dark:text-amber-400"
+                role="alert"
+                data-testid="total-card-manual-adjustment-warning"
+                data-tp-metal-id={ref.metalParentId ?? ""}
+              >
+                <span aria-hidden="true">⚠️</span>
+                <span>Ajuste inusualmente grande. Verifique el valor ingresado.</span>
+              </div>
+            )}
           </div>
         );
       })}
@@ -590,22 +698,40 @@ function BreakdownSnapshotRows(props: {
   const { snapshot, displayCurrency } = props;
   return (
     <div className="space-y-1 pl-2 border-l border-border/15">
+      {/* Etapa 2E — DELTA protagonista. El pre→post pasa a "Final" secundario.
+          Passthrough EXACTO del snapshot backend (deltaGrams / monetaryEquivalent
+          / postGrams ya calculados) — cero matemática, sin cambios de contrato. */}
       {snapshot.breakdown.metals.map((m: ManualAdjustmentApiSnapshotBreakdownMetal) => (
         <div
           key={`${m.metalParentId ?? "null"}-${m.metalParentName}`}
-          className="flex items-baseline justify-between gap-3 text-[11px]"
+          className="text-[11px]"
           data-testid="total-card-manual-metal-row"
           data-tp-metal-id={m.metalParentId ?? ""}
         >
-          <span className="text-muted truncate flex-1">
-            {m.metalParentName} · {fmtGrams(m.preGrams)} → {fmtGrams(m.postGrams)}
-          </span>
-          <span
-            className={`tabular-nums ${m.monetaryEquivalent < 0 ? vt.colors.discount : "text-text"}`}
-            data-testid="total-card-manual-metal-equiv"
-          >
-            {fmtMoney(m.monetaryEquivalent, displayCurrency)}
-          </span>
+          <div className="flex items-baseline justify-between gap-3">
+            <span className="text-text truncate flex-1">
+              {m.metalParentName}
+              {" · "}
+              <span
+                className={`tabular-nums font-medium ${m.deltaGrams < 0 ? vt.colors.discount : "text-text"}`}
+                data-testid="total-card-manual-metal-delta"
+              >
+                {fmtSignedGrams(m.deltaGrams)}
+              </span>
+            </span>
+            <span
+              className={`tabular-nums ${m.monetaryEquivalent < 0 ? vt.colors.discount : "text-text"}`}
+              data-testid="total-card-manual-metal-equiv"
+            >
+              {fmtMoney(m.monetaryEquivalent, displayCurrency)}
+            </span>
+          </div>
+          {/* Final (postGrams) — secundario; el pre→post completo queda como
+              dato de contexto, no protagonista. */}
+          <div className="text-[10px] text-muted/65 tabular-nums pl-0.5">
+            Final: {fmtGrams(m.postGrams)}
+            <span className="text-muted/45"> · {fmtGrams(m.preGrams)} → {fmtGrams(m.postGrams)}</span>
+          </div>
         </div>
       ))}
       {(snapshot.breakdown.monetary.amount !== 0 || snapshot.breakdown.metals.length === 0) && (

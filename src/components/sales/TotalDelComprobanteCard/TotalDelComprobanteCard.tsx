@@ -38,8 +38,8 @@
 // =============================================================================
 
 import type { ReactElement } from "react";
-import { useEffect } from "react";
-import { ChevronDown } from "lucide-react";
+import { useEffect, useMemo } from "react";
+import { ChevronDown, Info } from "lucide-react";
 import { vt } from "../../../lib/pricing/visualTokens";
 import { formatByType } from "../../../lib/pricing/format";
 import { CardHeader }              from "./parts/CardHeader";
@@ -48,13 +48,17 @@ import { MonetarySummary }         from "./parts/MonetarySummary";
 import { MetalsSummary }           from "./parts/MetalsSummary";
 import { ManualAdjustmentSection } from "./parts/ManualAdjustmentSection";
 import { OriginTooltip }           from "./parts/OriginTooltip";
+import { TraceTooltipBody }        from "./parts/TraceTooltipBody";
+import type { ComponentTrace }     from "./traceability";
 import { RoundingDiagnosticsSection } from "./parts/RoundingDiagnosticsSection";
 import { useDesgloseOpen }   from "./hooks/useDesgloseOpen";
 import {
   groupComponentsByGroup,
   resolveCardMetals,
   resolveMonetaryHeaderAmount,
+  aggregateMetalFinalByParent,
 } from "./helpers";
+import type { MetalFinalRow } from "./helpers";
 import type {
   TotalDelComprobanteCardProps,
   BalanceMode,
@@ -71,9 +75,17 @@ export function TotalDelComprobanteCard({
   overrideDisabled,
   channelName,
   priceListName,
+  priceListMixed,
   lineArticleNames,
   commercialMetalValueSum,
   commercialMetalValueByParent,
+  metalSaleByParent,
+  metalSalePreByParent,
+  metalVisibleGramsByParent,
+  commercialMonetarySaldoSum,
+  commercialMonetaryRoundingImpactSum,
+  commercialMetalRoundingImpactSum,
+  commercialRoundingByParentFromLines,
   documentMetals,
   hechuraLines,
   subtotalCommercial,
@@ -96,6 +108,7 @@ export function TotalDelComprobanteCard({
   // F1 — Detalle del redondeo COMERCIAL PHYSICAL aplanado por línea.
   // El caller (`VentasFacturas`) hace flatMap puro y nos pasa el array.
   commercialPhysicalRoundedMetals,
+  componentTraces,
   className,
   commercialStatus,
 }: TotalDelComprobanteCardProps): ReactElement {
@@ -179,27 +192,113 @@ export function TotalDelComprobanteCard({
   );
   const hasMetals      = resolvedMetals.length > 0;
 
-  // ── Modo efectivo (Etapa C/D3 — corrección de bug visual) ────────────────
-  // Regla canónica: el "modo" del card refleja LO QUE SE ESTÁ MOSTRANDO al
-  // operador, no el `balanceMode` crudo del backend.
+  // ── SSOT card ↔ footer (2026-06) — GRAMO PRINCIPAL = el del card ─────────
+  // El gramo protagonista de METALES debe ser EXACTAMENTE el que el card del
+  // artículo decidió mostrar (Σ `visibleGrams` ?? `gramsEquivLine`,
+  // `metalVisibleGramsByParent`), NO `saleEquivGr`/`displayGrams` (que diverge
+  // cuando la lista aplica redondeo comercial PER_DOCUMENT — card mostraba el
+  // físico redondeado y el footer el equivalente de venta). Override SOLO del
+  // campo `displayGrams` por NOMBRE de padre; el físico `grams` queda intacto
+  // (cuenta corriente metálica, sub-filas de redondeo físico, ajuste manual
+  // BREAKDOWN). Passthrough puro — cero recálculo. Sin el prop (snapshot legacy
+  // / sin líneas) se preserva `resolvedMetals` tal cual (back-compat). Esta
+  // copia alimenta ÚNICAMENTE el render de `MetalsSummary`.
+  const metalsForDisplay = useMemo(() => {
+    if (!metalVisibleGramsByParent) return resolvedMetals;
+    const byName = new Map<string, number>();
+    for (const [name, g] of Object.entries(metalVisibleGramsByParent)) {
+      if (typeof g === "number" && Number.isFinite(g)) {
+        byName.set(name.trim().toLowerCase(), g);
+      }
+    }
+    if (byName.size === 0) return resolvedMetals;
+    return resolvedMetals.map((m) => {
+      const v = byName.get((m.name ?? "").trim().toLowerCase());
+      return typeof v === "number" && Number.isFinite(v)
+        ? { ...m, displayGrams: v }
+        : m;
+    });
+  }, [resolvedMetals, metalVisibleGramsByParent]);
+
+  // ── Fase 1 (2026-06) — Metal a VALOR DE VENTA vía prop explícito ─────────
+  // `metalSaleByParent` (venta, derivado de líneas por el caller) tiene
+  // PRIORIDAD sobre `commercialMetalValueByParent` (COSTO). El gate es la
+  // PRESENCIA del prop con valor finito > 0 — NO el ambiguo `m.monetaryAmount`
+  // (que era venta o valuación física según el origen). Sin el prop (snapshot
+  // legacy / balanceBreakdown / sin líneas) se degrada a COSTO, preservando
+  // EXACTAMENTE el comportamiento previo.
+  const metalSaleSum: number | null = metalSaleByParent
+    ? Object.values(metalSaleByParent).reduce((a, v) => a + (Number.isFinite(v) ? v : 0), 0)
+    : null;
+  const hasMetalSale = metalSaleSum != null && Number.isFinite(metalSaleSum) && metalSaleSum > 0;
+  // Σ resolvedMetals.monetaryAmount — fallback legacy SOLO para deducción del
+  // saldo / valuationSum (NO para display). Preserva el comportamiento previo
+  // cuando no hay `commercialMetalValueSum`.
+  const metalMonetarySum = resolvedMetals.reduce(
+    (acc, m) =>
+      acc + (typeof m.monetaryAmount === "number" && Number.isFinite(m.monetaryAmount)
+        ? m.monetaryAmount
+        : 0),
+    0,
+  );
+  // DISPLAY (header del bloque + sub-fila por metal): VENTA → COSTO. Sin
+  // fallback a la valuación física (el display siempre fue costo-o-ausente).
+  const metalDisplayByParent = hasMetalSale ? metalSaleByParent : commercialMetalValueByParent;
+  const metalDisplaySum: number | null = hasMetalSale
+    ? metalSaleSum
+    : (typeof commercialMetalValueSum === "number" && Number.isFinite(commercialMetalValueSum)
+        ? commercialMetalValueSum
+        : null);
+  // ── Opción 1 (2026-06) — REDISTRIBUCIÓN VISUAL del redondeo COMERCIAL del
+  // metal: su delta (PER_DOCUMENT BREAKDOWN) deja de absorberse en MONETARIO y
+  // pasa a vivir en METALES. Σ delta por padre === breakdown.metalMonetaryEquivalent
+  // (conservación garantizada por el backend). Passthrough puro: el front
+  // SELECCIONA el campo y lo COMPONE para display; no recalcula el redondeo.
+  // En UNIFIED / sin snapshot el delta es 0 → comportamiento idéntico al previo.
+  // Fuente: snapshot document-level (PER_DOCUMENT puro) tiene PRIORIDAD; si no
+  // existe (MIXED → snapshot null), se cae al consolidado POR LÍNEAS que el
+  // caller derivó de `lineCommercialSummary.metals.byParent[].roundingImpact`.
+  // Así el header POST, la deducción del saldo y las filas per-metal quedan
+  // consistentes también en MIXED. Passthrough puro — cero recálculo.
+  const metalCommercialRoundingByParent: Readonly<Record<string, number>> | undefined =
+    commercialDocumentRoundingSnapshot?.scope === "BREAKDOWN"
+      ? Object.fromEntries(
+          (commercialDocumentRoundingSnapshot.breakdown?.metals ?? [])
+            .filter(
+              (mm) =>
+                typeof mm?.monetaryEquivalent === "number" &&
+                Number.isFinite(mm.monetaryEquivalent),
+            )
+            .map((mm) => [mm.metalParentName, mm.monetaryEquivalent] as const),
+        )
+      : commercialRoundingByParentFromLines;
+  // DEDUCCIÓN del saldo (fallback UNIFICADO / sin finalRows): VENTA → COSTO →
+  // Σ monetaryAmount (legacy). En BREAKDOWN se reemplaza por `metalFinalTotal`
+  // (Etapa 2C — ver más abajo, tras resolver `isBreakdown`).
+  const metalDeductionForSaldoBasePre: number = hasMetalSale
+    ? (metalSaleSum as number)
+    : (typeof commercialMetalValueSum === "number" && Number.isFinite(commercialMetalValueSum)
+        ? commercialMetalValueSum
+        : metalMonetarySum);
+
+  // ── Modo de saldo (SSOT 2026-06-03 — lector puro de `balanceMode`) ───────
+  // El modo SIEMPRE proviene del backend (`resolveSaleBalanceMode`, jerarquía
+  // R11.4): override del documento → cliente → lista → tenant → fallback
+  // UNIFIED. El frontend NO lo deriva.
   //
-  // Si hay metales visibles (`hasMetals` derivado de
-  // `balanceBreakdown.metals[]` o de `documentMetals` por línea), el
-  // comprobante OPERA visualmente en BREAKDOWN — el editor de ajuste manual,
-  // el label del selector inline y el desglose deben alinearse con eso.
+  // CRÍTICO: mostrar metales NO cambia el modo. Un comprobante puede ser
+  // `UNIFIED` y aun así mostrar Metales / Hechura / Valor comercial como
+  // INFORMACIÓN VISUAL — la sección METALES se renderiza con
+  // `isBreakdown || hasMetals`, así que sigue visible en UNIFIED.
   //
-  // Antes el código leía `balanceMode ?? (metals.length > 0 ? BREAKDOWN :
-  // UNIFIED)` y por eso, cuando el backend devolvía `balanceMode="UNIFIED"`
-  // (caso típico cuando el tenant no configuró el Balance Mode), el card
-  // mostraba "Patrimonio metálico" pero el editor de ajuste manual quedaba
-  // en UNIFIED y el label decía "Unificado" — desalineación visual con la
-  // realidad operativa.
-  //
-  // Si no hay metales visibles, fallback al `balanceMode` del backend
-  // (UNIFIED por default) — comportamiento sin metales no se altera.
-  const mode: BalanceMode = hasMetals
-    ? "BREAKDOWN"
-    : (balanceMode ?? "UNIFIED");
+  // Antes esta línea forzaba `BREAKDOWN` cuando había metales visibles
+  // (`hasMetals ? "BREAKDOWN" : balanceMode`). Eso creaba una SEGUNDA fuente
+  // de verdad: el label decía "Desglosado" mientras el motor calculaba los
+  // totales en `UNIFIED` (y `TPSaleAccountImpactCard` mostraba "Unificado").
+  // Doble fuente eliminada — el card es lector puro del `balanceMode` del
+  // preview, idéntico al que usan los totales, la confirmación y el card de
+  // Impacto en cuenta corriente.
+  const mode: BalanceMode = balanceMode ?? "UNIFIED";
 
   // ── Moneda de display ────────────────────────────────────────────────────
   const displayCurrency =
@@ -217,6 +316,52 @@ export function TotalDelComprobanteCard({
 
   const isBreakdown = mode === "BREAKDOWN";
   const hasMonetaryGroups = groupedComponents.length > 0;
+
+  // ── Etapa 2C — Valor Final Metal real (solo DESGLOSADO) ──────────────────
+  // Consolida por metal padre los CUATRO mecanismos (todos en moneda):
+  //   finalMetalValue = valor comercial + redondeo comercial + redondeo
+  //                     financiero (capa 16 PHYSICAL) + ajuste manual (gramos).
+  // Agregación PURA: el frontend SOLO suma los `monetaryEquivalent` que el
+  // backend ya emitió. NO multiplica gramos × cotización, NO aplica margen.
+  // El ajuste manual de metal sigue siendo FÍSICO — su equivalente monetario
+  // se suma al metal y NUNCA se vuelca a `breakdown.monetary.amount`.
+  const metalFinalRows: MetalFinalRow[] = isBreakdown
+    ? aggregateMetalFinalByParent({
+        resolvedMetals,
+        // Fix listas mixtas (2026-06) — BASE = "Valor de venta metal" PRE-redondeo
+        // (`metalSalePreByParent` = Σ saleAmountLinePre del card). Antes usaba
+        // `metalDisplayByParent` (POST = saleAmountLine, ya con el redondeo por
+        // línea) y luego SUMABA el redondeo otra vez → doble conteo en MIXED.
+        // Con la base PRE: `finalMetalValue = base(PRE) + redondeo = POST` (= el
+        // "Valor final metal" del card). PER_DOCUMENT no cambia (ahí PRE = POST
+        // porque el redondeo es documental, no por línea, y vive en el snapshot).
+        // Fallback a metalDisplayByParent para callers/snapshots sin el prop.
+        baseByParentName: (metalSalePreByParent
+          ?? metalDisplayByParent
+          ?? {}) as Readonly<Record<string, number>>,
+        commercialByParentName: metalCommercialRoundingByParent,
+        financialMetals:
+          docRoundingResolved?.breakdown?.metalDomain === "PHYSICAL"
+            ? docRoundingResolved?.breakdown?.metalPhysical?.metals ?? undefined
+            : undefined,
+        manualMetals:
+          manualResolved?.scope === "BREAKDOWN"
+            ? manualResolved?.breakdown?.metals ?? undefined
+            : undefined,
+      })
+    : [];
+  // Σ valor final por metal padre — header del bloque METALES en DESGLOSADO.
+  const metalFinalTotal: number | null = isBreakdown
+    ? Math.round(metalFinalRows.reduce((a, r) => a + r.finalMetalValue, 0) * 100) / 100
+    : null;
+  // Header del bloque METALES: en DESGLOSADO = Σ valor final real (incluye
+  // financiero + ajuste manual). En UNIFICADO queda null (Etapa 1 lo suprime).
+  const metalHeaderFinalSum: number | null = isBreakdown ? metalFinalTotal : null;
+  // Deducción del saldo: en DESGLOSADO = Σ valor final (cierre estructural
+  // METALES + MONETARIO = TOTAL). En UNIFICADO no se usa (saldo = total).
+  const metalDeductionForSaldoBase: number = isBreakdown
+    ? (metalFinalTotal ?? 0)
+    : metalDeductionForSaldoBasePre;
 
   // ── Importe del header "Saldo monetario" ────────────────────────────────
   // El valor representa SIEMPRE el bucket "no metal" del comprobante:
@@ -236,6 +381,90 @@ export function TotalDelComprobanteCard({
     resolvedMetals,
     hechuraLines,
   );
+
+  // ── "Monetario (saldo)" — SSOT del valor mostrado (anti doble-conteo) ─────
+  // Regla de negocio: METALES + MONETARIO (saldo) = TOTAL del comprobante.
+  // Esa identidad SOLO la garantiza `total − metal`. El header y el bloque de
+  // "Redondeo comercial monetario" leen ESTE valor único (no recalculan).
+  //
+  // En BREAKDOWN, históricamente se usaba `commercialMonetarySaldoSum`
+  // (Σ `lineCommercialSummary.monetary.amount`) para paridad línea↔footer. Pero
+  // una línea UNIFIED aporta a `monetary.amount` su TOTAL COMPLETO (metal +
+  // monetario) — en un documento mixto eso DUPLICA el metal (que también se
+  // muestra en METALES). Guard: si `metal + Σmonetary` EXCEDE el total, hay
+  // doble conteo → cerramos el invariante con `total − metal`. Si no excede
+  // (desglosado homogéneo consistente), se respeta `commercialMonetarySaldoSum`
+  // (back-compat). Display-only: resta de dos valores ya emitidos por el motor.
+  const monetarioSaldoResolved: number | null = (() => {
+    const r2 = (n: number) => Math.round(n * 100) / 100;
+    const totalN =
+      typeof totalDocument === "number" && Number.isFinite(totalDocument) ? totalDocument : null;
+    if (!isBreakdown) {
+      // UNIFICADO (Etapa 1) — el saldo monetario ES el TOTAL completo del
+      // documento. Los metales son informativos (gramos) y NO se descuentan
+      // del saldo. `monetaryHeaderAmount` solo actúa como fallback cuando
+      // `totalDocument` no es finito (ahí también es null).
+      return totalN ?? monetaryHeaderAmount;
+    }
+    // DESGLOSADO — SSOT del "Valor final monetario": RESIDUAL `total − Σ valor
+    // final metal` (`metalDeductionForSaldoBase`). Es el ÚNICO valor que SIEMPRE
+    // representa el saldo monetario desglosado y cierra el invariante por
+    // construcción: METALES + MONETARIO = TOTAL (guard anti doble-conteo
+    // intrínseco — el metal nunca se cuenta dos veces).
+    //
+    // ⚠️ NO usar `commercialMonetarySaldoSum` (Σ `lineCommercialSummary.monetary.amount`
+    // / `lineOwnMonetarySaldoPostCommercialRounding`) como fuente del FINAL: en
+    // listas DESGLOSADAS SIN redondeo ese campo trae el TOTAL DE LÍNEA (ej.
+    // 814.680,14), no el saldo → inflaría el monetario y rompería el invariante.
+    // El redondeo comercial monetario AUTÓNOMO por línea
+    // (`commercialMonetaryRoundingImpactSum`, prioridad `lineOwn`) SÍ se muestra
+    // como IMPACTO dentro del monetario (sub-fila) y deriva el "Valor comercial"
+    // (= final − redondeo), pero NO redefine el final. Passthrough puro.
+    return totalN != null ? r2(totalN - metalDeductionForSaldoBase) : null;
+  })();
+
+  // ── Impacto del REDONDEO FINANCIERO sobre el patrimonio MONETARIO ──────────
+  // Etapa UX (2026-06) — el redondeo financiero (política del tenant) debe
+  // reflejarse en AMBOS patrimonios cuando el saldo es DESGLOSADO. El metal ya
+  // muestra su parte (sub-fila "Redondeo financiero" vía `MetalsSummary` cuando
+  // el dominio es PHYSICAL). Acá extraemos la parte NO-metal (hechura/saldo)
+  // del snapshot financiero del documento para mostrarla en el patrimonio
+  // monetario. PASSTHROUGH puro — se LEE el valor que el backend ya calculó y
+  // que ya está absorbido en `monetarioSaldoResolved` (post); no se recalcula
+  // ningún redondeo ni se altera el total. Si el snapshot no trae el valor
+  // (o es ~0), queda 0 → no se renderiza la fila (degradación segura, sin
+  // regresión respecto al comportamiento previo).
+  const financialMonetaryImpact: number = (() => {
+    if (!isBreakdown) return 0;
+    const fin = docRoundingResolved;
+    if (!fin) return 0;
+    const h = fin.breakdown?.hechura?.adjustment;
+    if (typeof h === "number" && Number.isFinite(h)) return Math.round(h * 100) / 100;
+    const u = fin.unified?.adjustment;
+    if (typeof u === "number" && Number.isFinite(u)) return Math.round(u * 100) / 100;
+    return 0;
+  })();
+
+  // ── Redondeo comercial MONETARIO del documento — FUENTE CANÓNICA ───────────
+  // El "Redondeo comercial monetario" del footer DEBE leerse del MISMO espacio
+  // documental que alimentó `Sale.total`: el snapshot
+  // `commercialDocumentRoundingApplied.breakdown.hechura.deltaSaldoMonetario`
+  // (prop `commercialDocumentRoundingSnapshot`). En MIXED ese snapshot = el
+  // `commercialDocumentRoundingPrecomputed` (base REAL) que el motor sumó al
+  // total → el redondeo mostrado RECONCILIA con el `monetarioSaldoResolved`
+  // (residual). NO usar `commercialMonetaryRoundingImpactSum` (Σ `lineOwn*`,
+  // DISPLAY-ONLY desde `previewMoneyByIdx`/base limpia, que NO alimenta el total
+  // y diverge en MIXED). Fallback a la Σ per-línea SOLO cuando no hay snapshot
+  // documental (snapshots legacy / sin contrato) → back-compat. Passthrough puro
+  // — el FE no recalcula ningún redondeo.
+  const commercialMonetaryRoundingDocImpact: number = (() => {
+    const docDelta = commercialDocumentRoundingSnapshot?.breakdown?.hechura?.deltaSaldoMonetario;
+    if (typeof docDelta === "number" && Number.isFinite(docDelta)) {
+      return Math.round(docDelta * 100) / 100;
+    }
+    const lineSum = commercialMonetaryRoundingImpactSum;
+    return typeof lineSum === "number" && Number.isFinite(lineSum) ? lineSum : 0;
+  })();
 
   return (
     <section
@@ -273,7 +502,11 @@ export function TotalDelComprobanteCard({
             · BREAKDOWN: SIEMPRE se renderiza (aun vacía → mensaje).
             · UNIFIED:  se renderiza SÓLO cuando existen metales; la
               caption aclara que son informativos. */}
-        {(isBreakdown || hasMetals) && (
+        {/* Etapa 2D (Corrección A) — el bloque METALES solo se renderiza en
+            DESGLOSADO. En UNIFICADO el comprobante es TOTAL = MONETARIO; los
+            metales NO participan visualmente (se eliminó el bloque informativo
+            de Etapa 1). Display-only: no afecta cálculo, cuenta corriente ni PDF. */}
+        {isBreakdown && (
           <section
             className="border-t border-border/20 pt-3 space-y-2"
             data-testid="total-card-metals-section"
@@ -294,58 +527,43 @@ export function TotalDelComprobanteCard({
                 viene no-null (rama UX-Comercial §R-Rounding-16). */}
             <header className="flex items-baseline justify-between gap-3">
               <span className="text-xs font-bold uppercase tracking-[0.16em] text-text inline-flex items-center">
-                Metales
-                {/* UX.33-final — tooltip estilo calculadora: gramos por
-                    padre + valor comercial total. Sin texto narrativo. */}
-                {typeof commercialMetalValueSum === "number"
-                  && Number.isFinite(commercialMetalValueSum)
-                  && commercialMetalValueSum > 0
-                  && displayCurrency && (
-                  <OriginTooltip
-                    title="Metales"
-                    body={
-                      <>
-                        {resolvedMetals.map((m) => (
-                          <div key={`mtt-g-${m.id}`} className="flex items-baseline justify-between gap-3">
-                            <span className="text-muted/80">{m.name}</span>
-                            <span className="tabular-nums text-text">
-                              {formatByType(m.grams, "METAL_GRAMS")} g
-                            </span>
-                          </div>
-                        ))}
-                        <div className="my-1 border-t border-border/30" />
-                        <div className="flex items-baseline justify-between gap-3 font-semibold">
-                          <span className="text-muted/80">Valor comercial</span>
-                          <span className="tabular-nums text-text">
-                            {displayCurrency} {formatByType(commercialMetalValueSum, "MONEY")}
-                          </span>
-                        </div>
-                      </>
-                    }
-                  />
-                )}
+                {/* Etapa 1 (UNIFICADO) — en modo no-BREAKDOWN los metales son
+                    INFORMATIVOS (solo gramos): label distintivo + sin valuación
+                    monetaria. En BREAKDOWN conserva "Metales" (saldo real). */}
+                {isBreakdown ? "Metales" : "Metales informativos"}
+                {/* Etapa UX (2026-06) — el tooltip legacy del HEADER del bloque
+                    METALES se ELIMINÓ. La trazabilidad ahora vive en un único
+                    ⓘ por metal (estilo `TraceTooltipBody`), evitando dos
+                    estilos de tooltip en el mismo bloque. */}
               </span>
-              {typeof commercialMetalValueSum === "number"
-                && Number.isFinite(commercialMetalValueSum)
-                && commercialMetalValueSum > 0
+              {/* Etapa 1 — el total monetario del bloque METALES solo se
+                  muestra en BREAKDOWN. En UNIFICADO los metales son
+                  informativos (gramos): sin total monetario agregado. */}
+              {isBreakdown
+                && typeof metalHeaderFinalSum === "number"
+                && Number.isFinite(metalHeaderFinalSum)
+                && metalHeaderFinalSum > 0
                 && displayCurrency && (
                 <span
                   className="tabular-nums text-[12px] font-medium text-muted/80"
                   data-testid="total-card-metals-header-total"
                 >
-                  {displayCurrency} {formatByType(commercialMetalValueSum, "MONEY")}
+                  {displayCurrency} {formatByType(metalHeaderFinalSum, "MONEY")}
                 </span>
               )}
             </header>
             <MetalsSummary
-              metals={resolvedMetals}
+              // SSOT card ↔ footer — gramo principal = el del card
+              // (`metalsForDisplay` overridea `displayGrams` con el
+              // `visibleGrams` consolidado). El físico `grams` queda intacto.
+              metals={metalsForDisplay}
               currencyCode={displayCurrency}
               // I1 — Detalle del redondeo financiero PHYSICAL por metal padre.
               // Passthrough EXACTO del snapshot canónico top-level (capa 16).
               // Cuando la capa no actuó, queda `undefined` y MetalsSummary
               // no renderiza la sub-fila (degradación segura).
               physicalRoundedMetals={
-                docRoundingResolved?.breakdown?.metalDomain === "PHYSICAL"
+                isBreakdown && docRoundingResolved?.breakdown?.metalDomain === "PHYSICAL"
                   ? docRoundingResolved?.breakdown?.metalPhysical?.metals ?? undefined
                   : undefined
               }
@@ -357,7 +575,24 @@ export function TotalDelComprobanteCard({
               // se provee, cada metal muestra una sub-fila terciaria "Valor
               // comercial: ARS X". El total agregado vive ahora en el header
               // del bloque (arriba), NO al pie. Si falta, sin sub-fila.
-              commercialMetalValueByParent={commercialMetalValueByParent}
+              // Etapa 1 — en UNIFICADO los metales son informativos (solo
+              // gramos): se suprime la valuación monetaria por metal.
+              commercialMetalValueByParent={isBreakdown ? metalDisplayByParent : undefined}
+              // Opción 1 (2026-06) — impacto $ del redondeo COMERCIAL por metal
+              // padre. Habilita las sub-filas "Redondeo comercial" + "Valor
+              // final metales" debajo de "Valor comercial". Σ === el delta que
+              // se sumó al header. Sin snapshot / UNIFIED queda `undefined`.
+              // Etapa 1 — además gateado por modo: en UNIFICADO nunca se
+              // muestran redondeos comerciales separados por metal.
+              commercialRoundingByParent={isBreakdown ? metalCommercialRoundingByParent : undefined}
+              // Etapa 2C — composición FINAL por metal padre (valor comercial +
+              // redondeo comercial + redondeo financiero + ajuste manual). Cuando
+              // llega, MetalsSummary la usa como fuente canónica del "Valor final
+              // metal" y de las sub-filas físicas. En UNIFICADO va vacío → la
+              // sección queda informativa (solo gramos). Passthrough puro.
+              finalRows={metalFinalRows}
+              // Nombre real de la lista → "Origen" del tooltip de cada metal.
+              priceListName={priceListName}
             />
           </section>
         )}
@@ -386,6 +621,14 @@ export function TotalDelComprobanteCard({
                 el Total / Patrimonio metálico. Ahora la lectura rápida es
                 limpia y el detalle queda accesible bajo demanda. */}
             {(() => {
+              // ── Etapa 2F-C — eliminación de la DUPLICACIÓN del saldo ────────
+              // En UNIFICADO `Monetario (saldo)` == `Total del comprobante`
+              // (mismo valor, ver Etapa 2D). Mostrar ambos duplica el monto y
+              // hace parecer que existe una "cuenta de origen monetaria"
+              // separada. Se oculta el header "Monetario (saldo)" — el TOTAL del
+              // header maestro es el único valor visible. El detalle financiero
+              // (toggle) se conserva. Display-only, sin tocar cálculo.
+              if (!isBreakdown) return null;
               // ── Etapa UX-Comercial (2026-05-30 — POLICY §R-Rounding-16) ────
               // En BREAKDOWN el Saldo Monetario se calcula como
               // `totalDocument − commercialMetalValueSum` (Patrimonio comercial),
@@ -401,45 +644,20 @@ export function TotalDelComprobanteCard({
               //
               // En UNIFIED el header mantiene la fuente histórica
               // (`monetaryHeaderAmount` ya hace la resta total − Σ metales).
-              const useCommercial =
-                typeof commercialMetalValueSum === "number"
-                && Number.isFinite(commercialMetalValueSum);
-              const metalDeductionForSaldo: number = useCommercial
-                ? (commercialMetalValueSum as number)
-                : resolvedMetals.reduce(
-                    (acc, m) =>
-                      acc + (typeof m.monetaryAmount === "number" && Number.isFinite(m.monetaryAmount)
-                        ? m.monetaryAmount
-                        : 0),
-                    0,
-                  );
-              // Etapa D' (cierre conceptual) — FUENTE ÚNICA DE VERDAD.
-              // Cuando existe `commercialDocumentRoundingSnapshot` con scope
-              // BREAKDOWN, el saldo monetario visible es `postRoundingSaldoMonetario`
-              // (passthrough del snapshot canónico backend). Reemplaza el
-              // cálculo histórico `totalDocument − metalDeductionForSaldo` que
-              // reconstruía el saldo en frontend (violación de REGLA DE ORO).
-              //
-              // Prohibido reconstruir cuando el snapshot existe. Fallback al
-              // cálculo legacy SOLO cuando la lista opera en PER_LINE_LEGACY o
-              // mixed-list (no hay snapshot doc), para preservar back-compat.
-              const snapshotHechuraPost =
-                commercialDocumentRoundingSnapshot?.scope === "BREAKDOWN"
-                && commercialDocumentRoundingSnapshot?.breakdown?.hechura?.postRoundingSaldoMonetario;
-              const saldoMonetarioBreakdown: number | null =
-                isBreakdown
-                  ? (typeof snapshotHechuraPost === "number" && Number.isFinite(snapshotHechuraPost)
-                      ? snapshotHechuraPost
-                      : (typeof totalDocument === "number" && Number.isFinite(totalDocument)
-                          ? totalDocument - metalDeductionForSaldo
-                          : null))
-                  : null;
-              // Etapa UX.33 (2026-05-30) — Label visible "Hechura total" en
-              // ambos modos. La variable interna `saldoMonetarioBreakdown` y
-              // los testids `data-tp-header-mode` siguen iguales (cambio
-              // UX-only, sin renombrar contratos).
-              const headerLabel  = "Hechura total";
-              const headerAmount = isBreakdown ? saldoMonetarioBreakdown : monetaryHeaderAmount;
+              // Fase 1 — deducción del saldo alineada al MISMO valor que muestra
+              // METALES (`metalDeductionForSaldoBase`: venta si hay
+              // `metalSaleByParent`, si no costo, si no Σ monetaryAmount legacy).
+              // En PER_LINE/MIXED el saldo = total − ese valor → por construcción
+              // metalDisplay + saldo = total (sin doble margen). En PER_DOCUMENT
+              // no se usa (gana el snapshot).
+              // FASE 1 — Label visible "Monetario (saldo)" (ex "Hechura total").
+              // Refleja el SALDO MONETARIO (total − metal, post-tax). Los testids
+              // `data-tp-header-mode` siguen iguales (sin renombrar contratos).
+              const headerLabel  = "Monetario (saldo)";
+              // SSOT del valor — `monetarioSaldoResolved` (arriba). Garantiza
+              // METALES + MONETARIO = TOTAL en ambos modos y aplica el guard
+              // anti doble-conteo cuando una línea UNIFIED infló la Σ en mixto.
+              const headerAmount = monetarioSaldoResolved;
               return (
                 <div
                   className="flex items-baseline justify-between gap-3 py-1"
@@ -448,20 +666,34 @@ export function TotalDelComprobanteCard({
                 >
                   <span className="text-[15px] font-medium text-text inline-flex items-center">
                     {headerLabel}
-                    {/* UX.33-final — tooltip estilo calculadora: SOLO el monto. */}
-                    {headerAmount != null && Number.isFinite(headerAmount) && displayCurrency && (
-                      <OriginTooltip
-                        title="Hechura total"
-                        body={
-                          <div className="flex items-baseline justify-between gap-3 font-semibold">
-                            <span className="text-muted/80">Total</span>
-                            <span className={`tabular-nums ${headerAmount < 0 ? "text-red-500" : "text-text"}`}>
-                              {headerAmount < 0 ? "−" : ""}{displayCurrency} {formatByType(Math.abs(headerAmount), "MONEY")}
-                            </span>
-                          </div>
-                        }
-                      />
-                    )}
+                    {/* Tooltip de trazabilidad del MONETARIO — cuenta completa:
+                        valor comercial (Antes) → valor final (Después) ·
+                        redondeo comercial (Impacto). PASSTHROUGH puro. */}
+                    {headerAmount != null && Number.isFinite(headerAmount) && displayCurrency && (() => {
+                      // Redondeo comercial monetario = impacto DOCUMENTAL canónico
+                      // (snapshot que alimentó Sale.total), NO Σ lineOwn display-only.
+                      const commImpact = commercialMonetaryRoundingDocImpact;
+                      // Redondeo total del saldo = comercial (lista) + financiero
+                      // (tenant). Ambos ya están absorbidos en `post`.
+                      const totalRedondeo = Math.round((commImpact + financialMonetaryImpact) * 100) / 100;
+                      const post = headerAmount;
+                      const pre  = Math.round((post - totalRedondeo) * 100) / 100;
+                      const monTrace: ComponentTrace = {
+                        kind:  "MONETARY",
+                        title: "Monetario (saldo)",
+                        origin: { sourceType: "PRICE_LIST", sourceName: "Saldo no-metal del comprobante" },
+                        preValue:  pre,
+                        postValue: post,
+                        impact:    totalRedondeo,
+                        completeness: "COMPLETE",
+                      };
+                      return (
+                        <OriginTooltip
+                          title="Monetario (saldo)"
+                          body={<TraceTooltipBody trace={monTrace} currency={displayCurrency} />}
+                        />
+                      );
+                    })()}
                   </span>
                   {headerAmount != null && Number.isFinite(headerAmount) && (
                     <span
@@ -476,6 +708,95 @@ export function TotalDelComprobanteCard({
                       {formatByType(headerAmount, "MONEY")}
                     </span>
                   )}
+                </div>
+              );
+            })()}
+
+            {/* Redondeo comercial MONETARIO — desglose Valor comercial →
+                Redondeo comercial → Valor redondeado, debajo del header
+                "Monetario (saldo)" y con el MISMO patrón que el bloque de metal.
+                Passthrough puro: el impacto es Σ de
+                `lineCommercialSummary.monetary.roundingImpact` por línea
+                (`sumLineCommercialMonetaryRoundingImpact`). El "Valor redondeado"
+                es el MISMO saldo que muestra el header de arriba
+                (`commercialMonetarySaldoSum`). Regla 3: si el impacto es 0/null
+                NO se renderiza (en listas UNIFICADAS el contrato trae 0 porque el
+                redondeo ya está embebido en el total). Cero recálculo —
+                `pre = post − impacto` es derivación de display permitida (resta de
+                dos valores ya emitidos por el backend). */}
+            {(() => {
+              // Etapa UX — MONETARIO AUTOCONTENIDO (2026-06). En DESGLOSADO el
+              // patrimonio monetario muestra SIEMPRE su propia cuenta:
+              //   Valor comercial → (Redondeo comercial) → Valor final monetario
+              // — espejo estructural del bloque METALES. "Valor final monetario"
+              // == saldo del header (`monetarioSaldoResolved`); el redondeo solo
+              // aparece cuando es significativo (≠ 0). En UNIFICADO no aplica.
+              // Cero recálculo: `pre = post − impacto` es derivación de display
+              // (resta de dos valores ya emitidos por el backend).
+              if (!isBreakdown) return null;
+              const post = monetarioSaldoResolved;
+              if (post == null || !Number.isFinite(post)) return null;
+              // Redondeo comercial monetario = impacto DOCUMENTAL canónico
+              // (`commercialDocumentRoundingSnapshot.breakdown.hechura.deltaSaldoMonetario`,
+              // el que está en `Sale.total`), con fallback a la Σ per-línea solo sin
+              // snapshot. Así `pre + commImpact + finImpact = post` reconcilia con el
+              // residual también en MIXED (antes usaba Σ lineOwn display-only y divergía).
+              const commImpact = commercialMonetaryRoundingDocImpact;
+              const finImpact = financialMonetaryImpact;
+              const showCommercial = Math.abs(commImpact) > 0.005;
+              const showFinancial  = Math.abs(finImpact) > 0.005;
+              // Valor comercial = saldo final − (redondeo comercial + financiero).
+              // Derivación de display (resta de valores ya emitidos por el
+              // backend): pre + comercial + financiero = post.
+              const pre = Math.round((post - commImpact - finImpact) * 100) / 100;
+              const SignedImpact = ({ amount, testId }: { amount: number; testId: string }) => (
+                <span
+                  className={`tabular-nums text-[11px] font-medium ${amount > 0 ? vt.colors.bonus : vt.colors.discount}`}
+                  data-testid={testId}
+                >
+                  {amount > 0 ? "+" : "−"}{displayCurrency ? `${displayCurrency} ` : ""}{formatByType(Math.abs(amount), "MONEY")}
+                </span>
+              );
+              return (
+                <div
+                  className="mt-0.5 mb-1 space-y-0.5 pl-3 border-l border-border/15"
+                  data-testid="total-card-monetary-commercial-rounding"
+                >
+                  <div className="flex items-baseline justify-between gap-3">
+                    <span className="text-[11px] text-muted/70">Valor comercial</span>
+                    <span
+                      className="tabular-nums text-[11px] text-muted/80"
+                      data-testid="total-card-monetary-commercial-pre"
+                    >
+                      {displayCurrency ? `${displayCurrency} ` : ""}{formatByType(pre, "MONEY")}
+                    </span>
+                  </div>
+                  {showCommercial && (
+                    <div className="flex items-baseline justify-between gap-3">
+                      <span className="text-[11px] italic text-muted/70">Redondeo comercial</span>
+                      <SignedImpact amount={commImpact} testId="total-card-monetary-commercial-impact" />
+                    </div>
+                  )}
+                  {/* Etapa UX (2026-06) — REDONDEO FINANCIERO del patrimonio
+                      monetario: la parte no-metal del redondeo del comprobante
+                      (política del tenant). Simétrico con la sub-fila "Redondeo
+                      financiero" del bloque METALES. PASSTHROUGH — el valor ya
+                      está absorbido en `post`; acá solo se expone la línea. */}
+                  {showFinancial && (
+                    <div className="flex items-baseline justify-between gap-3">
+                      <span className="text-[11px] italic text-muted/70">Redondeo financiero</span>
+                      <SignedImpact amount={finImpact} testId="total-card-monetary-financial-impact" />
+                    </div>
+                  )}
+                  <div className="flex items-baseline justify-between gap-3">
+                    <span className="text-[11px] font-medium text-muted/80">Valor final monetario</span>
+                    <span
+                      className="tabular-nums text-[11px] font-semibold text-text"
+                      data-testid="total-card-monetary-commercial-post"
+                    >
+                      {displayCurrency ? `${displayCurrency} ` : ""}{formatByType(post, "MONEY")}
+                    </span>
+                  </div>
                 </div>
               );
             })()}
@@ -547,19 +868,9 @@ export function TotalDelComprobanteCard({
                   // (Patrimonio comercial), usa ese; sino fallback a Σ
                   // `valuationMonetary` (Patrimonio físico canónico).
                   // En UNIFIED queda null para preservar back-compat.
-                  metalsValuationSum={
-                    isBreakdown
-                      ? (typeof commercialMetalValueSum === "number" && Number.isFinite(commercialMetalValueSum)
-                          ? commercialMetalValueSum
-                          : resolvedMetals.reduce(
-                              (acc, m) =>
-                                acc + (typeof m.monetaryAmount === "number" && Number.isFinite(m.monetaryAmount)
-                                  ? m.monetaryAmount
-                                  : 0),
-                              0,
-                            ))
-                      : null
-                  }
+                  // Fase 1 (2026-06) — alineado al MISMO valor que METALES
+                  // (`metalDeductionForSaldoBase`: venta → costo → Σ monetaryAmount).
+                  metalsValuationSum={isBreakdown ? metalDeductionForSaldoBase : null}
                   // Fila de cierre "Total final" — passthrough exacto del
                   // `totalDocument`. El header del card también lo muestra
                   // (grande); aquí va al pie del desglose para que al
@@ -570,12 +881,53 @@ export function TotalDelComprobanteCard({
                   // con flatMap puro desde `preview.lines[i].appliedRounding.physical.metals`.
                   // Si está vacío/undefined, MonetarySummary no renderiza el
                   // bloque (degradación segura).
-                  commercialPhysicalMetals={commercialPhysicalRoundedMetals}
+                  // Etapa 1 — en UNIFICADO no se muestra redondeo (comercial)
+                  // físico separado del metal: se suprime el passthrough.
+                  commercialPhysicalMetals={isBreakdown ? commercialPhysicalRoundedMetals : undefined}
+                  // Etapa 2F — en UNIFICADO oculta la sección COMPOSICIÓN
+                  // (Hechura/Productos): el detalle se enfoca en la cuenta monetaria.
+                  isBreakdown={isBreakdown}
+                  // Trazabilidad de auditoría por componente (tooltips con la
+                  // cuenta completa). Passthrough puro desde el caller.
+                  componentTraces={componentTraces}
                 />
               </div>
             )}
           </section>
         )}
+
+        {/* Aviso LISTAS MIXTAS (2026-06-03) — UI informativa pura. Cuando el
+            comprobante usa múltiples listas de precios el backend entra en
+            MIXED_LIST_FALLBACK: el redondeo comercial PER_DOCUMENT se desactiva
+            y cada línea conserva su lógica comercial por lista. Esto explica el
+            cambio visual (desaparece el desglose comercial del comprobante) que
+            antes era confuso. NO altera ningún cálculo ni total — solo informa.
+            El caller deriva `priceListMixed` de `appliedPriceListId === "MIXED"`. */}
+        {priceListMixed && (
+          <div
+            role="note"
+            data-testid="total-card-mixed-pricelist-notice"
+            className="flex items-start gap-2 rounded-md border border-amber-400/40 bg-amber-400/10 px-2.5 py-2"
+          >
+            <Info size={14} aria-hidden="true" className="mt-0.5 shrink-0 text-amber-500" />
+            <p className="text-[11px] leading-snug text-text/80">
+              Este comprobante usa múltiples listas de precios. El redondeo
+              comercial a nivel comprobante se desactiva y cada línea conserva su
+              lógica comercial.
+            </p>
+          </div>
+        )}
+
+        {/* Etapa UX — SALDO DESGLOSADO AUTOCONTENIDO (Opción B, 2026-06):
+            el bloque standalone "Redondeos comerciales" (Metal / Hechura /
+            Total) fue ELIMINADO del render. Su información ya vive dentro de
+            cada patrimonio:
+              · Metal   → METALES (Valor comercial · Redondeo comercial ·
+                          Valor final metal, por metal padre).
+              · Hechura → "Monetario (saldo)" (Valor comercial · Redondeo
+                          comercial · Valor final monetario).
+            Cada patrimonio es autocontenido → cero duplicación, menos saltos
+            visuales. NO se tocó ningún cálculo ni snapshot — solo el render. */}
 
         {/* Manual Adjustment Etapa A (POLICY §R-Rounding-1 capa 17) —
             Override comercial humano final. Editor + display de snapshot.

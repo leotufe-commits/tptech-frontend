@@ -26,6 +26,13 @@ export interface DocumentMetalSummaryItem {
    *  línea muestra "Oro Fino 1,526 gr", el documento muestra Σ de esos
    *  números. NUNCA gramos puros / sin margen / lado costo. */
   grams: number;
+  /** Etapa 2D — gramos de DISPLAY (lado venta / comercial consolidado, =
+   *  `gramsEquivLine` de `deriveDocumentMetalsFromLines`). Es lo que el OPERADOR
+   *  ve en el card de línea. SOLO para display del bloque METALES del footer —
+   *  garantiza paridad Card↔Footer. NUNCA para ajuste manual, cuenta corriente
+   *  metálica ni redondeo físico, que SIEMPRE usan `grams` (físico `gramsPure`).
+   *  Cuando falta, el render cae a `grams` (degradación segura). */
+  displayGrams?: number;
   /** Importe monetario del metal en moneda del documento (Σ `saleAmountLine`
    *  por padre). `null` cuando ningún cost-line emitió `lineSale` (snapshot
    *  legacy). Display referencial — el caller lo renderiza como sub-línea
@@ -68,6 +75,14 @@ export interface TotalDelComprobanteCardProps {
   /** Nombre de la lista de precios aplicada (subheader opcional). */
   priceListName?:   string | null;
 
+  /** Aviso UI (2026-06-03) — el comprobante usa MÚLTIPLES listas de precios
+   *  (preview `appliedPriceListId === "MIXED"`). Cuando es `true`, el motor
+   *  entró en `MIXED_LIST_FALLBACK`: el redondeo comercial PER_DOCUMENT se
+   *  desactiva y cada línea conserva su lógica comercial por lista. El card
+   *  muestra un aviso informativo — NO cambia ningún cálculo ni total.
+   *  Passthrough puro: el caller lo deriva de `appliedPriceListId === "MIXED"`. */
+  priceListMixed?:  boolean;
+
   /** Etapa UX-Saldo — mapa `lineId → nombre del artículo` para que
    *  `MetalsSummary` muestre el "Origen" de cada metal padre (lookup contra
    *  `DocumentMetalSummaryItem.sourceLineIds`). El caller (`VentasFacturas`)
@@ -103,6 +118,73 @@ export interface TotalDelComprobanteCardProps {
    *  agregado al header del bloque "METALES … ARS Y" (eliminando la fila
    *  legacy "Valor comercial del metal" al pie). */
   commercialMetalValueByParent?: Readonly<Record<string, number>>;
+
+  /** Fase 1 (2026-06) — Valor de VENTA del metal por padre (con margen).
+   *  `Record<metalName, monto>` derivado por el caller con
+   *  `buildMetalSaleByParent` (= Σ `saleAmountLine` = `metalSale` del motor,
+   *  misma fuente que `documentMetals`). Cuando se provee, el bloque METALES
+   *  lo prioriza sobre `commercialMetalValueByParent` (COSTO) para el display
+   *  y para la deducción del saldo — así el cierre usa el MISMO valor (venta)
+   *  que se muestra, sin doble margen en PER_LINE/MIXED. Cuando falta o es `{}`
+   *  (snapshot legacy / sin líneas / `balanceBreakdown`), el card degrada a
+   *  COSTO (fallback) sin romper esos paths. Passthrough puro — el card no
+   *  recalcula. */
+  metalSaleByParent?: Readonly<Record<string, number>>;
+
+  /** Fix listas mixtas (2026-06) — Valor de venta del metal por padre
+   *  PRE-redondeo comercial (Σ `saleAmountLinePre` = el "Valor comercial" del
+   *  card). El footer lo usa como BASE de la consolidación del metal en lugar de
+   *  `metalSaleByParent` (POST), para que `valor final = base + redondeo` NO
+   *  duplique el redondeo en listas que lo aplican por línea (MIXED). Cuando
+   *  falta, el card cae a `metalSaleByParent` (back-compat). Passthrough puro. */
+  metalSalePreByParent?: Readonly<Record<string, number>>;
+
+  /** SSOT card ↔ footer (2026-06) — Gramo PRINCIPAL de METALES por metal padre,
+   *  consolidado del MISMO dato visible que el card del artículo (Σ
+   *  `lineCommercialSummary.metals.byParent[].visibleGrams` ?? `gramsEquivLine`).
+   *  El caller lo computa con `buildVisibleGramsByParent(lines)`. Cuando se
+   *  provee, el bloque METALES usa ESTE gramo como protagonista (override de
+   *  `displayGrams`) en lugar de `saleEquivGr`/`displayGrams` — así card y footer
+   *  muestran EXACTAMENTE el mismo gramo. NO toca el físico `grams` (cuenta
+   *  corriente / sub-filas físicas / tooltips lo siguen usando). Cuando falta,
+   *  el card cae a `displayGrams` (back-compat). Passthrough puro. */
+  metalVisibleGramsByParent?: Readonly<Record<string, number>>;
+
+  /** FASE 1 — Footer "Monetario (saldo)" (2026-06-03). Σ de
+   *  `lineCommercialSummary.monetary.amount` por línea (el MISMO "MONETARIO"
+   *  que muestra el Resumen Comercial de cada línea). El caller lo computa con
+   *  `sumLineCommercialMonetary(lines)`. Cuando se provee y el modo es
+   *  BREAKDOWN, el header "Monetario (saldo)" usa ESTE valor (paridad
+   *  línea↔footer) en lugar del cálculo legacy `total − metales`. `null` ⇒
+   *  fallback legacy (back-compat). Passthrough puro — el card no recalcula. */
+  commercialMonetarySaldoSum?: number | null;
+
+  /** Impacto del redondeo comercial MONETARIO del comprobante. Σ de
+   *  `lineCommercialSummary.monetary.roundingImpact` por línea (mismo contrato
+   *  por línea que `commercialMonetarySaldoSum`). El caller lo computa con
+   *  `sumLineCommercialMonetaryRoundingImpact(lines)`. Cuando es != 0, el
+   *  header "Monetario (saldo)" muestra el desglose
+   *  Valor comercial → Redondeo comercial → Valor redondeado (mismo patrón que
+   *  el bloque de metal). En listas UNIFICADAS el contrato trae 0 (el redondeo
+   *  ya está embebido en el total) ⇒ no se muestra la fila. `null`/`0` ⇒ no se
+   *  renderiza el desglose. Passthrough puro — el card no recalcula. */
+  commercialMonetaryRoundingImpactSum?: number | null;
+
+  /** Impacto del redondeo comercial del METAL consolidado por líneas. Σ de
+   *  `lineCommercialSummary.metals.byParent[].roundingImpact` (fallback
+   *  `metalRoundingMonetaryImpact`). El caller lo computa con
+   *  `sumLineCommercialMetalRoundingImpact(lines)`. Alimenta el bloque
+   *  "REDONDEOS COMERCIALES" (fila Metal) en documentos MIXED, cuando
+   *  `commercialDocumentRoundingSnapshot` es null. `null` ⇒ sin aporte de
+   *  metal. Passthrough puro. */
+  commercialMetalRoundingImpactSum?: number | null;
+
+  /** Mapa `metalParentName → Σ impacto $ redondeo comercial` por línea.
+   *  El caller lo computa con `groupLineCommercialMetalRoundingByParent(lines)`.
+   *  Alimenta la Opción 1 de METALES (Redondeo comercial + Valor final por
+   *  metal) en documentos MIXED, cuando no hay snapshot document-level.
+   *  `undefined` ⇒ sin aporte (las filas se omiten). Passthrough puro. */
+  commercialRoundingByParentFromLines?: Readonly<Record<string, number>>;
 
   /** Resumen de metales padres del comprobante. Cuando el modo es UNIFIED el
    *  backend NO popula `balanceBreakdown.metals[]`, pero el operador igual
@@ -335,6 +417,15 @@ export interface TotalDelComprobanteCardProps {
   /** Deshabilita el editor (ej. venta CONFIRMED). El snapshot ya congelado
    *  se sigue renderizando como display. */
   manualAdjustmentDisabled?: boolean;
+
+  /** Trazabilidad de auditoría por `type` de componente monetario (cupón,
+   *  canal, IVA, envío, descuento/bonificación global, promociones, redondeo
+   *  financiero, ajuste manual). El caller la arma con `buildComponentTraces`
+   *  desde el preview + draft. Cuando existe un trace para una fila del
+   *  desglose, su tooltip ⓘ reconstruye la cuenta completa (Origen · Base ×
+   *  regla · Impacto); si falta, la fila cae al tooltip minimalista legacy.
+   *  Passthrough puro — el card no calcula nada. */
+  componentTraces?: Readonly<Record<string, import("./traceability").ComponentTrace>>;
 
   /** Clase CSS adicional para el contenedor exterior. */
   className?:       string;

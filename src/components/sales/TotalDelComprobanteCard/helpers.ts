@@ -433,6 +433,35 @@ export function hasPhysicalRoundingActive(
   return false;
 }
 
+/** Etapa 2D — Enriquece cada item con `displayGrams` (gramos LADO VENTA /
+ *  comercial consolidado) tomados de `documentMetals` (= `gramsEquivLine` de
+ *  `deriveDocumentMetalsFromLines`, lo que muestra el card de línea). Mantiene
+ *  `grams` (físico `gramsPure`) intacto para ajuste manual / cuenta corriente /
+ *  redondeo físico. Match por `id` (canónico) → fallback por nombre. Si no hay
+ *  match, `displayGrams` queda sin setear y el render cae a `grams`. Cero
+ *  matemática — solo selección de un campo ya derivado por el caller. */
+function attachDisplayGrams(
+  items: DocumentMetalSummaryItem[],
+  documentMetals: DocumentMetalSummaryItem[] | undefined,
+): DocumentMetalSummaryItem[] {
+  if (!documentMetals || documentMetals.length === 0) return items;
+  const byId   = new Map<string, number>();
+  const byName = new Map<string, number>();
+  for (const dm of documentMetals) {
+    if (typeof dm.grams !== "number" || !Number.isFinite(dm.grams)) continue;
+    if (dm.id) byId.set(dm.id, dm.grams);
+    byName.set((dm.name ?? "").trim().toLowerCase(), dm.grams);
+  }
+  return items.map((it) => {
+    const dg = (it.id != null && byId.has(it.id))
+      ? byId.get(it.id)
+      : byName.get((it.name ?? "").trim().toLowerCase());
+    return (typeof dg === "number" && Number.isFinite(dg))
+      ? { ...it, displayGrams: dg }
+      : it;
+  });
+}
+
 /** Elige la fuente de metales para el card "Patrimonio Metálico".
  *
  *  REGLA MADRE (POLICY §R-Rounding-14, Opción C de la auditoría):
@@ -499,6 +528,9 @@ export function resolveCardMetals(
     } | null;
   } | null,
 ): DocumentMetalSummaryItem[] {
+  // Etapa 2D — el cuerpo histórico resuelve los gramos FÍSICOS (`grams`); al
+  // final se enriquece con `displayGrams` (lado venta) sin tocar `grams`.
+  const result: DocumentMetalSummaryItem[] = (() => {
   // Prioridad 0: Etapa D' — snapshot canónico del Redondeo Comercial
   // PER_DOCUMENT. FUENTE ÚNICA DE VERDAD cuando existe.
   const commercialDocByName = aggregateCommercialDocPostGramsByName(commercialDocSnapshot);
@@ -565,6 +597,26 @@ export function resolveCardMetals(
   }
 
   return [];
+  })();
+  // SSOT card ↔ footer (fix listas mixtas 2026-06) — el gramo PRINCIPAL de
+  // METALES debe ser SIEMPRE `displayGrams` (= `gramsEquivLine` / `saleEquivGr`
+  // del card: metal padre equivalente con pureza + merma + margen) cuando exista,
+  // independientemente de si hubo redondeo físico (comercial PER_DOC / financiero
+  // PHYSICAL).
+  //
+  // Antes se suprimía `displayGrams` cuando `physicalOverrideActive` era true y el
+  // gramo caía a `grams` (físico `postGrams`). En documentos MIXED (sin snapshot
+  // comercial PER_DOCUMENT) + redondeo financiero PHYSICAL activo, eso hacía que
+  // el footer mostrara gramos FÍSICOS en vez del equivalente comercial de los
+  // cards → divergencia card↔footer.
+  //
+  // `attachDisplayGrams` SOLO agrega el campo `displayGrams` (NO toca `grams`):
+  // así el físico `postGrams` queda disponible intacto para la cuenta corriente
+  // metálica, las sub-filas de redondeo físico y los tooltips, mientras el
+  // gramo grande renderiza `displayGrams ?? grams`. Si el caller no provee
+  // `documentMetals` (sin líneas), `attachDisplayGrams` es no-op → fallback a
+  // `grams` (físico), sin cambio de comportamiento.
+  return attachDisplayGrams(result, documentMetals);
 }
 
 /** Helper puro: Σ `postGrams` por `metalParentName` desde el snapshot canónico
@@ -708,6 +760,10 @@ export type CardLineForMetals = {
       metalVariantName?: string | null;
       purityLabel?:      string | null;
       lineSale?:         number | null;
+      /** Venta BASE PRE-redondeo per cost-line (Composición). Cae a `lineSale`
+       *  cuando el item no trae el campo. Permite consolidar "Valor de venta
+       *  metal" (PRE) en el footer = el mismo dato del card. */
+      lineSalePreRounding?: number | null;
     } | null | undefined>;
   } | null;
   metalHechuraBreakdown?: {
@@ -781,6 +837,419 @@ export function deriveDocumentMetalsFromLines(
       monetaryAmount: v.hasAmount ? v.amount : null,
     }))
     .sort((a, b) => a.name.localeCompare(b.name, "es"));
+}
+
+/** Fase 1 (2026-06) — Valor de VENTA del metal por padre como
+ *  `Record<metalName, monto>`. Fuente canónica ÚNICA: el MISMO
+ *  `deriveDocumentMetalsFromLines` (`monetaryAmount = saleAmountLine =
+ *  Σ lineSale × qty = metalSale del motor`). A diferencia de
+ *  `buildCommercialMetalValueByParent` (que devuelve el COSTO `lineCost`),
+ *  este devuelve el valor de VENTA (con margen).
+ *
+ *  Se separa de `m.monetaryAmount` del card porque ese campo es ambiguo
+ *  (venta cuando viene de líneas, valuación FÍSICA cuando viene de
+ *  `balanceBreakdown`). Acá la fuente es SIEMPRE líneas → SIEMPRE venta.
+ *
+ *  Passthrough puro — reusa el helper canónico, cero recálculo. Devuelve `{}`
+ *  cuando no hay venta derivable (sin líneas / `lineSale` ausente). El footer
+ *  usa ese `{}` para degradar a costo (fallback). */
+export function buildMetalSaleByParent(
+  lines: ReadonlyArray<CardLineForMetals>,
+): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const m of deriveDocumentMetalsFromLines(lines)) {
+    if (typeof m.monetaryAmount === "number" && Number.isFinite(m.monetaryAmount)) {
+      out[m.name] = (out[m.name] ?? 0) + m.monetaryAmount;
+    }
+  }
+  return out;
+}
+
+/** Fix listas mixtas (2026-06) — Valor de venta del metal por padre PRE-redondeo
+ *  comercial (`saleAmountLinePre` = Σ `lineSalePreRounding × qty`). Es el MISMO
+ *  "Valor comercial" que muestra el card del artículo. El footer lo usa como
+ *  BASE de la consolidación (en vez de `saleAmountLine` POST), para que
+ *  `final = base + redondeo` NO duplique el redondeo cuando la lista lo aplica
+ *  por línea (MIXED). Passthrough puro — reusa `buildMetalParentSaleLines`,
+ *  cero recálculo. Devuelve `{}` si ninguna línea trae venta derivable. */
+export function buildMetalSalePreByParent(
+  lines: ReadonlyArray<CardLineForMetals>,
+): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const line of lines) {
+    if (!line || !line.composition?.metals) continue;
+    const factor = computeMetalSaleFactor({
+      metalCost: line.metalHechuraBreakdown?.metalCost ?? null,
+      metalSale: line.metalHechuraBreakdown?.metalSale ?? null,
+    });
+    const normalizedMetals = line.composition.metals.map((m) =>
+      m == null
+        ? null
+        : {
+            metalName:           m.metalName        ?? null,
+            purity:              m.purity           ?? null,
+            appliedGrams:        m.appliedGrams     ?? null,
+            appliedMermaPct:     m.appliedMermaPct  ?? null,
+            variantName:         m.variantName      ?? null,
+            metalVariantName:    m.metalVariantName ?? null,
+            purityLabel:         m.purityLabel      ?? null,
+            lineSale:            m.lineSale         ?? null,
+            lineSalePreRounding: m.lineSalePreRounding ?? null,
+          },
+    );
+    const parents = buildMetalParentSaleLines(normalizedMetals, line.quantity ?? 1, factor);
+    for (const p of parents) {
+      if (typeof p.saleAmountLinePre === "number" && Number.isFinite(p.saleAmountLinePre)) {
+        out[p.name] = Math.round(((out[p.name] ?? 0) + p.saleAmountLinePre) * 100) / 100;
+      }
+    }
+  }
+  return out;
+}
+
+/** FASE 1 — Footer "Monetario (saldo)" (2026-06-03).
+ *  Σ del SALDO MONETARIO comercial por línea. Fuente ÚNICA:
+ *  `lineCommercialSummary.monetary.amount` — el MISMO "MONETARIO" que muestra
+ *  el Resumen Comercial de cada línea (`TPDocumentLineAdvancedEditor`). Lee
+ *  top-level del preview o, defensivamente, de `pricingMeta` (draft).
+ *
+ *  Agregación PURA (Σ) — cero matemática comercial (passthrough del contrato
+ *  por línea). Paridad por construcción: el footer = suma de los MONETARIO
+ *  visibles por línea, así "Desglosada 185.500 + Desglosada 185.500 = 371.000".
+ *
+ *  Devuelve `null` cuando NINGUNA línea trae el contrato (snapshots viejos /
+ *  líneas sin `lineCommercialSummary`) → el caller cae al cálculo legacy del
+ *  header (back-compat, no rompe flujos existentes). */
+type LineCommercialSummaryShape = {
+  monetary?: { amount?: number | null; roundingImpact?: number | null } | null;
+  /** Bloque METAL — presente en líneas DESGLOSADAS. `byParent[].roundingImpact`
+   *  = impacto $ del redondeo comercial del metal padre de ESA línea. Usado
+   *  para consolidar el footer MIXED cuando no hay snapshot document-level. */
+  metals?: {
+    roundingImpact?: number | null;
+    byParent?: ReadonlyArray<{
+      metalParentId?:   string | null;
+      metalParentName?: string | null;
+      roundingImpact?:  number | null;
+      /** Gramo VISIBLE del metal padre que el card del artículo RENDERIZA
+       *  (post-redondeo comercial PER_DOCUMENT). Es el `postGrams`/`visibleGrams`
+       *  que `TPDocumentLineAdvancedEditor` muestra como gramo principal de la
+       *  línea. El footer lo consolida (`buildVisibleGramsByParent`) para que
+       *  card y footer muestren EXACTAMENTE el mismo gramo. */
+      visibleGrams?:    number | null;
+    }> | null;
+  } | null;
+} | null | undefined;
+
+export function sumLineCommercialMonetary(
+  lines: ReadonlyArray<unknown>,
+): number | null {
+  if (!Array.isArray(lines)) return null;
+  let sum = 0;
+  let any = false;
+  for (const item of lines) {
+    if (!item || typeof item !== "object") continue;
+    const line = item as {
+      lineCommercialSummary?: LineCommercialSummaryShape;
+      pricingMeta?: { lineCommercialSummary?: LineCommercialSummaryShape } | null;
+    };
+    // NOTA (2026-06) — NO usar `lineOwnMonetarySaldoPostCommercialRounding` como
+    // fuente del "Valor final monetario". En listas DESGLOSADAS SIN redondeo ese
+    // campo trae el TOTAL DE LÍNEA (no el saldo monetario) → inflaría el footer.
+    // El "Valor final monetario" del footer DESGLOSADO se resuelve por residual
+    // `total − Σ valor final metal` en `TotalDelComprobanteCard`
+    // (`monetarioSaldoResolved`), que SIEMPRE da el saldo y cierra el invariante.
+    // Este helper queda como Σ del contrato `monetary.amount` (referencia /
+    // back-compat); el redondeo autónomo se suma aparte (sibling helper).
+    const summary = line.lineCommercialSummary ?? line.pricingMeta?.lineCommercialSummary ?? null;
+    const amt = summary?.monetary?.amount;
+    if (typeof amt === "number" && Number.isFinite(amt)) {
+      sum += amt;
+      any = true;
+    }
+  }
+  return any ? Math.round(sum * 100) / 100 : null;
+}
+
+/** Σ del IMPACTO del redondeo comercial MONETARIO por línea. Sibling de
+ *  `sumLineCommercialMonetary`: misma fuente única
+ *  (`lineCommercialSummary.monetary.roundingImpact`), misma agregación PURA (Σ)
+ *  — cero matemática comercial, passthrough del contrato por línea.
+ *
+ *  Permite que el footer "Monetario (saldo)" muestre el desglose
+ *  Valor comercial → Redondeo → Valor redondeado igual que el bloque de metal.
+ *  En listas UNIFICADAS el contrato trae `roundingImpact = 0` (el redondeo ya
+ *  está embebido en el total), así que la Σ da 0 y el caller oculta la fila.
+ *
+ *  Devuelve `null` cuando NINGUNA línea trae el contrato (back-compat). */
+export function sumLineCommercialMonetaryRoundingImpact(
+  lines: ReadonlyArray<unknown>,
+): number | null {
+  if (!Array.isArray(lines)) return null;
+  let sum = 0;
+  let any = false;
+  for (const item of lines) {
+    if (!item || typeof item !== "object") continue;
+    const line = item as {
+      lineCommercialDisplaySummary?: LineCommercialSummaryShape;
+      lineOwnHechuraRoundingMonetaryImpact?: number | null;
+      lineCommercialSummary?: LineCommercialSummaryShape;
+      pricingMeta?: {
+        lineCommercialDisplaySummary?: LineCommercialSummaryShape;
+        lineOwnHechuraRoundingMonetaryImpact?: number | null;
+        lineCommercialSummary?: LineCommercialSummaryShape;
+      } | null;
+    };
+    // SSOT card↔footer (Etapa 2 — Paso 2.2) — el card lee como fuente primaria
+    // el resumen comercial AUTÓNOMO display-only `lineCommercialDisplaySummary`
+    // (C-FASE1, line-local e inmune a otras líneas/modo). La Σ del footer usa la
+    // MISMA prioridad para que ambos coincidan, también en MIXED:
+    //   1) lineCommercialDisplaySummary.monetary.roundingImpact  (C-FASE1)
+    //   2) lineOwnHechuraRoundingMonetaryImpact                  (B, autónomo)
+    //   3) lineCommercialSummary.monetary.roundingImpact         (C-FASE0)
+    // (1) y (2) provienen del mismo primitivo autónomo → equivalentes; (1) es el
+    // contrato canónico. Para líneas sin C-FASE1 cae a B → C-FASE0 (histórico).
+    // ❌ NUNCA `metalRoundingMonetaryImpact` (prorrateo documental).
+    const display = line.lineCommercialDisplaySummary ?? line.pricingMeta?.lineCommercialDisplaySummary ?? null;
+    const own =
+      line.lineOwnHechuraRoundingMonetaryImpact ??
+      line.pricingMeta?.lineOwnHechuraRoundingMonetaryImpact;
+    const summary = line.lineCommercialSummary ?? line.pricingMeta?.lineCommercialSummary ?? null;
+    const displayImpact = display?.monetary?.roundingImpact;
+    const impact =
+      typeof displayImpact === "number" && Number.isFinite(displayImpact)
+        ? displayImpact
+        : typeof own === "number" && Number.isFinite(own)
+          ? own
+          : summary?.monetary?.roundingImpact;
+    if (typeof impact === "number" && Number.isFinite(impact)) {
+      sum += impact;
+      any = true;
+    }
+  }
+  return any ? Math.round(sum * 100) / 100 : null;
+}
+
+/** SSOT card ↔ footer — Gramo PRINCIPAL de METALES consolidado (2026-06).
+ *
+ *  CONTRATO: `FOOTER = consolidación exacta de los CARDS`. El footer NO
+ *  reinterpreta el patrimonio metálico: suma el MISMO gramo que cada card del
+ *  artículo ya decidió mostrar, por metal padre.
+ *
+ *  Por línea, replica la elección EXACTA del card
+ *  (`TPDocumentLineAdvancedEditor.tsx:5190`):
+ *
+ *    visibleGrams        (= `lineCommercialSummary.metals.byParent[].visibleGrams`,
+ *                          el gramo post-redondeo comercial que el card renderiza)
+ *    ?? gramsEquivLine    (fallback EXACTO del card cuando la línea no trae summary)
+ *
+ *  y consolida `Σ por metal padre`. NO usa `displayGrams`/`saleEquivGr` ni el
+ *  físico `postGrams` como fuente cuando existe el dato visible comercial del
+ *  card. Passthrough puro: reusa `buildMetalParentSaleLines` (solo para el
+ *  fallback + identidad del padre) y lee el summary del backend. Devuelve `{}`
+ *  cuando no hay líneas / metales → el caller cae al display previo
+ *  (degradación segura). */
+export function buildVisibleGramsByParent(
+  lines: ReadonlyArray<CardLineForMetals>,
+): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const line of lines) {
+    if (!line || !line.composition?.metals) continue;
+    const factor = computeMetalSaleFactor({
+      metalCost: line.metalHechuraBreakdown?.metalCost ?? null,
+      metalSale: line.metalHechuraBreakdown?.metalSale ?? null,
+    });
+    const normalizedMetals = line.composition.metals.map((m) =>
+      m == null
+        ? null
+        : {
+            metalName:        m.metalName        ?? null,
+            purity:           m.purity           ?? null,
+            appliedGrams:     m.appliedGrams     ?? null,
+            appliedMermaPct:  m.appliedMermaPct  ?? null,
+            variantName:      m.variantName      ?? null,
+            metalVariantName: m.metalVariantName ?? null,
+            purityLabel:      m.purityLabel      ?? null,
+            lineSale:         m.lineSale         ?? null,
+          },
+    );
+    const parents = buildMetalParentSaleLines(normalizedMetals, line.quantity ?? 1, factor);
+    // Summary comercial de ESTA línea — la MISMA fuente que el card lee para
+    // pintar `visibleGrams`/`postGrams` por metal padre. Lee top-level del
+    // preview o, defensivamente, de `pricingMeta` (draft).
+    // Trabajo #1 (Evolución) — gramos C-FASE1-first, simétrico con
+    // `groupLineCommercialMetalRoundingByParent`: display (FASE1, line-local,
+    // inmune a otras líneas) → summary (FASE0) → fallback `gramsEquivLine`.
+    // Near-no-op (FASE1==FASE0 en líneas frescas); FASE1 más correcto en MIXED.
+    const display =
+      (line as { lineCommercialDisplaySummary?: LineCommercialSummaryShape }).lineCommercialDisplaySummary ??
+      (line as { pricingMeta?: { lineCommercialDisplaySummary?: LineCommercialSummaryShape } | null })
+        .pricingMeta?.lineCommercialDisplaySummary ??
+      null;
+    const summary =
+      (line as { lineCommercialSummary?: LineCommercialSummaryShape }).lineCommercialSummary ??
+      (line as { pricingMeta?: { lineCommercialSummary?: LineCommercialSummaryShape } | null })
+        .pricingMeta?.lineCommercialSummary ??
+      null;
+    const byParent = display?.metals?.byParent ?? summary?.metals?.byParent ?? null;
+    for (const p of parents) {
+      // Match por nombre del padre (clave canónica de consolidación del footer),
+      // igual que `deriveDocumentMetalsFromLines`.
+      const cm = byParent
+        ? byParent.find(
+            (x) =>
+              !!x &&
+              typeof x.metalParentName === "string" &&
+              x.metalParentName.trim().toLowerCase() === p.name.trim().toLowerCase(),
+          )
+        : null;
+      // MISMA elección que el card: `hasPostGrams ? visibleGrams : gramsEquivLine`.
+      const g =
+        cm && typeof cm.visibleGrams === "number" && Number.isFinite(cm.visibleGrams)
+          ? cm.visibleGrams
+          : p.gramsEquivLine;
+      if (typeof g === "number" && Number.isFinite(g)) {
+        out[p.name] = (out[p.name] ?? 0) + g;
+      }
+    }
+  }
+  return out;
+}
+
+/** Lee un campo numérico de la línea o de su `pricingMeta` (draft). */
+function lineNum(
+  line: { pricingMeta?: Record<string, unknown> | null } & Record<string, unknown>,
+  key: string,
+): number | null {
+  const top = line[key];
+  if (typeof top === "number" && Number.isFinite(top)) return top;
+  const meta = line.pricingMeta?.[key];
+  if (typeof meta === "number" && Number.isFinite(meta)) return meta;
+  return null;
+}
+
+/** Σ del IMPACTO del redondeo comercial del METAL por línea — FUENTE AUTÓNOMA
+ *  por línea, en prioridad (la línea "como si estuviera sola"):
+ *    1. `lineCommercialDisplaySummary.metals.roundingImpact` (FASE 1 — AUTÓNOMO
+ *       puro, inmune a otras líneas; en MIXED preserva el valor real de la línea)
+ *    2. `lineCommercialSummary.metals.roundingImpact`        (FASE 0 — autónomo,
+ *       pero se contamina con el contexto documental en MIXED)
+ *    3. `lineOwnMetalRoundingMonetaryImpact`                 (autónomo PER_DOC/MIXED)
+ *    4. `metalHechuraBreakdown.metalSaleRoundingDelta`       (PER_LINE motor)
+ *    5. 0
+ *
+ *  ❌ NUNCA `metalRoundingMonetaryImpact` — ese es el PRORRATEO DOCUMENTAL
+ *  (`distributeMetalRoundingImpactPerLine`), que reparte el agregado del
+ *  comprobante entre líneas y depende de las demás líneas.
+ *
+ *  Agregación PURA (Σ). Alimenta el footer MIXED "REDONDEOS COMERCIALES"
+ *  (fila Metal): la suma de la lógica comercial VISIBLE en cada línea, no el
+ *  snapshot documental. `null` si ninguna línea trae impacto de metal. */
+export function sumLineCommercialMetalRoundingImpact(
+  lines: ReadonlyArray<unknown>,
+): number | null {
+  if (!Array.isArray(lines)) return null;
+  let sum = 0;
+  let any = false;
+  for (const item of lines) {
+    if (!item || typeof item !== "object") continue;
+    const line = item as {
+      lineCommercialDisplaySummary?: LineCommercialSummaryShape;
+      lineCommercialSummary?: LineCommercialSummaryShape;
+      pricingMeta?: ({
+        lineCommercialDisplaySummary?: LineCommercialSummaryShape;
+        lineCommercialSummary?: LineCommercialSummaryShape;
+      } & Record<string, unknown>) | null;
+      metalHechuraBreakdown?: { metalSaleRoundingDelta?: number | null } | null;
+    } & Record<string, unknown>;
+    const display = line.lineCommercialDisplaySummary ?? line.pricingMeta?.lineCommercialDisplaySummary ?? null;
+    const summary = line.lineCommercialSummary ?? line.pricingMeta?.lineCommercialSummary ?? null;
+    // Prioridad autónoma: display (FASE 1) → summary (FASE 0) → legacy.
+    let impact: number | null = null;
+    if (typeof display?.metals?.roundingImpact === "number" && Number.isFinite(display.metals.roundingImpact)) {
+      impact = display.metals.roundingImpact;
+    } else if (typeof summary?.metals?.roundingImpact === "number" && Number.isFinite(summary.metals.roundingImpact)) {
+      impact = summary.metals.roundingImpact;
+    } else {
+      const own = lineNum(line, "lineOwnMetalRoundingMonetaryImpact");
+      if (own != null) {
+        impact = own;
+      } else {
+        const mhb = line.metalHechuraBreakdown ?? (line.pricingMeta?.metalHechuraBreakdown as { metalSaleRoundingDelta?: number | null } | undefined) ?? null;
+        const delta = mhb?.metalSaleRoundingDelta;
+        if (typeof delta === "number" && Number.isFinite(delta)) impact = delta;
+      }
+    }
+    if (impact != null) {
+      sum += impact;
+      any = true;
+    }
+  }
+  return any ? Math.round(sum * 100) / 100 : null;
+}
+
+/** Agrupa el impacto $ del redondeo comercial del METAL por `metalParentName`,
+ *  sumando a través de TODAS las líneas. Fuente AUTÓNOMA per-línea:
+ *    primary:  `lineCommercialSummary.metals.byParent[]` (`metalParentName`, `roundingImpact`)
+ *    fallback: `lineCommercialRoundingMetals[]`           (`metalParentName`, `monetaryImpact`)
+ *  ❌ NUNCA `metalRoundingMonetaryImpact` (prorrateo documental).
+ *
+ *  Alimenta la Opción 1 de METALES (filas Redondeo comercial + Valor final por
+ *  metal) en MIXED, cuando no hay snapshot document-level. Devuelve `undefined`
+ *  si ninguna línea aporta. */
+export function groupLineCommercialMetalRoundingByParent(
+  lines: ReadonlyArray<unknown>,
+): Readonly<Record<string, number>> | undefined {
+  if (!Array.isArray(lines)) return undefined;
+  const acc: Record<string, number> = {};
+  let any = false;
+  const add = (name: string | null, imp: number | null) => {
+    if (!name || imp == null) return;
+    acc[name] = Math.round(((acc[name] ?? 0) + imp) * 100) / 100;
+    any = true;
+  };
+  for (const item of lines) {
+    if (!item || typeof item !== "object") continue;
+    const line = item as {
+      lineCommercialDisplaySummary?: LineCommercialSummaryShape;
+      lineCommercialSummary?: LineCommercialSummaryShape;
+      pricingMeta?: ({
+        lineCommercialDisplaySummary?: LineCommercialSummaryShape;
+        lineCommercialSummary?: LineCommercialSummaryShape;
+      } & Record<string, unknown>) | null;
+      lineCommercialRoundingMetals?: ReadonlyArray<{ metalParentName?: string | null; monetaryImpact?: number | null }> | null;
+    } & Record<string, unknown>;
+    // Prioridad autónoma: display (FASE 1, inmune a otras líneas) → summary (FASE 0).
+    const display = line.lineCommercialDisplaySummary ?? line.pricingMeta?.lineCommercialDisplaySummary ?? null;
+    const summary = line.lineCommercialSummary ?? line.pricingMeta?.lineCommercialSummary ?? null;
+    const byParent = display?.metals?.byParent ?? summary?.metals?.byParent;
+    if (Array.isArray(byParent) && byParent.length > 0) {
+      for (const p of byParent) {
+        add(
+          typeof p?.metalParentName === "string" ? p.metalParentName : null,
+          typeof p?.roundingImpact === "number" && Number.isFinite(p.roundingImpact) ? p.roundingImpact : null,
+        );
+      }
+      continue;
+    }
+    // Fallback autónomo: gramos comerciales POST por línea (mismo origen que el
+    // card cuando el summary no trae `byParent`).
+    const lcrm =
+      line.lineCommercialRoundingMetals ??
+      (line.pricingMeta?.lineCommercialRoundingMetals as
+        | ReadonlyArray<{ metalParentName?: string | null; monetaryImpact?: number | null }>
+        | undefined) ??
+      null;
+    if (Array.isArray(lcrm)) {
+      for (const m of lcrm) {
+        add(
+          typeof m?.metalParentName === "string" ? m.metalParentName : null,
+          typeof m?.monetaryImpact === "number" && Number.isFinite(m.monetaryImpact) ? m.monetaryImpact : null,
+        );
+      }
+    }
+  }
+  return any ? acc : undefined;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -905,4 +1374,146 @@ export function selectCommercialDocRoundingDisplay(
     rows,
     fallback:        snapshot.fallback ?? null,
   };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Etapa 2C — Valor Final Metal real (modo DESGLOSADO)
+//
+// `aggregateMetalFinalByParent` consolida, por metal padre, el valor final
+// monetario del metal sumando los CUATRO mecanismos:
+//
+//   finalMetalValue = baseCommercialValue
+//                   + commercialRoundingImpact   (monetaryEquivalent comercial)
+//                   + financialRoundingImpact    (monetaryEquivalent capa 16 PHYSICAL)
+//                   + manualAdjustmentImpact      (monetaryEquivalent ajuste manual)
+//
+// REGLA DE ORO (POLICY): el frontend SOLO suma `monetaryEquivalent` ya emitidos
+// por el backend. NO multiplica gramos × cotización, NO aplica margen/pureza/
+// merma, NO clampea, PRESERVA negativos. El ajuste manual de metal sigue siendo
+// FÍSICO (gramos) — su equivalente monetario se SUMA al valor del metal, pero
+// NUNCA se vuelca a `breakdown.monetary.amount` (no se mezcla con hechura).
+//
+// Join: primero por `metalParentId` (canónico); fallback por `metalParentName`
+// normalizado (porque `baseByParentName` viene indexado por nombre).
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Detalle físico passthrough de un mecanismo (financiero o manual) por metal. */
+export interface MetalPhysicalImpactDetail {
+  preGrams:           number;
+  postGrams:          number;
+  deltaGrams:         number;
+  metalPricePerGram:  number;
+  monetaryEquivalent: number;
+}
+
+/** Fila final consolidada por metal padre para el bloque METALES (BREAKDOWN). */
+export interface MetalFinalRow {
+  metalParentId:   string | null;
+  metalParentName: string;
+  /** Gramos informativos (passthrough de `resolvedMetals`). */
+  grams: number;
+  sourceLineIds?: ReadonlyArray<string>;
+  baseCommercialValue:      number;
+  commercialRoundingImpact: number;
+  financialRoundingImpact:  number;
+  manualAdjustmentImpact:   number;
+  /** = base + comercial + financiero + manual (round2). */
+  finalMetalValue: number;
+  /** Detalle físico del redondeo financiero (capa 16), si actuó sobre el padre. */
+  financial?: MetalPhysicalImpactDetail;
+  /** Detalle físico del ajuste manual (Etapa C), si actuó sobre el padre. */
+  manual?: MetalPhysicalImpactDetail;
+}
+
+/** Shape mínimo de una entry física por metal padre (financiero o manual).
+ *  Acepta el shape del snapshot financiero (`metalPhysical.metals[]`) y del
+ *  manual (`manualAdjustmentSnapshot.breakdown.metals[]`). */
+type PhysicalMetalEntryLike = {
+  metalParentId?:     string | null;
+  metalParentName?:   string;
+  preGrams?:          number;
+  postGrams?:         number;
+  deltaGrams?:        number | null;
+  metalPricePerGram?: number;
+  monetaryEquivalent?: number;
+} | null | undefined;
+
+const r2cents = (n: number): number => Math.round(n * 100) / 100;
+const finiteOr0 = (x: unknown): number =>
+  typeof x === "number" && Number.isFinite(x) ? x : 0;
+
+/** Busca la entry de un metal padre por id (canónico) o por nombre normalizado. */
+function matchPhysicalEntry(
+  pool: ReadonlyArray<PhysicalMetalEntryLike> | undefined,
+  id:   string | null,
+  name: string,
+): PhysicalMetalEntryLike {
+  if (!pool || pool.length === 0) return undefined;
+  const nameNorm = name.trim().toLowerCase();
+  for (const e of pool) {
+    if (!e) continue;
+    if (e.metalParentId != null && id != null && e.metalParentId === id) return e;
+  }
+  for (const e of pool) {
+    if (!e) continue;
+    if ((e.metalParentName ?? "").trim().toLowerCase() === nameNorm) return e;
+  }
+  return undefined;
+}
+
+/** Proyecta una entry física al detalle passthrough (sin recalcular nada). */
+function pickPhysical(e: NonNullable<PhysicalMetalEntryLike>): MetalPhysicalImpactDetail {
+  return {
+    preGrams:           finiteOr0(e.preGrams),
+    postGrams:          finiteOr0(e.postGrams),
+    deltaGrams:         finiteOr0(e.deltaGrams),
+    metalPricePerGram:  finiteOr0(e.metalPricePerGram),
+    monetaryEquivalent: finiteOr0(e.monetaryEquivalent),
+  };
+}
+
+/** Consolida el valor final por metal padre (DESGLOSADO). Agregación PURA:
+ *  suma de `monetaryEquivalent` ya emitidos por el backend. Cero cálculo de
+ *  negocio, sin clamp, preserva negativos. */
+export function aggregateMetalFinalByParent(args: {
+  /** Orden + nombre + gramos + sourceLineIds (de `resolveCardMetals`). */
+  resolvedMetals: ReadonlyArray<DocumentMetalSummaryItem>;
+  /** Valor comercial por nombre de padre (venta `metalSaleByParent` o costo). */
+  baseByParentName: Readonly<Record<string, number>>;
+  /** Impacto $ del redondeo comercial por nombre de padre. */
+  commercialByParentName?: Readonly<Record<string, number>>;
+  /** Entries físicas del redondeo FINANCIERO (capa 16 PHYSICAL). */
+  financialMetals?: ReadonlyArray<PhysicalMetalEntryLike>;
+  /** Entries físicas del AJUSTE MANUAL (scope BREAKDOWN). */
+  manualMetals?: ReadonlyArray<PhysicalMetalEntryLike>;
+}): MetalFinalRow[] {
+  return args.resolvedMetals.map((m) => {
+    const name = m.name;
+    // Valor comercial base por padre. Prioridad: mapa explícito
+    // (`metalSaleByParent` venta / `commercialMetalValueByParent` costo) →
+    // fallback canónico `m.monetaryAmount` (valuación física / `documentMetals`
+    // / snapshot sin líneas). Passthrough — no se inventa valor.
+    const baseExplicit = args.baseByParentName?.[name];
+    const base = (typeof baseExplicit === "number" && Number.isFinite(baseExplicit))
+      ? baseExplicit
+      : finiteOr0(m.monetaryAmount);
+    const cr   = finiteOr0(args.commercialByParentName?.[name]);
+    const fin  = matchPhysicalEntry(args.financialMetals, m.id ?? null, name);
+    const man  = matchPhysicalEntry(args.manualMetals,    m.id ?? null, name);
+    const finImpact = finiteOr0(fin?.monetaryEquivalent);
+    const manImpact = finiteOr0(man?.monetaryEquivalent);
+    return {
+      metalParentId:   m.id ?? null,
+      metalParentName:  name,
+      grams:            m.grams,
+      ...(m.sourceLineIds ? { sourceLineIds: m.sourceLineIds } : {}),
+      baseCommercialValue:      r2cents(base),
+      commercialRoundingImpact: r2cents(cr),
+      financialRoundingImpact:  r2cents(finImpact),
+      manualAdjustmentImpact:   r2cents(manImpact),
+      finalMetalValue:          r2cents(base + cr + finImpact + manImpact),
+      ...(fin ? { financial: pickPhysical(fin) } : {}),
+      ...(man ? { manual:    pickPhysical(man) } : {}),
+    };
+  });
 }

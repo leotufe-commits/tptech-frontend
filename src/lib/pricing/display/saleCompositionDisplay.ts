@@ -139,6 +139,11 @@ export function computeHechuraSaleFactor(
 // ─────────────────────────────────────────────────────────────────────────────
 export type MetalParentSaleTotal = {
   name:         string;
+  /** Identidad del metal PADRE (= `composition.metals[i].metalParentId`,
+   *  origen `step.meta.metalId`). Permite matchear el gramo redondeado por
+   *  ID contra el snapshot comercial. `null` en snapshots legacy → el
+   *  consumidor cae al match por `name`. Passthrough puro. */
+  metalParentId: string | null;
   /** Σ gramos × pureza × (1+merma/100) — equivalente de COSTO. */
   costEquivGr:  number;
   /** costEquivGr × metalSaleFactor — equivalente de VENTA (lo que muestra
@@ -149,6 +154,9 @@ export type MetalParentSaleTotal = {
 export function buildMetalParentSaleTotals(
   items: ReadonlyArray<{
     metalName:       string | null;
+    /** Identidad del metal PADRE (passthrough backend). Opcional para
+     *  callers/snapshots legacy. Se propaga al output para match por ID. */
+    metalParentId?:  string | null;
     purity:          number | null;
     appliedGrams:    number | null;
     appliedMermaPct: number | null;
@@ -157,9 +165,21 @@ export function buildMetalParentSaleTotals(
 ): MetalParentSaleTotal[] {
   const hasFactor =
     metalSaleFactor != null && Number.isFinite(metalSaleFactor) && metalSaleFactor > 0.0001;
+  // Identidad del padre por nombre de grupo (primer id no-nulo gana). Solo
+  // transporta el `metalParentId` del backend — cero matemática.
+  const idByName = new Map<string, string>();
+  for (const it of items) {
+    if (!it) continue;
+    const name = typeof it.metalName === "string" ? it.metalName.trim() : "";
+    const pid = typeof it.metalParentId === "string" && it.metalParentId.length > 0
+      ? it.metalParentId
+      : null;
+    if (name && pid != null && !idByName.has(name)) idByName.set(name, pid);
+  }
   return buildMetalParentTotals(items).map((p) => ({
-    name:        p.name,
-    costEquivGr: p.totalEquivGr,
+    name:          p.name,
+    metalParentId: idByName.get(p.name) ?? null,
+    costEquivGr:   p.totalEquivGr,
     // Mismo criterio que MetalSaleCard: si hay factor de venta válido y
     // gramos > 0 → gramos de venta; si no → fallback al equivalente de costo.
     saleEquivGr:
@@ -167,6 +187,382 @@ export function buildMetalParentSaleTotals(
         ? p.totalEquivGr * (metalSaleFactor as number)
         : p.totalEquivGr,
   }));
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+// CONTRATO FUNCIONAL DEL REDONDEO COMERCIAL (canónico — leer antes de tocar)
+//
+// Son TRES carriles distintos; el frontend solo RENDERIZA el snapshot backend.
+//
+//   METAL (físico):
+//     gramos → pureza → merma → margen → REDONDEO COMERCIAL FÍSICO (gramos)
+//     → impacto monetario = Δgramos × cotización
+//
+//   MONETARIO (hechura / saldo):
+//     hechura/saldo → bonificación/recargo → impuestos
+//     → REDONDEO COMERCIAL MONETARIO (sobre el saldo final post-tax)
+//
+//   REDONDEO FINANCIERO (otro dominio — NO se toca acá):
+//     documento final → redondeo financiero → ajuste manual
+//
+// Camino CANÓNICO = PER_DOCUMENT (Etapa D'): el redondeo monetario cae sobre el
+// saldo final post-impuestos (`hechuraRoundingMonetaryImpact`,
+// `lineMonetarySaldoPostCommercialRounding`). El camino PER_LINE
+// (`hechuraSaleRoundingDelta`, redondeo de hechura pura pre-tax) es COMPAT
+// LEGACY — sobrevive solo como fallback para listas/snapshots viejos. Los
+// helpers de abajo priorizan SIEMPRE el campo PER_DOCUMENT y caen al PER_LINE
+// únicamente si el canónico no vino. Identidad de metal padre = `metalParentId`
+// (el match por nombre es fallback legacy para snapshots sin id).
+// ───────────────────────────────────────────────────────────────────────────
+
+/**
+ * Resuelve los gramos comerciales POST-redondeo de un metal padre contra el
+ * snapshot del Redondeo Comercial (`commercialRoundingContext.breakdown.metals`
+ * o `lineCommercialRoundingMetals`). Camino NORMAL: match por `metalParentId`
+ * (identidad canónica — Divisas → Metales Padre). Fallback ÚNICO: por nombre,
+ * solo para snapshots legacy sin id. Devuelve `null` si no hay match o el
+ * `postGrams` no es válido (el caller usa su valor crudo). Passthrough puro:
+ * cero matemática, cero recálculo.
+ */
+export function resolveCommercialPostGrams(
+  target:   { metalParentId: string | null; name: string },
+  snapshotMetals: ReadonlyArray<{
+    metalParentId?:   string | null;
+    metalParentName?: string | null;
+    postGrams?:       number | null;
+  } | null | undefined>,
+): number | null {
+  if (!Array.isArray(snapshotMetals) || snapshotMetals.length === 0) return null;
+  // Camino normal: por ID.
+  let hit =
+    target.metalParentId != null
+      ? snapshotMetals.find((m) => !!m && m.metalParentId === target.metalParentId) ?? null
+      : null;
+  // Fallback legacy: por nombre (solo si no matcheó por id).
+  if (!hit) {
+    hit = snapshotMetals.find((m) => !!m && m.metalParentName === target.name) ?? null;
+  }
+  return hit && typeof hit.postGrams === "number" && Number.isFinite(hit.postGrams)
+    ? hit.postGrams
+    : null;
+}
+
+/**
+ * Elige la FUENTE de gramos comerciales POST-redondeo POR LÍNEA, en orden de
+ * prioridad (la primera no-vacía gana):
+ *   1. `lineCommercialRoundingMetals` — distribución per-línea del Redondeo
+ *      Comercial PER_DOCUMENT.
+ *   2. `appliedRounding.physical.metals` (≡ `commercialPhysical.metals`, mismo
+ *      snapshot) — Redondeo Comercial PHYSICAL PER_LINE. Es la fuente que usa
+ *      el footer (`VentasFacturas` → `appliedRounding.physical.metals`).
+ *   3. `commercialRoundingContext.breakdown.metalsPostGrams` / `.metals` —
+ *      vista doc-level legacy (cuando el redondeo fue PER_DOCUMENT).
+ * Devuelve `[]` si ninguna existe (el caller usa su valor crudo). Cada entry
+ * trae `metalParentId` + `postGrams`. Passthrough puro — cero matemática.
+ */
+export function pickLineCommercialRoundingMetals(
+  meta: any,
+  /** Listas mixtas / independencia entre líneas (2026-06-05) —
+   *  `allowDocLevelFallback: false` corta ANTES del agregado documental
+   *  (`commercialRoundingContext.breakdown.metals` / `metalsPostGrams`), que es
+   *  la SUMA de TODAS las líneas (Σ) replicada por línea → cambia al modificar
+   *  otra línea. Las superficies PER-LÍNEA (card del artículo, chip de metal del
+   *  grid) DEBEN pasar `false` para que el redondeo comercial de una línea sea
+   *  inmune a las demás. Default `true` = comportamiento previo (footer
+   *  documental / back-compat). */
+  opts?: { allowDocLevelFallback?: boolean },
+): ReadonlyArray<{
+  metalParentId?:   string | null;
+  metalParentName?: string | null;
+  preGrams?:        number | null;
+  postGrams?:       number | null;
+  deltaGrams?:      number | null;
+  /** PER_DOCUMENT (`lineCommercialRoundingMetals`). */
+  monetaryImpact?:  number | null;
+  /** PER_LINE PHYSICAL (`appliedRounding.physical.metals`). */
+  monetaryEquivalent?: number | null;
+}> {
+  if (!meta || typeof meta !== "object") return [];
+  const lcr = meta.lineCommercialRoundingMetals;
+  if (Array.isArray(lcr) && lcr.length > 0) return lcr;
+  // PER_LINE PHYSICAL — `appliedRounding.physical.metals` y
+  // `commercialPhysical.metals` son el MISMO snapshot (dos aliases del backend).
+  //
+  // NOTA listas mixtas (2026-06-03): esta fuente SIEMPRE alimenta los GRAMOS
+  // comerciales visibles del metal (ej. 1,40 g), incluso en MIXED_LIST_FALLBACK.
+  // La supresión de la capa MONETARIA legacy en listas mixtas NO se hace acá
+  // (eso apagaría los gramos) — se hace en los resolvers de IMPACTO monetario
+  // (`resolveCommercialMonetaryImpact` / `resolveCommercialHechuraImpact`) vía
+  // `allowPerLineLegacy: false`. Gramos = siempre; impacto $ legacy = bloqueado.
+  const phys = meta.appliedRounding?.physical?.metals ?? meta.commercialPhysical?.metals;
+  if (Array.isArray(phys) && phys.length > 0) return phys;
+  // Doc-level legacy (PER_DOCUMENT) — AGREGADO del documento (Σ de TODAS las
+  // líneas), replicado por línea. Solo apto para superficies documentales
+  // (footer). Las superficies per-línea pasan `allowDocLevelFallback: false`
+  // para no contaminar una línea con los gramos de otra.
+  if (opts?.allowDocLevelFallback !== false) {
+    const bd = meta.commercialRoundingContext?.breakdown;
+    if (bd) {
+      if (Array.isArray(bd.metalsPostGrams) && bd.metalsPostGrams.length > 0) return bd.metalsPostGrams;
+      if (Array.isArray(bd.metals) && bd.metals.length > 0) return bd.metals;
+    }
+  }
+  return [];
+}
+
+/**
+ * Impacto MONETARIO del Redondeo Comercial de un metal padre (la diferencia $
+ * que el redondeo del gramo introduce). Lee, en orden:
+ *   · `monetaryImpact`     — PER_DOCUMENT (`lineCommercialRoundingMetals`).
+ *   · `monetaryEquivalent` — PER_LINE PHYSICAL (`appliedRounding.physical.metals`).
+ * Es el fallback `monetaryImpact ?? monetaryEquivalent`. Devuelve `null` si
+ * ninguno es número finito (el caller oculta la fila). NO es el redondeo
+ * financiero — es comercial de lista. Passthrough puro — cero matemática.
+ */
+/**
+ * Modo de saldo DE LA LÍNEA (propiedad explícita, NO derivada del estado
+ * documental). "Desglosada" = la lista de precios de la línea compone por
+ * metal + hechura (`PriceList.mode === "METAL_HECHURA"`, expuesto por el motor
+ * como `appliedPriceListMode`). "Unificada" = cualquier otro modo (MARGIN_TOTAL,
+ * COST_PER_GRAM, manual sin lista).
+ *
+ * Prioridad:
+ *   1. `lineBalanceMode` explícito ("BREAKDOWN" | "UNIFIED") — lo replica
+ *      `applySalePreviewToDraft` desde `appliedPriceListMode`.
+ *   2. `appliedPriceListMode` crudo (por si el draft trae el campo del motor
+ *      sin el mapeo — ej. snapshots persistidos de ventas confirmadas).
+ *   3. `null` (desconocido) → el caller decide el fallback legacy.
+ *
+ * CRÍTICO: NO mira `commercialRoundingContext`, redondeo PER_DOCUMENT ni
+ * MIXED_LIST_FALLBACK. Por eso una línea desglosada conserva su modo aunque el
+ * documento esté en listas mixtas. Passthrough puro — cero matemática.
+ */
+export function resolveLineBalanceMode(
+  meta: { lineBalanceMode?: string | null; appliedPriceListMode?: string | null } | null | undefined,
+): "BREAKDOWN" | "UNIFIED" | null {
+  if (!meta) return null;
+  if (meta.lineBalanceMode === "BREAKDOWN" || meta.lineBalanceMode === "UNIFIED") {
+    return meta.lineBalanceMode;
+  }
+  const m = meta.appliedPriceListMode;
+  if (m === "METAL_HECHURA") return "BREAKDOWN";
+  if (typeof m === "string" && m.length > 0) return "UNIFIED";
+  return null;
+}
+
+/**
+ * ¿La línea se renderiza con LAYOUT DESGLOSADO? (metal + hechura protagonistas).
+ * Usa la señal EXPLÍCITA de línea (`resolveLineBalanceMode`); si no existe
+ * (ventas confirmadas viejas / snapshots sin el campo) cae al proxy legacy
+ * basado en el redondeo comercial PER_DOCUMENT — back-compat.
+ *
+ * Ésta es la fuente única que reemplaza la antigua inferencia inline de
+ * `TPDocumentLineAdvancedEditor` (`commercialRoundingContext?.scope === "BREAKDOWN"
+ * || typeof lineMonetarySaldoPostCommercialRounding === "number"`), que rompía
+ * en MIXED_LIST_FALLBACK porque esos campos son del DOCUMENTO, no de la línea.
+ */
+export function isLineDesglosadaView(
+  meta:
+    | {
+        lineBalanceMode?: string | null;
+        appliedPriceListMode?: string | null;
+        commercialRoundingContext?: { scope?: string } | null;
+        lineMonetarySaldoPostCommercialRounding?: number | null;
+      }
+    | null
+    | undefined,
+): boolean {
+  const explicit = resolveLineBalanceMode(meta);
+  if (explicit != null) return explicit === "BREAKDOWN";
+  // Fallback legacy (solo cuando no hay señal explícita de línea).
+  return (
+    meta?.commercialRoundingContext?.scope === "BREAKDOWN" ||
+    typeof meta?.lineMonetarySaldoPostCommercialRounding === "number"
+  );
+}
+
+export function resolveCommercialMonetaryImpact(
+  entry: { monetaryImpact?: number | null; monetaryEquivalent?: number | null } | null | undefined,
+  /** Listas mixtas (2026-06-03) — `allowPerLineLegacy: false` bloquea el
+   *  fallback PER_LINE (`monetaryEquivalent`). En MIXED_LIST_FALLBACK el
+   *  redondeo comercial monetario a nivel comprobante está desactivado, así que
+   *  NO se muestra el impacto $ legacy del metal (el banner lo explica). Los
+   *  GRAMOS visibles del metal NO dependen de esto (ver `pickLineCommercialRoundingMetals`).
+   *  Default `true` = comportamiento previo (back-compat para single-list y
+   *  otros consumers). */
+  opts?: { allowPerLineLegacy?: boolean },
+): number | null {
+  if (!entry) return null;
+  if (typeof entry.monetaryImpact === "number" && Number.isFinite(entry.monetaryImpact)) {
+    return entry.monetaryImpact;
+  }
+  if (opts?.allowPerLineLegacy === false) return null;
+  if (typeof entry.monetaryEquivalent === "number" && Number.isFinite(entry.monetaryEquivalent)) {
+    return entry.monetaryEquivalent;
+  }
+  return null;
+}
+
+/**
+ * Impacto MONETARIO del Redondeo Comercial del bucket HECHURA / saldo monetario
+ * (la diferencia $ que el redondeo del saldo introduce, ej. 185.475,21 →
+ * 185.500,00 ⇒ +24,79). Espejo de `resolveCommercialMonetaryImpact` para el
+ * carril monetario. Lee, en orden:
+ *   · `hechuraRoundingMonetaryImpact` — PER_DOCUMENT (Etapa D').
+ *   · `hechuraSaleRoundingDelta`      — PER_LINE (redondeo de hechura de la lista).
+ * Es el fallback `hechuraRoundingMonetaryImpact ?? hechuraSaleRoundingDelta`.
+ * Devuelve `null` si ninguno es número finito (el caller oculta la fila). NO es
+ * el redondeo físico del metal ni el financiero. Passthrough puro.
+ */
+export function resolveCommercialHechuraImpact(
+  meta: { hechuraRoundingMonetaryImpact?: number | null; hechuraSaleRoundingDelta?: number | null } | null | undefined,
+  /** Listas mixtas (2026-06-03) — `allowPerLineLegacy: false` bloquea el
+   *  fallback PER_LINE (`hechuraSaleRoundingDelta`). Es la "capa monetaria
+   *  legacy" del bucket hechura/saldo que NO debe aparecer en MIXED_LIST_FALLBACK
+   *  (el redondeo comercial a nivel comprobante está desactivado; el banner lo
+   *  explica). Default `true` = comportamiento previo (back-compat). */
+  opts?: { allowPerLineLegacy?: boolean },
+): number | null {
+  if (!meta) return null;
+  if (typeof meta.hechuraRoundingMonetaryImpact === "number" && Number.isFinite(meta.hechuraRoundingMonetaryImpact)) {
+    return meta.hechuraRoundingMonetaryImpact;
+  }
+  if (opts?.allowPerLineLegacy === false) return null;
+  if (typeof meta.hechuraSaleRoundingDelta === "number" && Number.isFinite(meta.hechuraSaleRoundingDelta)) {
+    return meta.hechuraSaleRoundingDelta;
+  }
+  return null;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// resolveLineMonetaryDisplay — MONETARIO visible del card por línea (SSOT)
+//
+// Centraliza la derivación del valor MONETARIO mostrado en el Resumen Comercial
+// del artículo. Antes vivía inline en `TPDocumentLineAdvancedEditor` (re-derivar
+// inline = bug arquitectónico, ver CLAUDE.md frontend §"Helpers canónicos").
+//
+// ════════════════════════════════════════════════════════════════════════════
+// DECISIÓN COMERCIAL (2026-06-04) — registrada, NO es solo un fix técnico:
+//
+//   · Una línea con **Lista Unificada** (MARGIN_TOTAL) PUEDE conservar datos
+//     internos de metal/hechura en el payload (gramos, `metalRoundingMonetary
+//     Impact`, etc.). NO se bloquean — más adelante pueden servir para pagos,
+//     saldos o cuenta corriente con metal. Esos campos siguen llegando intactos
+//     al draft (passthrough de `applySalePreviewToDraft`).
+//
+//   · Pero el **MONETARIO visible** de una Lista Unificada es el valor PROPIO de
+//     la pieza (`totalWithTaxPost − Σ metalSale`). NO se recalcula ni se reduce
+//     por el redondeo metálico DOCUMENTAL. El redondeo metálico pertenece a la
+//     lectura DESGLOSADA, no al precio visible de una lista unificada.
+//
+//   · Mecánica del bug que esto evita: en un comprobante MIXTO, el backend
+//     PRORRATEA el `metalRoundingMonetaryImpact` del Redondeo Comercial
+//     PER_DOCUMENT de metal de OTRA línea (Desglosada) a TODAS las líneas que
+//     comparten el metal padre — incluida la Unificada. Si la UI lo restara,
+//     la pieza Unificada cambiaría de valor SOLO por agregar otra línea
+//     (242.356,25 → 241.143,75). Regla comercial: una pieza NO cambia su valor
+//     porque agregué otra pieza con otra lista al mismo comprobante.
+//
+//   Por eso `metalRoundingImpact` SOLO se descuenta del residuo cuando la línea
+//   es DESGLOSADA (donde el metal visible y su redondeo SON parte del desglose
+//   de la propia pieza). En UNIFICADA el gate lo deja en 0.
+// ════════════════════════════════════════════════════════════════════════════
+//
+// Passthrough puro — NO recalcula pricing; solo elige/combina valores que ya
+// vienen del backend. La línea UNIFICADA se resuelve PRIMERO con el residuo
+// `totalWithTaxPost − Σ metalSale` (el único redondeo es el del TOTAL, absorbido
+// en el MONETARIO) y nunca cae a las ramas legacy del dominio DESGLOSADO
+// (`monetarySaldoPostField`, impactos). La rama DESGLOSADA queda intacta.
+// ─────────────────────────────────────────────────────────────────────────────
+export function resolveLineMonetaryDisplay(args: {
+  isLineDesglosada:          boolean;
+  hasLineSummary:            boolean;
+  /** `lineCommercialSummary.monetary.amount` (solo se usa en DESGLOSADA). */
+  lineSummaryMonetaryAmount: number | null;
+  totalWithTaxPost:          number;
+  sumMetalSale:              number;
+  metalRoundingImpact:       number;
+  allMetalsHaveSale:         boolean;
+  /** `buildLineHechuraSaleUnified(...).total` (fallback snapshots legacy). */
+  hechFallbackTotal:         number | null;
+  hasCommercialSaldo:        boolean;
+  /** `lineMonetarySaldoPostCommercialRounding` (fallback DESGLOSADA legacy). */
+  monetarySaldoPostField:    number | null;
+}): number {
+  // Gate del fix: el impacto de metal solo afecta el MONETARIO de líneas
+  // DESGLOSADAS. En UNIFICADA queda en 0 (la pieza no cambia por otra línea).
+  const metalImpactForMonetary = args.isLineDesglosada ? args.metalRoundingImpact : 0;
+  const residual = args.totalWithTaxPost - args.sumMetalSale - metalImpactForMonetary;
+
+  // ── UNIFICADA (MARGIN_TOTAL / FINAL_PRICE) — short-circuit ANTES de toda
+  //    rama legacy. Regla comercial: la pieza se vende como UNA pieza; el único
+  //    redondeo es el del TOTAL y su diferencia se absorbe en el MONETARIO
+  //    visible. Por eso:
+  //        MONETARIO = totalWithTaxPost − Σ metalSale
+  //    · SIN restar metalRoundingMonetaryImpact / hechura impact
+  //      (`metalImpactForMonetary` ya es 0 en UNIFICADA).
+  //    · SIN leer `lineMonetarySaldoPostCommercialRounding` (lectura DESGLOSADA;
+  //      en comprobantes MIXTOS llega prorrateado por OTRA línea → contaminaría
+  //      la pieza, ej. 242.356,25 → 241.143,75). Resolviéndolo acá arriba, la
+  //      rama `hasCommercialSaldo` NUNCA aplica a una Unificada.
+  //    Fallback `hechFallbackTotal` solo cuando los metales no traen sale-side
+  //    (snapshot legacy: `sumMetalSale` no es confiable).
+  if (!args.isLineDesglosada) {
+    return args.allMetalsHaveSale ? residual : (args.hechFallbackTotal ?? 0);
+  }
+
+  // ── DESGLOSADA — comportamiento actual intacto ───────────────────────────
+  // Contrato único → saldo comercial post directo (passthrough).
+  if (args.hasLineSummary) {
+    return args.lineSummaryMonetaryAmount ?? 0;
+  }
+  // Snapshots legacy: saldo comercial si vino, si no el residuo (con su impacto).
+  if (args.hasCommercialSaldo) {
+    return args.monetarySaldoPostField ?? 0;
+  }
+  return args.allMetalsHaveSale ? residual : (args.hechFallbackTotal ?? 0);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// resolveLineMonetaryRoundingDecomposition — descomposición del MONETARIO en
+// "Valor comercial (Y) → Redondeo comercial (Z) → Valor redondeado (X)" para el
+// detalle EXPANDIDO del card por línea. Cumple `Y + Z = X` por construcción.
+//
+//   · X (valorRedondeado) = MONETARIO visible final (`hechuraDisplayTotal`).
+//   · Z (redondeo) = redondeo del SALDO MONETARIO de la pieza (NO del total):
+//       - UNIFICADA (MARGIN_TOTAL / FINAL_PRICE) → `unificadoImpact` =
+//         `hechuraRoundingMonetaryImpact` (≡ `saldoPost − saldoPre`). Es el
+//         redondeo del BUCKET MONETARIO. ❌ NO usar `totalPost − totalPre`:
+//         ese delta incluye `metalRoundingMonetaryImpact` (redondeo del METAL,
+//         otro dominio) y NO debe verse bajo "Redondeo comercial" monetario.
+//       - DESGLOSADA → `desglosadoImpact` (lineSummary.monetary.roundingImpact /
+//         legacy). Comportamiento actual intacto.
+//   · Y (valorComercial) = X − Z.
+//
+// Devuelve `null` cuando el redondeo es ~0 (el caller oculta el detalle).
+// Display puro — passthrough del impacto del SALDO que ya emite el backend; no
+// deriva del total, así nunca mezcla el redondeo del metal en el carril monetario.
+// ─────────────────────────────────────────────────────────────────────────────
+export function resolveLineMonetaryRoundingDecomposition(args: {
+  isLineDesglosada: boolean;
+  /** X — MONETARIO visible final (`hechuraDisplayTotal`). */
+  monetarioFinal:   number;
+  /** Z para UNIFICADA — redondeo del SALDO monetario:
+   *  `hechuraRoundingMonetaryImpact` o `saldoPost − saldoPre`. NUNCA
+   *  `totalPost − totalPre` (incluye `metalRoundingMonetaryImpact`). */
+  unificadoImpact:  number | null;
+  /** Z para DESGLOSADA (passthrough del caller). Ignorado en UNIFICADA. */
+  desglosadoImpact: number | null;
+}): { valorComercial: number; redondeo: number; valorRedondeado: number } | null {
+  const redondeo = args.isLineDesglosada ? args.desglosadoImpact : args.unificadoImpact;
+  if (redondeo == null || !Number.isFinite(redondeo) || Math.abs(redondeo) <= 0.005) {
+    return null;
+  }
+  return {
+    valorComercial:  args.monetarioFinal - redondeo,  // Y = X − Z
+    redondeo,                                          // Z
+    valorRedondeado: args.monetarioFinal,              // X
+  };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -298,6 +694,11 @@ export type MetalParentVariantLine = {
 
 export type MetalParentSaleLine = {
   name:           string;
+  /** Identidad del metal PADRE (= `composition.metals[i].metalParentId`,
+   *  origen `step.meta.metalId`). El card matchea el gramo comercial
+   *  redondeado por este ID contra `lineCommercialRoundingMetals`. `null` en
+   *  snapshots viejos → el consumidor cae al match por `name`. */
+  metalParentId:  string | null;
   /** Σ (appliedGrams × metalEquivFactor) × metalSaleFactor × lineQty.
    *  Gramos equivalentes del LADO VENTA, escalados a la línea.
    *  Cae a `costEquivGr × lineQty` si no hay metalSaleFactor. */
@@ -305,6 +706,11 @@ export type MetalParentSaleLine = {
   /** (Σ lineSale del padre) × lineQty. `null` si ningún item trae lineSale
    *  (snapshot legacy). */
   saleAmountLine: number | null;
+  /** (Σ lineSalePreRounding del padre) × lineQty — venta BASE PRE-redondeo
+   *  (idéntico a la Composición del costo). Cae a `lineSale` por item cuando el
+   *  item no trae `lineSalePreRounding`. `null` si no hay datos. El card del
+   *  artículo usa ESTE para "Valor comercial" (no `saleAmountLine`, que es POST). */
+  saleAmountLinePre: number | null;
   /** Variantes del padre, agrupadas y sumadas por nombre. Cada entrada es
    *  el "origen" de los gramos: `<variantName>: <gramos originales> gr`.
    *  Sólo se incluyen variantes con gramos > 0; ordenadas por nombre. */
@@ -314,10 +720,15 @@ export type MetalParentSaleLine = {
 export function buildMetalParentSaleLines(
   items: ReadonlyArray<{
     metalName:       string | null;
+    /** Identidad del metal PADRE (passthrough backend). Se propaga al output
+     *  para permitir match por ID; opcional para callers/snapshots legacy. */
+    metalParentId?:  string | null;
     purity:          number | null;
     appliedGrams:    number | null;
     appliedMermaPct: number | null;
     lineSale?:       number | null;
+    /** Venta BASE PRE-redondeo per cost-line (Composición). Cae a `lineSale`. */
+    lineSalePreRounding?: number | null;
     /** F1.3 Fase 2.4 — Nombre comercial de la variante de metal. */
     variantName?:    string | null;
     /** Alias aceptado por compat (algunos callers usan este nombre). */
@@ -336,22 +747,32 @@ export function buildMetalParentSaleLines(
   // Acumulación de `lineSale` per-unit por metal padre. `has` distingue
   // "snapshot legacy sin lineSale" (→ null al final) de "motor declara
   // lineSale = 0" (→ 0 al final).
-  const saleByParent = new Map<string, { sum: number; has: boolean }>();
+  const saleByParent = new Map<string, { sum: number; sumPre: number; has: boolean }>();
   // T26 — Agregación de variantes por padre: `<padre> → Map<label, grams>`.
   // El label se resuelve por preferencia: variantName → purityLabel → padre.
   // Items con el MISMO label suman sus `appliedGrams`. Antes de escalar por
   // qty (eso se hace al final).
   const variantsByParent = new Map<string, Map<string, number>>();
+  // Identidad del metal padre por nombre de grupo (primer id no-nulo gana).
+  // Passthrough puro: solo transporta el `metalParentId` del backend.
+  const idByParent = new Map<string, string>();
   for (const it of items) {
     if (!it) continue;
     const name = typeof it.metalName === "string" ? it.metalName.trim() : "";
     const g    = it.appliedGrams;
     if (!name || g == null || !Number.isFinite(g)) continue;
+    const pid = typeof it.metalParentId === "string" && it.metalParentId.length > 0
+      ? it.metalParentId
+      : null;
+    if (pid != null && !idByParent.has(name)) idByParent.set(name, pid);
     // sale
-    const prev = saleByParent.get(name) ?? { sum: 0, has: false };
+    const prev = saleByParent.get(name) ?? { sum: 0, sumPre: 0, has: false };
     const ls = it.lineSale;
     if (ls != null && Number.isFinite(ls)) {
       prev.sum += ls;
+      // PRE base (Composición). Cae a `lineSale` cuando el item no trae el campo.
+      const lsPre = it.lineSalePreRounding;
+      prev.sumPre += (lsPre != null && Number.isFinite(lsPre)) ? lsPre : ls;
       prev.has  = true;
     }
     saleByParent.set(name, prev);
@@ -383,8 +804,10 @@ export function buildMetalParentSaleLines(
         .sort((a, b) => a.label.localeCompare(b.label, "es"));
       return {
         name:           p.name,
+        metalParentId:  idByParent.get(p.name) ?? null,
         gramsEquivLine: p.saleEquivGr * q,
         saleAmountLine: s?.has ? s.sum * q : null,
+        saleAmountLinePre: s?.has ? s.sumPre * q : null,
         variants,
       };
     });

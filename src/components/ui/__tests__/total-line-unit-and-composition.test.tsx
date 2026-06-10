@@ -81,7 +81,7 @@ describe("T8 — Total línea c/imp · unitario final + mini desglose", () => {
         lineTotalWithTax: 363, // 121 × 3
         pricingMeta: { unitTotalWithTax: 121 },
       })]} />);
-    expect(screen.getByText(/Unitario final/i)).toBeInTheDocument();
+    expect(screen.getByText(/Precio Unitario/i)).toBeInTheDocument();
   });
 
   it("T14 — quantity > 1 → fuente PRIMARIA = pricingMeta.unitTotalWithTax (data-tp-unit-final=backend)", () => {
@@ -91,10 +91,8 @@ describe("T8 — Total línea c/imp · unitario final + mini desglose", () => {
         lineTotalWithTax: 363,
         pricingMeta: { unitTotalWithTax: 121 },
       })]} />);
-    const unitLabel = screen.getByText(/Unitario final/i);
+    const unitLabel = screen.getByText(/Precio Unitario/i);
     expect(unitLabel).toBeInTheDocument();
-    expect(unitLabel.textContent ?? "").toMatch(/Cantidad/);
-    expect(unitLabel.textContent ?? "").toMatch(/3/);
     // T14 — el data-attr marca explícitamente que la fuente es el campo
     // canónico del motor (no el fallback legacy).
     const node = container.querySelector('[data-tp-unit-final]') as HTMLElement;
@@ -113,7 +111,7 @@ describe("T8 — Total línea c/imp · unitario final + mini desglose", () => {
         lineTotalWithTax: 300,
         pricingMeta: { unitTotalWithTax: 100.33 },
       })]} />);
-    const unitLabel = screen.getByText(/Unitario final/i);
+    const unitLabel = screen.getByText(/Precio Unitario/i);
     // Aparece el monto del campo backend, no el derivado.
     expect(unitLabel.textContent ?? "").toMatch(/100[.,]33/);
   });
@@ -128,7 +126,7 @@ describe("T8 — Total línea c/imp · unitario final + mini desglose", () => {
         lineTotalWithTax: 242,
         pricingMeta: {},
       })]} />);
-    expect(screen.getByText(/Unitario final/i)).toBeInTheDocument();
+    expect(screen.getByText(/Precio Unitario/i)).toBeInTheDocument();
     const node = container.querySelector('[data-tp-unit-final]') as HTMLElement;
     expect(node?.dataset.tpUnitFinal).toBe("legacy-fallback");
   });
@@ -147,13 +145,11 @@ describe("T8 — Total línea c/imp · unitario final + mini desglose", () => {
           },
         },
       })]} />);
-    // Vista RESUMIDA (default colapsada): el detalle por metal padre (Oro/Plata)
-    // está OCULTO. En lista unificada (sin contexto comercial) el colapsado no
-    // muestra metales; se revelan con el toggle "Ver composición"/"Ver detalle".
-    expect(screen.queryByText("Oro")).toBeNull();
-    expect(screen.queryByText("Plata")).toBeNull();
-    // Expandir el detalle (toggle por data-attribute — robusto al label).
-    fireEvent.click(container.querySelector("[data-tp-composition-detail-toggle]")!);
+    // AJUSTE 1 (2026-06-04) — en Lista Unificada el Resumen Comercial (METALES)
+    // se muestra POR DEFECTO con su detalle (variante + gramos). Antes vivía
+    // detrás de "Ver composición"; ahora el resumen principal queda visible y el
+    // toggle solo agrega detalles adicionales. Los metales padre ya están a la
+    // vista SIN expandir.
     // T21 — Label PRINCIPAL = nombre del METAL PADRE.
     expect(screen.getByText("Oro")).toBeInTheDocument();
     expect(screen.getByText("Plata")).toBeInTheDocument();

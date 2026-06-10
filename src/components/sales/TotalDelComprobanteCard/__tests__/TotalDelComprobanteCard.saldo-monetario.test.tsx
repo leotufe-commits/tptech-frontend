@@ -75,11 +75,11 @@ describe("TotalDelComprobanteCard — header 'Saldo monetario' en BREAKDOWN", ()
       />,
     );
     const row = screen.getByTestId("total-card-hechura-row");
-    // UX.33 — el `data-tp-header-mode` sigue distinguiendo modos (interno),
-    // pero el LABEL visible ahora dice "Hechura total" en ambos modos.
+    // FASE 1 (2026-06-03) — el `data-tp-header-mode` sigue distinguiendo modos
+    // (interno), pero el LABEL visible ahora dice "Monetario (saldo)".
     expect(row.getAttribute("data-tp-header-mode")).toBe("saldo-monetario");
-    expect(row.textContent).toContain("Hechura total");
-    expect(row.textContent).not.toContain("Saldo monetario");
+    expect(row.textContent).toContain("Monetario (saldo)");
+    expect(row.textContent).not.toContain("Hechura total");
 
     const amount = screen.getByTestId("total-card-monetary-header-amount");
     // 538260.94 − 210937.50 = 327323.44 (fallback canónico, Patrimonio físico)
@@ -94,11 +94,12 @@ describe("TotalDelComprobanteCard — header 'Saldo monetario' en BREAKDOWN", ()
         balanceMode="BREAKDOWN"
         balanceBreakdown={balanceWithOro()}
         commercialMetalValueSum={309375}    // Patrimonio comercial (metalCost)
+        commercialMetalValueByParent={{ Oro: 309375 }}  // per-parent (Etapa 2C / producción)
         onBalanceModeOverrideChange={noop}
       />,
     );
     const amount = screen.getByTestId("total-card-monetary-header-amount");
-    // 538260.94 − 309375 = 228885.94 (modo UX-Comercial)
+    // 538260.94 − 309375 = 228885.94 (Etapa 2C: saldo = total − Σ valor final metal)
     expect(amount.textContent).toMatch(/228[.,]?885[.,]94/);
   });
 
@@ -110,16 +111,54 @@ describe("TotalDelComprobanteCard — header 'Saldo monetario' en BREAKDOWN", ()
         balanceMode="BREAKDOWN"
         balanceBreakdown={balanceWithOro()}
         commercialMetalValueSum={309375}
+        commercialMetalValueByParent={{ Oro: 309375 }}  // per-parent (Etapa 2C / producción)
         onBalanceModeOverrideChange={noop}
       />,
     );
-    // Verificación matemática: el header del bloque METALES muestra
-    // "ARS 309.375" (post UX.32) + saldo monetario "$228.885,94" → suma = total.
+    // Verificación matemática: el header del bloque METALES = Σ valor final
+    // metal (309.375) + saldo monetario "$228.885,94" → suma = total.
     const valorComercial = screen.getByTestId("total-card-metals-header-total");
     expect(valorComercial.textContent).toMatch(/309[.,]?375/);
     const saldo = screen.getByTestId("total-card-monetary-header-amount");
     expect(saldo.textContent).toMatch(/228[.,]?885[.,]94/);
     // 309.375 + 228.885,94 = 538.260,94 ✅
+  });
+
+  it("UNIFIED con metales (Etapa 2D): SIN bloque METALES + saldo = total completo", () => {
+    // Contrato Etapa 2D (UNIFICADO) — NO se renderiza ningún bloque METALES
+    // (TOTAL = MONETARIO). El saldo monetario = totalDocument COMPLETO.
+    const bb: BalanceBreakdownDTO = {
+      metals: [
+        {
+          metalParentId: "oro", metalParentName: "Oro",
+          gramsOriginal: 1.5, purity: 1, gramsPure: 1.5,
+          quotePriceSnapshot: 1, valuationMonetary: 0,
+          valuationCurrencyCode: "ARS", sourceLineIds: ["L1"],
+        },
+      ],
+      monetaryBalance: {
+        amount: 1342937.5, currencyCode: "ARS", currencyRate: 1, amountBase: 1342937.5,
+        components: [{ type: "HECHURA", group: "HECHURA", label: "Hechura", amount: 423025 }],
+      },
+    };
+    render(
+      <TotalDelComprobanteCard
+        totalDocument={1342937.5}
+        currencyCode="ARS"
+        balanceMode="UNIFIED"
+        balanceBreakdown={bb}
+        commercialMetalValueSum={919912.5}    // backend lo emite, pero NO se muestra en UNIFICADO
+        onBalanceModeOverrideChange={noop}
+      />,
+    );
+    // Etapa 2D — en UNIFICADO NO hay bloque METALES.
+    expect(screen.queryByTestId("total-card-metals-section")).toBeNull();
+    expect(screen.queryByTestId("total-card-metals-header-total")).toBeNull();
+    // Etapa 2F-C — sin header de saldo duplicado; total en el hero = COMPLETO.
+    expect(screen.queryByTestId("total-card-monetary-header-amount")).toBeNull();
+    const saldo = screen.getByTestId("total-card-amount");
+    expect(saldo.textContent).toMatch(/1[.,]?342[.,]?937[.,]50/);
+    expect(saldo.textContent).not.toMatch(/423[.,]?025/);
   });
 
   it("BREAKDOWN: con varios metales padre suma todas las valuaciones antes de restar", () => {
@@ -161,11 +200,9 @@ describe("TotalDelComprobanteCard — header 'Saldo monetario' en BREAKDOWN", ()
     expect(amount.textContent).toMatch(/317[.,]?323[.,]44/);
   });
 
-  it("UNIFIED puro (sin metales) → header muestra 'Hechura total' (UX.33 unifica el label en ambos modos)", () => {
-    // En UNIFIED puro NO se pasa `documentMetals` ni `balanceBreakdown.metals`:
-    // si hubiera metales visibles, el card fuerza `mode=BREAKDOWN` por diseño
-    // (`TotalDelComprobanteCard.tsx:187-189`) — es el contrato del componente,
-    // independiente del prop `balanceMode`. Por eso UNIFIED puro = sin metales.
+  it("UNIFIED puro (sin metales) → SIN header 'Monetario (saldo)' (2F-C); total en el hero", () => {
+    // Etapa 2F-C — en UNIFICADO el header de saldo se oculta (duplicaba el TOTAL).
+    // El total vive en el hero; el detalle financiero sigue accesible por toggle.
     const bbUnified: BalanceBreakdownDTO = {
       metals: [],
       monetaryBalance: {
@@ -184,13 +221,13 @@ describe("TotalDelComprobanteCard — header 'Saldo monetario' en BREAKDOWN", ()
         onBalanceModeOverrideChange={noop}
       />,
     );
-    const row = screen.getByTestId("total-card-hechura-row");
-    // UX.33 — el atributo interno sigue distinguiendo (mode=total-hechura
-    // para UNIFIED), pero el label visible es "Hechura total" en ambos
-    // modos. Eliminamos la dualidad visual.
-    expect(row.getAttribute("data-tp-header-mode")).toBe("total-hechura");
-    expect(row.textContent).toContain("Hechura total");
-    expect(row.textContent).not.toContain("Saldo monetario");
+    // El header "Monetario (saldo)" NO se renderiza en UNIFICADO.
+    expect(screen.queryByTestId("total-card-hechura-row")).toBeNull();
+    expect(screen.queryByTestId("total-card-monetary-header-amount")).toBeNull();
+    // El total vive en el hero.
+    expect(screen.getByTestId("total-card-amount").textContent).toMatch(/538[.,]?260[.,]?94/);
+    // El toggle del detalle financiero sigue disponible.
+    expect(screen.getByTestId("total-card-composicion-toggle").textContent).toMatch(/detalle financiero/i);
   });
 });
 
@@ -424,7 +461,7 @@ describe("MonetarySummary — Total a cobrar en $ al pie del detalle", () => {
     expect(out.Cobre).toBeUndefined();
   });
 
-  it("UX.32: header del bloque METALES muestra total agregado (commercialMetalValueSum)", () => {
+  it("UX.32: header del bloque METALES = Σ valor final metal (Etapa 2C)", () => {
     render(
       <TotalDelComprobanteCard
         totalDocument={538260.94}
@@ -432,6 +469,7 @@ describe("MonetarySummary — Total a cobrar en $ al pie del detalle", () => {
         balanceMode="BREAKDOWN"
         balanceBreakdown={balanceWithOro()}
         commercialMetalValueSum={309375}
+        commercialMetalValueByParent={{ Oro: 309375 }}  // per-parent (producción)
         onBalanceModeOverrideChange={noop}
       />,
     );
@@ -473,15 +511,17 @@ describe("MonetarySummary — Total a cobrar en $ al pie del detalle", () => {
       />,
     );
     const oroRow = screen.getByTestId("total-card-metal-oro-fino-commercial-value");
-    expect(oroRow.textContent).toMatch(/Valor comercial/i);
+    expect(oroRow.textContent).toMatch(/Valor de venta metal/i);
     expect(oroRow.textContent).toMatch(/309[.,]?375/);
     const plataRow = screen.getByTestId("total-card-metal-plata-commercial-value");
     expect(plataRow.textContent).toMatch(/156[.,]?000/);
   });
 
-  it("UX.32.b (1 padre): NO renderiza 'Valor comercial' por padre — el header ya lo muestra", () => {
-    // Con 1 solo padre, la sub-fila duplicaría el valor del header del bloque.
-    // Se suprime para evitar ruido visual.
+  it("Ajuste 2026-06 (1 padre): SÍ renderiza 'Valor comercial' por padre (auditabilidad Metal+Hechura=Base)", () => {
+    // Decisión del operador: mostrar el valor comercial en CADA fila de metal,
+    // también con 1 padre. Antes (UX.32.b) se ocultaba por duplicar el header;
+    // ahora se prioriza la auditabilidad inline. El header del bloque sigue
+    // mostrando el total agregado (no se quita).
     render(
       <TotalDelComprobanteCard
         totalDocument={538260.94}
@@ -493,9 +533,11 @@ describe("MonetarySummary — Total a cobrar en $ al pie del detalle", () => {
         onBalanceModeOverrideChange={noop}
       />,
     );
-    // Sub-fila por padre: NO renderizada (regla N=1).
-    expect(screen.queryByTestId("total-card-metal-oro-fino-commercial-value")).toBeNull();
-    // Header del bloque: SÍ presente con el total agregado.
+    // Sub-fila por padre: AHORA renderizada también con 1 metal.
+    const oroRow = screen.getByTestId("total-card-metal-oro-fino-commercial-value");
+    expect(oroRow.textContent).toMatch(/Valor de venta metal/i);
+    expect(oroRow.textContent).toMatch(/309[.,]?375/);
+    // Header del bloque: SÍ sigue presente con el total agregado.
     expect(screen.getByTestId("total-card-metals-header-total").textContent)
       .toMatch(/309[.,]?375/);
   });
@@ -506,7 +548,11 @@ describe("MonetarySummary — Total a cobrar en $ al pie del detalle", () => {
     expect(sigma).toBe(309375); // = commercialMetalValueSum del header
   });
 
-  it("UX.32: si commercialMetalValueByParent no se provee, la sub-fila por padre se omite", () => {
+  it("Etapa 2C: sin commercialMetalValueByParent, la composición usa el fallback de base (valuación) y SÍ muestra Valor comercial", () => {
+    // Etapa 2C — en BREAKDOWN la composición FINAL siempre rinde el metal con
+    // un valor real para cerrar el comprobante; sin mapa per-parate cae al
+    // fallback canónico `m.monetaryAmount` (valuación). Reemplaza la regla
+    // legacy "sin sub-fila si no hay commercialMetalValueByParent".
     render(
       <TotalDelComprobanteCard
         totalDocument={538260.94}
@@ -515,12 +561,14 @@ describe("MonetarySummary — Total a cobrar en $ al pie del detalle", () => {
         balanceBreakdown={balanceWithOro()}
         commercialMetalValueSum={309375}
         onBalanceModeOverrideChange={noop}
-        // commercialMetalValueByParent omitido
+        // commercialMetalValueByParent omitido → base = valuación (210.937,50)
       />,
     );
-    expect(screen.queryByTestId("total-card-metal-oro-fino-commercial-value")).toBeNull();
-    // Pero el header del bloque sí muestra el total (porque commercialMetalValueSum sí está).
-    expect(screen.getByTestId("total-card-metals-header-total")).toBeTruthy();
+    const valor = screen.getByTestId("total-card-metal-oro-fino-commercial-value");
+    expect(valor.textContent).toMatch(/210[.,]?937[.,]50/);
+    // Header del bloque = Σ valor final metal = 210.937,50.
+    expect(screen.getByTestId("total-card-metals-header-total").textContent)
+      .toMatch(/210[.,]?937[.,]50/);
   });
 
   it("UX.32: fila legacy 'Valor comercial del metal' al pie del bloque YA NO existe", () => {
@@ -859,5 +907,156 @@ describe("MetalsSummary — sub-fila 'Origen' desde sourceLineIds + lineArticleN
       />,
     );
     expect(screen.queryByTestId("total-card-metal-oro-fino-origin")).toBeNull();
+  });
+});
+
+// ──────────────────────────────────────────────────────────────────────────
+// Fase 1 (2026-06) — Metal a VALOR DE VENTA vía prop explícito metalSaleByParent
+// Prioridad: metalSaleByParent (venta) > commercialMetalValueByParent (costo).
+// El gate es la PRESENCIA del prop (no el ambiguo m.monetaryAmount).
+// ──────────────────────────────────────────────────────────────────────────
+describe("Fase 1 — metalSaleByParent (venta) con fallback a costo", () => {
+  it("metalSaleByParent presente → METALES muestra VENTA (header + sub-fila)", () => {
+    render(
+      <TotalDelComprobanteCard
+        totalDocument={535487.5}
+        currencyCode="ARS"
+        balanceMode="BREAKDOWN"
+        balanceBreakdown={balanceWithOro()}
+        metalSaleByParent={{ Oro: 340312.5 }}
+        onBalanceModeOverrideChange={noop}
+      />,
+    );
+    expect(screen.getByTestId("total-card-metals-header-total").textContent).toMatch(/340[.,]?312/);
+    const oroRow = screen.getByTestId("total-card-metal-oro-fino-commercial-value");
+    expect(oroRow.textContent).toMatch(/340[.,]?312/);
+  });
+
+  it("metalSaleByParent gana sobre commercialMetalValueByParent (venta > costo)", () => {
+    render(
+      <TotalDelComprobanteCard
+        totalDocument={535487.5}
+        currencyCode="ARS"
+        balanceMode="BREAKDOWN"
+        balanceBreakdown={balanceWithOro()}
+        commercialMetalValueSum={309375}
+        commercialMetalValueByParent={{ Oro: 309375 }}
+        metalSaleByParent={{ Oro: 340312.5 }}
+        onBalanceModeOverrideChange={noop}
+      />,
+    );
+    const oroRow = screen.getByTestId("total-card-metal-oro-fino-commercial-value");
+    expect(oroRow.textContent).toMatch(/340[.,]?312/);      // venta
+    expect(oroRow.textContent).not.toMatch(/309[.,]?375/);  // NO costo
+  });
+
+  it("sin metalSaleByParent → fallback a commercialMetalValueByParent (costo)", () => {
+    render(
+      <TotalDelComprobanteCard
+        totalDocument={535487.5}
+        currencyCode="ARS"
+        balanceMode="BREAKDOWN"
+        balanceBreakdown={balanceWithOro()}
+        commercialMetalValueSum={309375}
+        commercialMetalValueByParent={{ Oro: 309375 }}
+        onBalanceModeOverrideChange={noop}
+      />,
+    );
+    expect(screen.getByTestId("total-card-metal-oro-fino-commercial-value").textContent)
+      .toMatch(/309[.,]?375/);
+  });
+
+  it("Etapa 2C: sin metalSaleByParent ni commercialMetalValueByParent → la composición usa valuación como fallback de base", () => {
+    // Etapa 2C — en BREAKDOWN la composición final SIEMPRE muestra el metal con
+    // un valor real (para cerrar el comprobante). Sin mapas per-parent cae al
+    // fallback canónico `m.monetaryAmount` (= valuationMonetary 210.937,50).
+    // Esto reemplaza la regla legacy "no usa valuación física" (que dejaba el
+    // metal sin valor y rompía el cierre Σ Metales + Monetario = Total).
+    render(
+      <TotalDelComprobanteCard
+        totalDocument={535487.5}
+        currencyCode="ARS"
+        balanceMode="BREAKDOWN"
+        balanceBreakdown={balanceWithOro()}
+        onBalanceModeOverrideChange={noop}
+      />,
+    );
+    expect(screen.getByTestId("total-card-metal-oro-fino-commercial-value").textContent)
+      .toMatch(/210[.,]?937[.,]50/);
+  });
+
+  it("helper: buildMetalSaleByParent agrega saleAmountLine (VENTA) por metalName", async () => {
+    const { buildMetalSaleByParent } = await import("../helpers");
+    const out = buildMetalSaleByParent([
+      {
+        quantity: 1,
+        composition: { metals: [{ metalName: "Oro", appliedGrams: 1.5, purity: 0.75, lineSale: 340312.5 }] },
+        metalHechuraBreakdown: { metalCost: 309375, metalSale: 340312.5 },
+      },
+    ]);
+    expect(out.Oro).toBeCloseTo(340312.5, 2);
+  });
+});
+
+// ============================================================================
+// FASE 1 (2026-06-03) — Footer "Monetario (saldo)" desde Σ lineCommercialSummary
+// El header en BREAKDOWN usa `commercialMonetarySaldoSum` (Σ del MONETARIO por
+// línea) en vez del cálculo legacy `total − metales`. Paridad línea↔footer.
+// ============================================================================
+describe("FASE 1 — Monetario (saldo) = Σ lineCommercialSummary.monetary.amount", () => {
+  it("helper: sumLineCommercialMonetary suma monetary.amount (top-level y pricingMeta)", async () => {
+    const { sumLineCommercialMonetary } = await import("../helpers");
+    const out = sumLineCommercialMonetary([
+      { lineCommercialSummary: { monetary: { amount: 185500 } } },           // top-level (preview)
+      { pricingMeta: { lineCommercialSummary: { monetary: { amount: 185500 } } } }, // draft
+      { lineCommercialSummary: { monetary: { amount: null } } },             // ignorada
+      null,                                                                   // defensivo
+    ]);
+    expect(out).toBe(371000);
+  });
+
+  it("helper: sin contrato por línea → null (cae a legacy)", async () => {
+    const { sumLineCommercialMonetary } = await import("../helpers");
+    expect(sumLineCommercialMonetary([{ foo: 1 }, null])).toBeNull();
+    expect(sumLineCommercialMonetary([])).toBeNull();
+  });
+
+  it("DESGLOSADO: 'Valor final monetario' = residual total − Σ valor final metal (NO Σ monetary.amount)", () => {
+    // SSOT del saldo desglosado: el "Valor final monetario" es el RESIDUAL
+    // `total − Σ valor final metal` (cierra METALES + MONETARIO = TOTAL). NO se
+    // usa `commercialMonetarySaldoSum` (Σ monetary.amount/lineOwn): en listas
+    // DESGLOSADAS SIN redondeo ese campo trae el TOTAL DE LÍNEA, no el saldo →
+    // inflaría el monetario. base = valuación (210.937,50) → saldo =
+    // 1.037.562,50 − 210.937,50 = 826.625,00 (NO 371.000).
+    render(
+      <TotalDelComprobanteCard
+        totalDocument={1037562.5}
+        currencyCode="ARS"
+        balanceMode="BREAKDOWN"
+        balanceBreakdown={balanceWithOro()}
+        commercialMonetarySaldoSum={371000}   // NO debe usarse como final
+        onBalanceModeOverrideChange={noop}
+      />,
+    );
+    const row = screen.getByTestId("total-card-hechura-row");
+    expect(row.textContent).toContain("Monetario (saldo)");
+    const amount = screen.getByTestId("total-card-monetary-header-amount");
+    expect(amount.textContent ?? "").toMatch(/826[.\s]?625/);       // residual
+    expect(amount.textContent ?? "").not.toMatch(/371[.\s]?000/);   // NO Σ monetary
+  });
+
+  it("BREAKDOWN sin commercialMonetarySaldoSum → fallback legacy residual (back-compat)", () => {
+    render(
+      <TotalDelComprobanteCard
+        totalDocument={538260.94}
+        currencyCode="ARS"
+        balanceMode="BREAKDOWN"
+        balanceBreakdown={balanceWithOro()}
+        onBalanceModeOverrideChange={noop}
+      />,
+    );
+    const amount = screen.getByTestId("total-card-monetary-header-amount");
+    // 538.260,94 − 210.937,50 = 327.323,44 (cálculo legacy intacto).
+    expect(amount.textContent ?? "").toMatch(/327[.\s]?323/);
   });
 });

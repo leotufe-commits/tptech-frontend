@@ -628,6 +628,16 @@ export function SaleCompositionEditableGrid({
               // Fuente del Redondeo Comercial POR LÍNEA (prioridad: PER_DOCUMENT
               // per-línea → PHYSICAL per-línea `appliedRounding.physical.metals`
               // → doc-level legacy). MISMA fuente que el footer.
+              //
+              // NOTA (2026-06-05): este chip del header del grid mantiene a
+              // propósito el fallback documental (R-COMMERCIAL-ROUNDING-VISIBILITY:
+              // en PER_DOCUMENT homogéneo muestra el `postGrams` agregado + flag
+              // "red. comercial"). En MIXTO el backend emite
+              // `commercialRoundingContext = null`, por lo que acá igual cae a la
+              // fuente per-línea (`lineCommercialRoundingMetals`). El card per-línea
+              // del artículo (`TPDocumentLineAdvancedEditor`) SÍ bloquea el
+              // documental (`allowDocLevelFallback: false`) — esa es la superficie
+              // que exige independencia estricta entre líneas.
               const crMetalsSource = pickLineCommercialRoundingMetals(meta);
               const equivGramsByMetal = crMetalsSource.length > 0
                   ? equivGramsByMetalPre.map((entry) => {

@@ -1,31 +1,26 @@
 // src/components/sales/TPBalanceModeSelector.tsx
 // =============================================================================
-// T60 (Fase 4.2) — Selector visual de Balance Mode Override.
+// Selector de Balance Mode Override.
+// Etapa UX 2.1 (2026-06) — SEPARACIÓN de conceptos:
+//   · El SWITCH representa ÚNICAMENTE el modo (los dos estados funcionales).
+//       [ Unificado | Desglosado ]
+//   · El ORIGEN de la resolución vive en una línea de texto APARTE, siempre
+//       visible (no en tooltip):
+//       Origen: Cliente | Lista de precios | Preferencia usuario | Sistema | Manual
+//   · Cuando hay override manual, junto al origen aparece un link discreto
+//       "Volver a automático" (Opción B aprobada) — sin chips ni indicadores
+//       extra dentro del switch.
 //
-// Compromisos:
+// Compromisos (sin cambios respecto a iteraciones previas):
 //   · READ-ONLY sobre el resolver: el frontend NUNCA decide qué modo aplica.
-//     Solo lee `balanceMode` + `balanceModeSource` del preview del backend y
-//     emite la INTENCIÓN del operador via `onOverrideChange(...)`.
-//   · El cambio del override modifica `draft.balanceModeOverride` →
-//     `previewSignature` cambia → se dispara un nuevo `salesApi.preview` →
-//     el backend resuelve y devuelve el modo efectivo.
-//   · Si `override === null`, vuelve a resolución automática (jerarquía
-//     R11.4 del backend: cliente → lista → tenant → fallback UNIFIED).
+//     Lee `effectiveMode` + `source` del preview y emite la INTENCIÓN via
+//     `onOverrideChange(...)`. Click en segmento → override manual del modo;
+//     link "Volver a automático" → `onOverrideChange(null)`.
 //   · NO recalcula. NO formatea montos. NO toca breakdown.
-//
-// Visual:
-//   ┌─────────────────────────────────┐
-//   │ Saldo: DESGLOSADO  [▼]         │   ← badge clickeable
-//   └─────────────────────────────────┘
-//   on click → popover:
-//     ○ Automático  (origen: Cliente)
-//     ○ Unificado
-//     ● Desglosado
 // =============================================================================
 
 import type { ReactElement } from "react";
-import { useState, useRef, useEffect, useCallback } from "react";
-import { vt } from "../../lib/pricing/visualTokens";
+import { useCallback } from "react";
 
 type Mode = "UNIFIED" | "BREAKDOWN";
 
@@ -51,18 +46,26 @@ const MODE_LABEL: Record<Mode, string> = {
   BREAKDOWN: "Desglosado",
 };
 
+// Vocabulario de ORIGEN alineado con la jerarquía R11.4 (CLAUDE.md):
+//   override doc → cliente → preferencia usuario → lista → tenant → fallback.
 const SOURCE_LABEL: Record<string, string> = {
-  DOCUMENT_OVERRIDE:  "Manual del documento",
+  DOCUMENT_OVERRIDE:  "Manual",
   ENTITY_DEFAULT:     "Cliente",
+  USER_PREFERENCE:    "Preferencia usuario",
   PRICELIST_DEFAULT:  "Lista de precios",
-  TENANT_DEFAULT:     "Configuración del tenant",
-  FALLBACK_UNIFIED:   "Por defecto",
+  TENANT_DEFAULT:     "Sistema",
+  FALLBACK_UNIFIED:   "Sistema (por defecto)",
 };
 
 function sourceLabel(source?: string): string {
-  if (!source) return "";
+  if (!source) return "—";
   return SOURCE_LABEL[source] ?? source;
 }
+
+const SEGMENTS: ReadonlyArray<{ mode: Mode; testId: string }> = [
+  { mode: "UNIFIED",   testId: "balance-mode-segment-unified" },
+  { mode: "BREAKDOWN", testId: "balance-mode-segment-breakdown" },
+];
 
 export function TPBalanceModeSelector({
   effectiveMode,
@@ -72,127 +75,85 @@ export function TPBalanceModeSelector({
   disabled,
   className,
 }: TPBalanceModeSelectorProps): ReactElement | null {
-  const [open, setOpen] = useState(false);
-  const containerRef = useRef<HTMLDivElement>(null);
-
-  // Cerrar el popover al hacer clic fuera.
-  useEffect(() => {
-    if (!open) return;
-    const handler = (e: MouseEvent) => {
-      if (!containerRef.current?.contains(e.target as Node)) setOpen(false);
-    };
-    document.addEventListener("mousedown", handler);
-    return () => document.removeEventListener("mousedown", handler);
-  }, [open]);
-
   const handleSelect = useCallback(
     (next: Mode | null) => {
+      if (disabled) return;
       onOverrideChange(next);
-      setOpen(false);
     },
-    [onOverrideChange],
+    [onOverrideChange, disabled],
   );
 
   // Sin modo efectivo todavía (primer preview no llegó) — no renderizamos.
   if (!effectiveMode) return null;
 
   const isManualOverride = override === "UNIFIED" || override === "BREAKDOWN";
+  // Regla 2.1: un override explícito SIEMPRE se comunica como "Manual",
+  // independientemente del `source` que devuelva el backend en ese ciclo.
+  const originText = isManualOverride ? "Manual" : sourceLabel(source);
 
   return (
     <div
-      ref={containerRef}
-      className={`relative inline-flex items-center ${className ?? ""}`}
+      className={`inline-flex flex-col items-end gap-0.5 ${className ?? ""}`}
       data-testid="balance-mode-selector"
     >
-      <button
-        type="button"
-        disabled={disabled}
-        onClick={() => setOpen((o) => !o)}
-        className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium transition-colors ${
-          disabled
-            ? "opacity-60 cursor-not-allowed text-muted"
-            : "text-muted hover:text-foreground hover:bg-muted/15 cursor-pointer"
-        }`}
+      {/* SWITCH — solo el modo (los dos estados funcionales). */}
+      <div
+        role="group"
+        aria-label="Modo de saldo"
+        className={`inline-flex rounded-full bg-muted/15 p-0.5 ${disabled ? "opacity-60" : ""}`}
         data-testid="balance-mode-selector-badge"
-        title={
-          source
-            ? `Origen: ${sourceLabel(source)}${isManualOverride ? " (override manual)" : ""}`
-            : undefined
-        }
       >
-        <span className="text-[10px] uppercase tracking-wider text-muted/80">
-          Modo de saldo
-        </span>
-        <span className="text-text font-semibold">
-          {MODE_LABEL[effectiveMode]}
-        </span>
-        {isManualOverride && (
-          <span
-            className="ml-0.5 inline-flex items-center rounded-full bg-primary/15 px-1.5 text-[9px] font-semibold uppercase tracking-wide text-primary"
-            data-testid="balance-mode-override-tag"
-          >
-            Manual
-          </span>
-        )}
-        <span aria-hidden className="ml-0.5 text-[10px] text-muted/70">
-          ▾
-        </span>
-      </button>
+        {SEGMENTS.map(({ mode, testId }) => {
+          const active = effectiveMode === mode;
+          return (
+            <button
+              key={mode}
+              type="button"
+              disabled={disabled}
+              aria-pressed={active}
+              onClick={() => handleSelect(mode)}
+              data-testid={testId}
+              data-active={active ? "true" : "false"}
+              className={`rounded-full px-2.5 py-0.5 text-xs font-medium transition-colors ${
+                disabled ? "cursor-not-allowed" : "cursor-pointer"
+              } ${
+                active
+                  ? "bg-primary text-white shadow-sm"
+                  : "text-muted hover:text-text hover:bg-muted/20"
+              }`}
+            >
+              {MODE_LABEL[mode]}
+            </button>
+          );
+        })}
+      </div>
 
-      {open && (
-        <div
-          role="menu"
-          className="absolute right-0 top-full z-50 mt-1 min-w-[220px] rounded-md border border-border bg-background p-1 shadow-md"
-          data-testid="balance-mode-selector-menu"
-        >
+      {/* ORIGEN — línea de contexto separada, siempre visible. */}
+      <div
+        className="inline-flex items-center gap-1.5 text-[10px] leading-tight"
+        data-testid="balance-mode-origin"
+      >
+        <span className="text-muted/70">
+          Origen: <span className="font-medium text-muted">{originText}</span>
+        </span>
+        {/* Opción B — link discreto, SOLO cuando hay override manual. */}
+        {isManualOverride && (
           <button
             type="button"
-            role="menuitemradio"
-            aria-checked={!isManualOverride}
+            disabled={disabled}
             onClick={() => handleSelect(null)}
-            className="flex w-full items-center justify-between rounded-sm px-2 py-1.5 text-xs hover:bg-muted/40"
-            data-testid="balance-mode-option-auto"
+            data-testid="balance-mode-reset"
+            className={`underline-offset-2 transition-colors ${
+              disabled
+                ? "text-muted/40 cursor-not-allowed"
+                : "text-primary/80 hover:text-primary hover:underline cursor-pointer"
+            }`}
+            title="Volver a la resolución automática del modo de saldo"
           >
-            <span>
-              <span className={!isManualOverride ? "font-semibold" : ""}>
-                Automático
-              </span>
-              {source && (
-                <span className="ml-1 text-muted-foreground">
-                  · {sourceLabel(source)}
-                </span>
-              )}
-            </span>
-            {!isManualOverride && <span aria-hidden>●</span>}
+            Volver a automático
           </button>
-          <button
-            type="button"
-            role="menuitemradio"
-            aria-checked={override === "UNIFIED"}
-            onClick={() => handleSelect("UNIFIED")}
-            className="flex w-full items-center justify-between rounded-sm px-2 py-1.5 text-xs hover:bg-muted/40"
-            data-testid="balance-mode-option-unified"
-          >
-            <span className={override === "UNIFIED" ? "font-semibold" : ""}>
-              Unificado
-            </span>
-            {override === "UNIFIED" && <span aria-hidden>●</span>}
-          </button>
-          <button
-            type="button"
-            role="menuitemradio"
-            aria-checked={override === "BREAKDOWN"}
-            onClick={() => handleSelect("BREAKDOWN")}
-            className="flex w-full items-center justify-between rounded-sm px-2 py-1.5 text-xs hover:bg-muted/40"
-            data-testid="balance-mode-option-breakdown"
-          >
-            <span className={override === "BREAKDOWN" ? "font-semibold" : ""}>
-              Desglosado
-            </span>
-            {override === "BREAKDOWN" && <span aria-hidden>●</span>}
-          </button>
-        </div>
-      )}
+        )}
+      </div>
     </div>
   );
 }

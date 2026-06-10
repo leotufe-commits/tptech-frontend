@@ -29,6 +29,8 @@ import type { ReactElement, ReactNode } from "react";
 import { formatByType } from "../../../../lib/pricing/format";
 import { vt } from "../../../../lib/pricing/visualTokens";
 import { OriginTooltip } from "./OriginTooltip";
+import { TraceTooltipBody } from "./TraceTooltipBody";
+import type { ComponentTrace } from "../traceability";
 import {
   groupLabel,
   categorizeGroupsForDisplay,
@@ -112,6 +114,18 @@ export interface MonetarySummaryProps {
    *  bloque adicional "Redondeo comercial" análogo al financiero pero con
    *  label distintivo. Si está vacío/undefined, el bloque no se renderiza. */
   commercialPhysicalMetals?: ReadonlyArray<PhysicalMetalEntry | null | undefined>;
+  /** Etapa 2F — modo de saldo del documento. En UNIFICADO (`false`) se OCULTA
+   *  la sección COMMERCIAL ("Composición": Hechura/Productos): no hay
+   *  composición metal/monetario, el detalle se enfoca en la cuenta monetaria
+   *  (ajustes / impuestos / redondeos / ajuste manual). Default `true`
+   *  (BREAKDOWN) para back-compat con callers que no lo pasan. */
+  isBreakdown?: boolean;
+  /** Trazabilidad de auditoría por `type` de componente (cupón, canal, IVA,
+   *  envío, descuento global, promociones, redondeo, ajuste). Cuando existe un
+   *  trace para una fila, su tooltip ⓘ reconstruye la cuenta completa
+   *  (Origen · Base × regla · Impacto) vía `TraceTooltipBody`. Si falta, la
+   *  fila cae al tooltip minimalista legacy (back-compat). Passthrough puro. */
+  componentTraces?: Readonly<Record<string, ComponentTrace>>;
 }
 
 function amountColorClass(amount: number): string {
@@ -232,8 +246,10 @@ function buildOriginBodyFor(
       };
     }
     case "DISCOUNT_QTY":
+      // C (2026-06) — label genérico claro (el footer no recibe el nombre de
+      // la promo, que vive per-línea). Solo display.
       return {
-        title: "Descuentos de línea",
+        title: "Promociones y descuentos",
         body: <TooltipRow label="Total" amount={amount} currency={displayCurrency} neg bold />,
       };
     case "DISCOUNT_MANUAL": {
@@ -297,6 +313,36 @@ function buildOriginBodyFor(
   }
 }
 
+/** Origen VISIBLE en pantalla (subtítulo) por tipo de componente. Resume de
+ *  dónde proviene el ajuste — NO cambia el label principal ni el cálculo.
+ *  Devuelve `null` para componentes de composición (no son ajustes del total)
+ *  y para `ROUNDING_MONETARY` (lo rinde `RoundingRow` con su propio caption).
+ *  Cualquier tipo modificador no mapeado cae a "Origen no especificado". */
+function originSubtitleFor(type: string): string | null {
+  switch (type) {
+    case "CHANNEL":           return "Canal de venta";
+    case "COUPON":            return "Cupón aplicado manualmente";
+    case "DISCOUNT_QTY":      return "Promoción automática / por línea";
+    case "DISCOUNT_PROMO":    return "Promoción automática";
+    case "DISCOUNT_CLIENT":   return "Descuento del cliente";
+    case "DISCOUNT_MANUAL":   return "Manual del comprobante";
+    case "BONUS":             return "Bonificación del comprobante";
+    case "SURCHARGE":         return "Recargo del comprobante";
+    case "TAX":               return "Impuesto sobre base imponible";
+    case "SHIPPING":          return "Envío del comprobante";
+    case "PAYMENT":           return "Forma de pago";
+    case "MANUAL_ADJUSTMENT": return "Ajuste manual del comprobante";
+    // Composición (base, no modifica el total como ajuste) → sin subtítulo.
+    case "HECHURA":
+    case "PRODUCT":
+    case "SERVICE":
+    case "METAL_MARGIN":      return null;
+    // El redondeo monetario se rinde en RoundingRow (caption propio en pantalla).
+    case "ROUNDING_MONETARY": return null;
+    default:                  return "Origen no especificado";
+  }
+}
+
 function ComponentRow({
   label,
   amount,
@@ -305,6 +351,7 @@ function ComponentRow({
   tier = "detail",
   originTitle,
   originBody,
+  originSubtitle,
 }: {
   label:           string;
   amount:          number;
@@ -313,17 +360,34 @@ function ComponentRow({
   tier?:           "premium" | "detail";
   originTitle?:    string;
   originBody?:     ReactNode;
+  /** Origen VISIBLE en pantalla (subtítulo bajo el label). Display puro. */
+  originSubtitle?: string | null;
 }): ReactElement {
   const hasOrigin = !!originBody && !!originTitle;
+  // Suprime el subtítulo si coincide con el label principal (ej. CHANNEL sin
+  // nombre cae a "Canal de venta", igual que el origen) — evita duplicar.
+  const showSubtitle =
+    !!originSubtitle &&
+    originSubtitle.trim().toLowerCase() !== label.trim().toLowerCase();
+  const subtitle = showSubtitle
+    ? (
+      <span className="text-[10px] text-muted/65 leading-tight" data-testid={`${testId}-origin`}>
+        {originSubtitle}
+      </span>
+    )
+    : null;
   if (tier === "premium") {
     return (
       <li
         className="flex items-baseline justify-between gap-3 py-1"
         data-testid={testId}
       >
-        <span className="text-sm font-medium text-text inline-flex items-center">
-          {label}
-          {hasOrigin && <OriginTooltip title={originTitle!} body={originBody} />}
+        <span className="flex flex-col gap-0">
+          <span className="text-sm font-medium text-text inline-flex items-center">
+            {label}
+            {hasOrigin && <OriginTooltip title={originTitle!} body={originBody} />}
+          </span>
+          {subtitle}
         </span>
         <span
           className={`tabular-nums text-sm font-semibold ${amountColorClass(amount)}`}
@@ -339,9 +403,12 @@ function ComponentRow({
       className={vt.row.flexBetween}
       data-testid={testId}
     >
-      <span className={`${vt.text.label} inline-flex items-center`}>
-        {label}
-        {hasOrigin && <OriginTooltip title={originTitle!} body={originBody} />}
+      <span className="flex flex-col gap-0">
+        <span className={`${vt.text.label} inline-flex items-center`}>
+          {label}
+          {hasOrigin && <OriginTooltip title={originTitle!} body={originBody} />}
+        </span>
+        {subtitle}
       </span>
       <span className={`${vt.text.rowAmount} ${amountColorClass(amount)}`}>
         {displayCurrency ? `${displayCurrency} ` : ""}
@@ -382,12 +449,16 @@ function RoundingRow({
   displayCurrency,
   testId,
   documentRoundingApplied,
+  trace,
 }: {
   label:           string;
   amount:          number;
   displayCurrency: string;
   testId:          string;
   documentRoundingApplied?: DocumentRoundingAppliedSummary | null;
+  /** Trazabilidad de auditoría — si llega, el tooltip ⓘ reconstruye la cuenta
+   *  completa (pre → post · impacto) en vez del cuerpo legacy. */
+  trace?:          ComponentTrace | null;
 }): ReactElement {
   const isComprobante = documentRoundingApplied != null;
   const source: "DOCUMENT" | "LIST" = isComprobante ? "DOCUMENT" : "LIST";
@@ -429,8 +500,12 @@ function RoundingRow({
             <span className={`${vt.text.label} inline-flex items-center`}>
               {displayLabel}
               <OriginTooltip
-                title={displayLabel}
-                body={buildRoundingOriginBody(documentRoundingApplied, displayCurrency, amount)}
+                title={trace ? trace.title : displayLabel}
+                body={
+                  trace
+                    ? <TraceTooltipBody trace={trace} currency={displayCurrency} />
+                    : buildRoundingOriginBody(documentRoundingApplied, displayCurrency, amount)
+                }
               />
             </span>
             {caption && (
@@ -466,8 +541,12 @@ function RoundingRow({
         <span className={`${vt.text.label} italic inline-flex items-center`}>
           {displayLabel}
           <OriginTooltip
-            title={displayLabel}
-            body={buildRoundingOriginBody(documentRoundingApplied, displayCurrency, amount)}
+            title={trace ? trace.title : displayLabel}
+            body={
+              trace
+                ? <TraceTooltipBody trace={trace} currency={displayCurrency} />
+                : buildRoundingOriginBody(documentRoundingApplied, displayCurrency, amount)
+            }
           />
         </span>
         <span className="text-[10px] text-muted/60 leading-tight italic">
@@ -613,6 +692,7 @@ function SectionGroups({
   documentRoundingApplied,
   subtotalCommercial,
   taxableBase,
+  componentTraces,
 }: {
   groups:           GroupedComponents[];
   displayCurrency:  string;
@@ -626,6 +706,8 @@ function SectionGroups({
    *  (= base × % = amount) en DISCOUNT_MANUAL e IVA. Passthrough. */
   subtotalCommercial?: number | null;
   taxableBase?:        number | null;
+  /** Trazabilidad por `type` — tooltip de auditoría con la cuenta completa. */
+  componentTraces?: Readonly<Record<string, ComponentTrace>>;
 }): ReactElement {
   return (
     <div className={showGroupHeaders ? "space-y-2.5" : ""}>
@@ -642,6 +724,10 @@ function SectionGroups({
               // POLICY §R-Rounding-3 — la fila ROUNDING_MONETARY se renderiza
               // con un componente especializado que distingue "lista" vs
               // "comprobante" según `documentRoundingApplied`.
+              // Trazabilidad de auditoría: si hay un trace para este `type`,
+              // su tooltip reconstruye la cuenta completa (Origen · Base ×
+              // regla · Impacto). Tiene PRIORIDAD sobre el cuerpo legacy.
+              const trace = componentTraces?.[c.type] ?? null;
               if (c.type === "ROUNDING_MONETARY") {
                 return (
                   <RoundingRow
@@ -651,26 +737,40 @@ function SectionGroups({
                     displayCurrency={displayCurrency}
                     testId={testId}
                     documentRoundingApplied={documentRoundingApplied}
+                    trace={trace}
                   />
                 );
               }
               // Etapa UX.30 — origen del importe (tooltip ⓘ).
               // UX.33 — ctx con `subtotalCommercial` y `taxableBase` para
               // que tooltips de DISCOUNT_MANUAL e IVA puedan mostrar "Cuenta".
-              const origin = buildOriginBodyFor(c.type, c.label, c.amount, displayCurrency, {
+              const legacyOrigin = buildOriginBodyFor(c.type, c.label, c.amount, displayCurrency, {
                 subtotalCommercial,
                 taxableBase,
               });
+              const origin = trace
+                ? { title: trace.title, body: <TraceTooltipBody trace={trace} currency={displayCurrency} /> }
+                : legacyOrigin;
+              // C (2026-06) — El bucket DISCOUNT_QTY agrega descuentos de línea
+              // de varios orígenes (promoción, descuento por cantidad, etc.). El
+              // footer NO recibe el nombre exacto de la promo (vive per-línea),
+              // así que el label genérico "Descuentos de línea" se reemplaza por
+              // el más claro "Promociones y descuentos". Solo display — no inventa
+              // nombres ni toca el dato del backend.
+              const rowLabel =
+                c.type === "DISCOUNT_QTY" ? "Promociones y descuentos" : c.label;
               return (
                 <ComponentRow
                   key={`${c.type}-${idx}`}
-                  label={c.label}
+                  label={rowLabel}
                   amount={c.amount}
                   displayCurrency={displayCurrency}
                   testId={testId}
                   tier={tier}
                   originTitle={origin?.title}
                   originBody={origin?.body}
+                  // Origen VISIBLE en pantalla (subtítulo bajo el label).
+                  originSubtitle={originSubtitleFor(c.type)}
                 />
               );
             })}
@@ -724,6 +824,18 @@ function SectionSummaryRow({
   );
 }
 
+// B (2026-06) — Labels CORTOS de sección para el encabezado del detalle
+// financiero. Reusan la clasificación canónica `DisplaySection`
+// (`categorizeGroupsForDisplay`). Versión compacta del `sectionLabel` de
+// `helpers.ts` (que devuelve los nombres largos "Construcción comercial",
+// etc.); acá priorizamos densidad ERP. Solo jerarquía visual — cero cálculo.
+const SECTION_SHORT_LABEL: Record<DisplaySection, string> = {
+  COMMERCIAL:       "Composición",
+  BASE_ADJUSTMENTS: "Ajustes",
+  TAXES:            "Impuestos",
+  POST_TAX:         "Adicionales",
+};
+
 export function MonetarySummary({
   groups,
   displayCurrency,
@@ -734,6 +846,8 @@ export function MonetarySummary({
   metalsValuationSum,
   totalDocument,
   commercialPhysicalMetals,
+  isBreakdown = true,
+  componentTraces,
 }: MonetarySummaryProps): ReactElement | null {
   const hasResult        = monetaryResult != null && Number.isFinite(monetaryResult);
   const hasTotalDocument = totalDocument  != null && Number.isFinite(totalDocument);
@@ -761,7 +875,13 @@ export function MonetarySummary({
 
   // Reorganización en 4 secciones (helper puro). El orden canónico
   // (COMMERCIAL → BASE_ADJUSTMENTS → TAXES → POST_TAX) se respeta siempre.
-  const sections = categorizeGroupsForDisplay(filteredGroups);
+  const allSections = categorizeGroupsForDisplay(filteredGroups);
+  // Etapa 2F — en UNIFICADO se OCULTA la sección COMMERCIAL ("Composición").
+  // No hay composición metal/monetario: el detalle se enfoca en la cuenta
+  // monetaria (ajustes / impuestos / redondeos / ajuste manual).
+  const sections = isBreakdown
+    ? allSections
+    : allSections.filter((s) => s.section !== "COMMERCIAL");
 
   const hasAnyRow = sections.length > 0 || hasResult || hasTotalDocument
                     || hasSubtotal || hasTaxableBase;
@@ -795,8 +915,13 @@ export function MonetarySummary({
   const showTaxableBaseRow = hasTaxableBase
     && (hasSection("BASE_ADJUSTMENTS") || hasSection("TAXES"));
 
+  // Etapa 2F-B — en UNIFICADO el detalle es COMPACTO (como print 1): sin
+  // headers de sección, sin sub-headers de grupo, sin base imponible y con
+  // separadores mínimos. Solo filas relevantes (Promociones/IVA/Redondeo/
+  // Ajuste manual). En BREAKDOWN se conserva el desglose estructurado.
+  const compact = !isBreakdown;
   return (
-    <div className="space-y-4" data-testid="total-card-monetary">
+    <div className={compact ? "space-y-0.5" : "space-y-2"} data-testid="total-card-monetary">
       {sections.map(({ section, groups: secGroups }, secIdx) => {
         // Etapa UX-premium v3 — los headers/captions de sección se ELIMINARON.
         // El operador entiende el contexto por agrupación (sub-headers de
@@ -814,17 +939,28 @@ export function MonetarySummary({
           <section
             key={section}
             data-testid={`total-card-section-${section}`}
-            // Separador entre secciones — el borde superior solo cuando NO
-            // es la primera (la primera respira sin línea extra).
-            className={secIdx === 0 ? "" : "border-t border-border/15 pt-3"}
+            // Etapa 2F-B — en UNIFICADO (compact) sin separadores entre
+            // secciones (lista plana); en BREAKDOWN borde tenue + padding mínimo.
+            className={compact ? "" : (secIdx === 0 ? "" : "border-t border-border/10 pt-2")}
           >
+            {/* Encabezado corto de sección (COMPOSICIÓN / AJUSTES / IMPUESTOS /
+                ADICIONALES). Etapa 2F-B — OCULTO en UNIFICADO (compact): el
+                detalle se lee como una cuenta simple sin títulos de sección. */}
+            {!compact && (
+              <header
+                className="text-[10px] font-semibold uppercase tracking-wider text-muted/70 mb-1.5"
+                data-testid={`total-card-section-header-${section}`}
+              >
+                {SECTION_SHORT_LABEL[section]}
+              </header>
+            )}
             <SectionGroups
               groups={secGroups}
               displayCurrency={displayCurrency}
               // COMMERCIAL: items directos sin sub-encabezados de grupo.
-              // Otras secciones: sub-encabezados visibles para distinguir
-              // ("Canal de venta", "Descuentos", "Bonificaciones", etc.).
-              showGroupHeaders={!isCommercial}
+              // Etapa 2F-B — en UNIFICADO (compact) TODOS los grupos van sin
+              // sub-encabezado ("Descuentos"/"Bonificaciones"/etc.): filas planas.
+              showGroupHeaders={!isCommercial && !compact}
               // Todo el detalle financiero vive bajo el collapsible y se ve
               // SECUNDARIO al header premium "Total hechura · ARS xxx" del
               // orchestrator. Todas las filas pasan a `tier="detail"`
@@ -838,6 +974,8 @@ export function MonetarySummary({
               // DISCOUNT_MANUAL (base × % = amount).
               subtotalCommercial={subtotalCommercial}
               taxableBase={taxableBase}
+              // Trazabilidad de auditoría por componente.
+              componentTraces={componentTraces}
             />
 
             {/* Etapa UX-Saldo Compact (2026-05-29) — fila "Subtotal comercial"
@@ -851,17 +989,20 @@ export function MonetarySummary({
                     <SectionSummaryRow label="Subtotal comercial" ... />
                   )} */}
 
-            {/* Fila destacada al cierre de BASE_ADJUSTMENTS. La "Base imponible"
-                es el número CLAVE del modelo fiscal — sobre este monto el
-                motor calculó los impuestos (POLICY §Tax.1 paso 11). */}
-            {section === "BASE_ADJUSTMENTS" && showTaxableBaseRow && (
-              <SectionSummaryRow
-                label="Base imponible"
-                amount={taxableBase as number}
-                displayCurrency={displayCurrency}
-                emphasis="strong"
-                testId="total-card-taxable-base"
-              />
+            {/* Etapa 2F — "Base imponible" como REFERENCIA secundaria dentro de
+                la cuenta (no título fuerte). Etapa 2F-B — OCULTA en UNIFICADO
+                (compact) para no recargar la lista; en BREAKDOWN se mantiene. */}
+            {!compact && section === "BASE_ADJUSTMENTS" && showTaxableBaseRow && (
+              <div
+                className="mt-1 flex items-baseline justify-between border-t border-border/10 pt-1"
+                data-testid="total-card-taxable-base"
+              >
+                <span className="text-[10px] text-muted/70">Base imponible</span>
+                <span className="tabular-nums text-[11px] text-text/80">
+                  {displayCurrency ? `${displayCurrency} ` : ""}
+                  {formatByType(taxableBase as number, "MONEY")}
+                </span>
+              </div>
             )}
           </section>
         );

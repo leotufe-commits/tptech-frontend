@@ -1,26 +1,26 @@
 // src/components/sales/__tests__/TPBalanceModeSelector.test.tsx
 // =============================================================================
-// T60 (Fase 4.2) — Tests del selector visual de Balance Mode Override.
+// Tests del selector de Balance Mode — Etapa UX 2.1 (switch solo-modo + línea
+// de origen separada + link "Volver a automático").
 //
 // Cubren:
-//   1. Render del badge con el modo efectivo.
-//   2. Tag "Manual" solo cuando hay override explícito.
-//   3. Tooltip / title con el origen legible.
-//   4. Cambiar UNIFIED → BREAKDOWN llama onOverrideChange("BREAKDOWN").
-//   5. Cambiar a Automático llama onOverrideChange(null).
-//   6. Popover se cierra al clickear opción.
-//   7. Disabled (venta confirmada) no abre el popover.
+//   1. Render de los dos segmentos con el modo efectivo resaltado.
+//   2. Línea "Origen:" siempre visible con la etiqueta legible.
+//   3. Override manual → Origen "Manual" + link "Volver a automático".
+//   4. Sin override → Origen = fuente real, sin link de reset.
+//   5. Click segmento Unificado/Desglosado → onOverrideChange(modo).
+//   6. Click "Volver a automático" → onOverrideChange(null).
+//   7. Disabled no dispara cambios.
 //   8. Sin effectiveMode no renderiza nada.
-//   9. Mismo modo Auto vs Manual: el badge muestra Manual solo si hay override.
-//  10. Multi-source label legible (ENTITY_DEFAULT → "Cliente", etc.).
+//   9. Mapeo de orígenes (incluye USER_PREFERENCE → "Preferencia usuario").
 // =============================================================================
 
 import { describe, it, expect, vi } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 import { TPBalanceModeSelector } from "../TPBalanceModeSelector";
 
-describe("TPBalanceModeSelector — render", () => {
-  it("muestra el modo efectivo en el badge", () => {
+describe("TPBalanceModeSelector — switch (solo modo)", () => {
+  it("muestra ambos segmentos con el modo efectivo resaltado", () => {
     render(
       <TPBalanceModeSelector
         effectiveMode="BREAKDOWN"
@@ -28,40 +28,18 @@ describe("TPBalanceModeSelector — render", () => {
         onOverrideChange={() => {}}
       />,
     );
-    expect(screen.getByText("Desglosado")).toBeTruthy();
-  });
-
-  it("UNIFIED se etiqueta como 'Unificado'", () => {
-    render(
-      <TPBalanceModeSelector
-        effectiveMode="UNIFIED"
-        source="TENANT_DEFAULT"
-        onOverrideChange={() => {}}
-      />,
-    );
-    expect(screen.getByText("Unificado")).toBeTruthy();
+    expect(screen.getByTestId("balance-mode-segment-breakdown").getAttribute("data-active")).toBe("true");
+    expect(screen.getByTestId("balance-mode-segment-unified").getAttribute("data-active")).toBe("false");
   });
 
   it("sin effectiveMode → no renderiza nada", () => {
-    const { container } = render(
-      <TPBalanceModeSelector onOverrideChange={() => {}} />,
-    );
+    const { container } = render(<TPBalanceModeSelector onOverrideChange={() => {}} />);
     expect(container.firstChild).toBeNull();
   });
+});
 
-  it("override manual → renderiza el chip 'Manual'", () => {
-    render(
-      <TPBalanceModeSelector
-        effectiveMode="BREAKDOWN"
-        source="DOCUMENT_OVERRIDE"
-        override="BREAKDOWN"
-        onOverrideChange={() => {}}
-      />,
-    );
-    expect(screen.getByTestId("balance-mode-override-tag")).toBeTruthy();
-  });
-
-  it("sin override (Automático) → NO renderiza chip 'Manual'", () => {
+describe("TPBalanceModeSelector — línea de origen", () => {
+  it("automático → Origen = fuente real, SIN link de reset", () => {
     render(
       <TPBalanceModeSelector
         effectiveMode="UNIFIED"
@@ -70,22 +48,12 @@ describe("TPBalanceModeSelector — render", () => {
         onOverrideChange={() => {}}
       />,
     );
-    expect(screen.queryByTestId("balance-mode-override-tag")).toBeNull();
+    const origin = screen.getByTestId("balance-mode-origin");
+    expect(origin.textContent).toContain("Cliente");
+    expect(screen.queryByTestId("balance-mode-reset")).toBeNull();
   });
 
-  it("tooltip incluye el origen legible (ENTITY_DEFAULT → Cliente)", () => {
-    render(
-      <TPBalanceModeSelector
-        effectiveMode="UNIFIED"
-        source="ENTITY_DEFAULT"
-        onOverrideChange={() => {}}
-      />,
-    );
-    const badge = screen.getByTestId("balance-mode-selector-badge");
-    expect(badge.getAttribute("title")).toContain("Cliente");
-  });
-
-  it("tooltip incluye '(override manual)' cuando hay override", () => {
+  it("override manual → Origen 'Manual' + link 'Volver a automático'", () => {
     render(
       <TPBalanceModeSelector
         effectiveMode="BREAKDOWN"
@@ -94,42 +62,36 @@ describe("TPBalanceModeSelector — render", () => {
         onOverrideChange={() => {}}
       />,
     );
-    const badge = screen.getByTestId("balance-mode-selector-badge");
-    expect(badge.getAttribute("title")).toContain("override manual");
+    const origin = screen.getByTestId("balance-mode-origin");
+    expect(origin.textContent).toContain("Manual");
+    expect(screen.getByTestId("balance-mode-reset")).toBeTruthy();
+  });
+
+  it("override manual → Origen 'Manual' aunque el source aún no sea DOCUMENT_OVERRIDE", () => {
+    // Antes de que el preview vuelva, el override ya implica Manual.
+    render(
+      <TPBalanceModeSelector
+        effectiveMode="UNIFIED"
+        source="ENTITY_DEFAULT"
+        override="UNIFIED"
+        onOverrideChange={() => {}}
+      />,
+    );
+    expect(screen.getByTestId("balance-mode-origin").textContent).toContain("Manual");
   });
 });
 
 describe("TPBalanceModeSelector — interacciones", () => {
-  it("click en badge abre el popover con las 3 opciones", () => {
-    render(
-      <TPBalanceModeSelector
-        effectiveMode="UNIFIED"
-        source="ENTITY_DEFAULT"
-        onOverrideChange={() => {}}
-      />,
-    );
-    fireEvent.click(screen.getByTestId("balance-mode-selector-badge"));
-    expect(screen.getByTestId("balance-mode-selector-menu")).toBeTruthy();
-    expect(screen.getByTestId("balance-mode-option-auto")).toBeTruthy();
-    expect(screen.getByTestId("balance-mode-option-unified")).toBeTruthy();
-    expect(screen.getByTestId("balance-mode-option-breakdown")).toBeTruthy();
-  });
-
-  it("cambiar a BREAKDOWN llama onOverrideChange('BREAKDOWN')", () => {
+  it("click en segmento Desglosado → onOverrideChange('BREAKDOWN')", () => {
     const spy = vi.fn();
     render(
-      <TPBalanceModeSelector
-        effectiveMode="UNIFIED"
-        source="TENANT_DEFAULT"
-        onOverrideChange={spy}
-      />,
+      <TPBalanceModeSelector effectiveMode="UNIFIED" source="TENANT_DEFAULT" onOverrideChange={spy} />,
     );
-    fireEvent.click(screen.getByTestId("balance-mode-selector-badge"));
-    fireEvent.click(screen.getByTestId("balance-mode-option-breakdown"));
+    fireEvent.click(screen.getByTestId("balance-mode-segment-breakdown"));
     expect(spy).toHaveBeenCalledWith("BREAKDOWN");
   });
 
-  it("cambiar a UNIFIED llama onOverrideChange('UNIFIED')", () => {
+  it("click en segmento Unificado → onOverrideChange('UNIFIED')", () => {
     const spy = vi.fn();
     render(
       <TPBalanceModeSelector
@@ -139,12 +101,11 @@ describe("TPBalanceModeSelector — interacciones", () => {
         onOverrideChange={spy}
       />,
     );
-    fireEvent.click(screen.getByTestId("balance-mode-selector-badge"));
-    fireEvent.click(screen.getByTestId("balance-mode-option-unified"));
+    fireEvent.click(screen.getByTestId("balance-mode-segment-unified"));
     expect(spy).toHaveBeenCalledWith("UNIFIED");
   });
 
-  it("cambiar a 'Automático' llama onOverrideChange(null)", () => {
+  it("click en 'Volver a automático' → onOverrideChange(null)", () => {
     const spy = vi.fn();
     render(
       <TPBalanceModeSelector
@@ -154,56 +115,37 @@ describe("TPBalanceModeSelector — interacciones", () => {
         onOverrideChange={spy}
       />,
     );
-    fireEvent.click(screen.getByTestId("balance-mode-selector-badge"));
-    fireEvent.click(screen.getByTestId("balance-mode-option-auto"));
+    fireEvent.click(screen.getByTestId("balance-mode-reset"));
     expect(spy).toHaveBeenCalledWith(null);
   });
 
-  it("popover se cierra al seleccionar una opción", () => {
+  it("disabled no dispara cambios", () => {
+    const spy = vi.fn();
     render(
-      <TPBalanceModeSelector
-        effectiveMode="UNIFIED"
-        source="TENANT_DEFAULT"
-        onOverrideChange={() => {}}
-      />,
+      <TPBalanceModeSelector effectiveMode="UNIFIED" source="ENTITY_DEFAULT" onOverrideChange={spy} disabled />,
     );
-    fireEvent.click(screen.getByTestId("balance-mode-selector-badge"));
-    expect(screen.getByTestId("balance-mode-selector-menu")).toBeTruthy();
-    fireEvent.click(screen.getByTestId("balance-mode-option-breakdown"));
-    expect(screen.queryByTestId("balance-mode-selector-menu")).toBeNull();
-  });
-
-  it("disabled (venta confirmada) no abre el popover", () => {
-    render(
-      <TPBalanceModeSelector
-        effectiveMode="UNIFIED"
-        source="ENTITY_DEFAULT"
-        onOverrideChange={() => {}}
-        disabled
-      />,
-    );
-    fireEvent.click(screen.getByTestId("balance-mode-selector-badge"));
-    expect(screen.queryByTestId("balance-mode-selector-menu")).toBeNull();
+    fireEvent.click(screen.getByTestId("balance-mode-segment-breakdown"));
+    expect(spy).not.toHaveBeenCalled();
   });
 });
 
-describe("TPBalanceModeSelector — labels de origen", () => {
+describe("TPBalanceModeSelector — mapeo de orígenes", () => {
   it.each([
-    ["DOCUMENT_OVERRIDE",  "Manual del documento"],
     ["ENTITY_DEFAULT",     "Cliente"],
+    ["USER_PREFERENCE",    "Preferencia usuario"],
     ["PRICELIST_DEFAULT",  "Lista de precios"],
-    ["TENANT_DEFAULT",     "Configuración del tenant"],
-    ["FALLBACK_UNIFIED",   "Por defecto"],
-  ])("source=%s → tooltip contiene '%s'", (src, label) => {
+    ["TENANT_DEFAULT",     "Sistema"],
+    ["FALLBACK_UNIFIED",   "Sistema (por defecto)"],
+  ])("source=%s → Origen '%s'", (src, label) => {
     render(
       <TPBalanceModeSelector
         effectiveMode="UNIFIED"
         source={src}
+        override={null}
         onOverrideChange={() => {}}
       />,
     );
-    const badge = screen.getByTestId("balance-mode-selector-badge");
-    expect(badge.getAttribute("title")).toContain(label);
+    expect(screen.getByTestId("balance-mode-origin").textContent).toContain(label);
   });
 
   it("source desconocido → se muestra tal cual (passthrough)", () => {
@@ -211,10 +153,10 @@ describe("TPBalanceModeSelector — labels de origen", () => {
       <TPBalanceModeSelector
         effectiveMode="UNIFIED"
         source="LEGACY_BALANCE_TYPE"
+        override={null}
         onOverrideChange={() => {}}
       />,
     );
-    const badge = screen.getByTestId("balance-mode-selector-badge");
-    expect(badge.getAttribute("title")).toContain("LEGACY_BALANCE_TYPE");
+    expect(screen.getByTestId("balance-mode-origin").textContent).toContain("LEGACY_BALANCE_TYPE");
   });
 });

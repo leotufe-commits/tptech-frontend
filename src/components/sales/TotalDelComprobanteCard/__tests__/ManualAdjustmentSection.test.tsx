@@ -283,3 +283,48 @@ describe("ManualAdjustmentSection — BREAKDOWN editor (Etapa C)", () => {
     expect(total.textContent).toMatch(/96[.,]?995/);
   });
 });
+
+// =============================================================================
+// Etapa UX — colapsable simétrico (abrir/cerrar)
+// =============================================================================
+
+describe("ManualAdjustmentSection — colapsable", () => {
+  it("con snapshot arranca expandido; el header colapsa y vuelve a expandir", () => {
+    render(
+      <ManualAdjustmentSection
+        draft={null}
+        snapshot={SNAPSHOT_BASE}
+        engineTotal={1210}
+        displayCurrency="ARS"
+      />,
+    );
+    // Expandido por defecto (hay snapshot) → detalle visible.
+    expect(screen.getByTestId("total-card-manual-final-total")).toBeTruthy();
+    const header = screen.getByTestId("total-card-manual-adjustment-header");
+    expect(header.getAttribute("aria-expanded")).toBe("true");
+
+    // Click → colapsa (detalle oculto, simetría con el resto del card).
+    fireEvent.click(header);
+    expect(screen.queryByTestId("total-card-manual-final-total")).toBeNull();
+    expect(
+      screen.getByTestId("total-card-manual-adjustment-header").getAttribute("aria-expanded"),
+    ).toBe("false");
+
+    // Click otra vez → vuelve a expandir.
+    fireEvent.click(screen.getByTestId("total-card-manual-adjustment-header"));
+    expect(screen.getByTestId("total-card-manual-final-total")).toBeTruthy();
+  });
+
+  it("colapsado con snapshot → muestra el resumen del impacto neto", () => {
+    render(
+      <ManualAdjustmentSection
+        draft={null}
+        snapshot={{ ...SNAPSHOT_BASE, totals: { monetaryAdjustment: -210, totalMonetaryAdjustment: -210 } }}
+        engineTotal={1210}
+        displayCurrency="ARS"
+      />,
+    );
+    fireEvent.click(screen.getByTestId("total-card-manual-adjustment-header"));
+    expect(screen.getByTestId("total-card-manual-adjustment-collapsed-summary")).toBeTruthy();
+  });
+});
