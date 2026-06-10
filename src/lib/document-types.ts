@@ -347,6 +347,28 @@ export interface DocumentLine {
     metalSaleRoundingDelta?:  number | null;
     hechuraSaleRoundingDelta?:number | null;
 
+    // ════════════════════════════════════════════════════════════════════
+    // LECTURA PER-LÍNEA — CONTRATO DE CONSUMO (Etapa 1 — Roadmap Evolución)
+    // --------------------------------------------------------------------
+    // Para TODO desarrollo NUEVO que muestre el resultado comercial de una
+    // línea (Resumen Comercial del Artículo / Card), leer la FAMILIA C:
+    //   `lineCommercialSummary` / `lineCommercialDisplaySummary`.
+    //
+    // La FAMILIA A (prorrateo DOCUMENTAL: `metalRoundingMonetaryImpact`,
+    // `hechuraRoundingMonetaryImpact`, `lineMonetarySaldoPostCommercialRounding`,
+    // `lineTotalWithTaxPostCommercialRounding`) y la FAMILIA B (`lineOwn*`,
+    // no tipada aquí, accedida vía cast) permanecen como COMPATIBILIDAD /
+    // FALLBACK INTERNO — NO se eliminan, pero NO son la fuente de lectura
+    // para superficies per-línea nuevas.
+    //
+    // `metalRoundingMonetaryImpact` y `commercialRoundingContext.breakdown`
+    // están PROHIBIDOS en superficies per-línea (lo hace cumplir el guard
+    // `no-family-a-in-line-surfaces.guard.test.ts`).
+    //
+    // Contrato:  pricing-engine/CONTRATO-FUNCIONAL.md
+    // Consumo:   pricing-engine/CONTRATO-FUNCIONAL-consumo.md
+    // ════════════════════════════════════════════════════════════════════
+
     // ── Etapa D' (cierre conceptual) — Redondeo Comercial PER_DOCUMENT ─────
     // VISTA del Redondeo Comercial del comprobante para visualización dentro
     // del card del artículo. El backend replica el snapshot del documento en
