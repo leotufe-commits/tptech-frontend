@@ -326,6 +326,51 @@ export default function TPNumberInput({
     innerRef.current?.focus();
   }
 
+  // ── Press-and-hold de los spinners (↑/↓) ─────────────────────────────────
+  // Mantener presionado un arrow repite el incremento automáticamente. Cero
+  // cambio de cálculo: solo llama a `inc(dir)` en intervalos. Respeta step /
+  // min / max / formatType (todo vive dentro de `inc`).
+  //
+  // Anti-duplicación: `onPointerDown` hace el incremento INMEDIATO + agenda la
+  // repetición; el `onClick` posterior (que dispara el mouse real) se ignora vía
+  // el flag `fromPointer`. Cuando NO hubo pointer (ej. `fireEvent.click` en
+  // tests o activación sintética), `onClick` incrementa una vez (back-compat).
+  const HOLD_INITIAL_DELAY_MS = 350; // pausa antes de empezar a repetir
+  const HOLD_REPEAT_MS        = 70;  // cadencia de repetición (fluida)
+  const incRef = useRef(inc);
+  incRef.current = inc;
+  const holdRef = useRef<{
+    timeout?: ReturnType<typeof setTimeout>;
+    interval?: ReturnType<typeof setInterval>;
+    fromPointer?: boolean;
+  }>({});
+
+  function stopHold() {
+    if (holdRef.current.timeout) {
+      clearTimeout(holdRef.current.timeout);
+      holdRef.current.timeout = undefined;
+    }
+    if (holdRef.current.interval) {
+      clearInterval(holdRef.current.interval);
+      holdRef.current.interval = undefined;
+    }
+  }
+
+  function startHold(dir: 1 | -1) {
+    if (disabled || readOnly) return;
+    stopHold();
+    incRef.current(dir); // incremento inmediato
+    holdRef.current.timeout = setTimeout(() => {
+      holdRef.current.interval = setInterval(() => {
+        incRef.current(dir);
+      }, HOLD_REPEAT_MS);
+    }, HOLD_INITIAL_DELAY_MS);
+  }
+
+  // Limpieza defensiva: si el componente se desmonta mientras se mantiene
+  // presionado, cancelar timers (evita callbacks sobre un nodo desmontado).
+  useEffect(() => stopHold, []);
+
   useEffect(() => {
     if (!disableWheel) return;
     const el = innerRef.current;
@@ -562,7 +607,13 @@ export default function TPNumberInput({
               // Evita que el click robe foco del input editable adyacente —
               // el operador puede seguir clickeando los arrows con mouse.
               onMouseDown={(e) => e.preventDefault()}
-              onClick={() => inc(1)}
+              // Press-and-hold: pointerdown incrementa + agenda repetición.
+              onPointerDown={(e) => { e.preventDefault(); holdRef.current.fromPointer = true; startHold(1); }}
+              onPointerUp={stopHold}
+              onPointerLeave={stopHold}
+              onPointerCancel={stopHold}
+              // Back-compat: click sin pointer (teclado/synthetic) incrementa 1×.
+              onClick={() => { if (holdRef.current.fromPointer) { holdRef.current.fromPointer = false; return; } inc(1); }}
               disabled={disabled || readOnly}
               className={cn(
                 "grid place-items-center text-muted hover:text-text disabled:opacity-50",
@@ -578,7 +629,11 @@ export default function TPNumberInput({
               type="button"
               tabIndex={-1}
               onMouseDown={(e) => e.preventDefault()}
-              onClick={() => inc(-1)}
+              onPointerDown={(e) => { e.preventDefault(); holdRef.current.fromPointer = true; startHold(-1); }}
+              onPointerUp={stopHold}
+              onPointerLeave={stopHold}
+              onPointerCancel={stopHold}
+              onClick={() => { if (holdRef.current.fromPointer) { holdRef.current.fromPointer = false; return; } inc(-1); }}
               disabled={disabled || readOnly}
               className={cn(
                 "grid place-items-center text-muted hover:text-text disabled:opacity-50",
