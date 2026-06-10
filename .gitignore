@@ -31,3 +31,6 @@ docs/screenshots/*
 *.njsproj
 *.sln
 *.sw?
+
+# Build artifacts (TS incremental)
+tsconfig.tsbuildinfo
