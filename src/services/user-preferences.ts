@@ -28,6 +28,9 @@ export type SalesUserPreference = {
   defaultChannelId: string | null;
   defaultCurrencyId: string | null;
   defaultGlobalDiscountType: "PERCENT" | "AMOUNT" | null;
+  /** Tipo de saldo por defecto del usuario (nivel R11.4 entre cliente y lista).
+   *  `null` = sin preferencia → delega a lista/tenant/fallback. */
+  defaultBalanceMode: "UNIFIED" | "BREAKDOWN" | null;
   invoiceLayoutConfig: unknown;
   preferredInvoiceViewPreset: InvoiceViewPresetId | null;
   invoiceUiPreferences: unknown;
@@ -68,6 +71,7 @@ export type UpdateUserPreferenceInput = Partial<{
   defaultChannelId: string | null;
   defaultCurrencyId: string | null;
   defaultGlobalDiscountType: "PERCENT" | "AMOUNT" | null;
+  defaultBalanceMode: "UNIFIED" | "BREAKDOWN" | null;
   invoiceLayoutConfig: unknown;
   preferredInvoiceViewPreset: InvoiceViewPresetId | null;
   invoiceUiPreferences: unknown;

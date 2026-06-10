@@ -106,6 +106,9 @@ export default function MisPreferencias() {
     defaultPriceListId: null,
     defaultChannelId: null,
     defaultCurrencyId: null,
+    // Etapa — Tipo de saldo por defecto (UNIFIED/BREAKDOWN). Editable acá;
+    // nivel R11.4 entre cliente y lista. `null` = sin preferencia.
+    defaultBalanceMode: null,
     // `defaultGlobalDiscountType` no se edita desde Mis preferencias (la
     // estrella vive en el card "Descuento global" de la Factura). Aquí solo
     // hidratamos el campo para que el tipo no rompa el form.
@@ -152,6 +155,7 @@ export default function MisPreferencias() {
           defaultPriceListId: pref.defaultPriceListId,
           defaultChannelId: pref.defaultChannelId,
           defaultCurrencyId: pref.defaultCurrencyId,
+          defaultBalanceMode: pref.defaultBalanceMode,
           defaultGlobalDiscountType: pref.defaultGlobalDiscountType,
           invoiceLayoutConfig: pref.invoiceLayoutConfig,
           preferredInvoiceViewPreset: pref.preferredInvoiceViewPreset,
@@ -199,6 +203,7 @@ export default function MisPreferencias() {
         defaultPriceListId: form.defaultPriceListId,
         defaultChannelId: form.defaultChannelId,
         defaultCurrencyId: form.defaultCurrencyId,
+        defaultBalanceMode: form.defaultBalanceMode,
       };
       const saved = await userPreferencesApi.update(payload);
       setForm({
@@ -207,6 +212,7 @@ export default function MisPreferencias() {
         defaultPriceListId: saved.defaultPriceListId,
         defaultChannelId: saved.defaultChannelId,
         defaultCurrencyId: saved.defaultCurrencyId,
+        defaultBalanceMode: saved.defaultBalanceMode,
         // Preservamos lo que el backend devolvió (esta pantalla no edita el
         // tipo del descuento global, layout, presets ni preset de vista;
         // pero los refleja para mantener consistencia con la imagen completa).
@@ -303,6 +309,25 @@ export default function MisPreferencias() {
                   <div className="text-[11px] text-muted">{r.hint}</div>
                 </div>
               ))}
+            </div>
+
+            {/* Tipo de saldo por defecto (UNIFIED/BREAKDOWN). Nivel R11.4 entre
+                cliente y lista. "Sin preferencia" (vacío) → null → delega. */}
+            <div className="space-y-1 max-w-md" data-testid="pref-default-balance-mode">
+              <div className="text-sm font-medium text-text">Tipo de saldo por defecto</div>
+              <TPComboFixed
+                value={form.defaultBalanceMode ?? ""}
+                onChange={(v) => set("defaultBalanceMode", v)}
+                options={[
+                  { value: "UNIFIED",   label: "Unificado" },
+                  { value: "BREAKDOWN", label: "Desglosado" },
+                ]}
+                placeholder="Sin preferencia…"
+              />
+              <div className="text-[11px] text-muted">
+                Modo de saldo precargado al crear una factura. El default del cliente y el
+                cambio manual en la factura tienen prioridad sobre esta preferencia.
+              </div>
             </div>
 
             <div className="flex items-center justify-between gap-3 pt-1">
