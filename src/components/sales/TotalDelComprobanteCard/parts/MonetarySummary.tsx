@@ -120,6 +120,14 @@ export interface MonetarySummaryProps {
    *  (ajustes / impuestos / redondeos / ajuste manual). Default `true`
    *  (BREAKDOWN) para back-compat con callers que no lo pasan. */
   isBreakdown?: boolean;
+  /** Layout PLANO del detalle financiero, independiente del modo de saldo.
+   *  Cuando es `true`, el detalle se renderiza como una lista plana (sin
+   *  encabezados de sección, sin sub-encabezados de grupo, sin "Base imponible",
+   *  separadores mínimos) — idéntico al look UNIFICADO — pero CONSERVANDO el
+   *  contenido propio del modo (en BREAKDOWN sigue mostrando la Composición).
+   *  Permite que el detalle financiero del DESGLOSADO se vea como el del
+   *  UNIFICADO. Sin él, el layout se deriva de `isBreakdown` (back-compat). */
+  flatDetail?: boolean;
   /** Trazabilidad de auditoría por `type` de componente (cupón, canal, IVA,
    *  envío, descuento global, promociones, redondeo, ajuste). Cuando existe un
    *  trace para una fila, su tooltip ⓘ reconstruye la cuenta completa
@@ -847,6 +855,7 @@ export function MonetarySummary({
   totalDocument,
   commercialPhysicalMetals,
   isBreakdown = true,
+  flatDetail = false,
   componentTraces,
 }: MonetarySummaryProps): ReactElement | null {
   const hasResult        = monetaryResult != null && Number.isFinite(monetaryResult);
@@ -918,8 +927,11 @@ export function MonetarySummary({
   // Etapa 2F-B — en UNIFICADO el detalle es COMPACTO (como print 1): sin
   // headers de sección, sin sub-headers de grupo, sin base imponible y con
   // separadores mínimos. Solo filas relevantes (Promociones/IVA/Redondeo/
-  // Ajuste manual). En BREAKDOWN se conserva el desglose estructurado.
-  const compact = !isBreakdown;
+  // Ajuste manual). En BREAKDOWN se conserva el desglose estructurado, SALVO
+  // que el caller pida `flatDetail` (paridad visual con el unificado): ahí el
+  // layout es plano pero el CONTENIDO sigue siendo el de BREAKDOWN (Composición
+  // incluida, gracias a que `sections` ya se resolvió con `isBreakdown`).
+  const compact = flatDetail || !isBreakdown;
   return (
     <div className={compact ? "space-y-0.5" : "space-y-2"} data-testid="total-card-monetary">
       {sections.map(({ section, groups: secGroups }, secIdx) => {
@@ -1157,7 +1169,7 @@ export function MonetarySummary({
                 />
               </span>
               <span
-                className={`${vt.text.rowAmount} font-bold ${vt.colors.primary}`}
+                className={`${vt.text.rowAmount} font-bold ${vt.colors.text}`}
                 data-testid="total-card-monetary-total-a-cobrar-amount"
               >
                 {displayCurrency ? `${displayCurrency} ` : ""}

@@ -124,11 +124,20 @@ describe("DESGLOSADO autocontenido — MONETARIO", () => {
 });
 
 describe("DESGLOSADO autocontenido — tooltips de trazabilidad", () => {
-  it("4a) el tooltip del metal usa TraceTooltipBody (trace-body-metal)", () => {
+  it("4a) el tooltip del metal muestra la CUENTA (gramos × precio/g = valor), sin Antes/Después/Impacto", () => {
     renderBreakdown();
     const trigger = screen.getByTestId("origin-tooltip-trigger-oro");
     fireEvent.click(trigger);
-    expect(screen.getByTestId("trace-body-metal")).toBeTruthy();
+    const txt = screen.getByTestId("origin-tooltip-content-oro").textContent ?? "";
+    // La cuenta es la protagonista.
+    expect(txt).toMatch(/×/);
+    expect(txt).toMatch(/\/g/);
+    expect(txt).toMatch(/=/);
+    // Ya NO se usa TraceTooltipBody para el metal → sin Antes/Después/Impacto.
+    expect(screen.queryByTestId("trace-body-metal")).toBeNull();
+    expect(txt).not.toMatch(/Antes/i);
+    expect(txt).not.toMatch(/Después/i);
+    expect(txt).not.toMatch(/Impacto/i);
   });
 
   it("4b) el tooltip del monetario usa TraceTooltipBody (trace-body-monetary)", () => {

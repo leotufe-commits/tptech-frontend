@@ -58,18 +58,21 @@ import {
   sumGroupLineCost,
   sumGroupQuantity,
   sumGroupLineSaleDisplay,
+  comboAdjustmentToCostAdjustmentData,
+  extractComboPriceMeta,
+  computeGlobalCostImpact,
 } from "./helpers";
 import { TableLayoutContext } from "./context";
 import { useFlashOnChange } from "./hooks/useFlashOnChange";
 import { CellNumberInput } from "./parts/CellNumberInput";
 import { MermaLabelEditor } from "./parts/MermaLabelEditor";
 import { AdjustmentLabelEditor } from "./parts/AdjustmentLabelEditor";
+import { MetalGlobalAdjustmentBadge } from "./parts/MetalGlobalAdjustmentBadge";
 import { TableHeader } from "./parts/TableHeader";
 import { TypeGroupHeader } from "./parts/TypeGroupHeader";
 import { TypeGroupFooter } from "./parts/TypeGroupFooter";
 import { Row } from "./parts/EditableRow";
 import { EmptyState } from "./parts/EmptyState";
-import { CostAdjustmentDetailSection } from "./parts/CostAdjustmentDetailSection";
 import { GlobalAdjustmentsBlock } from "./parts/GlobalAdjustmentsBlock";
 
 // Importar la versión "bare" del % para el sub-line "Aj. global" — se mantiene
@@ -135,6 +138,50 @@ export function SaleCompositionEditableGrid({
   const hechuras  = (composition?.hechuras  ?? []) as any[];
   const products  = (composition?.products  ?? []) as any[];
   const services  = (composition?.services  ?? []) as any[];
+
+  // UX combo (display-only): el combo comercial muestra sus COMPONENTES como
+  // capa de auditoría. Identidad CANÓNICA del combo (backend SSOT + editor de
+  // línea): `costMode === "COMBO" || priceSource === "COMBO_COMPONENTS"`. Antes
+  // este guard usaba SOLO `costMode === "COMBO"`, más débil que el resto del
+  // sistema: cuando el combo llegaba identificado por `priceSource` pero sin
+  // `costMode` "COMBO" (p. ej. en saldo DESGLOSADO / snapshots), el encabezado
+  // "Composición del combo" desaparecía aunque en UNIFICADO sí aparecía. Alinear
+  // a la identidad canónica lo vuelve consistente entre ambos modos de saldo.
+  const isComboLine =
+    (meta as any)?.costMode === "COMBO" ||
+    (meta as any)?.priceSource === "COMBO_COMPONENTS";
+  // ── COMBO_PRICE (Modelo A) — trazabilidad del precio del combo ────────────
+  // Passthrough del step que el motor ya calcula (`pricingMeta.pricingSteps`).
+  // Alimenta el bloque AJUSTE GLOBAL (antes → ajuste → final) y la "Venta total"
+  // del grupo de componentes con el precio comercial real del combo. Si el step
+  // no llegó (combo sin ajuste resuelto / preview legacy) → null → fallback.
+  const comboPriceMeta = isComboLine
+    ? extractComboPriceMeta((meta as any)?.pricingSteps)
+    : null;
+
+  // ── Ajuste global del ARTÍCULO (bonif/recargo) — fuente ÚNICA ──────────────
+  // El mismo dato que alimenta el bloque inferior "AJUSTE GLOBAL": combo →
+  // `comboAdjustment*` (vía COMBO_PRICE); normal → `composition.costAdjustment`.
+  // Se extrae acá una sola vez para (a) el bloque inferior y (b) el desglose
+  // visual por componente en la columna Costo total. `{kind, type, value, amount}`.
+  const globalCostAdjData = isComboLine
+    ? comboAdjustmentToCostAdjustmentData(
+        comboPriceMeta?.adjustmentKind  ?? (meta as any)?.comboAdjustmentKind,
+        comboPriceMeta?.adjustmentValue ?? (meta as any)?.comboAdjustmentValue,
+        comboPriceMeta?.adjustmentAmount ?? null,
+      )
+    : ((meta as any)?.composition?.costAdjustment ?? null);
+  // % del ajuste global (solo modo PORCENTAJE) + kind, para el desglose por
+  // componente. En modo monto fijo no hay % que reaplicar → null.
+  const globalCostPct =
+    globalCostAdjData != null
+    && globalCostAdjData.type === "PERCENTAGE"
+    && globalCostAdjData.value != null
+    && Number.isFinite(Number(globalCostAdjData.value))
+      ? Number(globalCostAdjData.value)
+      : null;
+  const globalCostKind: "BONUS" | "SURCHARGE" =
+    globalCostAdjData?.kind === "SURCHARGE" ? "SURCHARGE" : "BONUS";
 
   // ── Margen "no atribuible por línea" — detector display-only ─────────────
   // El motor backend emite `hechuraMarginPct = 0` (y `metalMarginPct = 0`) de
@@ -267,29 +314,11 @@ export function SaleCompositionEditableGrid({
     onApply({ costLineOverrides: next });
   }
 
-  // FASE 12.11 — derivación display-only del ajuste global de la línea del
-  // documento (`pricingMeta.documentAdjustments.lineManualDiscount`). Es la
-  // ÚNICA pieza de "ajuste global" que el motor backend emite a nivel de
-  // línea de Factura hoy; el resto (canal, cupón, payment, shipping,
-  // globalDiscount del documento) son agregados puros sin breakdown
-  // per-componente. Este texto se muestra como sub-línea bajo "Margen" en
-  // CADA fila del grid (todas comparten el mismo ajuste de línea).
-  //
-  // GAP DE BACKEND: para mostrar UN ajuste global *prorrateado por componente*
-  // se necesitaría que el motor emita `componentAdjustmentBreakdown[]` con
-  // su porción por costLineId. Hoy no existe — F1.5 deuda.
-  const lineGlobalAdj = (() => {
-    const md: any = (meta as any).documentAdjustments?.lineManualDiscount;
-    if (!md || md.amount == null || md.amount === 0) return null;
-    const sign = md.kind === "SURCHARGE" ? "+" : "−";
-    if (md.valuePct != null && Number.isFinite(Number(md.valuePct))) {
-      const pct = formatByType(Number(md.valuePct), "PERCENT", { bare: true });
-      return { text: `Aj. global ${sign}${pct}%`, kind: md.kind as "BONUS" | "SURCHARGE" };
-    }
-    // Sin pct (modo AMOUNT) → mostrar solo signo + monto bruto del ajuste.
-    const amt = fmtMoney(Math.abs(Number(md.amount)));
-    return { text: `Aj. global ${sign}${currency} ${amt}`, kind: md.kind as "BONUS" | "SURCHARGE" };
-  })();
+  // NOTA: el "Aj. global −X%" por fila (FASE 12.11) fue ELIMINADO del grid de
+  // costo (contrato visual: la columna Costo total muestra SOLO costo). El
+  // impacto del ajuste global se visualiza únicamente en el bloque inferior
+  // "AJUSTE GLOBAL". El dato sigue en `pricingMeta.documentAdjustments` para
+  // otros consumidores; acá ya no se renderiza.
 
   function handleClearAll() {
     // Limpia explícitamente el array Y los legacy. El backend recalcula sin
@@ -322,6 +351,33 @@ export function SaleCompositionEditableGrid({
   const qtyLine = Number.isFinite(line.quantity) ? line.quantity : 0;
   const totalForRow = (saleVal: number | null) =>
     saleVal != null && qtyLine > 1 ? saleVal * qtyLine : saleVal;
+
+  // ── Desglose visual del ajuste global por componente (columna Costo total) ─
+  // Reaplica el % del ajuste global del artículo (`globalCostPct`/`globalCostKind`)
+  // sobre el costo base de la fila → { base, pct, impact, after }. Display puro
+  // (helpers `computeGlobalCostImpact`): el costo ya viene del motor, acá solo se
+  // descompone el porcentaje para mostrar base → ±% GLOBAL → ±$ → costo final.
+  // `null` cuando no hay ajuste global porcentual (entonces la celda muestra
+  // solo el costo, como siempre).
+  const buildGlobalCost = (costBase: number | null) => {
+    const r = computeGlobalCostImpact(costBase, globalCostPct, globalCostKind);
+    if (r == null || globalCostPct == null) return null;
+    return { pct: globalCostPct, impact: r.impact, after: r.after, kind: globalCostKind };
+  };
+
+  // ── Footer "Total <grupo>": costo POST ajuste global (paridad con las filas) ─
+  // El footer debe mostrar el MISMO estado económico que la columna "Costo
+  // Total" de cada fila — que ya usa `buildGlobalCost(...).after`. Reutiliza ese
+  // helper sobre el subtotal del grupo: como el % del ajuste global es uniforme,
+  // aplicarlo al Σ del grupo es idéntico a Σ de los `after` por fila (sin
+  // matemática nueva; mismo `computeGlobalCostImpact` que las filas). Sin ajuste
+  // global → `buildGlobalCost` devuelve null y queda el costo base (comportamiento
+  // previo). Cierra la divergencia fila/header (POST) vs footer (PRE).
+  const groupCostPost = (items: any[]): number | null => {
+    const base = sumGroupLineCost(items, qtyLine);
+    const adjusted = buildGlobalCost(base);
+    return adjusted != null ? adjusted.after : base;
+  };
 
   // FASE 12.5b — `fallback` se usa también cuando el código existe pero el
   // catálogo no lo mapea (antes devolvía el código crudo, ej. "g"). Esto
@@ -370,8 +426,16 @@ export function SaleCompositionEditableGrid({
       precioUnitVentaText = fmt(saleLineValue / qtyComp);
     }
     // Margen — helper compartido (también usado por el Simulador a futuro).
+    // El margen de lista se mide contra el COSTO AJUSTADO (post ajuste global),
+    // no el base: el motor construye `saleLineValue` sobre el costo ajustado, así
+    // que `(sale − costoAjustado)/costoAjustado` = margen comercial de la lista
+    // (ej. 85%). Reutiliza `buildGlobalCost` (mismo helper que la columna "Costo
+    // Total" de la fila). Sin ajuste global → `after == lineCost` → idéntico al
+    // comportamiento previo (los márgenes por componente de los tests se preservan).
+    const adjForMargin = buildGlobalCost(lineCost);
+    const costForMargin = adjForMargin != null ? adjForMargin.after : lineCost;
     const margin = resolveMarginForRowDisplay(
-      lineCost,
+      costForMargin,
       saleLineValue,
       marginUnattributable,
       unifiedFactorForRow,
@@ -430,9 +494,23 @@ export function SaleCompositionEditableGrid({
   // desglose unitario (× qty = total) vive en la tabla de abajo.
   const totalComponents = totalComponentsUnit * qtyForLine;
   const showTotalSum = metals.length + hechuras.length + products.length + services.length > 0;
+  // ── Costo POST-ajuste global (Costo Ajustado) — el que sostiene la Venta ──
+  // El motor ya lo emite como `meta.unitCost` (= `adjusted` del step
+  // COST_LINES_FINAL, post bonif/recargo global). `totalComponents` es la SUMA
+  // PRE-ajuste de los componentes (Costo Base); NO es el costo final cuando hay
+  // ajuste global. Header "Costo total línea" y el resumen "Costo total" deben
+  // mostrar el POST. Escalado × qty (agregación trivial, mismo patrón que
+  // `totalComponents` / `headerSaleTotal`). Fallback a `totalComponents` cuando
+  // `unitCost` no es finito (costo parcial) o no hay ajuste (POST === PRE).
+  const unitCostPost = Number((meta as any)?.unitCost);
+  const costTotalPost =
+    showTotalSum
+      ? (Number.isFinite(unitCostPost) ? unitCostPost * qtyForLine : totalComponents)
+      : null;
   // Fase 2.1 — flash en "Total componentes" cuando el preview backend
   // devuelve un nuevo valor (post-edit). Mismo highlight sutil del margen.
-  const flashTotal = useFlashOnChange(showTotalSum ? totalComponents : null);
+  // Sigue al valor mostrado (POST-ajuste).
+  const flashTotal = useFlashOnChange(costTotalPost);
   // Fase 2.6.2 — VALOR DE VENTA del header. Mismo campo que el KPI inferior
   // (basePrice × qty con fallback a unitPrice × qty). Ver Fase 2.6.1.
   const headerSaleUnitPrice =
@@ -443,10 +521,27 @@ export function SaleCompositionEditableGrid({
     ? headerSaleUnitPrice * qtyForLine
     : null;
   const flashHeaderSale = useFlashOnChange(headerSaleTotal);
+  // ── COMBO de un solo componente — "Venta total" de la fila = finalPrice ───
+  // Cuando el combo tiene UN solo componente, esa fila representa al combo
+  // entero. Su celda "Venta total" debe mostrar el precio comercial del combo
+  // POST-ajuste (`COMBO_PRICE.meta.finalPrice` × qty) — el MISMO valor que el
+  // input, "Venta total línea" y el footer — NO el sale del componente (que es
+  // el subtotal PRE-ajuste). Passthrough puro del motor, cero matemática. Para
+  // combos multi-componente las filas siguen siendo auditoría (cada una su sale)
+  // y el finalPrice vive en el footer "Total productos".
+  const comboSingleRowFinalSale =
+    comboPriceMeta != null && products.length === 1 && services.length === 0
+      ? comboPriceMeta.finalPrice * qtyForLine
+      : null;
 
   return (
     <TableLayoutContext.Provider value={gridTpl}>
     <div className="space-y-2" data-testid="sale-composition-editable-grid">
+      {/* Banner exclusivo de COMBO eliminado — rompía el patrón visual: en
+          productos/servicios no hay caja previa equivalente. El combo ahora
+          usa el mismo patrón de grupo (PRODUCTOS · N líneas → filas → Total
+          productos) que el resto. La identidad de combo sigue viva en la
+          lógica (`isComboLine`) para Venta total / Margen / AJUSTE GLOBAL. */}
       {/* ── Header ────────────────────────────────────────────────────── */}
       <div className="flex items-center justify-between gap-2">
         <span className="text-[10px] font-medium uppercase tracking-[0.04em] text-muted/75">
@@ -473,7 +568,7 @@ export function SaleCompositionEditableGrid({
                 "font-semibold text-text/90 tabular-nums rounded px-1 transition-colors duration-500",
                 flashTotal,
               )}>
-                {fmtMoney(totalComponents, currency)}
+                {fmtMoney(costTotalPost ?? totalComponents, currency)}
               </span>
             </span>
           )}
@@ -779,8 +874,6 @@ export function SaleCompositionEditableGrid({
                     ? "Margen unificado aplicado al total del artículo"
                     : commercialCells.margenTooltip}
                   ventaLineaText={commercialCells.ventaLineaText}
-                  globalAdjustmentText={lineGlobalAdj?.text ?? null}
-                  globalAdjustmentKind={lineGlobalAdj?.kind ?? null}
                   participacionText={commercialCells.participacionText}
                   // FASE 12.5 — etiquetas para sub-línea Cantidad y prefijo
                   // moneda en Costo unit. (rendering al nivel de RowImpl).
@@ -859,23 +952,44 @@ export function SaleCompositionEditableGrid({
                   }
                   // FASE 12.11 — Merma como label editable (chip-style).
                   // Click expande el input; ✓ vuelve al label. Mismo callback.
+                  // Debajo, indicador READ-ONLY del Ajuste Global del artículo
+                  // (consistencia visual con HECHURA/PRODUCT/SERVICE, que muestran
+                  // su ajuste en esta columna). Passthrough de
+                  // `composition.costAdjustment` — el mismo dato del resumen
+                  // inferior; cero matemática. Combos → costAdjustment null → no
+                  // renderea (no mezcla con comboAdjustment).
                   mermaOrAdjustmentCell={
-                    <MermaLabelEditor
-                      value={mermaValue}
-                      original={m?.appliedMermaPct ?? null}
-                      onChange={isEditable && costLineId
-                        ? (v) => applyCostLinePatch(costLineId, "METAL", { mermaPercentOverride: v ?? 0 })
-                        : () => {}}
-                      readOnly={!isEditable}
-                      // FASE F2 — badge "Manual" si el operador editó local
-                      // (override aún no propagado al preview); si no, usar
-                      // el `mermaSource` que vino del backend.
-                      mermaSource={
-                        ov?.mermaPercentOverride != null
-                          ? "costLineOverride"
-                          : ((m as any)?.mermaSource ?? null)
-                      }
-                    />
+                    <div className="flex flex-col items-center gap-0.5">
+                      <MermaLabelEditor
+                        value={mermaValue}
+                        original={m?.appliedMermaPct ?? null}
+                        onChange={isEditable && costLineId
+                          ? (v) => applyCostLinePatch(costLineId, "METAL", { mermaPercentOverride: v ?? 0 })
+                          : () => {}}
+                        readOnly={!isEditable}
+                        // FASE F2 — badge "Manual" si el operador editó local
+                        // (override aún no propagado al preview); si no, usar
+                        // el `mermaSource` que vino del backend.
+                        mermaSource={
+                          ov?.mermaPercentOverride != null
+                            ? "costLineOverride"
+                            : ((m as any)?.mermaSource ?? null)
+                        }
+                      />
+                      {/* UX 2026-06-13 — el % del ajuste global se unificó en el
+                          label de "Costo total" ("GLOBAL (−10%)"), así que el
+                          badge de % en "Merma / Ajuste" se oculta para evitar la
+                          doble lectura. Se MANTIENE solo para ajustes
+                          FIXED_AMOUNT (`globalCostPct == null`): ahí "Costo total"
+                          no emite subdetalle de %, así que el badge es el único
+                          indicador del ajuste en la fila. */}
+                      {globalCostPct == null && (
+                        <MetalGlobalAdjustmentBadge
+                          data={(meta as any)?.composition?.costAdjustment ?? null}
+                          currency={currency}
+                        />
+                      )}
+                    </div>
                   }
                   // Costo Total del componente para la línea de factura completa
                   // (= `lineCost × line.quantity`). Display puro — `lineCost`
@@ -885,6 +999,7 @@ export function SaleCompositionEditableGrid({
                   // factura", simétrico a la columna Venta.
                   saleValueValue={totalForRow(lineCost)}
                   saleValueText={fmt(totalForRow(lineCost))}
+                  globalCost={buildGlobalCost(totalForRow(lineCost))}
                   // FASE 12.10 — última columna ("Costo de Venta") debe
                   // mostrar el dato comercial, no el costo. Usamos
                   // `commercialCells.ventaLineaText` (passthrough de lineSale
@@ -932,7 +1047,7 @@ export function SaleCompositionEditableGrid({
             {metals.length > 0 && (
               <TypeGroupFooter
                 label="metales"
-                costTotal={sumGroupLineCost(metals, qtyLine)}
+                costTotal={groupCostPost(metals)}
                 saleTotal={sumGroupLineSaleDisplay(metals, {
                   qtyLine,
                   marginUnattributable: isMetalMarginUnattributable,
@@ -1046,8 +1161,6 @@ export function SaleCompositionEditableGrid({
                     ? "Margen unificado aplicado al total del artículo"
                     : commercialCells.margenTooltip}
                   ventaLineaText={commercialCells.ventaLineaText}
-                  globalAdjustmentText={lineGlobalAdj?.text ?? null}
-                  globalAdjustmentKind={lineGlobalAdj?.kind ?? null}
                   participacionText={commercialCells.participacionText}
                   // FASE 12.5 — etiquetas para sub-línea Cantidad + prefijo moneda.
                   // FASE 12.5b — preferimos `h.quantityUnit` del snapshot si
@@ -1136,6 +1249,7 @@ export function SaleCompositionEditableGrid({
                   // multiplicado por la cantidad del documento.
                   saleValueValue={totalForRow(lineCost)}
                   saleValueText={fmt(totalForRow(lineCost))}
+                  globalCost={buildGlobalCost(totalForRow(lineCost))}
                   // FASE 12.10 — Costo de Venta = lineSale (passthrough),
                   // no `lineCost × qty`. Si no hay venta → "—".
                   totalValue={saleForRow != null && qtyValue ? totalForRow(saleForRow) : null}
@@ -1162,7 +1276,7 @@ export function SaleCompositionEditableGrid({
             {hechuras.length > 0 && (
               <TypeGroupFooter
                 label="hechuras"
-                costTotal={sumGroupLineCost(hechuras, qtyLine)}
+                costTotal={groupCostPost(hechuras)}
                 saleTotal={sumGroupLineSaleDisplay(hechuras, {
                   qtyLine,
                   marginUnattributable: isHechuraMarginUnattributable,
@@ -1271,6 +1385,13 @@ export function SaleCompositionEditableGrid({
                 isHechuraMarginUnattributable,
                 unifiedFactor,
               );
+              // Margen del COMBO = margen REAL de lista/composición (NO contra el
+              // finalPrice ni contra el costo post-global). Usa `commercialCells`
+              // (= `resolveMarginForRowDisplay(costo, productSaleForRow)`), igual
+              // que cualquier fila normal. El monto monetario del margen también
+              // debe ir contra la VENTA de composición (no contra `comboSingleRow
+              // FinalSale`, que sí manda en la columna Venta total): por eso se
+              // pasa `marginSaleValueOverride` = venta de composición de la fila.
               return (
                 <Row
                   key={`product-${costLineId ?? idx}`}
@@ -1285,9 +1406,11 @@ export function SaleCompositionEditableGrid({
                   margenTooltip={isUnifiedSaleRow
                     ? "Margen unificado aplicado al total del artículo"
                     : commercialCells.margenTooltip}
+                  marginSaleValueOverride={comboSingleRowFinalSale != null
+                    && productSaleForRow != null && qtyValue
+                    ? totalForRow(productSaleForRow)
+                    : null}
                   ventaLineaText={commercialCells.ventaLineaText}
-                  globalAdjustmentText={lineGlobalAdj?.text ?? null}
-                  globalAdjustmentKind={lineGlobalAdj?.kind ?? null}
                   participacionText={commercialCells.participacionText}
                   quantityUnitLabel={(() => {
                     const code = (p as any)?.quantityUnit;
@@ -1354,8 +1477,16 @@ export function SaleCompositionEditableGrid({
                   }
                   saleValueValue={totalForRow(lineCost)}
                   saleValueText={fmt(totalForRow(lineCost))}
-                  totalValue={productSaleForRow != null && qtyValue ? totalForRow(productSaleForRow) : null}
-                  totalText={commercialCells.ventaLineaText}
+                  globalCost={buildGlobalCost(totalForRow(lineCost))}
+                  // COMBO de un solo componente → "Venta total" = finalPrice del
+                  // combo (post-ajuste). Multi-componente / normales: sale de la
+                  // fila (passthrough del motor, sin cambios).
+                  totalValue={comboSingleRowFinalSale != null
+                    ? comboSingleRowFinalSale
+                    : (productSaleForRow != null && qtyValue ? totalForRow(productSaleForRow) : null)}
+                  totalText={comboSingleRowFinalSale != null
+                    ? fmt(comboSingleRowFinalSale)
+                    : commercialCells.ventaLineaText}
                   totalTooltip={isUnifiedSaleRow ? "Valor unificado del artículo" : null}
                   manual={!!ov}
                   onResetRow={costLineId ? () => resetCostLine(costLineId) : () => {}}
@@ -1377,12 +1508,19 @@ export function SaleCompositionEditableGrid({
             {products.length > 0 && (
               <TypeGroupFooter
                 label="productos"
-                costTotal={sumGroupLineCost(products, qtyLine)}
-                saleTotal={sumGroupLineSaleDisplay(products, {
-                  qtyLine,
-                  marginUnattributable: isHechuraMarginUnattributable,
-                  unifiedFactor,
-                })}
+                costTotal={groupCostPost(products)}
+                // Venta total: para COMBO, el precio comercial real del combo
+                // (`COMBO_PRICE.meta.finalPrice` × qty) — el mismo valor que el
+                // input y el header, NO la suma legacy de la composición (Modelo
+                // B). Passthrough del motor. Para normales / combos sin step,
+                // se conserva la suma por composición de siempre.
+                saleTotal={comboPriceMeta != null
+                  ? comboPriceMeta.finalPrice * qtyForLine
+                  : sumGroupLineSaleDisplay(products, {
+                      qtyLine,
+                      marginUnattributable: isHechuraMarginUnattributable,
+                      unifiedFactor,
+                    })}
                 currency={currency}
                 quantityTotal={sumGroupQuantity(products, (it) =>
                   it?.quantity != null && Number.isFinite(Number(it.quantity))
@@ -1486,8 +1624,6 @@ export function SaleCompositionEditableGrid({
                     ? "Margen unificado aplicado al total del artículo"
                     : commercialCells.margenTooltip}
                   ventaLineaText={commercialCells.ventaLineaText}
-                  globalAdjustmentText={lineGlobalAdj?.text ?? null}
-                  globalAdjustmentKind={lineGlobalAdj?.kind ?? null}
                   participacionText={commercialCells.participacionText}
                   quantityUnitLabel={(() => {
                     const code = (s as any)?.quantityUnit;
@@ -1554,6 +1690,7 @@ export function SaleCompositionEditableGrid({
                   }
                   saleValueValue={totalForRow(lineCost)}
                   saleValueText={fmt(totalForRow(lineCost))}
+                  globalCost={buildGlobalCost(totalForRow(lineCost))}
                   totalValue={serviceSaleForRow != null && qtyValue ? totalForRow(serviceSaleForRow) : null}
                   totalText={commercialCells.ventaLineaText}
                   totalTooltip={isUnifiedSaleRow ? "Valor unificado del artículo" : null}
@@ -1576,7 +1713,7 @@ export function SaleCompositionEditableGrid({
             {services.length > 0 && (
               <TypeGroupFooter
                 label="servicios"
-                costTotal={sumGroupLineCost(services, qtyLine)}
+                costTotal={groupCostPost(services)}
                 saleTotal={sumGroupLineSaleDisplay(services, {
                   qtyLine,
                   marginUnattributable: isHechuraMarginUnattributable,
@@ -1605,16 +1742,18 @@ export function SaleCompositionEditableGrid({
           `PriceFlowCards` se mantiene en el árbol del repo por si otra
           pantalla lo necesita; acá no se renderea. */}
 
-      {/* FASE F20 — Sección compacta de detalle del Ajuste Global, debajo
-          de todos los grupos (METALES / HECHURAS / PRODUCTOS / SERVICIOS).
-          Display only — pasa por `composition.costAdjustment` + el
-          `totalComponents` calculado arriba (mismo monto que "Valor de
-          costo" del header). Si no hay ajuste, no renderea. */}
-      <CostAdjustmentDetailSection
-        data={(meta as any)?.composition?.costAdjustment ?? null}
-        costTotalFinal={showTotalSum ? totalComponents : null}
-        currency={currency}
-      />
+      {/* FASE F20 → REMOVIDO (solo render) 2026-06-13. El recuadro "Ajuste
+          global" (`CostAdjustmentDetailSection`) quedó REDUNDANTE: tras unificar
+          el costo POST ajuste, la composición ya muestra los valores ajustados
+          en TODAS sus superficies — costo por fila (`globalCost.after` + sub-
+          línea "±$ GLOBAL"), footers de grupo (`groupCostPost`), header "Costo
+          total línea" (POST) y los márgenes contra costo ajustado. El bloque
+          solo duplicaba datos ya visibles, así que se deja de renderizar.
+          NADA de lógica/datos se eliminó: `globalCostAdjData` / `globalCostPct`
+          siguen alimentando `buildGlobalCost` / `groupCostPost`, y el componente
+          `CostAdjustmentDetailSection` permanece en el repo por si otra pantalla
+          lo necesita — acá simplemente no se renderea. Sin impacto en
+          backend / preview / confirm / cálculos. */}
 
       {/* ── Bloque de ajustes globales (canal/cupón/envío) — fuera del flujo
             principal porque son ajustes doc-level, no de costo del artículo ── */}

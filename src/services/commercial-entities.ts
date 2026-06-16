@@ -120,6 +120,9 @@ export type EntityRow = {
   ivaCondition: string;
   avatarUrl: string;
   balanceType: BalanceType;
+  /** Preferencia canónica del cliente para el Balance Mode (R11.4). `null` =
+   *  "sin preferencia" → el cliente delega en la jerarquía. */
+  balanceMode?: BalanceType | null;
   priceListId: string | null;
   currencyId: string | null;
   sellerId: string | null;
@@ -303,6 +306,8 @@ export type EntityPayload = {
   documentNumber?: string;
   ivaCondition?: string;
   balanceType?: BalanceType;
+  /** Preferencia canónica del cliente (R11.4). `null` = "sin preferencia". */
+  balanceMode?: BalanceType | null;
   priceListId?: string | null;
   currencyId?: string | null;
   sellerId?: string | null;

@@ -91,8 +91,8 @@ describe("Etapa 2F-B — Footer UNIFICADO compacto", () => {
   });
 });
 
-describe("Etapa 2F-B — BREAKDOWN conserva el desglose estructurado", () => {
-  it("BREAKDOWN: SÍ muestra headers de sección + Base imponible", () => {
+describe("Detalle financiero PLANO en BREAKDOWN (paridad visual con unificado)", () => {
+  it("BREAKDOWN: detalle plano (sin headers de sección ni base imponible) pero CONSERVA la Composición (Hechura)", () => {
     const metals: BalanceBreakdownDTO["metals"] = [{
       metalParentId: "oro-fino", metalParentName: "Oro Fino",
       gramsOriginal: 1, purity: 1, gramsPure: 1,
@@ -110,8 +110,13 @@ describe("Etapa 2F-B — BREAKDOWN conserva el desglose estructurado", () => {
       />,
     );
     openDetail();
-    // En BREAKDOWN los headers de sección y la base imponible se conservan.
-    expect(screen.getByTestId("total-card-section-header-TAXES")).toBeTruthy();
-    expect(screen.getByTestId("total-card-taxable-base")).toBeTruthy();
+    // Layout PLANO (flatDetail): sin encabezados de sección ni "Base imponible",
+    // igual que el detalle financiero del UNIFICADO.
+    expect(screen.queryByTestId("total-card-section-header-TAXES")).toBeNull();
+    expect(screen.queryByTestId("total-card-taxable-base")).toBeNull();
+    // Pero el CONTENIDO propio del BREAKDOWN se conserva: la Composición
+    // (Hechura) aparece como fila plana (en UNIFICADO se oculta — ver test de
+    // arriba que la espera null).
+    expect(screen.getByTestId("total-card-component-HECHURA")).toBeTruthy();
   });
 });

@@ -19,6 +19,37 @@ El grid **no calcula precios**. Cada edición dispara un override que viaja al
 motor backend vía `applyCostLinePatch` y el preview siguiente trae los valores
 hidratados.
 
+## Contrato de columnas independientes (CRÍTICO — no romper)
+
+La tabla **NO** debe cerrar aritméticamente
+`Costo total + Margen = Venta total`. **El no-cierre es correcto y deliberado**
+(auditoría visual confirmada con el operador). Cada columna comunica un
+concepto distinto:
+
+| Columna | Qué muestra | Contra qué se calcula |
+|---|---|---|
+| **Costo total** | costo **POST** ajuste global del artículo (+ subdetalle `±$ GLOBAL`) | costo base ± ajuste global (display de composición) |
+| **Margen** | margen **real de lista/composición** (`commercialCells.margenPctText`) | costo **BASE** (`saleValueValue`) y venta de lista — **nunca** el costo POST-global ni el `finalPrice` |
+| **Venta total** | venta final/comercial (combo: `finalPrice`; resto: venta de composición) | passthrough del motor |
+| **AJUSTE GLOBAL** (bloque inferior) | resumen consolidado (Costo antes → ajuste → Costo total) | passthrough |
+
+Por eso, con ajuste global (o en combos), `Costo + Margen ≠ Venta`:
+- el **Costo total** muestra el POST mientras el **Margen** resta la BASE → la
+  diferencia es el **impacto del ajuste global**;
+- en **combos**, además, la Venta es `finalPrice` (con descuento de precio) y el
+  Margen usa la venta de composición.
+
+❌ **Prohibido** "arreglar" el margen recalculándolo contra el costo POST-global
+o el `finalPrice` para forzar el cierre — rompe el margen comercial real.
+
+- **Margen monetario contra BASE**: `parts/EditableRow.tsx` (celda Margen,
+  comentario ⚠️ CONTRATO).
+- **Combo de un componente**: el margen usa `marginSaleValueOverride` (venta de
+  composición) aunque la Venta total muestre `finalPrice`.
+- **Guard**: `__tests__/SaleCompositionEditableGrid.test.tsx` →
+  `describe("Contrato de columnas independientes — Costo + Margen ≠ Venta")`
+  blinda que el margen sea **invariante** al ajuste global.
+
 ## Estructura
 
 ```
@@ -129,7 +160,7 @@ las primitivas que afectan el render:
   `precioUnitVentaText`, `margenPctText`, `margenTone`, `margenTooltip`,
   `ventaLineaText`, `participacionText`, `formulaQuantity`,
   `formulaCostUnit`, `formulaSaleUnit`, `quantityUnitLabel`,
-  `currencyLabel`, `globalAdjustmentText`, `globalAdjustmentKind`.
+  `currencyLabel`, `marginSaleValueOverride`, `globalCost`.
 - NO compara: `Icon`, `onResetRow` (closures; el caller los recrea cada
   render pero su salida visual depende de los primitivos listados).
 - NO compara: `primary`, `secondary`, `quantityCell`, `unitValueCell`,

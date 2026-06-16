@@ -29,30 +29,17 @@
 // haciendo su propio fetch/save independiente. Pricing-engine intacto.
 // ============================================================================
 
-import React, { useMemo } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { Eye } from "lucide-react";
 import { TPSectionShell } from "../../components/ui/TPSectionShell";
 import { TPCard } from "../../components/ui/TPCard";
-import TPTabs from "../../components/ui/TPTabs";
-import NumericFormatSection from "./NumericFormatSection";
-import FieldFormatsSection from "./FieldFormatsSection";
+import { TPButton } from "../../components/ui/TPButton";
+import { toast } from "../../lib/toast";
+import NumericFormatSection, { type NumericFormatSectionHandle } from "./NumericFormatSection";
+import FieldFormatsSection, { type FieldFormatsSectionHandle } from "./FieldFormatsSection";
 import { useNumberFormat } from "../../context/NumberFormatContext";
 import { useFieldFormats } from "../../context/FieldFormatsContext";
-
-type TabValue = "numeros" | "campos";
-
-const TAB_OPTIONS: Array<{ value: TabValue; label: string }> = [
-  { value: "numeros", label: "Números" },
-  { value: "campos",  label: "Campos"  },
-];
-
-const VALID_TABS = new Set<TabValue>(["numeros", "campos"]);
-
-function normalizeTab(raw: string | null): TabValue {
-  if (raw && VALID_TABS.has(raw as TabValue)) return raw as TabValue;
-  return "numeros";
-}
 
 /** Bloque de vista previa global — siempre visible junto a la sección
  *  activa. Lee los contextos globales (`useNumberFormat`/`useFieldFormats`)
@@ -66,26 +53,33 @@ function GlobalPreviewCard(): React.ReactElement {
   const { fmt } = useNumberFormat();
   const { fmtDoc, fmtPhone } = useFieldFormats();
 
-  const items = useMemo(
+  // Agrupación VISUAL de los previews (espeja las tabs Números/Campos). Mismos
+  // valores, mismos helpers config-aware — solo mejora la jerarquía.
+  const numberItems = useMemo(
     () => [
-      { label: "Moneda",           value: fmt(1234567.89, "MONEY") },
-      { label: "Gramos",           value: `${fmt(12.55, "METAL_GRAMS")} g` },
-      { label: "Porcentaje",       value: `${fmt(15.25, "PERCENT")} %` },
-      { label: "Cantidad",         value: fmt(125, "QUANTITY") },
-      { label: "Tipo de cambio",   value: fmt(1250.123456, "FX_RATE") },
+      { label: "Moneda",         value: fmt(1234567.89, "MONEY") },
+      { label: "Gramos",         value: `${fmt(12.55, "METAL_GRAMS")} g` },
+      { label: "Porcentaje",     value: `${fmt(15.25, "PERCENT")} %` },
+      { label: "Cantidad",       value: fmt(125, "QUANTITY") },
+      { label: "Tipo de cambio", value: fmt(1250.123456, "FX_RATE") },
+    ],
+    [fmt],
+  );
+
+  const fieldItems = useMemo(
+    () => [
       { label: "Documento (CUIT)", value: fmtDoc("20290396728") || "20290396728" },
       { label: "Documento (DNI)",  value: fmtDoc("29039672")    || "29039672"    },
       { label: "Teléfono",         value: fmtPhone("+54", "1112345678") || "1112345678" },
     ],
-    [fmt, fmtDoc, fmtPhone],
+    [fmtDoc, fmtPhone],
   );
 
-  return (
-    <TPCard title="Vista previa global">
-      <p className="text-xs text-muted leading-relaxed mb-3">
-        Cómo se verá la información en facturas, listados y reportes con la
-        configuración actual.
-      </p>
+  const renderGroup = (title: string, items: Array<{ label: string; value: string }>) => (
+    <div>
+      <div className="text-[11px] font-semibold uppercase tracking-wide text-muted mb-1.5">
+        {title}
+      </div>
       <ul className="space-y-1.5">
         {items.map(({ label, value }) => (
           <li
@@ -99,20 +93,71 @@ function GlobalPreviewCard(): React.ReactElement {
           </li>
         ))}
       </ul>
+    </div>
+  );
+
+  return (
+    <TPCard title="Vista previa global">
+      <p className="text-xs text-muted leading-relaxed mb-3">
+        Cómo se verá la información en facturas, listados y reportes con la
+        configuración actual.
+      </p>
+      <div className="space-y-4">
+        {renderGroup("Números", numberItems)}
+        {renderGroup("Campos", fieldItems)}
+      </div>
     </TPCard>
   );
 }
 
 export default function VisualizacionFormatosPage() {
-  const [searchParams, setSearchParams] = useSearchParams();
-  const activeTab = normalizeTab(searchParams.get("tab"));
+  const [searchParams] = useSearchParams();
+  const numRef = useRef<NumericFormatSectionHandle>(null);
+  const fieldRef = useRef<FieldFormatsSectionHandle>(null);
+  const [saving, setSaving] = useState(false);
 
-  function changeTab(next: string) {
-    if (!VALID_TABS.has(next as TabValue)) return;
-    // `replace: true` para que el cambio de tab no acumule entradas en el
-    // history del browser (al volver atrás esperamos volver a Configuración,
-    // no rebotar entre tabs).
-    setSearchParams({ tab: next }, { replace: true });
+  // Compatibilidad ?tab=numeros|campos → ahora hace scroll suave al bloque
+  // correspondiente (ya no hay tabs visibles). El deep-link del hub sigue
+  // "aterrizando" en la sección correcta.
+  useEffect(() => {
+    const tab = searchParams.get("tab");
+    const id = tab === "campos" ? "campos" : tab === "numeros" ? "numeros" : null;
+    if (!id) return;
+    // pequeño defer para asegurar que las secciones ya estén montadas.
+    const t = window.setTimeout(() => {
+      document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }, 150);
+    return () => window.clearTimeout(t);
+  }, [searchParams]);
+
+  // Botón ÚNICO: coordina (U1) los DOS guardados independientes con
+  // dirty-tracking. Cada sección conserva su propio PATCH + validación (vía
+  // ref imperativa). Si una falla, la otra no pierde lo guardado: cada sección
+  // maneja su propio estado. Toda esta coordinación es UI-level — no toca
+  // servicios, contextos ni backend.
+  async function handleSaveAll() {
+    const numDirty = numRef.current?.isDirty() ?? false;
+    const fieldDirty = fieldRef.current?.isDirty() ?? false;
+
+    if (!numDirty && !fieldDirty) {
+      toast.info("No hay cambios para guardar.");
+      return;
+    }
+
+    setSaving(true);
+    try {
+      const results = await Promise.all([
+        numDirty   ? numRef.current!.save()   : Promise.resolve(true),
+        fieldDirty ? fieldRef.current!.save() : Promise.resolve(true),
+      ]);
+      if (results.every(Boolean)) {
+        toast.success("Cambios guardados.");
+      }
+      // Falla parcial: la sección que falló ya mostró su toast de error y
+      // conservó sus cambios; la otra quedó guardada.
+    } finally {
+      setSaving(false);
+    }
   }
 
   return (
@@ -121,27 +166,31 @@ export default function VisualizacionFormatosPage() {
       subtitle="Cómo TPTech muestra y formatea la información en todo el sistema. Los cambios son solo visuales; no afectan cálculos ni lo que se guarda en la base."
       icon={<Eye size={22} />}
     >
-      <div className="space-y-5">
-        {/* Tabs — pill-style, alineadas a la izquierda. */}
-        <TPTabs
-          options={TAB_OPTIONS}
-          value={activeTab}
-          onChange={changeTab}
-        />
-
-        {/* Grid: sección editora (izq) + preview global (der).
-            En mobile/tablet apilamos. */}
-        <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_320px] items-start">
-          <div className="min-w-0">
-            {activeTab === "numeros" && <NumericFormatSection />}
-            {activeTab === "campos"  && <FieldFormatsSection />}
+      <div className="space-y-6">
+        {/* Config (izq, aprovecha el ancho con cards en grilla) + preview global
+            sticky (der). En mobile apila: primero la config, el preview al final. */}
+        <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_clamp(320px,26vw,380px)] items-start">
+          <div className="min-w-0 space-y-8">
+            <section id="numeros" className="scroll-mt-6">
+              <NumericFormatSection ref={numRef} embedded />
+            </section>
+            <section id="campos" className="scroll-mt-6">
+              <FieldFormatsSection ref={fieldRef} embedded />
+            </section>
           </div>
 
-          {/* Preview sticky en desktop para que siempre esté visible
-              mientras el operador toca decimales/separadores/máscaras. */}
+          {/* Preview sticky en desktop, siempre visible mientras se editan
+              decimales / separadores / máscaras. */}
           <aside className="lg:sticky lg:top-4">
             <GlobalPreviewCard />
           </aside>
+        </div>
+
+        {/* Botón ÚNICO de guardado (U1). */}
+        <div className="flex justify-end border-t border-border/60 pt-4">
+          <TPButton variant="primary" onClick={handleSaveAll} loading={saving} disabled={saving}>
+            {saving ? "Guardando…" : "Guardar cambios"}
+          </TPButton>
         </div>
       </div>
     </TPSectionShell>

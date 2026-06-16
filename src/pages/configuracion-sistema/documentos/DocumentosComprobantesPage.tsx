@@ -39,7 +39,7 @@ import React from "react";
 import { useSearchParams } from "react-router-dom";
 import { FileText, Hash } from "lucide-react";
 import { TPSectionShell } from "../../../components/ui/TPSectionShell";
-import { TPCard } from "../../../components/ui/TPCard";
+import { HelpPopover } from "../../../components/ui/HelpPopover";
 import TPTabs from "../../../components/ui/TPTabs";
 import DocumentosHub from "./DocumentosHub";
 // Etapa B (2026-05-29) — Numeración funcional con CRUD admin sobre
@@ -83,30 +83,6 @@ const HELP_BY_TAB: Record<TabValue, { title: string; body: string }> = {
   },
 };
 
-function HelpCard({ tab }: { tab: TabValue }): React.ReactElement {
-  const active = HELP_BY_TAB[tab];
-  return (
-    <TPCard title="Ayuda rápida">
-      <div className="space-y-3 text-xs leading-relaxed">
-        <div>
-          <div className="font-semibold text-text mb-0.5">{active.title}</div>
-          <p className="text-muted">{active.body}</p>
-        </div>
-        <div className="border-t border-border/40 pt-2 space-y-1.5 text-muted">
-          {(Object.keys(HELP_BY_TAB) as TabValue[])
-            .filter((t) => t !== tab)
-            .map((t) => (
-              <div key={t}>
-                <span className="font-medium text-text/80">{HELP_BY_TAB[t].title}: </span>
-                <span>{HELP_BY_TAB[t].body}</span>
-              </div>
-            ))}
-        </div>
-      </div>
-    </TPCard>
-  );
-}
-
 // Etapa B (2026-05-29) — `NumeracionComingSoon` placeholder removido.
 // La tab Numeración ahora muestra `<NumeracionAdmin />` con CRUD
 // funcional contra `/api/receipt-series`.
@@ -146,6 +122,7 @@ export default function DocumentosComprobantesPage() {
       title="Documentos y comprobantes"
       subtitle="Cómo se ven y numeran los comprobantes que emite TPTech. Reúne plantillas y numeración en un solo lugar."
       icon={TAB_ICON[activeTab]}
+      right={<HelpPopover entries={HELP_BY_TAB} active={activeTab} />}
     >
       <div className="space-y-5">
         <TPTabs
@@ -154,15 +131,9 @@ export default function DocumentosComprobantesPage() {
           onChange={changeTab}
         />
 
-        <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_280px] items-start">
-          <div className="min-w-0">
-            {activeTab === "plantillas" && <DocumentosHub embedded />}
-            {activeTab === "numeracion" && <NumeracionAdmin />}
-          </div>
-
-          <aside className="lg:sticky lg:top-4">
-            <HelpCard tab={activeTab} />
-          </aside>
+        <div className="min-w-0">
+          {activeTab === "plantillas" && <DocumentosHub embedded />}
+          {activeTab === "numeracion" && <NumeracionAdmin />}
         </div>
       </div>
     </TPSectionShell>

@@ -55,6 +55,20 @@ export type TPSearchSelectProps<T> = {
   className?: string;
   /** Visual; reservado para futuro fetch async. */
   loading?: boolean;
+  /**
+   * Si se provee, se invoca con el query actual cada vez que el usuario tipea.
+   * Habilita búsqueda remota (server-side): el parent hace el fetch y actualiza
+   * `options`. No reemplaza el filtrado local salvo que además se pase
+   * `disableLocalFilter`.
+   */
+  onQueryChange?: (query: string) => void;
+  /**
+   * Cuando es `true`, NO se filtra `options` en memoria — se asume que ya
+   * vienen filtradas por el server (modo búsqueda remota). Evita ocultar
+   * resultados que matchean por campos no incluidos en
+   * `getOptionSearchableText` (ej. documento/código).
+   */
+  disableLocalFilter?: boolean;
 };
 
 export function TPSearchSelect<T>({
@@ -72,6 +86,8 @@ export function TPSearchSelect<T>({
   disabled = false,
   className,
   loading = false,
+  onQueryChange,
+  disableLocalFilter = false,
 }: TPSearchSelectProps<T>) {
   const [query, setQuery]     = useState("");
   const [isOpen, setIsOpen]   = useState(false);
@@ -125,11 +141,13 @@ export function TPSearchSelect<T>({
   }, [isOpen]);
 
   const filtered = useMemo(() => {
+    // Modo búsqueda remota: el server ya filtró; mostramos `options` tal cual.
+    if (disableLocalFilter) return options;
     const term = query.trim().toLowerCase();
     if (!term) return options;
     const getText = getOptionSearchableText ?? getOptionLabel;
     return options.filter((o) => getText(o).toLowerCase().includes(term));
-  }, [options, query, getOptionSearchableText, getOptionLabel]);
+  }, [options, query, getOptionSearchableText, getOptionLabel, disableLocalFilter]);
 
   useEffect(() => { setHighlight(0); }, [query, isOpen]);
 
@@ -190,7 +208,7 @@ export function TPSearchSelect<T>({
           ref={inputRef}
           type="text"
           value={isOpen ? query : (value ? getOptionLabel(value) : "")}
-          onChange={(e) => { setQuery(e.target.value); setIsOpen(true); }}
+          onChange={(e) => { setQuery(e.target.value); setIsOpen(true); onQueryChange?.(e.target.value); }}
           onClick={() => setIsOpen(true)}
           onKeyDown={onKeyDown}
           placeholder={placeholder}

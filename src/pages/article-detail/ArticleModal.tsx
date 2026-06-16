@@ -284,9 +284,10 @@ function articleToDraft(a: ArticleDetail | ArticleRow): Draft {
     salePrice:            a.salePrice != null ? parseFloat(a.salePrice) : null,
     useManualSalePrice:   (a as any).useManualSalePrice ?? false,
     mermaPercent:         a.mermaPercent != null ? parseFloat(a.mermaPercent) : null,
-    manualAdjustmentKind:   (a.manualAdjustmentKind as "" | "BONUS" | "SURCHARGE") ?? "",
-    manualAdjustmentType:   (a.manualAdjustmentType as "" | "PERCENTAGE" | "FIXED_AMOUNT") ?? "",
-    manualAdjustmentValue:  a.manualAdjustmentValue != null ? parseFloat(a.manualAdjustmentValue) : null,
+    // Editor del ajuste (compartido "Ajuste de costo"/"Ajuste del combo"). Para
+    // COMBO el valor canónico vive en `comboAdjustment*`; lo cargamos al editor
+    // (con fallback al `manualAdjustment*` legacy). Normal: igual que antes.
+    ...buildAdjustmentEditorState(a),
     manualTaxIds:           a.manualTaxIds ?? [],
     reorderPoint:         a.reorderPoint != null ? parseFloat(a.reorderPoint) : null,
     minSaleQuantity:      a.minSaleQuantity != null ? parseFloat(a.minSaleQuantity) : null,
@@ -328,6 +329,92 @@ function normalizeCostLines(lines: any[]): CostLine[] {
 
 // AdjTypeButton ahora vive en src/components/ui/TPAdjTypeButton.tsx
 
+// ── Mapeo del "Ajuste del combo" entre el editor (UI) y el campo canónico ───
+// El control visual comparte el vocabulario BONUS/SURCHARGE + PERCENTAGE/
+// FIXED_AMOUNT entre "Ajuste de costo" (normal → `manualAdjustment*`) y
+// "Ajuste del combo" (combo → `comboAdjustmentKind/Value`, enum del motor).
+// El mapeo ocurre SOLO en los bordes (carga/guardado). NO toca el control, ni
+// el pricing-engine, ni los artículos normales.
+type EditorAdjKind = "" | "BONUS" | "SURCHARGE";
+type EditorAdjType = "" | "PERCENTAGE" | "FIXED_AMOUNT";
+type ComboAdjKind  = "NONE" | "DISCOUNT_PERCENT" | "DISCOUNT_FIXED" | "SURCHARGE_PERCENT";
+
+/** Editor (BONUS/SURCHARGE + tipo) → `comboAdjustmentKind` del combo. */
+export function editorToComboAdjustmentKind(kind: EditorAdjKind, type: EditorAdjType): ComboAdjKind {
+  if (kind === "") return "NONE";
+  if (kind === "BONUS") return (type || "PERCENTAGE") === "FIXED_AMOUNT" ? "DISCOUNT_FIXED" : "DISCOUNT_PERCENT";
+  // SURCHARGE: el combo solo soporta recargo porcentual.
+  return "SURCHARGE_PERCENT";
+}
+
+/** `comboAdjustmentKind` → editor (BONUS/SURCHARGE + tipo) para mostrar en el control. */
+export function comboAdjustmentKindToEditor(kind: string | null | undefined): { kind: EditorAdjKind; type: EditorAdjType } {
+  switch (kind) {
+    case "DISCOUNT_PERCENT":  return { kind: "BONUS",     type: "PERCENTAGE" };
+    case "DISCOUNT_FIXED":    return { kind: "BONUS",     type: "FIXED_AMOUNT" };
+    case "SURCHARGE_PERCENT": return { kind: "SURCHARGE", type: "PERCENTAGE" };
+    default:                  return { kind: "",          type: "" };
+  }
+}
+
+/** Carga (display): qué muestra el editor del ajuste. COMBO lee `comboAdjustment*`
+ *  (con fallback al `manualAdjustment*` legacy si el combo aún no fue migrado, para
+ *  no ocultar el valor que el operador cargó). Normal: el `manualAdjustment*` de costo. */
+export function buildAdjustmentEditorState(a: {
+  commercialMode?: string | null;
+  comboAdjustmentKind?: string | null;
+  comboAdjustmentValue?: string | number | null;
+  manualAdjustmentKind?: string | null;
+  manualAdjustmentType?: string | null;
+  manualAdjustmentValue?: string | number | null;
+}): { manualAdjustmentKind: EditorAdjKind; manualAdjustmentType: EditorAdjType; manualAdjustmentValue: number | null } {
+  const toNum = (v: string | number | null | undefined): number | null =>
+    v == null ? null : typeof v === "number" ? v : (Number.isFinite(parseFloat(v)) ? parseFloat(v) : null);
+  const legacy = {
+    manualAdjustmentKind:  (a.manualAdjustmentKind as EditorAdjKind) ?? "",
+    manualAdjustmentType:  (a.manualAdjustmentType as EditorAdjType) ?? "",
+    manualAdjustmentValue: toNum(a.manualAdjustmentValue),
+  };
+  if (a.commercialMode === "COMBO_COMMERCIAL") {
+    const ck = a.comboAdjustmentKind;
+    if (ck && ck !== "NONE") {
+      const m = comboAdjustmentKindToEditor(ck);
+      return { manualAdjustmentKind: m.kind, manualAdjustmentType: m.type, manualAdjustmentValue: toNum(a.comboAdjustmentValue) };
+    }
+    // combo sin `comboAdjustment*` (legacy): mostramos el `manualAdjustment*` cargado.
+  }
+  return legacy;
+}
+
+/** Guardado: a dónde persiste el ajuste del editor. COMBO → `comboAdjustment*`
+ *  (precio de venta del combo, lo usa el motor) y NO reutiliza el ajuste de costo.
+ *  Normal → `manualAdjustment*` (ajuste de costo), combo en NONE (comportamiento previo). */
+export function buildAdjustmentPayload(d: Draft): {
+  comboAdjustmentKind: ComboAdjKind;
+  comboAdjustmentValue: number | null;
+  manualAdjustmentKind: string;
+  manualAdjustmentType: string;
+  manualAdjustmentValue: number | null;
+} {
+  if (d.commercialMode === "COMBO_COMMERCIAL") {
+    const comboKind = editorToComboAdjustmentKind(d.manualAdjustmentKind, d.manualAdjustmentType);
+    return {
+      comboAdjustmentKind:   comboKind,
+      comboAdjustmentValue:  comboKind === "NONE" ? null : d.manualAdjustmentValue,
+      manualAdjustmentKind:  "",
+      manualAdjustmentType:  "",
+      manualAdjustmentValue: null,
+    };
+  }
+  return {
+    comboAdjustmentKind:   "NONE",
+    comboAdjustmentValue:  null,
+    manualAdjustmentKind:  d.manualAdjustmentKind,
+    manualAdjustmentType:  d.manualAdjustmentType,
+    manualAdjustmentValue: d.manualAdjustmentValue,
+  };
+}
+
 function draftToPayload(d: Draft): ArticlePayload {
   const isCombo = d.commercialMode === "COMBO_COMMERCIAL";
 
@@ -365,14 +452,11 @@ function draftToPayload(d: Draft): ArticlePayload {
     salePrice:              d.salePrice,
     useManualSalePrice:     d.useManualSalePrice,
     mermaPercent:           d.mermaPercent,
-    // Combo (solo el modo; ya no enviamos ajuste combo: pricing usa flujo estándar).
     commercialMode:         d.commercialMode,
-    comboAdjustmentKind:    "NONE",
-    comboAdjustmentValue:   null,
-    // Ajuste global (se aplica sobre la suma de ArticleCostLine en el backend)
-    manualAdjustmentKind:   d.manualAdjustmentKind,
-    manualAdjustmentType:   d.manualAdjustmentType,
-    manualAdjustmentValue:  d.manualAdjustmentValue,
+    // COMBO: el "Ajuste del combo" persiste en `comboAdjustment*` (lo usa el
+    // pricing-engine para el precio de venta del combo). NORMAL: el control es
+    // "Ajuste de costo" y persiste en `manualAdjustment*`. El motor no se toca.
+    ...buildAdjustmentPayload(d),
     manualTaxIds:           d.manualTaxIds,
     reorderPoint:           d.reorderPoint,
     minSaleQuantity:        d.minSaleQuantity,
@@ -1707,6 +1791,7 @@ export default function ArticleModal({
         manualCurrencyId: r.manualCurrencyId ?? null,
         mainImageUrl: r.mainImageUrl ?? "",
         categoryName: r.category?.name ?? undefined,
+        commercialMode: r.commercialMode ?? "NORMAL",
       }));
       const mappedSvcs: ProductItem[] = svcRows.map((r: any) => ({
         id: r.id, name: r.name, sku: r.sku || "", stock: toStock(r),
@@ -1715,6 +1800,7 @@ export default function ArticleModal({
         manualCurrencyId: r.manualCurrencyId ?? null,
         mainImageUrl: r.mainImageUrl ?? "",
         categoryName: r.category?.name ?? undefined,
+        commercialMode: r.commercialMode ?? "NORMAL",
       }));
       productItemsRef.current  = mappedProds; // mirror síncrono para fetchArticle
       serviceItemsRef.current  = mappedSvcs;

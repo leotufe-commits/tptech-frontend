@@ -1,5 +1,5 @@
 // src/pages/configuracion-sistema/ConfiguracionSistemaCorreos.tsx
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { ArrowLeft, Pencil, Save, X } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 
@@ -26,8 +26,17 @@ export default function ConfiguracionSistemaCorreos() {
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
 
+  // Guard anti-pisada: mientras el usuario está editando, un refresh del
+  // contexto `me` (ej. cambio de avatar/logo en otra parte) NO debe rehidratar
+  // y borrar lo que está escribiendo. Mismo criterio que usePerfilJoyeria.
+  const editingRef = useRef(false);
+  useEffect(() => {
+    editingRef.current = editing;
+  }, [editing]);
+
   // Hidratar desde el contexto de autenticación
   useEffect(() => {
+    if (editingRef.current) return; // editando: no pisar cambios sin guardar
     const j = pickJewelryFromMe(me);
     if (!j) return;
     setServerJewelry(j as JewelryProfile);

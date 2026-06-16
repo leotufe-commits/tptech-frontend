@@ -180,6 +180,13 @@ export function buildClientPatches(input: {
   };
 
   const pricingPatch: Partial<SalesInvoice> = {
+    // Cambiar de CLIENTE vuelve el modo de saldo a AUTOMÁTICO: se descarta el
+    // override manual del footer para que el modo del NUEVO cliente (o, si no
+    // define, su lista / tenant) resuelva por jerarquía y se propague a footer
+    // + líneas. (Un ajuste manual BREAKDOWN sigue forzando BREAKDOWN en
+    // `buildSalePreviewPayload` — sin riesgo de 400.) Viaja en `pricingPatch`
+    // para aplicarse en los flujos de aplicar/recalcular, NO en el congelado.
+    balanceModeOverride: null,
     // T15 — `priceListId` viaja SIEMPRE cuando el caller resolvió un valor
     // (string), aunque sea "" (sin lista). El merge `{...cur, ...pricingPatch}`
     // necesita PISAR `cur.priceListId` para no arrastrar la lista del

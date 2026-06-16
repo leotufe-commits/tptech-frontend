@@ -12,6 +12,7 @@ import TPComboFixed from "../../components/ui/TPComboFixed";
 import TPNumberInput from "../../components/ui/TPNumberInput";
 import TPTextarea from "../../components/ui/TPTextarea";
 import { TPCard } from "../../components/ui/TPCard";
+import { TPCheckbox } from "../../components/ui/TPCheckbox";
 import { Modal } from "../../components/ui/Modal";
 import ConfirmDeleteDialog from "../../components/ui/ConfirmDeleteDialog";
 import TPDateRangeInline, { type TPDateRangeValue } from "../../components/ui/TPDateRangeInline";
@@ -887,7 +888,17 @@ function PriceListFormModal({
       NEAREST: "al", UP: "hacia arriba al", DOWN: "hacia abajo al",
     };
 
-    function buildLine(mode: RoundingMode, dir: RoundingDirection): { detail: string; example: string } | null {
+    // `kind` define la UNIDAD del ejemplo para que sea fácil de interpretar:
+    //   · "metal" → gramos (ej: 1,37 g → 1,40 g)
+    //   · "money" → pesos  (ej: $12.345,67 → $12.350)
+    // El resultado SIEMPRE se computa con el modo + dirección elegidos → el
+    // ejemplo queda sincronizado con la configuración. Display only (no afecta
+    // cálculos: las muestras son ilustrativas).
+    function buildLine(
+      mode: RoundingMode,
+      dir: RoundingDirection,
+      kind: "metal" | "money",
+    ): { detail: string; example: string } | null {
       if (mode === "NONE") return null;
       const detail = `${DIR[dir]} ${PRECISION[mode]}`;
 
@@ -899,25 +910,39 @@ function PriceListFormModal({
         if (mode === "HUNDRED") return dir === "UP" ? Math.ceil(n / 100) * 100 : dir === "DOWN" ? Math.floor(n / 100) * 100 : Math.round(n / 100) * 100;
         return n;
       };
-      const samples: Record<RoundingMode, number> = { NONE: 0, INTEGER: 12.6, DECIMAL_1: 12.34, DECIMAL_2: 12.349, TEN: 1472, HUNDRED: 1472 };
-      const raw = samples[mode];
+
+      // Números cotidianos, elegidos para que el "antes → después" sea SIEMPRE
+      // visible y no ambiguo (mostramos el original con suficiente detalle).
+      const METAL_SAMPLES: Record<RoundingMode, number> = { NONE: 0, INTEGER: 1.6, DECIMAL_1: 1.37, DECIMAL_2: 1.375, TEN: 14, HUNDRED: 137 };
+      const MONEY_SAMPLES: Record<RoundingMode, number> = { NONE: 0, INTEGER: 12345.67, DECIMAL_1: 12345.67, DECIMAL_2: 12345.678, TEN: 12345.67, HUNDRED: 12345.67 };
+      const raw = (kind === "metal" ? METAL_SAMPLES : MONEY_SAMPLES)[mode];
       const rounded = applyRound(raw);
-      const fmtN = (v: number) =>
-        mode === "INTEGER" || mode === "TEN" || mode === "HUNDRED"
-          ? v.toLocaleString("es-AR")
-          : v.toLocaleString("es-AR", { minimumFractionDigits: mode === "DECIMAL_1" ? 1 : 2, maximumFractionDigits: mode === "DECIMAL_1" ? 1 : 2 });
-      return { detail, example: `${fmtN(raw)} → ${fmtN(rounded)}` };
+
+      const fmt = (v: number, decimals: number) =>
+        v.toLocaleString("es-AR", { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
+
+      if (kind === "metal") {
+        // Gramos: mismos decimales antes/después para leer claro (1,37 g → 1,40 g).
+        const dec: Record<RoundingMode, number> = { NONE: 0, INTEGER: 1, DECIMAL_1: 2, DECIMAL_2: 3, TEN: 0, HUNDRED: 0 };
+        const d = dec[mode];
+        return { detail, example: `${fmt(raw, d)} g → ${fmt(rounded, d)} g` };
+      }
+
+      // Pesos: el original con centavos; el resultado con la precisión del modo.
+      const rawDec = mode === "DECIMAL_2" ? 3 : 2;
+      const resDec: Record<RoundingMode, number> = { NONE: 0, INTEGER: 0, DECIMAL_1: 1, DECIMAL_2: 2, TEN: 0, HUNDRED: 0 };
+      return { detail, example: `$${fmt(raw, rawDec)} → $${fmt(rounded, resDec[mode])}` };
     }
 
     if (draft.mode !== "METAL_HECHURA") {
-      const l = buildLine(draft.roundingModeHechura, draft.roundingDirectionHechura);
+      const l = buildLine(draft.roundingModeHechura, draft.roundingDirectionHechura, "money");
       return l ? [{ label: "Precio final", ...l }] : null;
     }
 
     const lines: { label: string; detail: string; example: string }[] = [];
-    const m = buildLine(draft.roundingMode, draft.roundingDirection);
+    const m = buildLine(draft.roundingMode, draft.roundingDirection, "metal");
     if (m) lines.push({ label: "Metal", ...m });
-    const h = buildLine(draft.roundingModeHechura, draft.roundingDirectionHechura);
+    const h = buildLine(draft.roundingModeHechura, draft.roundingDirectionHechura, "money");
     if (h) lines.push({ label: "Hechura", ...h });
     return lines.length > 0 ? lines : null;
   })();
@@ -1099,8 +1124,11 @@ function PriceListFormModal({
             {/* ── Bloque "Por artículo / línea" ─────────────────────────── */}
             {(roundingScope === "LINE" || roundingScope === "BOTH") && (
               <div className={cn(
+                // UX (2026-06-14): sin fondo coloreado — borde neutro para
+                // unificar con el resto del modal. Se mantiene borde, rounded,
+                // padding y espaciado; solo se quita el relleno de color.
                 "space-y-4 rounded-lg border p-3",
-                "border-primary/40 bg-primary/10",
+                "border-border",
               )}>
                 {roundingScope === "BOTH" && (
                   <p className="text-[11px] font-semibold uppercase tracking-wide text-muted">
@@ -1131,34 +1159,12 @@ function PriceListFormModal({
                     cambiar a "Por línea" si necesita esa granularidad. */}
                 {roundingScope === "LINE" && hasRounding && (
                   <>
-                    {/* Etapa A — Cierre UX (POLICY §R-Rounding-12):
-                        Cuando `roundingTarget === "METAL"` (modo desglosado),
-                        el motor aplica el rounding INMEDIATAMENTE sobre cada
-                        componente (metal y hechura por separado) — no usa la
-                        configuración `applyOn`. Deshabilitamos el select para
-                        evitar que el operador asuma que las opciones
-                        PRICE/NET/TOTAL modifican el comportamiento.
-                        Conceptualmente: en desglosado no hay "momento" de
-                        aplicación porque opera sobre componentes, no sobre
-                        un total agregado. */}
-                    <TPField label="Aplicar sobre">
-                      <TPComboFixed
-                        value={draft.roundingApplyOn}
-                        onChange={(v) => set("roundingApplyOn", v as RoundingApplyOn)}
-                        disabled={draft.roundingTarget === "METAL"}
-                        options={[
-                          { value: "TOTAL", label: "Total final (con impuestos)" },
-                          { value: "NET",   label: "Sin impuestos (después de descuentos)" },
-                          { value: "PRICE", label: "Precio de lista (antes de descuentos)" },
-                        ]}
-                      />
-                      {draft.roundingTarget === "METAL" && (
-                        <p className="text-[10px] text-muted/70 italic mt-1">
-                          En modo desglosado el redondeo se aplica directamente sobre cada componente
-                          (metal y hechura). Las opciones de "Aplicar sobre" no aplican en este modo.
-                        </p>
-                      )}
-                    </TPField>
+                    {/* UX (2026-06-14): el selector "Aplicar sobre" se OCULTA
+                        para reducir ruido visual. Se deja de renderizar
+                        únicamente la UI — la lógica permanece intacta:
+                        `draft.roundingApplyOn` sigue en el estado (default
+                        "TOTAL" en alta, valor persistido en edición), `set()` y
+                        el payload/contrato no cambian. NO tocar la lógica. */}
 
                     {/* Modo unificado (MARGIN_TOTAL / COST_PER_GRAM) — bloque único.
                         Bindeado a roundingModeHechura para que al pasar a desglosado
@@ -1200,69 +1206,17 @@ function PriceListFormModal({
                     {/* Modo desglosado (METAL_HECHURA) — bloques Metal + Hechura. */}
                     {draft.mode === "METAL_HECHURA" && (
                       <div className="space-y-3">
-                        {/* C10 — Toggle dominio del metal (POLICY §R-Rounding-14).
-                            Solo visible en DESGLOSADO. Aplica únicamente al
-                            redondeo del METAL; la hechura siempre es monetaria
-                            por contrato canónico (no se ofrece toggle). */}
-                        <div
-                          className="space-y-2 rounded-lg border border-primary/30 bg-primary/5 px-3 py-2.5"
-                          data-testid="commercial-rounding-domain-block"
-                        >
-                          <p className="text-xs font-semibold text-muted uppercase tracking-wide">
-                            Dominio del redondeo del metal
-                          </p>
-                          <div
-                            role="radiogroup"
-                            aria-label="Dominio del redondeo del metal"
-                            className="grid grid-cols-1 md:grid-cols-2 gap-2"
-                          >
-                            {([
-                              {
-                                value: "PHYSICAL" as const,
-                                label: "Físico (gramos)",
-                                caption:
-                                  "Redondea gramos por metal padre (Oro Fino, Plata…) y suma su equivalente $ al total. Contrato canónico TPTech.",
-                              },
-                              {
-                                value: "MONETARY" as const,
-                                label: "Monetario (legacy)",
-                                caption:
-                                  "Redondea directamente el subtotal $ del metal por línea. Compat hacia atrás — no recomendado para listas nuevas.",
-                              },
-                            ]).map((opt) => {
-                              const active =
-                                draft.commercialRoundingMetalDomain === opt.value;
-                              return (
-                                <button
-                                  key={opt.value}
-                                  type="button"
-                                  role="radio"
-                                  aria-checked={active}
-                                  data-testid={`commercial-rounding-domain-${opt.value.toLowerCase()}`}
-                                  onClick={() =>
-                                    set("commercialRoundingMetalDomain", opt.value)
-                                  }
-                                  className={cn(
-                                    "flex flex-col items-start gap-1 rounded-md border px-3 py-2 text-left text-xs transition",
-                                    active
-                                      ? "border-primary bg-primary/15 text-primary"
-                                      : "border-border bg-card text-text hover:bg-surface2/40",
-                                  )}
-                                >
-                                  <span className="font-semibold">{opt.label}</span>
-                                  <span
-                                    className={cn(
-                                      "text-[10px] leading-snug",
-                                      active ? "text-primary/80" : "text-muted",
-                                    )}
-                                  >
-                                    {opt.caption}
-                                  </span>
-                                </button>
-                              );
-                            })}
-                          </div>
-                        </div>
+                        {/* C10 — Dominio del redondeo del metal (POLICY §R-Rounding-14).
+                            UX (2026-06-14): el selector se OCULTA para simplificar
+                            la configuración. El comportamiento por defecto es
+                            "Físico (gramos)" (canónico) — ver `EMPTY_DRAFT`
+                            (`commercialRoundingMetalDomain: "PHYSICAL"`) y la
+                            hidratación en `rowToDraft` (DESGLOSADO → PHYSICAL).
+                            NADA se eliminó: el estado, el modo legacy "MONETARY",
+                            la hidratación de listas legacy y `draftToPayload`
+                            permanecen intactos — solo dejamos de mostrar la
+                            elección. Las listas legacy que ya tengan MONETARY
+                            conservan su valor al editarse (no se fuerza conversión). */}
 
                         {/* Metal */}
                         <div className="space-y-3">
@@ -1368,8 +1322,12 @@ function PriceListFormModal({
               const fmtN         = (v: number) => v.toLocaleString("es-AR");
               return (
                 <div className={cn(
+                  // UX (2026-06-14): sin fondo coloreado — borde neutro para
+                  // unificar con el resto del modal. Se mantienen título, badge
+                  // Activo, descripción, ejemplo, link, borde, rounded, padding
+                  // y espaciado; solo se quita el relleno de color.
                   "space-y-2 rounded-lg border p-3",
-                  "border-primary/40 bg-primary/10",
+                  "border-border",
                 )}>
                   <div className="flex items-baseline justify-between gap-2">
                     <p className="text-[11px] font-semibold uppercase tracking-wide text-muted">
@@ -1442,27 +1400,25 @@ function PriceListFormModal({
         {/* D. Vigencia */}
         <TPCard title="Vigencia">
           <div className="space-y-3">
-            <label className="flex items-center gap-2 cursor-pointer select-none">
-              <input
-                type="checkbox"
-                checked={draft.vigenciaActiva}
-                onChange={(e) => {
-                  const active = e.target.checked;
-                  set("vigenciaActiva", active);
-                  if (active) {
-                    const today = new Date();
-                    today.setHours(0, 0, 0, 0);
-                    const to = new Date(today);
-                    to.setDate(to.getDate() + 30);
-                    set("validityRange", { from: today, to });
-                  } else {
-                    set("validityRange", { from: null, to: null });
-                  }
-                }}
-                className="h-4 w-4 rounded border-border accent-primary"
-              />
-              <span className="text-sm text-text">Activar vigencia</span>
-            </label>
+            {/* UX (2026-06-14): checkbox unificado al estándar TPCheckbox.
+                Misma lógica/comportamiento (toggle + inicialización de fechas);
+                solo cambia la presentación. */}
+            <TPCheckbox
+              checked={draft.vigenciaActiva}
+              onChange={(active) => {
+                set("vigenciaActiva", active);
+                if (active) {
+                  const today = new Date();
+                  today.setHours(0, 0, 0, 0);
+                  const to = new Date(today);
+                  to.setDate(to.getDate() + 30);
+                  set("validityRange", { from: today, to });
+                } else {
+                  set("validityRange", { from: null, to: null });
+                }
+              }}
+              label="Activar vigencia"
+            />
 
             <div className="w-full md:w-auto md:min-w-[320px]">
               <TPDateRangeInline

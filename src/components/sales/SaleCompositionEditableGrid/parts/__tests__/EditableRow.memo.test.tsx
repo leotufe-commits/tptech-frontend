@@ -2,14 +2,13 @@
 // =============================================================================
 // P1 #7 (Etapa E2) — test reproductor del bug "memo comparator incompleto".
 //
-// Antes del fix: el `React.memo` de `Row` NO comparaba 4 props primitivas
-// que afectan el render directamente (`quantityUnitLabel`, `currencyLabel`,
-// `globalAdjustmentText`, `globalAdjustmentKind`). Si solo esas props
-// cambiaban entre dos renders del padre, React.memo devolvía "equal" y
-// saltaba el re-render → la UI quedaba stale con el valor anterior.
+// Antes del fix: el `React.memo` de `Row` NO comparaba props primitivas
+// que afectan el render directamente (`quantityUnitLabel`, `currencyLabel`).
+// Si solo esas props cambiaban entre dos renders del padre, React.memo
+// devolvía "equal" y saltaba el re-render → la UI quedaba stale.
 //
-// Después del fix: el comparator incluye explícitamente las 4 → cualquier
-// cambio en cualquiera de ellas dispara el re-render y la UI se actualiza.
+// Después del fix: el comparator las incluye explícitamente → cualquier
+// cambio dispara el re-render y la UI se actualiza.
 //
 // Estrategia del test: renderizamos con un set de props, hacemos `rerender`
 // cambiando SOLO la prop bajo prueba (el resto permanece byte-a-byte igual)
@@ -64,48 +63,11 @@ describe("EditableRow — comparator del React.memo (P1 #7)", () => {
     expect(container.textContent).not.toContain("ARS");
   });
 
-  it("rerenderea cuando SOLO cambia globalAdjustmentText", () => {
-    const propsWithAdj = {
-      ...baseProps,
-      // Necesitamos saleValueText/saleValueValue para que el bloque "Costo
-      // Total" se renderice y dentro de él aparezca la sub-línea de ajuste
-      // global (el bloque solo se monta cuando hay valor visible arriba).
-      saleValueValue: 100,
-      saleValueText:  "$ 100",
-      globalAdjustmentKind: "BONUS" as const,
-    };
-    const { container, rerender } = render(
-      <Row {...propsWithAdj} globalAdjustmentText="Aj. global −5%" />
-    );
-    expect(container.textContent).toContain("Aj. global −5%");
-
-    rerender(<Row {...propsWithAdj} globalAdjustmentText="Aj. global +10%" />);
-
-    expect(container.textContent).toContain("Aj. global +10%");
-    expect(container.textContent).not.toContain("Aj. global −5%");
-  });
-
-  it("rerenderea cuando SOLO cambia globalAdjustmentKind (cambia el color del texto)", () => {
-    const propsWithAdj = {
-      ...baseProps,
-      saleValueValue: 100,
-      saleValueText:  "$ 100",
-      globalAdjustmentText: "Aj. global −5%",
-    };
-    const { container, rerender } = render(
-      <Row {...propsWithAdj} globalAdjustmentKind="BONUS" />
-    );
-    const adjEl1 = container.querySelector('[title*="Ajuste global"]');
-    expect(adjEl1).not.toBeNull();
-    expect(adjEl1!.className).toMatch(/emerald/);
-
-    rerender(<Row {...propsWithAdj} globalAdjustmentKind="SURCHARGE" />);
-
-    const adjEl2 = container.querySelector('[title*="Ajuste global"]');
-    expect(adjEl2).not.toBeNull();
-    expect(adjEl2!.className).toMatch(/amber/);
-    expect(adjEl2!.className).not.toMatch(/emerald/);
-  });
+  // NOTA: los tests de `globalAdjustmentText`/`globalAdjustmentKind` se
+  // eliminaron: ese render (sub-línea "Aj. global −X%" en la celda Costo total,
+  // FASE 12.11) fue removido por contrato visual (la columna Costo total
+  // muestra SOLO costo; el ajuste global vive en el bloque "AJUSTE GLOBAL").
+  // Las props ya no existen en `Row`.
 
   it("regresión: NO rerenderea cuando las props NO cambian (memo sigue trabajando)", () => {
     // Verificamos que el fix NO rompió el opt-out del memo. Para detectar

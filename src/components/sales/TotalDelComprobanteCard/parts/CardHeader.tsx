@@ -37,6 +37,7 @@ export interface CardHeaderProps {
 export function CardHeader({
   totalDocument,
   currencyCode,
+  mode,
   channelName,
   priceListName,
   modeSelector,
@@ -67,7 +68,10 @@ export function CardHeader({
             override `!important` es necesario porque `totalGrand` declara su
             propio `text-base` y ambas clases coexisten en `className`. */}
         <span
-          className={`${vt.text.totalGrand} ${vt.colors.primary} !text-3xl sm:!text-4xl leading-tight`}
+          // Criterio único de énfasis por modo (`vt.emphasisFor`): en DESGLOSADO
+          // el total baja a secundario (la jerarquía pasa a METALES y Monetario);
+          // en UNIFICADO es el protagonista (grande, acento primary).
+          className={`${vt.emphasisFor(mode, "documentTotal")} tabular-nums`}
           data-testid="total-card-amount"
         >
           {moneyPrefix}

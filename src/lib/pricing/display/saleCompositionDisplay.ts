@@ -524,6 +524,43 @@ export function resolveLineMonetaryDisplay(args: {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// isAmountSignificantInBase — decide si un monto monetario es "significativo"
+// (no ~0) de forma INVARIANTE a la moneda de display. La decisión se toma sobre
+// el equivalente en moneda BASE del tenant, para que el detalle comercial
+// muestre EXACTAMENTE las mismas filas en la moneda base y en cualquier otra
+// moneda.
+//
+// Problema que resuelve: los cortes de visibilidad usaban un umbral absoluto
+// (`Math.abs(x) > 0.005`) sobre montos ya expresados en la moneda mostrada.
+// Cuando la moneda del documento vale más que la base (ej. base ARS, doc USD),
+// una fila de pocos pesos (visible en ARS) caía bajo medio centavo de USD y
+// DESAPARECÍA → el "ver detalle" se veía recortado en moneda no-base.
+//
+//   `amount`      monto tal como vive en el draft/preview (en la moneda en que
+//                 el frontend lo mostrará).
+//   `baseFactor`  multiplicador que lleva ese `amount` a moneda base (1 cuando
+//                 la factura está en moneda base). Lo provee el caller ya
+//                 resuelto (= documentFxRate / displayRate en Factura).
+//   `baseEpsilon` umbral en moneda base (default 0.005 = medio centavo).
+//
+// Display puro — cero matemática comercial: solo escala un umbral de
+// visibilidad, NUNCA altera un importe mostrado. Con `baseFactor = 1` (moneda
+// base) el comportamiento es idéntico al umbral histórico.
+// ─────────────────────────────────────────────────────────────────────────────
+export function isAmountSignificantInBase(
+  amount: number | null | undefined,
+  baseFactor: number = 1,
+  baseEpsilon: number = 0.005,
+): boolean {
+  if (typeof amount !== "number" || !Number.isFinite(amount)) return false;
+  const f =
+    typeof baseFactor === "number" && Number.isFinite(baseFactor) && baseFactor > 0
+      ? baseFactor
+      : 1;
+  return Math.abs(amount) * f > baseEpsilon;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // resolveLineMonetaryRoundingDecomposition — descomposición del MONETARIO en
 // "Valor comercial (Y) → Redondeo comercial (Z) → Valor redondeado (X)" para el
 // detalle EXPANDIDO del card por línea. Cumple `Y + Z = X` por construcción.
@@ -553,9 +590,13 @@ export function resolveLineMonetaryRoundingDecomposition(args: {
   unificadoImpact:  number | null;
   /** Z para DESGLOSADA (passthrough del caller). Ignorado en UNIFICADA. */
   desglosadoImpact: number | null;
+  /** Multiplicador a moneda base para el umbral de visibilidad (default 1 =
+   *  factura en moneda base). Garantiza que la descomposición del redondeo se
+   *  muestre/oculte igual en cualquier moneda. Ver `isAmountSignificantInBase`. */
+  baseFactor?:      number;
 }): { valorComercial: number; redondeo: number; valorRedondeado: number } | null {
   const redondeo = args.isLineDesglosada ? args.desglosadoImpact : args.unificadoImpact;
-  if (redondeo == null || !Number.isFinite(redondeo) || Math.abs(redondeo) <= 0.005) {
+  if (redondeo == null || !isAmountSignificantInBase(redondeo, args.baseFactor)) {
     return null;
   }
   return {
@@ -1077,9 +1118,15 @@ export function resolveSaleForRowDisplay(
 // resolveMarginForRowDisplay — display del margen por fila (texto + tono +
 // tooltip).
 //
+// `lineCost` = COSTO AJUSTADO de la fila (post ajuste global del artículo); el
+// caller lo deriva con `buildGlobalCost(...).after`. El margen mostrado es el
+// de la LISTA sobre ese costo ajustado (Costo ajustado → margen lista → venta),
+// que es el "único estado económico" de la composición. Sin ajuste global, el
+// costo ajustado === costo base → comportamiento idéntico al histórico.
+//
 // Casos cubiertos:
 //   1. lineSale real ≠ lineCost (modo desglosado):
-//        margenPct = ((sale − cost) / cost) × 100 — derivación trivial.
+//        margenPct = ((sale − costoAjustado) / costoAjustado) × 100.
 //   2. lineSale colapsado al lineCost en modo derivado:
 //        si `unifiedFactor` disponible y ≠ 1 → usar `(unifiedFactor − 1) × 100`
 //        y agregar tooltip "Margen unificado…".
@@ -1114,6 +1161,12 @@ export function resolveMarginForRowDisplay(
   let margenPctText: string | null = null;
   let margenTooltip: string | null = null;
 
+  // `lineCost` debe ser el COSTO AJUSTADO (post ajuste global del artículo),
+  // NO el costo base — el `saleLineValue` (lineSale) lo emite el motor sobre el
+  // costo ajustado, así que el margen de lista correcto es
+  // `(sale − costoAjustado)/costoAjustado`. El caller (buildCommercialCells)
+  // ya pasa el costo ajustado vía `buildGlobalCost(...).after`. Sin ajuste
+  // global, costoAjustado === costo base ⇒ comportamiento idéntico al previo.
   if (lineCost != null && Number.isFinite(lineCost) && lineCost > 0
       && saleLineValue != null && Number.isFinite(saleLineValue)) {
     const raw = ((saleLineValue - lineCost) / lineCost) * 100;

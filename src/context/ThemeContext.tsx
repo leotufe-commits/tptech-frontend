@@ -11,7 +11,26 @@ import React, {
 import { useAuth } from "./AuthContext";
 import { updateMyTheme } from "../services/users";
 
-export type ThemeName = "classic" | "dark" | "blue" | "gray" | "emerald";
+// ─────────────────────────────────────────────────────────────────────────
+// SSOT (frontend) de la lista de temas. Definir UNA sola vez y derivar de acá
+// el tipo, el set de validación y las clases que limpia el DOM.
+//
+// El backend mantiene su propia copia en `users.schemas.ts` (`THEME_NAMES` /
+// `themeSchema`) — NO se comparte por paquete porque `tptech-shared` no se
+// compila a JS y `node dist` (producción) no resuelve el alias `@tptech/shared`.
+// ⚠️ Si se agrega/quita un tema, actualizar AMBAS listas (FE + BE).
+// ─────────────────────────────────────────────────────────────────────────
+const THEME_DEFS = [
+  { value: "classic", label: "Clásico" },
+  { value: "dark",    label: "Oscuro" },
+  { value: "blue",    label: "Azul" },
+  { value: "gray",    label: "Gris" },
+  { value: "emerald", label: "Esmeralda" },
+] as const;
+
+export type ThemeName = (typeof THEME_DEFS)[number]["value"];
+
+const THEME_VALUES: readonly ThemeName[] = THEME_DEFS.map((t) => t.value);
 
 type ThemeContextValue = {
   theme: ThemeName;
@@ -23,26 +42,19 @@ const ThemeContext = createContext<ThemeContextValue | null>(null);
 
 function normalizeTheme(t: string | null): ThemeName {
   if (t === "gold") return "blue"; // legacy
-  if (t === "classic" || t === "dark" || t === "blue" || t === "gray" || t === "emerald") return t;
-  return "classic";
+  return (THEME_VALUES as readonly string[]).includes(t ?? "")
+    ? (t as ThemeName)
+    : "classic";
 }
 
 function applyThemeToDom(theme: ThemeName) {
   const root = document.documentElement;
 
-  // ✅ limpiar tanto clases nuevas como posibles legacy
-  root.classList.remove(
-    "classic",
-    "dark",
-    "blue",
-    "gray",
-    "emerald",
-    "theme-classic",
-    "theme-dark",
-    "theme-blue",
-    "theme-gray",
-    "theme-emerald"
-  );
+  // ✅ limpiar tanto clases nuevas como posibles legacy (theme-*) de TODOS
+  //    los temas conocidos — derivado del SSOT, sin listas hardcodeadas.
+  for (const v of THEME_VALUES) {
+    root.classList.remove(v, `theme-${v}`);
+  }
 
   // ✅ esto es lo que usa tu themes.css actual
   root.setAttribute("data-theme", theme);
@@ -87,13 +99,7 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
   const { user } = useAuth();
 
   const themes = useMemo(
-    () => [
-      { value: "classic" as const, label: "Clásico" },
-      { value: "dark" as const, label: "Oscuro" },
-      { value: "blue" as const, label: "Azul" },
-      { value: "gray" as const, label: "Gris" },
-      { value: "emerald" as const, label: "Esmeralda" },
-    ],
+    () => THEME_DEFS.map((t) => ({ value: t.value, label: t.label })),
     []
   );
 

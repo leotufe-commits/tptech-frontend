@@ -365,11 +365,17 @@ export default function EntityAccountStatement() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [emailModalOpen, setEmailModalOpen] = useState(false);
-  // Fase 4.3 — Tab para alternar entre vista legacy (EntityBalanceEntry +
-  // MovementsTable) y vista canónica (CurrentAccountMovement +
-  // AccountMovementMetalEntry). Default "legacy" para no cambiar la UX a
-  // los operadores existentes — el operador elige cuándo probar la nueva.
-  const [movementsView, setMovementsView] = useState<"legacy" | "canonical">("legacy");
+  // Tab para alternar entre vista canónica (CurrentAccountMovement +
+  // AccountMovementMetalEntry — congelada POR MOVIMIENTO) y la vista legacy
+  // (EntityBalanceEntry + MovementsTable — agregada con `entity.balanceType`
+  // ACTUAL del cliente).
+  //
+  // Etapa 1 Cuenta Corriente (2026-06-14): el Estado de Cuenta se consolida
+  // sobre el modelo CANÓNICO → default "canonical". Cada movimiento conserva
+  // su modo de impacto congelado, así un cambio posterior en Cliente / Lista /
+  // Mis preferencias / Joyería NO reinterpreta el histórico. La vista legacy
+  // queda como opción secundaria ("Vista clásica") hasta su deprecación.
+  const [movementsView, setMovementsView] = useState<"legacy" | "canonical">("canonical");
 
   const backPath = isSupplierContext ? `/proveedores/${id}` : `/clientes/${id}`;
 
@@ -504,13 +510,18 @@ export default function EntityAccountStatement() {
               </div>
             </TPCard>
 
-            {/* Opening balance */}
-            <BalanceSummary
-              balance={statement.openingBalance}
-              label={`Saldo inicial al ${statement.period.from ? fmtDate(statement.period.from) : "inicio"}`}
-            />
+            {/* Opening balance — SOLO en vista legacy. El saldo inicial se
+                agrega con `entity.balanceType` ACTUAL del cliente (reinterpreta),
+                así que NO se muestra en la vista canónica congelada (que trae su
+                propio resumen de SALDOS por movimiento). */}
+            {movementsView === "legacy" && (
+              <BalanceSummary
+                balance={statement.openingBalance}
+                label={`Saldo inicial al ${statement.period.from ? fmtDate(statement.period.from) : "inicio"}`}
+              />
+            )}
 
-            {/* Movements — Fase 4.3: tab Vista clásica / Vista por saldos */}
+            {/* Movements — tab Vista clásica (legacy) / Vista por saldos (canónica) */}
             <div>
               <div className="flex items-center justify-between mb-2 px-1 gap-2 flex-wrap no-print">
                 <div className="text-sm font-semibold">Movimientos</div>

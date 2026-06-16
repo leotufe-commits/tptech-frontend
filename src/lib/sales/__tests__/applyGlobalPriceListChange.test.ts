@@ -372,3 +372,29 @@ describe("applyGlobalPriceListChange — escenario 7 (priceListExplicitlyCleared
     expect(wouldApplyFavorite).toBe(false);
   });
 });
+
+// ──────────────────────────────────────────────────────────────────────────
+// Escenario 7 — Cambiar lista global RESETEA el modo de saldo a AUTOMÁTICO
+// (descarta el override manual del footer) para que el modo de la nueva lista
+// (o del cliente, mayor prioridad) resuelva y el footer + líneas se sincronicen.
+// ──────────────────────────────────────────────────────────────────────────
+
+describe("applyGlobalPriceListChange — escenario 7 (reset del modo de saldo)", () => {
+  it("(7a) override manual 'UNIFIED' → se descarta (null) al cambiar la lista", () => {
+    const draft = makeDraft({ balanceModeOverride: "UNIFIED", priceListId: LISTA_UNIFICADA });
+    const out = applyGlobalPriceListChange(draft, LISTA_DESGLOSADA);
+    expect(out.balanceModeOverride).toBeNull();
+  });
+
+  it("(7b) override manual 'BREAKDOWN' → también se descarta (null)", () => {
+    const draft = makeDraft({ balanceModeOverride: "BREAKDOWN", priceListId: LISTA_DESGLOSADA });
+    const out = applyGlobalPriceListChange(draft, LISTA_UNIFICADA);
+    expect(out.balanceModeOverride).toBeNull();
+  });
+
+  it("(7c) 'Sin lista' también resetea el override", () => {
+    const draft = makeDraft({ balanceModeOverride: "UNIFIED", priceListId: LISTA_UNIFICADA });
+    const out = applyGlobalPriceListChange(draft, null);
+    expect(out.balanceModeOverride).toBeNull();
+  });
+});

@@ -35,7 +35,7 @@ import React from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { CreditCard, Receipt, Wallet, ArrowUpDown, Clock, ExternalLink } from "lucide-react";
 import { TPSectionShell } from "../../components/ui/TPSectionShell";
-import { TPCard } from "../../components/ui/TPCard";
+import { HelpPopover } from "../../components/ui/HelpPopover";
 import TPTabs from "../../components/ui/TPTabs";
 import ConfiguracionSistemaPagos from "./ConfiguracionSistemaPagos";
 import ConfiguracionSistemaImpuestos from "./ConfiguracionSistemaImpuestos";
@@ -89,30 +89,6 @@ const HELP_BY_TAB: Record<TabValue, { title: string; body: string }> = {
       + "descuentos que se aplican al confirmar la venta.",
   },
 };
-
-function HelpCard({ tab }: { tab: TabValue }): React.ReactElement {
-  const active = HELP_BY_TAB[tab];
-  return (
-    <TPCard title="Ayuda rápida">
-      <div className="space-y-3 text-xs leading-relaxed">
-        <div>
-          <div className="font-semibold text-text mb-0.5">{active.title}</div>
-          <p className="text-muted">{active.body}</p>
-        </div>
-        <div className="border-t border-border/40 pt-2 space-y-1.5 text-muted">
-          {(Object.keys(HELP_BY_TAB) as TabValue[])
-            .filter((t) => t !== tab)
-            .map((t) => (
-              <div key={t}>
-                <span className="font-medium text-text/80">{HELP_BY_TAB[t].title}: </span>
-                <span>{HELP_BY_TAB[t].body}</span>
-              </div>
-            ))}
-        </div>
-      </div>
-    </TPCard>
-  );
-}
 
 /** Panel "Próximamente" para la tab Cuenta corriente. La pantalla
  *  OPERATIVA de saldo (lista de cuentas, movimientos) ya existe en
@@ -191,6 +167,7 @@ export default function FinanzasCobrosPage() {
       title="Finanzas y cobros"
       subtitle="Cobros, impuestos, deuda y canales — desde acá controlás cómo TPTech maneja el flujo financiero del negocio."
       icon={TAB_ICON[activeTab]}
+      right={<HelpPopover entries={HELP_BY_TAB} active={activeTab} />}
     >
       <div className="space-y-5">
         <TPTabs
@@ -199,17 +176,11 @@ export default function FinanzasCobrosPage() {
           onChange={changeTab}
         />
 
-        <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_280px] items-start">
-          <div className="min-w-0">
-            {activeTab === "pagos"             && <ConfiguracionSistemaPagos             embedded />}
-            {activeTab === "impuestos"         && <ConfiguracionSistemaImpuestos         embedded />}
-            {activeTab === "cuenta-corriente"  && <CuentaCorrienteComingSoon />}
-            {activeTab === "canales"           && <ConfiguracionSistemaCanalesDeVenta    embedded />}
-          </div>
-
-          <aside className="lg:sticky lg:top-4">
-            <HelpCard tab={activeTab} />
-          </aside>
+        <div className="min-w-0">
+          {activeTab === "pagos"             && <ConfiguracionSistemaPagos             embedded />}
+          {activeTab === "impuestos"         && <ConfiguracionSistemaImpuestos         embedded />}
+          {activeTab === "cuenta-corriente"  && <CuentaCorrienteComingSoon />}
+          {activeTab === "canales"           && <ConfiguracionSistemaCanalesDeVenta    embedded />}
         </div>
       </div>
     </TPSectionShell>

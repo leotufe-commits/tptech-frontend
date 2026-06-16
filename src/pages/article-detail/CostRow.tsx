@@ -2,7 +2,7 @@
 import React, { useEffect, useState } from "react";
 import { formatDecimal } from "../../lib/pricing/format";
 import ReactDOM from "react-dom";
-import { GripVertical, Star, X } from "lucide-react";
+import { GripVertical, Lock, Star, X } from "lucide-react";
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 
@@ -63,6 +63,9 @@ export type ProductItem = {
   mainImageUrl?: string;
   /** Nombre de la categoría, opcional para enriquecer el render del combo. */
   categoryName?: string;
+  /** Modo comercial del artículo. Se usa para excluir combos del selector de
+   *  componentes de un combo (un combo no puede contener otro combo). */
+  commercialMode?: string;
 };
 
 // ---------------------------------------------------------------------------
@@ -171,6 +174,9 @@ export function SortableCostRow({
   }
 
   const isMetal = line.type === "METAL";
+  // "Precio unit." de PRODUCT/SERVICE es un RESULTADO calculado (readOnly).
+  // Señal visual de campo calculado (candado + estilo). Solo UI; no cambia lógica.
+  const isCalcReadonlyPrice = line.type === "PRODUCT" || line.type === "SERVICE";
   const lineTotal = calcCostLine(line, currencyOptions, baseCurrencyId);
   const currForLine =
     currencyOptions.find(c => c.id === (line.currencyId ?? baseCurrencyId)) ??
@@ -301,7 +307,9 @@ export function SortableCostRow({
             }}
             options={[
               { value: "", label: "Seleccionar servicio..." },
-              ...serviceItems.map(s => ({
+              // Excluir combos comerciales SIEMPRE (paridad con el selector de
+              // Producto). Un combo no es un componente válido de composición.
+              ...serviceItems.filter(s => s.commercialMode !== "COMBO_COMMERCIAL").map(s => ({
                 value:    s.id,
                 label:    s.name,
                 sublabel: buildOptionSublabel({ item: s, isService: true, selSym, fmtN }),
@@ -419,9 +427,26 @@ export function SortableCostRow({
       </div>
 
       {/* ── 6. Precio unitario ──────────────────────────── */}
-      <div className="self-center [&_input]:font-semibold">
+      {/* PRODUCT/SERVICE: "Precio unit." es el RESULTADO calculado (costo del
+          componente referenciado) — solo lectura. El usuario edita parámetros
+          (cantidad, merma/stock, bonif./recargo), no el resultado. METAL y
+          MANUAL conservan la edición (en METAL el valor está ligado a la merma).
+          Señal visual (candado + fondo + cursor) para comunicar "campo calculado"
+          sin sumar altura a la fila. */}
+      <div
+        className="self-center [&_input]:font-semibold"
+        title={isCalcReadonlyPrice
+          ? "Precio calculado automáticamente por el sistema. Para modificarlo cambie el componente, cantidad, merma o bonificación."
+          : undefined}
+      >
         <TPNumberInput
           value={line.unitValue}
+          readOnly={isCalcReadonlyPrice}
+          showArrows={isCalcReadonlyPrice ? false : undefined}
+          className={isCalcReadonlyPrice ? "bg-muted/10 cursor-not-allowed" : undefined}
+          suffix={isCalcReadonlyPrice
+            ? <Lock className="h-3 w-3 text-muted/50" aria-hidden />
+            : undefined}
           onChange={(v) => {
             const newUnitValue = v ?? 0;
             if (isMetal && line.metalVariantId) {
@@ -682,6 +707,12 @@ export function ProductSelector({
   submitted,
   fmtN,
 }: ProductSelectorProps) {
+  // La composición de costo NUNCA debe ofrecer combos comerciales como
+  // componente (regla del modal de Artículos, SIEMPRE — no solo cuando se
+  // edita un combo). Un combo es una unidad comercial autónoma, no un
+  // componente válido. Filtro INCONDICIONAL en el punto que alimenta el
+  // dropdown. Solo afecta este selector del modal de Artículos.
+  const effectiveItems = productItems.filter(p => p.commercialMode !== "COMBO_COMMERCIAL");
   // Precargar variantes de TODOS los productItems en paralelo. La cache vive
   // arriba (ArticleModal), así que esta carga se ejecuta una sola vez por
   // artículo durante la sesión, sin importar cuántas filas haya. Mientras
@@ -724,7 +755,7 @@ export function ProductSelector({
     item: ProductItem;
   };
   const flatOptions: FlatOpt[] = [];
-  for (const p of productItems) {
+  for (const p of effectiveItems) {
     const variants = getVariantsForArticle ? getVariantsForArticle(p.id) : undefined;
     if (variants && variants.length > 0) {
       for (const v of variants) {

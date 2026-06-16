@@ -65,7 +65,7 @@ export const PRESET_LABELS: Record<NumberFormatType, string> = {
   MERMA_GRAMS:    "Merma (gramos)",
   AJUSTE_PERCENT: "Ajuste (%)",
   AJUSTE_AMOUNT:  "Ajuste (monto)",
-  PERCENT:        "Porcentaje",
+  PERCENT:        "Porcentaje general",
   MARGIN_PERCENT: "Margen (%)",
   TAX_PERCENT:    "Impuesto (%)",
   FX_RATE:        "Tipo de cambio",

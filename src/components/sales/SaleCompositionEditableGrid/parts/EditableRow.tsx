@@ -37,12 +37,13 @@ function RowImpl({
   quantityCell, unitValueCell, mermaOrAdjustmentCell,
   unitValueCurrencyOverride, unitValueSubLine,
   saleValueValue, saleValueText, totalValue, totalText, totalTooltip,
+  marginSaleValueOverride,
   manual, onResetRow, canResetRow,
   commercialView,
   precioUnitVentaText, margenPctText, margenTone, margenTooltip,
   ventaLineaText, participacionText,
   quantityUnitLabel, currencyLabel,
-  globalAdjustmentText, globalAdjustmentKind,
+  globalCost,
   formulaQuantity, formulaCostUnit, formulaSaleUnit,
 }: {
   componentType:   ComponentTypeKey;
@@ -68,6 +69,12 @@ function RowImpl({
    *  MARGIN_TOTAL / PROPORTIONAL_COST), para diferenciarlo del lineSale
    *  atribuido por línea por el backend. */
   totalTooltip?:   string | null;
+  /** Venta a usar SOLO para el monto monetario del margen (utilidad), cuando
+   *  difiere de `totalValue` (la columna Venta total). Caso combo de un
+   *  componente: Venta total muestra `finalPrice`, pero el margen va contra la
+   *  venta de composición/lista (margen comercial real). `null` ⇒ se usa
+   *  `totalValue` (comportamiento normal de todas las demás filas). */
+  marginSaleValueOverride?: number | null;
   manual:          boolean;
   onResetRow:      () => void;
   canResetRow:     boolean;
@@ -88,15 +95,13 @@ function RowImpl({
    *  en moneda del comprobante. Solo se renderea cuando aplica conversión
    *  (cost line en moneda distinta). */
   unitValueSubLine?: React.ReactNode | null;
-  /** FASE 12.11 — texto pre-formateado del ajuste global del documento
-   *  aplicado a esta línea (ej. "Aj. global −5%"). Se renderea como sub-
-   *  línea bajo "Margen" en la celda Costo Total. Si null/undefined, no
-   *  se renderea nada extra. El caller deriva esto desde
-   *  `meta.documentAdjustments.lineManualDiscount` (passthrough) — cero
-   *  matemática nueva. */
-  globalAdjustmentText?: string | null;
-  /** Tono ("BONUS"=verde, "SURCHARGE"=amber) para colorear el texto. */
-  globalAdjustmentKind?: "BONUS" | "SURCHARGE" | null;
+  /** Desglose visual del ajuste global del artículo sobre el COSTO de esta
+   *  fila — DISPLAY de composición (NO motor). El principal de la celda Costo
+   *  total (`saleValueText`) es el costo BASE; debajo se muestra
+   *  "±pct% GLOBAL", "±$impact" y el costo FINAL. `pct` = % del ajuste;
+   *  `impact`/`after` = base·% y base±impacto (del helper). `null` ⇒ la celda
+   *  muestra solo el costo, sin desglose. */
+  globalCost?: { pct: number; impact: number; after: number; kind: "BONUS" | "SURCHARGE" } | null;
   // FASE 12.4 — `commercialView` deprecated (vista única). Los siguientes
   // campos siguen llegando como props para no romper la API del Row ni
   // los memos; cualquier prop nuevo se evalúa en otra parte. `margenPctText`
@@ -244,11 +249,13 @@ function RowImpl({
       <div data-merma-ajuste-cell className="flex justify-center tabular-nums leading-tight">
         {mermaOrAdjustmentCell}
       </div>
-      {/* FASE F23/F24 — Celda COSTO TOTAL queda con SOLO el importe principal.
-          El % y el delta del margen se movieron a la columna Margen (a la
-          DERECHA de Costo Total, antes de Costo de Venta). El
-          `globalAdjustmentText` (ajuste global del documento, no del
-          artículo) se mantiene acá como sub-línea opcional. */}
+      {/* FASE F23/F24 — Celda COSTO TOTAL. Principal = costo POST ajuste global
+          del artículo (cuando existe `globalCost`); si no, el costo de
+          composición de siempre (`saleValueText`). Debajo, el impacto global
+          como subdetalle "±$ GLOBAL". Display de composición/costo (el costo ya
+          viene del motor; acá solo se muestra el resultado del % aplicado). El
+          bloque "AJUSTE GLOBAL" inferior sigue como resumen consolidado, y la
+          columna Margen NO usa este valor (usa el costo base + venta de lista). */}
       <div className="text-center leading-tight">
         <div
           className={cn(
@@ -258,7 +265,9 @@ function RowImpl({
             flashSale,
           )}
         >
-          {saleValueText ?? "—"}
+          {globalCost
+            ? fmtMoney(globalCost.after, currencyLabel)
+            : (saleValueText ?? "—")}
         </div>
         {/* Fórmula auxiliar "qty × valor unitario" — solo cuando hay más de
             una unidad/gramo y el motor proveyó ambos números. Texto chico y
@@ -278,18 +287,34 @@ function RowImpl({
             <span>{fmtMoney(formulaCostUnit)}</span>
           </div>
         )}
-        {/* FASE 12.11 — sub-línea opcional del ajuste global de la línea. */}
-        {globalAdjustmentText && (
+        {/* Subdetalle del ajuste global del artículo sobre el costo (display de
+            composición): "±$impacto GLOBAL". Verde (bonificación) / naranja
+            (recargo). El principal de arriba ya es el costo POST. */}
+        {globalCost && (
           <div
+            data-tp-global-cost-impact="true"
             className={cn(
-              "text-[9px] tabular-nums leading-tight",
-              globalAdjustmentKind === "SURCHARGE"
-                ? "text-amber-600/80 dark:text-amber-400/80"
-                : "text-emerald-600/75 dark:text-emerald-400/75",
+              "text-[9px] tabular-nums leading-tight font-medium",
+              globalCost.kind === "SURCHARGE"
+                ? "text-amber-600/85 dark:text-amber-400/85"
+                : "text-emerald-600/80 dark:text-emerald-400/80",
             )}
-            title="Ajuste global aplicado a la línea del documento"
+            title="Ajuste global del artículo aplicado sobre el costo (display de composición; el principal ya es el costo POST)"
           >
-            {globalAdjustmentText}
+            {globalCost.kind === "SURCHARGE" ? "+" : "−"}
+            {fmtMoney(Math.abs(globalCost.impact), currencyLabel)}{" "}
+            <span className="font-semibold tracking-wide text-muted/70">GLOBAL</span>
+            {/* % del ajuste global entre paréntesis — unificado acá desde la
+                columna "Merma / Ajuste" (UX 2026-06-13): una sola lectura
+                "monto + origen + porcentaje". `pct` ya viene en el prop
+                `globalCost` (passthrough); no se recalcula. Formato config-aware
+                (PERCENT), mismo que usaba el badge removido. */}
+            {globalCost.pct != null && Number.isFinite(globalCost.pct) && (
+              <span className="text-muted/70">
+                {" ("}{globalCost.kind === "SURCHARGE" ? "+" : "−"}
+                {formatByType(Math.abs(globalCost.pct), "PERCENT", { bare: true })}{"%)"}
+              </span>
+            )}
           </div>
         )}
       </div>
@@ -322,19 +347,34 @@ function RowImpl({
           <div className="text-[10px] text-muted/40">—</div>
         )}
         {(() => {
-          // UTILIDAD de línea = Venta de línea − Costo total de línea.
-          // Ambos operandos vienen YA en base "total de línea" (escalados ×
-          // cantidad): `totalValue` = venta línea, `saleValueValue` = costo
-          // total línea. Antes `totalValue` llegaba sin escalar (venta
-          // unitaria) y el importe se volvía rojo/negativo al subir la
-          // cantidad pese a margen positivo. Display puro: no recalcula
-          // precios, solo resta dos valores ya provistos por el motor.
-          // El signo/color es ahora coherente con el % de margen.
+          // UTILIDAD de línea = Venta de margen − Costo total de línea.
+          // `saleValueValue` = costo total línea (BASE de composición).
+          //
+          // ⚠️ CONTRATO DE COLUMNAS INDEPENDIENTES (NO romper):
+          // El margen se calcula SIEMPRE contra el costo BASE (`saleValueValue`),
+          // NUNCA contra el costo POST-ajuste-global (`globalCost.after`) ni
+          // contra el `finalPrice`. La tabla NO debe cerrar
+          // `Costo total + Margen = Venta total`: cada columna comunica un
+          // concepto distinto (costo post-global / margen de lista / venta final).
+          // No "arreglar" esto restando el costo POST — rompería el margen real.
+          // Guard: SaleCompositionEditableGrid.test.tsx → "Contrato de columnas
+          // independientes". Detalle: README "Contrato de columnas independientes".
+          //
+          // La VENTA usada para el margen es normalmente `totalValue` (= Venta
+          // total de la fila). EXCEPCIÓN: cuando el caller pasa
+          // `marginSaleValueOverride` (combo de un componente), la columna Venta
+          // total muestra el `finalPrice` del combo, pero el MARGEN va contra la
+          // venta de COMPOSICIÓN/lista (margen comercial real) — ese override es
+          // esa venta. Display puro: solo resta dos valores del motor.
+          const marginSaleValue =
+            marginSaleValueOverride != null && Number.isFinite(marginSaleValueOverride)
+              ? Number(marginSaleValueOverride)
+              : (totalValue != null && Number.isFinite(totalValue) ? Number(totalValue) : null);
           if (
-            saleValueValue == null || totalValue == null ||
-            !Number.isFinite(saleValueValue) || !Number.isFinite(totalValue)
+            saleValueValue == null || marginSaleValue == null ||
+            !Number.isFinite(saleValueValue)
           ) return null;
-          const utilidad = Number(totalValue) - Number(saleValueValue);
+          const utilidad = marginSaleValue - Number(saleValueValue);
           if (!Number.isFinite(utilidad) || Math.abs(utilidad) < 0.005) return null;
           const isNeg = utilidad < 0;
           const sign  = isNeg ? "−" : "+";
@@ -445,6 +485,7 @@ export const Row = React.memo(RowImpl, (prev, next) => {
   if (prev.canResetRow     !== next.canResetRow)     return false;
   if (prev.saleValueValue  !== next.saleValueValue)  return false;
   if (prev.totalValue      !== next.totalValue)      return false;
+  if (prev.marginSaleValueOverride !== next.marginSaleValueOverride) return false;
   if (prev.saleValueText   !== next.saleValueText)   return false;
   if (prev.totalText       !== next.totalText)       return false;
   if (prev.totalTooltip    !== next.totalTooltip)    return false;
@@ -465,15 +506,17 @@ export const Row = React.memo(RowImpl, (prev, next) => {
   if (prev.formulaSaleUnit     !== next.formulaSaleUnit)     return false;
   // P1 #7 (Etapa E2) — primitivas de display que SÍ afectan el render
   // pero faltaban en el comparator. Sin estas comparaciones, cambios
-  // en la moneda del documento (`currencyLabel`), la unidad del catálogo
-  // (`quantityUnitLabel`) o el ajuste global de la línea
-  // (`globalAdjustmentText`/`globalAdjustmentKind`) no propagaban porque
-  // el resto de props eran estables. Son strings/uniones cortas: la
-  // comparación referencial alcanza, mismo patrón que el resto del bloque.
+  // en la moneda del documento (`currencyLabel`) o la unidad del catálogo
+  // (`quantityUnitLabel`) no propagaban porque el resto de props eran
+  // estables. Son strings cortas: la comparación referencial alcanza.
   if (prev.quantityUnitLabel    !== next.quantityUnitLabel)    return false;
   if (prev.currencyLabel        !== next.currencyLabel)        return false;
-  if (prev.globalAdjustmentText !== next.globalAdjustmentText) return false;
-  if (prev.globalAdjustmentKind !== next.globalAdjustmentKind) return false;
+  // Desglose del ajuste global sobre el costo — objeto nuevo por render;
+  // comparamos campos para no romper el memo ni perder updates.
+  if ((prev.globalCost?.pct    ?? null) !== (next.globalCost?.pct    ?? null)) return false;
+  if ((prev.globalCost?.impact ?? null) !== (next.globalCost?.impact ?? null)) return false;
+  if ((prev.globalCost?.after  ?? null) !== (next.globalCost?.after  ?? null)) return false;
+  if ((prev.globalCost?.kind   ?? null) !== (next.globalCost?.kind   ?? null)) return false;
   // primary / secondary / *Cell son JSX nodes derivados de los primitivos
   // del caller. Asumimos pure-derivation y skipeamos.
   return true;

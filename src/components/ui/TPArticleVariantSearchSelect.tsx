@@ -45,6 +45,11 @@ export type TPArticleLite = {
   itemKind?: "ARTICLE_SIMPLE" | "ARTICLE_VARIANT" | "SERVICE" | "COMBO";
   /** articleType crudo del backend — útil para reglas comerciales. */
   articleType?: "PRODUCT" | "SERVICE" | "MATERIAL";
+  // Combo comercial — config del ajuste del combo (display de la composición en
+  // Factura). Viene del backend en la búsqueda de artículos (ARTICLE_LIST_SELECT).
+  commercialMode?: "NORMAL" | "COMBO_COMMERCIAL";
+  comboAdjustmentKind?: "NONE" | "DISCOUNT_PERCENT" | "DISCOUNT_FIXED" | "SURCHARGE_PERCENT" | null;
+  comboAdjustmentValue?: number | null;
   /** ¿La línea debe administrar stock? false para servicios, opcional para combos. */
   manageStock?: boolean;
   /** Unidad de medida (ej. "u", "kg", "g", "m"). Para derivar step. */
@@ -294,6 +299,9 @@ export function TPArticleVariantSearchSelect({
   const containerRef              = useRef<HTMLDivElement>(null);
   const panelRef                  = useRef<HTMLDivElement>(null);
   const inputRef                  = useRef<HTMLInputElement>(null);
+  // Ref a la opción ACTIVA (highlight) — para mantenerla visible al navegar
+  // con flechas cuando hay más resultados que los visibles en el dropdown.
+  const activeOptionRef           = useRef<HTMLLIElement>(null);
 
   // Posicionamiento del dropdown (renderizado vía portal, position: fixed).
   // Se recalcula al abrir, en scroll/resize, para seguir al combo.
@@ -412,6 +420,16 @@ export function TPArticleVariantSearchSelect({
   }, [remoteSearch, query, isOpen]);
 
   useEffect(() => { setHighlight(0); }, [query, isOpen]);
+
+  // Navegación con flechas: mantener la opción activa SIEMPRE visible dentro del
+  // dropdown (auto-scroll). `block: "nearest"` no fuerza centrado: solo desplaza
+  // lo mínimo cuando el ítem queda fuera del viewport del menú. No afecta mouse,
+  // Enter, Escape ni el diseño. Aplica a artículos/productos/servicios/combos.
+  useEffect(() => {
+    if (!isOpen) return;
+    // Optional call — algunos entornos (jsdom) no implementan scrollIntoView.
+    activeOptionRef.current?.scrollIntoView?.({ block: "nearest" });
+  }, [highlight, isOpen]);
 
   // Foco bajo demanda — cada cambio de focusSignal mueve foco al input.
   useEffect(() => {
@@ -896,6 +914,7 @@ export function TPArticleVariantSearchSelect({
                 return (
                   <li
                     key={(a.variantId ?? a.id) + ":" + idx}
+                    ref={idx === highlight ? activeOptionRef : undefined}
                     role="option"
                     aria-selected={idx === highlight}
                     onMouseDown={(ev) => { ev.preventDefault(); commitSelection(a); }}

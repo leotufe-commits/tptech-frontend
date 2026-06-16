@@ -123,9 +123,10 @@ export default function MisPreferencias() {
     // `invoiceUiPreferences` (UX.20) tampoco se edita acá — vive en el
     // modal de Configuración de Factura. Hidratamos null.
     invoiceUiPreferences: null,
-    // Etapa 5 — "Mis vistas" del layout. Tampoco se edita acá; hidratamos
-    // null para mantener imagen completa de la preferencia.
-    invoiceLayoutPresets: null,
+    // NOTA: `invoiceLayoutPresets` ("Mis vistas") NO se hidrata acá. Es un
+    // campo que hoy solo persiste el frontend (useInvoiceLayout) y el backend
+    // no lo guarda todavía (ver "Gap conocido" en CLAUDE.md). Esta pantalla no
+    // lo edita ni lo necesita para su "imagen completa".
   });
 
   useEffect(() => {
@@ -160,7 +161,6 @@ export default function MisPreferencias() {
           invoiceLayoutConfig: pref.invoiceLayoutConfig,
           preferredInvoiceViewPreset: pref.preferredInvoiceViewPreset,
           invoiceUiPreferences: pref.invoiceUiPreferences,
-          invoiceLayoutPresets: pref.invoiceLayoutPresets,
         });
 
         setWarehouses(buildOpts(whs, (w) => w.name || w.code || w.id));
@@ -220,7 +220,6 @@ export default function MisPreferencias() {
         invoiceLayoutConfig: saved.invoiceLayoutConfig,
         preferredInvoiceViewPreset: saved.preferredInvoiceViewPreset,
         invoiceUiPreferences: saved.invoiceUiPreferences,
-        invoiceLayoutPresets: saved.invoiceLayoutPresets,
       });
       toast.success("Preferencias guardadas.");
     } catch (e) {
@@ -276,8 +275,7 @@ export default function MisPreferencias() {
         <div className="min-w-0">
           <div className="text-lg font-semibold text-text">Mis preferencias</div>
           <div className="text-sm text-muted">
-            Valores que se precargan al crear una{" "}
-            <span className="font-semibold text-text">Factura de ventas</span> nueva. Se guardan{" "}
+            Valores predeterminados del usuario para nuevos comprobantes. Se guardan{" "}
             <span className="font-semibold text-text">por usuario</span>
             {user?.email ? (
               <>
@@ -285,7 +283,7 @@ export default function MisPreferencias() {
                 (<span className="font-semibold text-text">{user.email}</span>)
               </>
             ) : null}
-            . No afectan los cálculos de precios.
+            {" "}y no afectan los cálculos de precios.
           </div>
         </div>
       </div>
@@ -309,24 +307,30 @@ export default function MisPreferencias() {
                   <div className="text-[11px] text-muted">{r.hint}</div>
                 </div>
               ))}
-            </div>
 
-            {/* Tipo de saldo por defecto (UNIFIED/BREAKDOWN). Nivel R11.4 entre
-                cliente y lista. "Sin preferencia" (vacío) → null → delega. */}
-            <div className="space-y-1 max-w-md" data-testid="pref-default-balance-mode">
-              <div className="text-sm font-medium text-text">Tipo de saldo por defecto</div>
-              <TPComboFixed
-                value={form.defaultBalanceMode ?? ""}
-                onChange={(v) => set("defaultBalanceMode", v)}
-                options={[
-                  { value: "UNIFIED",   label: "Unificado" },
-                  { value: "BREAKDOWN", label: "Desglosado" },
-                ]}
-                placeholder="Sin preferencia…"
-              />
-              <div className="text-[11px] text-muted">
-                Modo de saldo precargado al crear una factura. El default del cliente y el
-                cambio manual en la factura tienen prioridad sobre esta preferencia.
+              {/* Tipo de saldo por defecto (UNIFIED/BREAKDOWN). UX 2026-06-14:
+                  pasa a ser la 6ª celda de la grilla (junto a Moneda) → mismo
+                  ancho/celda que los demás combos. Antes iba aparte con
+                  `max-w-md`, generando ancho inconsistente. Solo layout:
+                  valor, lógica, prioridades y persistencia sin cambios.
+                  "Sin preferencia" (vacío) → null → delega. */}
+              <div className="space-y-1" data-testid="pref-default-balance-mode">
+                <div className="text-sm font-medium text-text">Tipo de saldo por defecto</div>
+                <TPComboFixed
+                  value={form.defaultBalanceMode ?? ""}
+                  onChange={(v) => set("defaultBalanceMode", v)}
+                  options={[
+                    { value: "",          label: "Sin preferencia" },
+                    { value: "UNIFIED",   label: "Unificado" },
+                    { value: "BREAKDOWN", label: "Desglosado" },
+                  ]}
+                  placeholder="Sin preferencia…"
+                />
+                <div className="text-[11px] text-muted">
+                  <span className="font-medium text-text/80">Sin preferencia</span> usa la
+                  configuración de los niveles inferiores (lista de precios → joyería). El default
+                  del cliente y el cambio manual en la factura tienen prioridad sobre esta preferencia.
+                </div>
               </div>
             </div>
 

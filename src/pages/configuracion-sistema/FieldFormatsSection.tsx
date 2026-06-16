@@ -9,7 +9,7 @@
 // y validaciones siguen idénticos. No toca pricing-engine ni cálculos.
 // ============================================================================
 
-import React, { useEffect, useState } from "react";
+import React, { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "react";
 import { TPCard } from "../../components/ui/TPCard";
 import { TPField } from "../../components/ui/TPField";
 import TPComboFixed from "../../components/ui/TPComboFixed";
@@ -83,22 +83,37 @@ const DEFAULTS: FieldFormatsConfig = {
   documentFormat: "raw",
 };
 
-export type FieldFormatsSectionProps = {
-  /** Callback opcional para que el contenedor con tabs pueda alimentar
-   *  el panel de previews global sin volver a fetchear. */
-  onConfigChange?: (config: FieldFormatsConfig) => void;
+/** API imperativa para que el contenedor unificado coordine el guardado sin
+ *  relocar lógica (la sección conserva su estado, su save y su validación). */
+export type FieldFormatsSectionHandle = {
+  isDirty: () => boolean;
+  /** Guarda SOLO este dominio. true = OK; false = validación o PATCH fallaron
+   *  (ya mostró su toast). No emite toast de éxito (lo hace el contenedor). */
+  save: () => Promise<boolean>;
 };
 
-export default function FieldFormatsSection({ onConfigChange }: FieldFormatsSectionProps = {}) {
+export type FieldFormatsSectionProps = {
+  /** Callback opcional para alimentar previews externos sin volver a fetchear. */
+  onConfigChange?: (config: FieldFormatsConfig) => void;
+  /** Embebido en la pantalla unificada: oculta el botón propio (el guardado lo
+   *  coordina el contenedor vía ref). Standalone/legacy = false → botón visible. */
+  embedded?: boolean;
+};
+
+const FieldFormatsSection = forwardRef<FieldFormatsSectionHandle, FieldFormatsSectionProps>(
+  function FieldFormatsSection({ onConfigChange, embedded = false }, ref) {
   const { reload } = useFieldFormats();
   const [config, setConfig] = useState<FieldFormatsConfig>(DEFAULTS);
   const [loading, setLoading] = useState(true);
   const [saving,  setSaving]  = useState(false);
+  // Snapshot del último valor cargado/guardado — base del dirty-tracking.
+  const initialRef = useRef<FieldFormatsConfig | null>(null);
 
   useEffect(() => {
     fetchFieldFormats()
       .then((cfg) => {
         setConfig(cfg);
+        initialRef.current = cfg;
         onConfigChange?.(cfg);
       })
       .catch((err) => {
@@ -122,32 +137,53 @@ export default function FieldFormatsSection({ onConfigChange }: FieldFormatsSect
   const docIsCustom      = config.documentFormat.startsWith("custom:");
   const docCustomPat     = docIsCustom ? config.documentFormat.slice(7) : "";
 
-  async function handleSave() {
+  // Guarda SOLO este dominio (incluye su validación de patrones). Sin toast de
+  // éxito (lo decide el caller). Reutilizado por el botón standalone y el ref.
+  async function doSave(): Promise<boolean> {
     if (phoneIsCustom && countPatternDigits(phoneCustomPat) === 0) {
       toast.error("El patrón de teléfono debe contener al menos un # para indicar dígitos.");
-      return;
+      return false;
     }
     if (docIsCustom && countPatternDigits(docCustomPat) === 0) {
       toast.error("El patrón de documento debe contener al menos un # para indicar dígitos.");
-      return;
+      return false;
     }
     setSaving(true);
     try {
       const updated = await updateFieldFormats(config);
       setConfig(updated);
+      initialRef.current = updated;
       onConfigChange?.(updated);
       reload();
-      toast.success("Configuración de formato guardada.");
+      return true;
     } catch (err) {
       if (err instanceof ApiError && err.status === 403) {
         toast.error("No tenés permisos para guardar esta configuración.");
       } else {
         toast.error("Error al guardar la configuración.");
       }
+      return false;
     } finally {
       setSaving(false);
     }
   }
+
+  // Botón propio (standalone/legacy): guarda y muestra éxito.
+  async function handleSave() {
+    if (await doSave()) toast.success("Configuración de formato guardada.");
+  }
+
+  useImperativeHandle(
+    ref,
+    () => ({
+      isDirty: () =>
+        initialRef.current != null &&
+        JSON.stringify(config) !== JSON.stringify(initialRef.current),
+      save: doSave,
+    }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [config],
+  );
 
   const phonePreview = formatPhone("", getPhoneSample(config.phoneFormat), config.phoneFormat);
   const docSamples = (() => {
@@ -165,7 +201,7 @@ export default function FieldFormatsSection({ onConfigChange }: FieldFormatsSect
   }
 
   return (
-    <div className="space-y-6 max-w-2xl">
+    <div className={embedded ? "grid gap-6 xl:grid-cols-2 items-start" : "space-y-6 max-w-2xl"}>
 
       <TPCard title="Formato de teléfono">
         <div className="space-y-4">
@@ -266,12 +302,16 @@ export default function FieldFormatsSection({ onConfigChange }: FieldFormatsSect
         </div>
       </TPCard>
 
-      <div className="flex justify-end pt-2">
-        <TPButton variant="primary" onClick={handleSave} disabled={saving}>
-          {saving ? "Guardando…" : "Guardar cambios"}
-        </TPButton>
-      </div>
+      {!embedded && (
+        <div className="flex justify-end pt-2">
+          <TPButton variant="primary" onClick={handleSave} disabled={saving}>
+            {saving ? "Guardando…" : "Guardar cambios"}
+          </TPButton>
+        </div>
+      )}
 
     </div>
   );
-}
+});
+
+export default FieldFormatsSection;

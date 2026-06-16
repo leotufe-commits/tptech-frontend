@@ -24,7 +24,7 @@ const snap: ClientSnapshot = {
   entityType: "COMPANY",
 } as ClientSnapshot;
 
-const PRICING_KEYS = ["priceListId", "currency", "fxRate"] as const;
+const PRICING_KEYS = ["priceListId", "currency", "fxRate", "balanceModeOverride"] as const;
 
 describe("buildClientPatches — separación identidad vs. pricing", () => {
   it("clientDataPatch NUNCA contiene priceListId/currency/fxRate", () => {
@@ -51,7 +51,7 @@ describe("buildClientPatches — separación identidad vs. pricing", () => {
       autoPriceListId: "pl-9", currency: "USD", fxRate: 1450,
     });
     expect(pricingPatch).toEqual({
-      priceListId: "pl-9", currency: "USD", fxRate: 1450,
+      balanceModeOverride: null, priceListId: "pl-9", currency: "USD", fxRate: 1450,
     });
     expect(Object.keys(pricingPatch).every((k) => (PRICING_KEYS as readonly string[]).includes(k))).toBe(true);
   });
@@ -62,7 +62,9 @@ describe("buildClientPatches — separación identidad vs. pricing", () => {
       sellerId: "", canonicalTerm: "", dueDate: "",
       autoPriceListId: null, currency: null, fxRate: undefined,
     });
-    expect(pricingPatch).toEqual({});
+    // El reset del modo de saldo (override → AUTOMÁTICO) viaja SIEMPRE al
+    // cambiar de cliente, aun cuando lista/moneda/fx se omitan.
+    expect(pricingPatch).toEqual({ balanceModeOverride: null });
   });
 
   it("T15 — autoPriceListId='' (resolvedo a string vacío) → EMITE priceListId='' (limpia la del cliente anterior)", () => {
@@ -137,7 +139,7 @@ describe("buildClientPatches — separación identidad vs. pricing", () => {
     });
     // Aunque NO haya priceList, la moneda target (base ARS resuelta por el
     // caller) viaja → Recalcular es autoritativo.
-    expect(pricingPatch).toEqual({ currency: "ARS", fxRate: 1 });
+    expect(pricingPatch).toEqual({ balanceModeOverride: null, currency: "ARS", fxRate: 1 });
   });
 
   it("Recalcular USD → cliente SIN moneda propia: vuelve a la base (no queda USD pegado)", () => {

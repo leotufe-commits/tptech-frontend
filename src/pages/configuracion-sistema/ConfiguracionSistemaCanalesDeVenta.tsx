@@ -223,17 +223,14 @@ export default function ConfiguracionSistemaCanalesDeVenta({ embedded = false }:
   }
 
   /* ── JSX ─────────────────────────────────────────────────────────────────── */
-  // Helper local — envuelve con TPSectionShell salvo en modo embedded.
-  const Shell = embedded
-    ? ({ children }: { children: React.ReactNode }) => <>{children}</>
-    : ({ children }: { children: React.ReactNode }) => (
-        <TPSectionShell title="Canales de Venta" subtitle="Ajuste comercial adicional por canal (Mercado Libre, Mayorista, etc.)">
-          {children}
-        </TPSectionShell>
-      );
-
-  return (
-    <Shell>
+  // Contenido estable de la página. ⚠️ NO definir un componente `Shell` dentro
+  // del render: una nueva identidad de función por render hace que React
+  // DESMONTE y REMONTE todo el subtree (tabla + Modal + inputs) en cada
+  // setState → se pierde el foco y el autofocus del Modal se rearma (el cursor
+  // vuelve a "Nombre"). En su lugar armamos un ELEMENTO estable (`content`) y
+  // elegimos el wrapper recién afuera, manteniendo el árbol React identitario.
+  const content = (
+    <>
       <TPTableKit
         columns={COL_DEFS}
         rows={filtered}
@@ -373,8 +370,18 @@ export default function ConfiguracionSistemaCanalesDeVenta({ embedded = false }:
       />
 
       <ConfirmDeleteDialog {...dialogProps} />
-    </Shell>
+    </>
   );
+
+  // Wrapper elegido FUERA del árbol que cambia: el mismo `content` se reconcilia
+  // in-place en ambos modos → sin remount. Mantiene layout/estilos/embedded.
+  return embedded
+    ? content
+    : (
+        <TPSectionShell title="Canales de Venta" subtitle="Ajuste comercial adicional por canal (Mercado Libre, Mayorista, etc.)">
+          {content}
+        </TPSectionShell>
+      );
 }
 
 /* ── Modal de detalle (solo lectura) ────────────────────────────────────────── */

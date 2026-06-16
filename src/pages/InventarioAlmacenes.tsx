@@ -319,13 +319,15 @@ export default function InventarioAlmacenes() {
     try {
       setBusyFavoriteId(r.id);
 
+      // Favorito GENERAL de la joyería (compartido). Toggle: si esta fila YA era
+      // el favorito, el backend la desmarca → reflejamos el toggle-off.
+      const wasFav = !!r.isFavorite;
       await warehousesApi.favorite(r.id);
 
-      // Mutación explícita: marcar la fila objetivo + desmarcar la previa.
-      // Coincide línea por línea con `handleFavorite` de Vendedores.
+      // Mutación explícita: togglear la fila objetivo + desmarcar la previa.
       setRows((prev) =>
         prev.map((x) => {
-          if (x.id === r.id) return { ...x, isFavorite: true };
+          if (x.id === r.id) return { ...x, isFavorite: !wasFav };
           if (x.isFavorite) return { ...x, isFavorite: false };
           return x;
         })

@@ -145,11 +145,10 @@ describe("T8 — Total línea c/imp · unitario final + mini desglose", () => {
           },
         },
       })]} />);
-    // AJUSTE 1 (2026-06-04) — en Lista Unificada el Resumen Comercial (METALES)
-    // se muestra POR DEFECTO con su detalle (variante + gramos). Antes vivía
-    // detrás de "Ver composición"; ahora el resumen principal queda visible y el
-    // toggle solo agrega detalles adicionales. Los metales padre ya están a la
-    // vista SIN expandir.
+    // AJUSTE (2026-06-16) — en Lista UNIFICADA el resumen comercial (METALES +
+    // MONETARIO) vive DETRÁS de "Ver detalle" (el total unificado es el
+    // protagonista). Se expande para auditar el agrupamiento por metal padre.
+    fireEvent.click(container.querySelector("[data-tp-composition-detail-toggle]")!);
     // T21 — Label PRINCIPAL = nombre del METAL PADRE.
     expect(screen.getByText("Oro")).toBeInTheDocument();
     expect(screen.getByText("Plata")).toBeInTheDocument();

@@ -1020,27 +1020,25 @@ describe("FASE 12.11 — merma label editable + totales grupo + ajuste global", 
     expect(metalHeader.textContent).toMatch(/línea/);
   });
 
-  it("Si hay ajuste global de línea, aparece sub-línea bajo Margen", () => {
+  it("Aún con ajuste global de línea (BONUS), la columna Costo total NO muestra texto de ajuste global", () => {
+    // Contrato visual: la columna Costo total muestra SOLO costo. El impacto
+    // del ajuste global vive únicamente en el bloque inferior "AJUSTE GLOBAL".
     const line = makeLine();
-    // Inyectamos un ajuste global en pricingMeta (passthrough simulado).
     (line.pricingMeta as any).documentAdjustments = {
       lineManualDiscount: { kind: "BONUS", valuePct: 5, amount: 50 },
       channel: null,
       coupon: null,
     };
     render(<SaleCompositionEditableGrid line={line} onApply={vi.fn()} {...baseProps} />);
-    // Cada fila renderea "Aj. global −5,0%" como sub-línea bajo margen.
-    // 4 fixtures (METAL/HECHURA/PRODUCT/SERVICE) → al menos 4 ocurrencias.
-    expect(screen.getAllByText(/Aj\.\s+global\s+−5,00%/).length).toBeGreaterThanOrEqual(4);
+    expect(screen.queryByText(/Aj\.\s+global/)).toBeNull();
   });
 
-  it("Si NO hay ajuste global, no aparece sub-línea 'Aj. global'", () => {
-    // Fixture default sin documentAdjustments.lineManualDiscount.
+  it("Sin ajuste global, tampoco aparece texto 'Aj. global' (sin regresión)", () => {
     render(<SaleCompositionEditableGrid line={makeLine()} onApply={vi.fn()} {...baseProps} />);
     expect(screen.queryByText(/Aj\.\s+global/)).toBeNull();
   });
 
-  it("SURCHARGE global → tono amber + signo '+'", () => {
+  it("Aún con ajuste global de línea (SURCHARGE), la columna Costo total NO muestra texto de ajuste global", () => {
     const line = makeLine();
     (line.pricingMeta as any).documentAdjustments = {
       lineManualDiscount: { kind: "SURCHARGE", valuePct: 15, amount: 100 },
@@ -1048,7 +1046,7 @@ describe("FASE 12.11 — merma label editable + totales grupo + ajuste global", 
       coupon: null,
     };
     render(<SaleCompositionEditableGrid line={line} onApply={vi.fn()} {...baseProps} />);
-    expect(screen.getAllByText(/Aj\.\s+global\s+\+15,00%/).length).toBeGreaterThanOrEqual(4);
+    expect(screen.queryByText(/Aj\.\s+global/)).toBeNull();
   });
 });
 
@@ -1982,18 +1980,19 @@ describe("FASE 12.17 — Feedback theme + labels sentence-case", () => {
     expect(screen.queryByText(/Valor de venta:/)).toBeNull();
   });
 
-  it("Header: qty = 1 — costo total línea = Σ lineCost (sin escalar)", () => {
-    // Fixture default: metals.lineCost=500, hechuras=200, products=150, services=80.
-    // Σ = 930. qty=1 → total línea = 930.
-    render(<SaleCompositionEditableGrid line={makeLine()} onApply={vi.fn()} {...baseProps} />);
+  it("Header: qty = 1 — costo total línea = Costo Ajustado POST (sin ajuste: = Σ lineCost)", () => {
+    // Sin ajuste global, el Costo Ajustado (unitCost) === Σ componentes.
+    // Fixture: metals 500 + hechuras 200 + products 150 + services 80 = 930.
+    // unitCost consistente = 930 → header (POST) = 930.
+    render(<SaleCompositionEditableGrid line={makeLine({ unitCost: 930 })} onApply={vi.fn()} {...baseProps} />);
     const header = screen.getByText(/Costo total línea/).parentElement!;
     expect(header.textContent ?? "").toMatch(/930/);
   });
 
-  it("Header: qty > 1 — costo total línea = Σ lineCost × qty (escalado coherente con venta)", () => {
-    // qty=3 → costo total = 930 × 3 = 2.790. La venta del header (basePrice
-    // × qty) también está escalada × qty → ambos en la MISMA ESCALA.
-    const line = { ...makeLine(), quantity: 3 };
+  it("Header: qty > 1 — costo total línea = unitCost × qty (escalado coherente con venta)", () => {
+    // qty=3 → costo total = unitCost(930) × 3 = 2.790. La venta del header
+    // (basePrice × qty) también está escalada × qty → MISMA ESCALA.
+    const line = { ...makeLine({ unitCost: 930 }), quantity: 3 };
     render(<SaleCompositionEditableGrid line={line} onApply={vi.fn()} {...baseProps} />);
     const headerCost = screen.getByText(/Costo total línea/).parentElement!;
     expect(headerCost.textContent ?? "").toMatch(/2\.?790/);
@@ -2003,11 +2002,11 @@ describe("FASE 12.17 — Feedback theme + labels sentence-case", () => {
     expect(headerSale.textContent ?? "").toMatch(/3\.?000/);
   });
 
-  it("Header: composición mixta (metal + hechura + producto + servicio) — total se suma sin perder componentes", () => {
-    const line = { ...makeLine(), quantity: 2 };
+  it("Header: composición mixta (metal + hechura + producto + servicio) — costo POST coherente", () => {
+    const line = { ...makeLine({ unitCost: 930 }), quantity: 2 };
     render(<SaleCompositionEditableGrid line={line} onApply={vi.fn()} {...baseProps} />);
     const header = screen.getByText(/Costo total línea/).parentElement!;
-    // qty=2 → 930 × 2 = 1.860. Confirma que el header agrega los 4 tipos.
+    // qty=2 → unitCost(930) × 2 = 1.860. Sin ajuste, unitCost = Σ 4 tipos.
     expect(header.textContent ?? "").toMatch(/1\.?860/);
   });
 
@@ -3682,117 +3681,68 @@ describe("FASE F20 — Header sin '(% ajuste)' inline; detalle al final del card
   });
 });
 
-describe("FASE F20 — Sección 'AJUSTE GLOBAL' al final del card", () => {
-  it("BONUS muestra 3 filas: 'Costo antes', 'Bonificación X%' (verde), 'Costo total'", () => {
-    const line = makeLine();
-    (line.pricingMeta as any).composition.costAdjustment = {
-      kind:   "BONUS",
-      type:   "PERCENTAGE",
-      value:  5,
-      amount: 100,
-    };
-    render(<SaleCompositionEditableGrid line={line} onApply={vi.fn()} {...baseProps} />);
-    const section = document.querySelector("[data-cost-adjustment-detail]");
-    expect(section).not.toBeNull();
-    expect(section!.textContent).toMatch(/Ajuste global/i);
-    expect(section!.textContent).toMatch(/Costo antes del ajuste:/);
-    expect(section!.textContent).toMatch(/Bonificación 5,00%/);
-    // Monto signado − (BONUS reduce).
-    expect(section!.textContent).toMatch(/−ARS\s*100,00/);
-    expect(section!.textContent).toMatch(/Costo total:/);
-    // Color emerald para BONUS.
-    expect(section!.innerHTML).toMatch(/emerald-600|emerald-400/);
-  });
-
-  it("SURCHARGE muestra 'Recargo X%' (ámbar) y monto signado '+ARS Y'", () => {
-    const line = makeLine();
-    (line.pricingMeta as any).composition.costAdjustment = {
-      kind:   "SURCHARGE",
-      type:   "PERCENTAGE",
-      value:  5,
-      amount: 100,
-    };
-    render(<SaleCompositionEditableGrid line={line} onApply={vi.fn()} {...baseProps} />);
-    const section = document.querySelector("[data-cost-adjustment-detail]")!;
-    expect(section.textContent).toMatch(/Recargo 5,00%/);
-    expect(section.textContent).toMatch(/\+ARS\s*100,00/);
-    expect(section.innerHTML).toMatch(/amber-600|amber-400/);
-  });
-
-  it("BONUS FIXED muestra 'Bonificación ARS Y'", () => {
-    const line = makeLine();
-    (line.pricingMeta as any).composition.costAdjustment = {
-      kind:   "BONUS",
-      type:   "FIXED_AMOUNT",
-      value:  35000,
-      amount: 35000,
-    };
-    render(<SaleCompositionEditableGrid line={line} onApply={vi.fn()} {...baseProps} />);
-    const section = document.querySelector("[data-cost-adjustment-detail]")!;
-    expect(section.textContent).toMatch(/Bonificación ARS\s*35\.000,00/);
-    expect(section.textContent).toMatch(/−ARS\s*35\.000,00/);
-  });
-
-  it("'Costo total' del detalle coincide con el 'Valor de costo' del header (fixture: 930)", () => {
+describe("FASE F20 → REMOVIDO — el recuadro 'Ajuste global' ya no se renderiza", () => {
+  // UX 2026-06-13: tras unificar el costo POST en la composición, el recuadro
+  // "Ajuste global" quedó REDUNDANTE (duplicaba datos ya visibles). Contrato
+  // nuevo: la sección NUNCA se renderiza; el costo POST sigue visible en el
+  // header "Costo total línea", los footers de grupo, el costo por fila y el
+  // subdetalle "±$ GLOBAL". No se eliminó lógica ni datos del modelo.
+  it("BONUS — la sección 'Ajuste global' NO se renderiza", () => {
     const line = makeLine();
     (line.pricingMeta as any).composition.costAdjustment = {
       kind: "BONUS", type: "PERCENTAGE", value: 5, amount: 100,
     };
     render(<SaleCompositionEditableGrid line={line} onApply={vi.fn()} {...baseProps} />);
-    // El fixture default emite totalComponents = 930.
-    expect(screen.getAllByText(/ARS\s*930,00/).length).toBeGreaterThanOrEqual(1);
-    const section = document.querySelector("[data-cost-adjustment-detail]")!;
-    expect(section.textContent).toMatch(/Costo total:[\s\S]*ARS\s*930,00/);
+    expect(document.querySelector("[data-cost-adjustment-detail]")).toBeNull();
+    expect(screen.queryByText(/Costo antes del ajuste/)).toBeNull();
   });
 
-  it("'Costo antes del ajuste' se deriva visualmente:  BONUS → total + amount (930 + 100 = 1.030)", () => {
-    const line = makeLine();
-    (line.pricingMeta as any).composition.costAdjustment = {
-      kind: "BONUS", type: "PERCENTAGE", value: 5, amount: 100,
-    };
-    render(<SaleCompositionEditableGrid line={line} onApply={vi.fn()} {...baseProps} />);
-    const section = document.querySelector("[data-cost-adjustment-detail]")!;
-    expect(section.textContent).toMatch(/Costo antes del ajuste:[\s\S]*ARS\s*1\.030,00/);
-  });
-
-  it("'Costo antes del ajuste' se deriva visualmente: SURCHARGE → total − amount (930 − 100 = 830)", () => {
+  it("SURCHARGE — la sección NO se renderiza", () => {
     const line = makeLine();
     (line.pricingMeta as any).composition.costAdjustment = {
       kind: "SURCHARGE", type: "PERCENTAGE", value: 5, amount: 100,
     };
     render(<SaleCompositionEditableGrid line={line} onApply={vi.fn()} {...baseProps} />);
-    const section = document.querySelector("[data-cost-adjustment-detail]")!;
-    expect(section.textContent).toMatch(/Costo antes del ajuste:[\s\S]*ARS\s*830,00/);
+    expect(document.querySelector("[data-cost-adjustment-detail]")).toBeNull();
   });
 
-  it("NO renderea sección cuando kind === null", () => {
+  it("BONUS FIXED — la sección NO se renderiza", () => {
     const line = makeLine();
     (line.pricingMeta as any).composition.costAdjustment = {
-      kind: null, type: null, value: null, amount: null,
+      kind: "BONUS", type: "FIXED_AMOUNT", value: 35000, amount: 35000,
     };
     render(<SaleCompositionEditableGrid line={line} onApply={vi.fn()} {...baseProps} />);
     expect(document.querySelector("[data-cost-adjustment-detail]")).toBeNull();
   });
 
-  it("NO renderea sección cuando NO existe composition.costAdjustment (legacy)", () => {
-    const line = makeLine();
-    delete (line.pricingMeta as any).composition.costAdjustment;
-    render(<SaleCompositionEditableGrid line={line} onApply={vi.fn()} {...baseProps} />);
+  it("Sin ajuste (kind null) y legacy (sin costAdjustment) — tampoco se renderiza", () => {
+    const lineNull = makeLine();
+    (lineNull.pricingMeta as any).composition.costAdjustment = { kind: null, type: null, value: null, amount: null };
+    const { unmount } = render(<SaleCompositionEditableGrid line={lineNull} onApply={vi.fn()} {...baseProps} />);
+    expect(document.querySelector("[data-cost-adjustment-detail]")).toBeNull();
+    unmount();
+
+    const lineLegacy = makeLine();
+    delete (lineLegacy.pricingMeta as any).composition.costAdjustment;
+    render(<SaleCompositionEditableGrid line={lineLegacy} onApply={vi.fn()} {...baseProps} />);
     expect(document.querySelector("[data-cost-adjustment-detail]")).toBeNull();
   });
 
-  it("La sección aparece UNA sola vez (no duplicada)", () => {
-    const line = makeLine();
+  it("El POST sobrevive sin la sección: header 'Costo total línea' = POST (830), NO PRE (930)", () => {
+    // BONUS: Σ componentes 930 (PRE) − 100 (ajuste) = 830 (POST = unitCost).
+    const line = makeLine({ unitCost: 830 });
     (line.pricingMeta as any).composition.costAdjustment = {
       kind: "BONUS", type: "PERCENTAGE", value: 5, amount: 100,
     };
     render(<SaleCompositionEditableGrid line={line} onApply={vi.fn()} {...baseProps} />);
-    expect(document.querySelectorAll("[data-cost-adjustment-detail]").length).toBe(1);
-    // Solo un label "Ajuste global" en todo el card.
-    expect(screen.getAllByText(/Ajuste global/i).length).toBe(1);
+    const header = screen.getByText(/Costo total línea/).parentElement!;
+    expect(header.textContent ?? "").toMatch(/830/);
+    // El ajuste sigue representado por fila (subdetalle "±$ GLOBAL"), no en una sección aparte.
+    expect(document.querySelector("[data-tp-global-cost-impact]")).not.toBeNull();
+    expect(document.querySelector("[data-cost-adjustment-detail]")).toBeNull();
   });
 
-  it("Header sigue mostrando 'Costo con impuestos' independientemente del ajuste", () => {
+  it("Header 'Costo con impuestos' sigue mostrándose con ajuste activo (sin la sección)", () => {
     const line = makeLine();
     (line.pricingMeta as any).composition.costAdjustment = {
       kind: "BONUS", type: "PERCENTAGE", value: 10, amount: 100,
@@ -3803,7 +3753,373 @@ describe("FASE F20 — Sección 'AJUSTE GLOBAL' al final del card", () => {
     render(<SaleCompositionEditableGrid line={line} onApply={vi.fn()} {...baseProps} />);
     expect(screen.getByText(/Costo con impuestos:/)).toBeInTheDocument();
     expect(screen.getByText(/ARS\s*927,00/)).toBeInTheDocument();
-    expect(document.querySelector("[data-cost-adjustment-detail]")).not.toBeNull();
+    expect(document.querySelector("[data-cost-adjustment-detail]")).toBeNull();
+  });
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+// AJUSTE GLOBAL — contrato del pipeline (display POST-ajuste)
+//   Σ Componentes (antes) ± Ajuste = Costo Ajustado (total POST) → Venta.
+//   El POST se muestra en el header "Costo total línea" (= unitCost × qty) y en
+//   los footers de grupo. El recuadro "Ajuste global" ya NO se renderiza
+//   (UX 2026-06-13): era redundante con esas superficies.
+//   Cierre obligatorio: antes ∓ ajuste = total (verificado por aritmética).
+// ════════════════════════════════════════════════════════════════════════════
+describe("AJUSTE GLOBAL — pipeline POST por tipo de componente", () => {
+  const metalC = (lineCost: number) => ([{
+    costLineId: "m", metalVariantId: "mv", metalName: "Oro", purity: 0.75,
+    purityLabel: "18k", appliedGrams: 1, appliedMermaPct: 0, lineCost, quotePrice: lineCost,
+  }]);
+  const hechuraC = (lineCost: number) => ([{
+    costLineId: "h", appliedAmount: lineCost, lineCost, lineLabel: "Hechura",
+  }]);
+  const prodC = (totalValue: number) => ([{
+    costLineId: "p", catalogItemId: "ci", catalogItemCode: "P1", catalogItemName: "Prod",
+    quantity: 1, unitValue: totalValue, totalValue, currencyId: null,
+    lineAdjKind: null, lineAdjType: null, lineAdjValue: null, lineAdjAmount: null, affectsStock: null,
+  }]);
+  const servC = (totalValue: number) => ([{
+    costLineId: "s", catalogItemId: "ci", catalogItemCode: "S1", catalogItemName: "Serv",
+    quantity: 1, unitValue: totalValue, totalValue, currencyId: null,
+    lineAdjKind: null, lineAdjType: null, lineAdjValue: null, lineAdjAmount: null, affectsStock: null,
+  }]);
+
+  /** Construye una línea con SOLO los componentes dados, ajuste global y
+   *  `unitCost` consistente (= POST). `sum` = Σ componentes (PRE). */
+  function adjLine(opts: {
+    metals?: any[]; hechuras?: any[]; products?: any[]; services?: any[];
+    sum: number; kind: "BONUS" | "SURCHARGE"; amount: number; qty?: number;
+  }): DocumentLine {
+    const post = opts.kind === "BONUS" ? opts.sum - opts.amount : opts.sum + opts.amount;
+    const line = makeLine({
+      unitCost: post, basePrice: post * 2, unitPrice: post * 2,
+      composition: {
+        metal: null, hechura: null, taxes: [],
+        metals:   opts.metals   ?? [], hechuras: opts.hechuras ?? [],
+        products: opts.products ?? [], services: opts.services ?? [],
+        costAdjustment: { kind: opts.kind, type: "PERCENTAGE", value: 10, amount: opts.amount },
+      } as any,
+    });
+    (line as any).quantity = opts.qty ?? 1;
+    return line;
+  }
+
+  function expectClosure(sum: number, amount: number, post: number, kind: "BONUS" | "SURCHARGE", qty: number) {
+    const f = (v: number) => new RegExp(`${(v * qty).toLocaleString("es-AR")}`.replace(/\./g, "\\."));
+    // El recuadro "Ajuste global" ya no se renderiza (UX 2026-06-13): el costo
+    // POST se valida en el header "Costo total línea" y en los footers de grupo
+    // (tests dedicados). La sección NO debe existir.
+    const header = screen.getByText(/Costo total línea/).parentElement!;
+    expect(header.textContent ?? "").toMatch(f(post));                 // header = POST × qty
+    expect(document.querySelector("[data-cost-adjustment-detail]")).toBeNull();
+    // Cierre aritmético del fixture (antes ∓ ajuste = POST).
+    expect(kind === "BONUS" ? sum - amount : sum + amount).toBe(post);
+  }
+
+  it("METALES — Bonificación 10% (1000 → 900): antes 1000, −100, total 900", () => {
+    render(<SaleCompositionEditableGrid line={adjLine({ metals: metalC(1000), sum: 1000, kind: "BONUS", amount: 100 })} onApply={vi.fn()} {...baseProps} />);
+    expectClosure(1000, 100, 900, "BONUS", 1);
+  });
+  it("METALES — Recargo 10% (1000 → 1100): antes 1000, +100, total 1100", () => {
+    render(<SaleCompositionEditableGrid line={adjLine({ metals: metalC(1000), sum: 1000, kind: "SURCHARGE", amount: 100 })} onApply={vi.fn()} {...baseProps} />);
+    expectClosure(1000, 100, 1100, "SURCHARGE", 1);
+  });
+  it("HECHURAS — Bonificación (800 → 720): antes 800, −80, total 720", () => {
+    render(<SaleCompositionEditableGrid line={adjLine({ hechuras: hechuraC(800), sum: 800, kind: "BONUS", amount: 80 })} onApply={vi.fn()} {...baseProps} />);
+    expectClosure(800, 80, 720, "BONUS", 1);
+  });
+  it("PRODUCTOS — Recargo (500 → 575): antes 500, +75, total 575", () => {
+    render(<SaleCompositionEditableGrid line={adjLine({ products: prodC(500), sum: 500, kind: "SURCHARGE", amount: 75 })} onApply={vi.fn()} {...baseProps} />);
+    expectClosure(500, 75, 575, "SURCHARGE", 1);
+  });
+  it("SERVICIOS — Bonificación (400 → 360): antes 400, −40, total 360", () => {
+    render(<SaleCompositionEditableGrid line={adjLine({ services: servC(400), sum: 400, kind: "BONUS", amount: 40 })} onApply={vi.fn()} {...baseProps} />);
+    expectClosure(400, 40, 360, "BONUS", 1);
+  });
+  it("MIXTO (metal+hechura+producto+servicio) — Bonificación (2000 → 1800)", () => {
+    render(<SaleCompositionEditableGrid line={adjLine({
+      metals: metalC(1000), hechuras: hechuraC(500), products: prodC(300), services: servC(200),
+      sum: 2000, kind: "BONUS", amount: 200,
+    })} onApply={vi.fn()} {...baseProps} />);
+    expectClosure(2000, 200, 1800, "BONUS", 1);
+  });
+  it("MIXTO con qty=2 — el ajuste escala × qty y cierra (antes 4000, −400, total 3600)", () => {
+    render(<SaleCompositionEditableGrid line={adjLine({
+      metals: metalC(1000), hechuras: hechuraC(500), products: prodC(300), services: servC(200),
+      sum: 2000, kind: "BONUS", amount: 200, qty: 2,
+    })} onApply={vi.fn()} {...baseProps} />);
+    expectClosure(2000, 200, 1800, "BONUS", 2);
+  });
+
+  // ── Costo total con ajuste global: principal = POST + subdetalle "±$ GLOBAL" ─
+  it("Costo total — principal = costo POST + subdetalle '−$ GLOBAL' (BONUS)", () => {
+    // metal 1000, BONUS 10% → POST 900, impacto −100.
+    render(<SaleCompositionEditableGrid line={adjLine({ metals: metalC(1000), sum: 1000, kind: "BONUS", amount: 100 })} onApply={vi.fn()} {...baseProps} />);
+    const impact = document.querySelector("[data-tp-global-cost-impact]");
+    expect(impact).not.toBeNull();
+    expect(impact!.textContent ?? "").toMatch(/GLOBAL/);
+    expect(impact!.textContent ?? "").toMatch(/−/);                 // BONUS → signo menos
+    // El principal de la celda muestra el costo POST (900), no la base (1000).
+    expect(impact!.parentElement!.textContent ?? "").toMatch(/900/);
+  });
+  it("Costo total — subdetalle con signo '+' cuando es recargo (SURCHARGE)", () => {
+    render(<SaleCompositionEditableGrid line={adjLine({ products: prodC(500), sum: 500, kind: "SURCHARGE", amount: 75 })} onApply={vi.fn()} {...baseProps} />);
+    const impact = document.querySelector("[data-tp-global-cost-impact]");
+    expect(impact).not.toBeNull();
+    expect(impact!.textContent ?? "").toMatch(/\+/);
+    expect(impact!.textContent ?? "").toMatch(/GLOBAL/);
+  });
+  it("Sin ajuste global → la celda Costo total NO muestra subdetalle GLOBAL", () => {
+    const line = makeLine();
+    delete (line.pricingMeta as any).composition.costAdjustment;
+    render(<SaleCompositionEditableGrid line={line} onApply={vi.fn()} {...baseProps} />);
+    expect(document.querySelector("[data-tp-global-cost-impact]")).toBeNull();
+  });
+
+  // ── OBJETIVO 1 — Footer de grupo POST ajuste global (paridad fila/footer) ──
+  // El footer "Total <grupo>" debe mostrar el costo POST ajuste global, igual
+  // que la fila y el header. Antes mostraba el costo BASE (PRE) → dos verdades.
+  it("Footer 'Total metales' = costo POST ajuste (Bonif 10%: 1.000 → 900, NO 1.000)", () => {
+    render(<SaleCompositionEditableGrid line={adjLine({ metals: metalC(1000), sum: 1000, kind: "BONUS", amount: 100 })} onApply={vi.fn()} {...baseProps} />);
+    const footer = document.querySelector('[data-group-footer="METAL"]')!;
+    expect(footer.textContent ?? "").toMatch(/900,00/);     // POST
+    expect(footer.textContent ?? "").not.toMatch(/1\.000,00/); // NO base PRE
+  });
+
+  it("Footer 'Total metales' = costo POST con los números del caso real (355.389,93 → 319.850,94)", () => {
+    render(<SaleCompositionEditableGrid line={adjLine({ metals: metalC(355389.93), sum: 355389.93, kind: "BONUS", amount: 35538.99 })} onApply={vi.fn()} {...baseProps} />);
+    const footer = document.querySelector('[data-group-footer="METAL"]')!;
+    expect(footer.textContent ?? "").toMatch(/319\.850,94/);     // POST ajuste 10%
+    expect(footer.textContent ?? "").not.toMatch(/355\.389,93/); // NO costo base
+  });
+
+  it("Footer 'Total hechuras' también aplica POST (Recargo: 800 → 880)", () => {
+    render(<SaleCompositionEditableGrid line={adjLine({ hechuras: hechuraC(800), sum: 800, kind: "SURCHARGE", amount: 80 })} onApply={vi.fn()} {...baseProps} />);
+    const footer = document.querySelector('[data-group-footer="HECHURA"]')!;
+    expect(footer.textContent ?? "").toMatch(/880,00/);     // POST recargo 10%
+    expect(footer.textContent ?? "").not.toMatch(/800,00/); // NO base PRE
+  });
+
+  // ── OBJETIVO 2 — Margen = margen comercial de la lista (NO % reconstruido) ──
+  // El margen se mide contra el COSTO AJUSTADO (post ajuste global), que es la
+  // base sobre la que el motor construye la venta. Con Bonif 10%:
+  //   costo base 1.000 → ajustado 900;  venta 1.665.
+  //   Margen de lista = (1.665 − 900)/900 = 85%.  (Contra el base daría el
+  //   engañoso (1.665 − 1.000)/1.000 = 66,5% que veía el operador.)
+  it("Margen = margen de lista sobre costo ajustado (85%), NO el derivado contra base (66,5%)", () => {
+    const line = makeLine({ metalSale: 1665 } as any);
+    (line.pricingMeta as any).composition = {
+      metal: null, hechura: null, taxes: [],
+      metals: [{
+        costLineId: "cl-metal-1", metalVariantId: "mv-1", metalName: "Oro",
+        purity: 0.75, purityLabel: "18k", appliedGrams: 2.5, appliedMermaPct: 0,
+        lineCost: 1000, quotePrice: 400,
+      }],
+      hechuras: [], products: [], services: [],
+      costAdjustment: { kind: "BONUS", type: "PERCENTAGE", value: 10, amount: 100 },
+    };
+    render(<SaleCompositionEditableGrid line={line} onApply={vi.fn()} {...baseProps} />);
+    expect(screen.getByText(/^\+85,00%$/)).toBeTruthy();        // margen de lista
+    expect(screen.queryByText(/^\+66,50%$/)).toBeNull();        // NO el derivado contra base
+  });
+
+  it("Sin ajuste global, el margen de lista es idéntico al histórico (no regresa el caso base)", () => {
+    // costo base 1.000 (sin ajuste) → ajustado === base; venta 1.665 → 66,5%.
+    // Aquí 66,5% SÍ es correcto: no hay ajuste global que separe base de ajustado.
+    const line = makeLine({ metalSale: 1665 } as any);
+    (line.pricingMeta as any).composition = {
+      metal: null, hechura: null, taxes: [],
+      metals: [{
+        costLineId: "cl-metal-1", metalVariantId: "mv-1", metalName: "Oro",
+        purity: 0.75, purityLabel: "18k", appliedGrams: 2.5, appliedMermaPct: 0,
+        lineCost: 1000, quotePrice: 400,
+      }],
+      hechuras: [], products: [], services: [],
+    };
+    render(<SaleCompositionEditableGrid line={line} onApply={vi.fn()} {...baseProps} />);
+    expect(screen.getByText(/^\+66,50%$/)).toBeTruthy();
+  });
+});
+
+// ============================================================================
+// CONTRATO DE COLUMNAS INDEPENDIENTES — Costo + Margen ≠ Venta (POR DISEÑO)
+// ----------------------------------------------------------------------------
+// La tabla de Composición NO debe cerrar aritméticamente
+// `Costo total + Margen = Venta total`. Cada columna comunica un concepto
+// distinto (auditoría visual confirmada con el operador):
+//   · COSTO TOTAL → costo POST ajuste global (+ subdetalle "±$ GLOBAL").
+//   · MARGEN      → margen REAL de lista/composición, contra el costo BASE
+//                   (NO el costo POST-global, NO el finalPrice).
+//   · VENTA TOTAL → venta final/comercial.
+// Estos tests BLINDAN ese contrato: si un futuro "arreglo" intenta forzar el
+// cierre recalculando el Margen contra el costo POST-global o el finalPrice,
+// fallan. NO "ajustar" estos tests para que cierren — el no-cierre es correcto.
+// ============================================================================
+describe("Contrato de columnas independientes — Costo + Margen ≠ Venta (por diseño)", () => {
+  // Fixture: un único producto. Costo base 1000, venta de lista 1850 (margen 85%).
+  const marginGuardLine = (withGlobal: boolean): DocumentLine => makeLine({
+    composition: {
+      metal: null, hechura: null, taxes: [],
+      metals: [], hechuras: [], services: [],
+      products: [{
+        costLineId: "pg", catalogItemId: "ci-pg", catalogItemCode: "PG",
+        catalogItemName: "ProdGuard", quantity: 1, unitValue: 1000, totalValue: 1000,
+        lineSale: 1850, currencyId: null,
+        lineAdjKind: null, lineAdjType: null, lineAdjValue: null, lineAdjAmount: null, affectsStock: null,
+      }],
+      ...(withGlobal
+        ? { costAdjustment: { kind: "BONUS", type: "PERCENTAGE", value: 10, amount: 100 } }
+        : {}),
+    } as any,
+  });
+
+  it("PROTECCIÓN: el Margen monetario es INVARIANTE al ajuste global (usa BASE, no POST ni finalPrice)", () => {
+    // SIN ajuste global: margen monetario = venta(1850) − base(1000).
+    const { unmount } = render(
+      <SaleCompositionEditableGrid line={marginGuardLine(false)} onApply={vi.fn()} {...baseProps} />,
+    );
+    const marginNoGlobal = document.querySelector("[data-margin-amount-impact]")?.textContent ?? null;
+    expect(marginNoGlobal).not.toBeNull();
+    unmount();
+
+    // CON ajuste global 10%: el COSTO total baja a POST (900) + subdetalle GLOBAL,
+    // pero el MARGEN monetario NO cambia (sigue contra la base 1000). Si alguien
+    // recalcula el margen contra el costo POST (→ 950) o el finalPrice, este
+    // `toBe` falla. Es el blindaje del contrato "no forzar Costo+Margen=Venta".
+    render(<SaleCompositionEditableGrid line={marginGuardLine(true)} onApply={vi.fn()} {...baseProps} />);
+    const marginWithGlobal = document.querySelector("[data-margin-amount-impact]")?.textContent ?? null;
+    expect(marginWithGlobal).toBe(marginNoGlobal);            // margen INVARIANTE
+    expect(document.querySelector("[data-tp-global-cost-impact]")).not.toBeNull(); // costo SÍ refleja el global
+  });
+});
+
+describe("AJUSTE GLOBAL — combos comerciales sin regresión", () => {
+  it("Combo SIN costAdjustment → NO renderea la sección 'Ajuste global' (dominio distinto)", () => {
+    // El combo usa comboAdjustment sobre el PRECIO, no manualAdjustment sobre el
+    // costo. `composition.costAdjustment` viene null → la sección no aparece.
+    const line = makeLine({ costMode: "COMBO", priceSource: "COMBO_COMPONENTS" } as any);
+    delete (line.pricingMeta as any).composition.costAdjustment;
+    render(<SaleCompositionEditableGrid line={line} onApply={vi.fn()} {...baseProps} />);
+    expect(document.querySelector("[data-cost-adjustment-detail]")).toBeNull();
+    // El banner exclusivo del combo fue ELIMINADO (unificación visual): el combo
+    // usa el mismo patrón de grupo (PRODUCTOS → filas → Total productos) que
+    // producto/servicio, sin caja previa. No debe renderearse.
+    expect(document.querySelector("[data-testid='combo-composition-header']")).toBeNull();
+  });
+
+  it("Header del combo usa unitCost POST (= Σ componentes cuando no hay ajuste de costo)", () => {
+    // Sin manualAdjustment, unitCost === Σ componentes → header = Σ (sin cambio).
+    const line = makeLine({ costMode: "COMBO", priceSource: "COMBO_COMPONENTS", unitCost: 930 } as any);
+    delete (line.pricingMeta as any).composition.costAdjustment;
+    render(<SaleCompositionEditableGrid line={line} onApply={vi.fn()} {...baseProps} />);
+    const header = screen.getByText(/Costo total línea/).parentElement!;
+    expect(header.textContent ?? "").toMatch(/930/);
+  });
+});
+
+describe("AJUSTE GLOBAL — mismo pipeline que el motor (passthrough)", () => {
+  it("'Costo total' (display) === unitCost del motor × qty (no recálculo frontend)", () => {
+    // Si el motor emite unitCost=777, el display lo usa tal cual × qty.
+    const line = makeLine({
+      unitCost: 777,
+      composition: {
+        metal: null, hechura: null, taxes: [],
+        metals: [{ costLineId: "m", metalVariantId: "mv", metalName: "Oro", purity: 0.75, purityLabel: "18k", appliedGrams: 1, appliedMermaPct: 0, lineCost: 877, quotePrice: 877 }],
+        hechuras: [], products: [], services: [],
+        costAdjustment: { kind: "BONUS", type: "PERCENTAGE", value: 10, amount: 100 },
+      } as any,
+    });
+    (line as any).quantity = 1;
+    render(<SaleCompositionEditableGrid line={line} onApply={vi.fn()} {...baseProps} />);
+    // El header lee unitCost (777), NO la Σ componentes (877). El recuadro
+    // "Ajuste global" ya no se renderiza — el POST vive en el header.
+    const header = screen.getByText(/Costo total línea/).parentElement!;
+    expect(header.textContent ?? "").toMatch(/777/);
+    expect(document.querySelector("[data-cost-adjustment-detail]")).toBeNull();
+  });
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+// AJUSTE GLOBAL — el % del ajuste se unifica en el label de "Costo total"
+//   UX 2026-06-13: antes el % se mostraba dos veces (badge "−10% GLOBAL" en
+//   Merma/Ajuste + "−$X GLOBAL" en Costo total). Ahora el % vive UNA sola vez,
+//   junto al monto: "Costo total → −$X GLOBAL (−10%)". El badge de % en
+//   Merma/Ajuste se oculta; solo persiste para ajustes FIXED_AMOUNT (sin %).
+// ════════════════════════════════════════════════════════════════════════════
+describe("AJUSTE GLOBAL — fila METAL: % unificado en 'Costo total' (sin badge en Merma/Ajuste)", () => {
+  function metalAdj(adj: any, over: any = {}) {
+    const line = makeLine(over);
+    (line.pricingMeta as any).composition.costAdjustment = adj;
+    return line;
+  }
+
+  it("Bonificación % → SIN badge en Merma/Ajuste; el % va en 'Costo total' GLOBAL (−10%)", () => {
+    render(<SaleCompositionEditableGrid line={metalAdj({ kind: "BONUS", type: "PERCENTAGE", value: 10, amount: 100 })} onApply={vi.fn()} {...baseProps} />);
+    // Ya NO hay badge de % en la columna Merma/Ajuste.
+    expect(document.querySelector("[data-tp-metal-global-adjustment]")).toBeNull();
+    // El % vive en el subdetalle "GLOBAL (−10,00%)" del Costo total (1ra fila = metal).
+    const impact = document.querySelector("[data-tp-global-cost-impact]")!;
+    expect(impact.textContent ?? "").toMatch(/GLOBAL/);
+    expect(impact.textContent ?? "").toMatch(/\(−\s*10,00\s*%\)/);
+  });
+
+  it("Recargo % → 'Costo total' muestra GLOBAL (+10%) con signo +", () => {
+    render(<SaleCompositionEditableGrid line={metalAdj({ kind: "SURCHARGE", type: "PERCENTAGE", value: 10, amount: 100 })} onApply={vi.fn()} {...baseProps} />);
+    expect(document.querySelector("[data-tp-metal-global-adjustment]")).toBeNull();
+    const impact = document.querySelector("[data-tp-global-cost-impact]")!;
+    expect(impact.textContent ?? "").toMatch(/GLOBAL/);
+    expect(impact.textContent ?? "").toMatch(/\(\+\s*10,00\s*%\)/);
+  });
+
+  it("Sin ajuste global → NO badge y NO subdetalle de % en Costo total", () => {
+    render(<SaleCompositionEditableGrid line={makeLine()} onApply={vi.fn()} {...baseProps} />);
+    expect(document.querySelector("[data-tp-metal-global-adjustment]")).toBeNull();
+    expect(document.querySelector("[data-tp-global-cost-impact]")).toBeNull();
+  });
+
+  it("FIXED_AMOUNT → conserva el badge (Costo total no emite % para FIXED)", () => {
+    // Para FIXED no hay porcentaje que mover: el badge sigue siendo el único
+    // indicador del ajuste en la fila (Costo total no emite subdetalle de %).
+    render(<SaleCompositionEditableGrid line={metalAdj({ kind: "BONUS", type: "FIXED_AMOUNT", value: 35000, amount: 35000 })} onApply={vi.fn()} {...baseProps} />);
+    const badge = document.querySelector("[data-tp-metal-global-adjustment]")!;
+    expect(badge.textContent ?? "").toMatch(/35\.000/);
+    expect(badge.textContent ?? "").toMatch(/global/i);
+    // FIXED no genera el subdetalle de % en Costo total.
+    expect(document.querySelector("[data-tp-global-cost-impact]")).toBeNull();
+  });
+
+  it("Reutiliza el % del motor (passthrough): value 7 → 'GLOBAL (−7,00%)' en Costo total", () => {
+    render(<SaleCompositionEditableGrid line={metalAdj({ kind: "BONUS", type: "PERCENTAGE", value: 7, amount: 65 })} onApply={vi.fn()} {...baseProps} />);
+    expect(document.querySelector("[data-tp-metal-global-adjustment]")).toBeNull();
+    const impact = document.querySelector("[data-tp-global-cost-impact]")!;
+    expect(impact.textContent ?? "").toMatch(/\(−\s*7,00\s*%\)/);
+  });
+
+  it("Qty > 1 → el % sigue visible en 'Costo total' (no depende de la cantidad)", () => {
+    const line = metalAdj({ kind: "BONUS", type: "PERCENTAGE", value: 10, amount: 100 });
+    (line as any).quantity = 3;
+    render(<SaleCompositionEditableGrid line={line} onApply={vi.fn()} {...baseProps} />);
+    expect(document.querySelector("[data-tp-metal-global-adjustment]")).toBeNull();
+    const impact = document.querySelector("[data-tp-global-cost-impact]")!;
+    expect(impact.textContent ?? "").toMatch(/\(−\s*10,00\s*%\)/);
+  });
+
+  it("HECHURA/PRODUCT/SERVICE sin regresión: conservan su editor de ajuste por línea", () => {
+    render(<SaleCompositionEditableGrid line={metalAdj({ kind: "BONUS", type: "PERCENTAGE", value: 10, amount: 100 })} onApply={vi.fn()} {...baseProps} />);
+    // Con % global, NINGÚN badge de metal (se unificó en Costo total).
+    expect(document.querySelectorAll("[data-tp-metal-global-adjustment]").length).toBe(0);
+    // Las celdas no-metal (1/2/3) conservan su AdjustmentLabelEditor (ajuste por línea).
+    const cells = document.querySelectorAll("[data-merma-ajuste-cell]");
+    expect(cells[1].querySelector("[data-adjustment-inline-editor]")).not.toBeNull();
+    expect(cells[2].querySelector("[data-adjustment-inline-editor]")).not.toBeNull();
+    expect(cells[3].querySelector("[data-adjustment-inline-editor]")).not.toBeNull();
+  });
+
+  it("COMBO sin costAdjustment → NO badge (comboAdjustment es otro dominio)", () => {
+    const line = makeLine({ costMode: "COMBO", priceSource: "COMBO_COMPONENTS" } as any);
+    delete (line.pricingMeta as any).composition.costAdjustment;
+    render(<SaleCompositionEditableGrid line={line} onApply={vi.fn()} {...baseProps} />);
+    expect(document.querySelector("[data-tp-metal-global-adjustment]")).toBeNull();
   });
 });
 

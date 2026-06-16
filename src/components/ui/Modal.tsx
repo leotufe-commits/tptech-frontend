@@ -530,9 +530,19 @@ export function Modal({
           // ocurre cuando el modal ya está visible, así que no necesita
           // scroll — y si lo necesita, el modal entero ya está layout-eado.
           best.focus({ preventScroll: true });
+          // UX fix (2026-06-13) — NO seleccionar todo el contenido del campo.
+          // En campos precargados (modo edición) el `select()` dejaba TODO el
+          // texto seleccionado, así que la primera tecla REEMPLAZABA el valor
+          // completo (síntoma "solo queda un carácter"). En su lugar colapsamos
+          // el caret al FINAL del texto: el autofocus sigue siendo útil (campo
+          // enfocado, listo para escribir) sin pisar lo que el usuario ya tenía.
+          // Campo vacío (alta) → longitud 0 → caret al inicio, comportamiento
+          // idéntico al previo. `setSelectionRange` puede no estar soportado en
+          // algunos tipos de input (number/email/…) → try/catch defensivo.
           if (best instanceof HTMLInputElement || best instanceof HTMLTextAreaElement) {
             try {
-              best.select?.();
+              const end = best.value?.length ?? 0;
+              best.setSelectionRange?.(end, end);
             } catch {}
           }
           return;
@@ -554,9 +564,22 @@ export function Modal({
     const t1 = window.setTimeout(focusModal, 60);
     const t2 = window.setTimeout(focusModal, 180);
 
-    // guard (si algo roba foco después)
+    // ✅ FIX "el foco salta a Nombre" (2026-06-13).
+    // El setInterval de abajo reafirmaba el foco cada 50 ms durante 800 ms.
+    // Su check por-tick `root.contains(activeElement)` (en focusModal) NO
+    // alcanza: mientras el usuario escribe en Valor/Notas, un re-render del
+    // formulario puede dejar `document.activeElement` fuera del modal por un
+    // instante; si un tick cae en esa ventana, focusModal devuelve el foco al
+    // primer campo (Nombre). Solución: apenas el foco aterriza en un control
+    // REAL del modal (input/select/textarea/button) — sea el autofocus inicial
+    // o una interacción del usuario — el usuario tomó control: cancelamos TODA
+    // la reafirmación pendiente para que ningún tick posterior pueda robar el
+    // foco. El foco inicial ya ocurrió; el focus-trap (`onFocusCapture`) sigue
+    // activo para cuando el foco SALE del modal. No toca drag/resize/maximize.
+    let userTookControl = false;
     const start = Date.now();
     const guard = window.setInterval(() => {
+      if (userTookControl) { window.clearInterval(guard); return; }
       // Leer el stack en tiempo real para evitar stale closure cuando otro modal se abre encima
       if (__tp_modal_stack[__tp_modal_stack.length - 1] !== instanceId) return;
       if (Date.now() - start > 800) {
@@ -566,12 +589,26 @@ export function Modal({
       focusModal();
     }, 50);
 
+    const root = modalRef.current;
+    const onFocusIn = (e: Event) => {
+      const t = e.target as HTMLElement | null;
+      if (t && typeof t.matches === "function"
+          && t.matches("input, textarea, select, button, [contenteditable='true']")) {
+        userTookControl = true;
+        window.clearTimeout(t1);
+        window.clearTimeout(t2);
+        window.clearInterval(guard);
+      }
+    };
+    root?.addEventListener("focusin", onFocusIn);
+
     return () => {
       window.clearTimeout(t0);
       window.cancelAnimationFrame(raf);
       window.clearTimeout(t1);
       window.clearTimeout(t2);
       window.clearInterval(guard);
+      root?.removeEventListener("focusin", onFocusIn);
     };
   }, [open, instanceId]);
 

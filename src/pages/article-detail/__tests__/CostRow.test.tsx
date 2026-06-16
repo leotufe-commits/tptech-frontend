@@ -210,6 +210,48 @@ describe("<ProductSelector /> — salvavidas defensivo (FASE 10.2)", () => {
   });
 });
 
+// ============================================================================
+// Filtro de combos en la composición de COSTO del modal de Artículos.
+// El selector "Descripción / Variante" NUNCA debe ofrecer combos comerciales
+// como componente — SIEMPRE, sin importar el modo del artículo que se edita.
+// ============================================================================
+describe("<ProductSelector /> — excluye combos del dropdown SIEMPRE", () => {
+  function renderSel(catalogItemId: string, label: string) {
+    return render(
+      <ProductSelector
+        line={makeLine({ catalogItemId, catalogVariantId: null, label })}
+        productItems={[
+          { id: "combo-X", name: "COMBO REAL", costPrice: 514352.43,
+            manualCurrencyId: null, mainImageUrl: "", commercialMode: "COMBO_COMMERCIAL" },
+          { id: "prod-1", name: "Producto Normal", costPrice: 1000,
+            manualCurrencyId: null, mainImageUrl: "", commercialMode: "NORMAL" },
+        ]}
+        currencyOptions={currencyOptions}
+        baseCurrencyId={baseCurrencyId}
+        selSym="$"
+        onPatch={noop}
+        getVariantsForArticle={() => undefined}
+        loadVariantsForArticle={noop}
+        submitted={false}
+        fmtN={fmtN}
+      />
+    );
+  }
+
+  it("el combo NO es opción del dropdown (filtro incondicional → cae a la sintética)", () => {
+    // line apunta al combo: como fue excluido de las opciones, no hay match
+    // real → la option sintética muestra line.label (no el nombre del combo).
+    const { container } = renderSel("combo-X", "FALLBACK_COMBO");
+    expect(comboInput(container).value).toBe("FALLBACK_COMBO");
+  });
+
+  it("los productos normales SÍ aparecen como opción", () => {
+    const { container } = renderSel("prod-1", "FALLBACK_PROD");
+    // 'Producto Normal' no se filtra → es opción real → el input lo muestra.
+    expect(comboInput(container).value).toBe("Producto Normal");
+  });
+});
+
 // Sanity: el helper vi.fn no se usa pero el import de vi se mantiene por si
 // se agregan tests con spies más adelante.
 void vi;

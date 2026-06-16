@@ -99,10 +99,11 @@ describe("FASE 1 — Resumen Comercial lee lineCommercialSummary", () => {
     expect(screen.getAllByText(/Anillo/).length).toBeGreaterThan(0);
   });
 
-  it("UNIFIED: MONETARIO visible colapsado; 'Valor comercial' del metal solo al expandir", () => {
-    // Escenario real del operador: Total 814.700, Metales 572.343,75 →
-    // Monetario correcto = 242.356,25 (NO 814.700). BÁSICO colapsado = MONETARIO;
-    // el "Valor comercial" del metal (572.343,75) aparece al desplegar.
+  it("UNIFIED: el resumen comercial (METALES + MONETARIO) vive DETRÁS de 'Ver detalle'; al expandir, MONETARIO correcto (242.356, no 814.700)", () => {
+    // En UNIFICADO el total unificado es el protagonista; el resumen comercial
+    // (metales + monetario) queda detrás de "Ver detalle". Al expandir, el
+    // MONETARIO correcto = 242.356,25 (NO el total 814.700) + "Valor comercial"
+    // del metal (572.343,75).
     const { container } = render(<LinesEditorSection {...(baseProps as any)}
       lines={[makeLine({
         lineCommercialSummary: {
@@ -115,14 +116,15 @@ describe("FASE 1 — Resumen Comercial lee lineCommercialSummary", () => {
         metalSale: 572343.75,
         metalRoundingMonetaryImpact: 0,
       }, { lineTotalWithTax: 814700 })]} />);
-    // Sin expandir: MONETARIO visible; "Valor comercial" del metal AUSENTE.
+    // Sin expandir (UNIFICADO): MONETARIO AUSENTE (detrás de "Ver detalle").
+    expect(document.querySelector("[data-tp-hechura-display-total]")).toBeNull();
+    expect(container.textContent ?? "").not.toMatch(/572[.\s]?343/);
+    // Expandir → MONETARIO correcto (242.356, no 814.700) + valor comercial del metal.
+    fireEvent.click(container.querySelector("[data-tp-composition-detail-toggle]")!);
     const monetario = document.querySelector("[data-tp-hechura-display-total]");
     expect(monetario).toBeTruthy();
     expect(monetario!.textContent ?? "").toMatch(/242[.\s]?356/);
     expect(monetario!.textContent ?? "").not.toMatch(/814[.\s]?700/);
-    expect(container.textContent ?? "").not.toMatch(/572[.\s]?343/);
-    // Expandir → "Valor comercial" del metal (572.343,75) visible.
-    fireEvent.click(container.querySelector("[data-tp-composition-detail-toggle]")!);
     expect(container.textContent ?? "").toMatch(/572[.\s]?343/);
   });
 

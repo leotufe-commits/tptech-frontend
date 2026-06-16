@@ -66,7 +66,9 @@ type Draft = {
   documentNumber: string;
   ivaCondition: string;
   paymentTerm: string;
-  balanceType: BalanceType;
+  // Preferencia canónica del cliente (R11.4). `null` = "Sin preferencia" → el
+  // cliente delega en la jerarquía (Mis preferencias → Lista → Joyería).
+  balanceMode: BalanceType | null;
   commercialApplyOn: CommercialApplyOn | "";
   commercialRuleType: CommercialRuleType | "";
   commercialValueType: CommercialValueType | "";
@@ -100,7 +102,7 @@ function emptyDraft(isClientCtx: boolean, isSupplierCtx: boolean): Draft {
     firstName: "", lastName: "", companyName: "", tradeName: "",
     email: "", phonePrefix: "", phoneNumber: "",
     documentType: "", documentNumber: "", ivaCondition: "", paymentTerm: "",
-    balanceType: "UNIFIED",
+    balanceMode: null,
     commercialApplyOn: "", commercialRuleType: "", commercialValueType: "", commercialValue: null,
     creditLimitClient: null, creditLimitSupplier: null,
     priceListId: null, currencyId: null, sellerId: null,
@@ -125,7 +127,7 @@ function entityToDraft(e: EntityDetailType): Draft {
     documentNumber: e.documentNumber,
     ivaCondition: e.ivaCondition,
     paymentTerm: e.paymentTerm ?? "",
-    balanceType: e.balanceType,
+    balanceMode: e.balanceMode ?? null,
     commercialApplyOn: e.commercialApplyOn ?? "",
     commercialRuleType: e.commercialRuleType ?? "",
     commercialValueType: e.commercialValueType ?? "",
@@ -237,15 +239,17 @@ export default function EntityEditModal({
   const paymentTermCat = useCatalog("PAYMENT_TERM");
   const prefixCat     = useCatalog("PHONE_PREFIX");
 
-  // Default balance type — persisted in localStorage, solo afecta nuevas entidades
-  const LS_KEY_BALANCE = "tptech_default_balance_type";
-  const [defaultBalanceType, setDefaultBalanceType] = useState<BalanceType | null>(
-    () => (localStorage.getItem(LS_KEY_BALANCE) as BalanceType | null)
+  // Default del modo de saldo para NUEVOS clientes (preferencia personal del
+  // operador, persistida en localStorage). Valores: "" = Sin preferencia,
+  // "UNIFIED", "BREAKDOWN". Solo precarga el alta; no afecta clientes existentes.
+  const LS_KEY_BALANCE = "tptech_default_balance_mode";
+  const [defaultBalanceMode, setDefaultBalanceMode] = useState<string | null>(
+    () => localStorage.getItem(LS_KEY_BALANCE)
   );
 
-  function handleSetDefaultBalanceType(val: string) {
-    if (defaultBalanceType === val) { localStorage.removeItem(LS_KEY_BALANCE); setDefaultBalanceType(null); }
-    else { localStorage.setItem(LS_KEY_BALANCE, val); setDefaultBalanceType(val as BalanceType); }
+  function handleSetDefaultBalanceMode(val: string) {
+    if (defaultBalanceMode === val) { localStorage.removeItem(LS_KEY_BALANCE); setDefaultBalanceMode(null); }
+    else { localStorage.setItem(LS_KEY_BALANCE, val); setDefaultBalanceMode(val); }
   }
 
   // Lists
@@ -277,14 +281,18 @@ export default function EntityEditModal({
     setAvatarFile(null);
 
     if (mode === "CREATE") {
-      const storedBalance = localStorage.getItem(LS_KEY_BALANCE) as BalanceType | null;
+      const storedBalance = localStorage.getItem(LS_KEY_BALANCE);
       setDraft({
         ...emptyDraft(isClientContext, isSupplierContext),
         documentType: docTypeCat.favoriteItem?.label ?? "",
         ivaCondition:  ivaCat.favoriteItem?.label ?? "",
         paymentTerm:   paymentTermCat.favoriteItem?.label ?? "",
         phonePrefix:   prefixCat.favoriteItem?.label ?? "",
-        ...(storedBalance ? { balanceType: storedBalance } : {}),
+        // Default personal del operador para nuevos clientes: "" = Sin
+        // preferencia (null); "UNIFIED"/"BREAKDOWN" precargan ese modo.
+        ...(storedBalance != null
+          ? { balanceMode: storedBalance === "" ? null : (storedBalance as BalanceType) }
+          : {}),
       });
       setEntity(null);
     } else if (mode === "EDIT" && entityId) {
@@ -491,7 +499,7 @@ export default function EntityEditModal({
       documentNumber: d.documentNumber.trim(),
       ivaCondition: d.ivaCondition.trim(),
       paymentTerm: d.paymentTerm.trim(),
-      balanceType: d.balanceType,
+      balanceMode: d.balanceMode,
       priceListId: d.priceListId || null,
       currencyId: d.currencyId || null,
       sellerId: d.sellerId || null,
@@ -1125,16 +1133,20 @@ export default function EntityEditModal({
                     ]}
                   />
                 </TPField>
-                <TPField label="Tipo de saldo">
+                <TPField
+                  label="Tipo de saldo"
+                  hint="Sin preferencia utilizará la siguiente configuración disponible."
+                >
                   <TPComboFixed
-                    value={draft.balanceType}
-                    onChange={(v) => set("balanceType", v as BalanceType)}
+                    value={draft.balanceMode ?? ""}
+                    onChange={(v) => set("balanceMode", v === "" ? null : (v as BalanceType))}
                     disabled={busy}
                     options={[
-                      { value: "UNIFIED",   label: "Unificado",  isFavorite: defaultBalanceType === "UNIFIED" },
-                      { value: "BREAKDOWN", label: "Desglosado", isFavorite: defaultBalanceType === "BREAKDOWN" },
+                      { value: "",          label: "Sin preferencia", isFavorite: defaultBalanceMode === "" },
+                      { value: "UNIFIED",   label: "Unificado",       isFavorite: defaultBalanceMode === "UNIFIED" },
+                      { value: "BREAKDOWN", label: "Desglosado",      isFavorite: defaultBalanceMode === "BREAKDOWN" },
                     ]}
-                    onSetFavorite={handleSetDefaultBalanceType}
+                    onSetFavorite={handleSetDefaultBalanceMode}
                   />
                 </TPField>
                 <TPField label="Término de pago">

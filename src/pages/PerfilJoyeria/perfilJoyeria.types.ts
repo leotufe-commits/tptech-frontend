@@ -15,8 +15,11 @@ export type EmailConfigBody = {
   emailAddressLine:    string;
   emailBusinessHours:  string;
   emailWebsite:        string;
-  emailInstagram:      string;
   emailFooter:         string;
+  // NOTA: `emailInstagram` existe como columna en el backend (Jewelry) pero
+  // esta pantalla nunca lo edita ni lo muestra. Se quitó del shape del
+  // frontend para no arrastrar un campo huérfano. El backend lo conserva
+  // intacto (PATCH /company/me trata los ausentes como "no tocar").
 };
 
 export type ExistingBody = {

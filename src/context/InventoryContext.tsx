@@ -25,6 +25,9 @@ export type WarehouseRow = {
   code: string;
   notes?: string;
   isActive: boolean;
+  // Favorito GENERAL de la joyería (compartido). El override personal vive en
+  // UserPreference.defaultWarehouseId (tiene prioridad).
+  isFavorite?: boolean;
   deletedAt?: string | null;
   createdAt?: string;
   updatedAt?: string;
@@ -54,6 +57,7 @@ function normRow(x: any): WarehouseRow {
     id: String(x?.id ?? ""),
     jewelryId: x?.jewelryId ? String(x.jewelryId) : undefined,
     name, code, notes, isActive,
+    isFavorite: Boolean(x?.isFavorite),
     deletedAt: x?.deletedAt ?? null,
     createdAt: x?.createdAt,
     updatedAt: x?.updatedAt,
@@ -78,16 +82,27 @@ export function InventoryProvider({ children }: { children: ReactNode }) {
     try {
       const r = await apiFetch("/warehouses", { method: "GET" as any });
       const rows: any[] = Array.isArray((r as any)?.rows) ? (r as any).rows : Array.isArray(r) ? (r as any) : [];
-      setWarehouses(rows.map(normRow));
+      const mapped = rows.map(normRow);
+      setWarehouses(mapped);
 
       try {
-        // Fuente de verdad del almacén por defecto: UserPreference
-        // (scope SALES_INVOICE). Fallback legacy a /auth/me solo si la
-        // preferencia aún no tiene almacén (usuarios sin backfill).
+        // Almacén por defecto efectivo (jerarquía):
+        //   1. Preferencia PERSONAL del usuario (UserPreference.defaultWarehouseId).
+        //   2. Favorito GENERAL de la joyería (Warehouse.isFavorite — la estrella).
+        //   3. (el "primer activo" lo resuelve `resolveDefaultId` en cada consumidor).
+        // Validamos que estén activos en cada nivel para no apuntar a un almacén
+        // dado de baja. El override personal solo se setea desde "Mis preferencias".
+        const isActiveId = (id: string | null) =>
+          !!id && mapped.some((w) => w.id === id && w.isActive);
+
         const pref = await userPreferencesApi.get();
-        let fav: string | null = pref.defaultWarehouseId
-          ? String(pref.defaultWarehouseId)
-          : null;
+        const personal = pref.defaultWarehouseId ? String(pref.defaultWarehouseId) : null;
+        const jewelryFav = mapped.find((w) => w.isFavorite && w.isActive)?.id ?? null;
+
+        let fav: string | null = isActiveId(personal) ? personal : jewelryFav;
+
+        // Fallback legacy (solo lectura) a /auth/me si no hay personal ni favorito
+        // de joyería — usuarios sin backfill durante la transición.
         if (!fav) {
           try {
             const me = await apiFetch("/auth/me", { method: "GET" as any });

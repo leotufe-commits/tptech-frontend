@@ -54,7 +54,6 @@ export function usePerfilJoyeria() {
 
   const logoInputRef = useRef<HTMLInputElement>(null!);
   const [logoPreview, setLogoPreview] = useState<string>("");
-  const [logoImgLoading, setLogoImgLoading] = useState(false);
 
   const attInputRef = useRef<HTMLInputElement>(null!);
 
@@ -499,8 +498,6 @@ export function usePerfilJoyeria() {
 
     logoInputRef,
     logoPreview,
-    logoImgLoading,
-    setLogoImgLoading,
     uploadingLogo,
     deletingLogo,
 

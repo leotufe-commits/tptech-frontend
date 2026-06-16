@@ -89,6 +89,9 @@ export type InvoiceHeaderFormProps = {
   onPickClient:        (entity: TPEntityLite | null) => void;
   onCreateNewClient:   () => void;
   onOpenEditClient:    () => void;
+  /** Búsqueda server-side de clientes (el padre debouncea + anti-stale). Si se
+   *  omite, el combo filtra `clientOptions` en memoria (comportamiento previo). */
+  onClientSearch?:     (query: string) => void;
 
   onDateChange:        (newDate: string) => void;
   onDueDateChange:     (newDueDate: string) => void;
@@ -170,7 +173,7 @@ type ClientSectionProps = Pick<
   | "clientId" | "clientName" | "clientSnapshot" | "clientOptions"
   | "clientsLoading" | "clientAddresses" | "composeAddressLine"
   | "onPickClient" | "onCreateNewClient" | "onOpenEditClient"
-  | "onOpenAddressEdit" | "onSelectAddress"
+  | "onClientSearch" | "onOpenAddressEdit" | "onSelectAddress"
 >;
 
 function ClientSection(props: ClientSectionProps): React.ReactElement {
@@ -178,7 +181,7 @@ function ClientSection(props: ClientSectionProps): React.ReactElement {
     clientId, clientName, clientSnapshot, clientOptions, clientsLoading,
     clientAddresses, composeAddressLine,
     onPickClient, onCreateNewClient, onOpenEditClient,
-    onOpenAddressEdit, onSelectAddress,
+    onClientSearch, onOpenAddressEdit, onSelectAddress,
   } = props;
 
   // Estado UI local — el popover de direcciones no tiene consumidores fuera
@@ -200,6 +203,8 @@ function ClientSection(props: ClientSectionProps): React.ReactElement {
               options={clientOptions as TPEntityLite[]}
               onChange={onPickClient}
               onCreateNew={onCreateNewClient}
+              onSearch={onClientSearch}
+              loading={clientsLoading}
               hideAddressLine
             />
           </div>
@@ -522,6 +527,7 @@ export function InvoiceHeaderForm(props: InvoiceHeaderFormProps): React.ReactEle
           onPickClient={props.onPickClient}
           onCreateNewClient={props.onCreateNewClient}
           onOpenEditClient={props.onOpenEditClient}
+          onClientSearch={props.onClientSearch}
           onOpenAddressEdit={props.onOpenAddressEdit}
           onSelectAddress={props.onSelectAddress}
         />

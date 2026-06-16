@@ -107,6 +107,17 @@ export type TPEntitySearchSelectProps = {
   hideAddressLine?: boolean;
   disabled?: boolean;
   className?: string;
+  /**
+   * Búsqueda server-side. Si se provee, el combo invoca este callback con el
+   * query al tipear (el parent debe debouncear + fetchear + actualizar
+   * `options`) y se desactiva el filtrado en memoria (los resultados ya vienen
+   * filtrados por el backend, incluido match por documento/código que el
+   * filtro local no cubría). Si se omite, el combo filtra `options` en memoria
+   * (comportamiento por defecto, sin cambios para el resto de consumidores).
+   */
+  onSearch?: (query: string) => void;
+  /** Spinner de carga (durante el fetch remoto). */
+  loading?: boolean;
 };
 
 export function TPEntitySearchSelect({
@@ -120,6 +131,8 @@ export function TPEntitySearchSelect({
   hideAddressLine = false,
   disabled = false,
   className,
+  onSearch,
+  loading = false,
 }: TPEntitySearchSelectProps) {
   const data = options ?? (type === "client" ? MOCK_CLIENTS : MOCK_SUPPLIERS);
   const defaultPlaceholder = type === "client" ? "Buscar cliente…" : "Buscar proveedor…";
@@ -143,6 +156,9 @@ export function TPEntitySearchSelect({
       options={data}
       disabled={disabled}
       placeholder={placeholder ?? defaultPlaceholder}
+      loading={loading}
+      onQueryChange={onSearch}
+      disableLocalFilter={!!onSearch}
       getOptionLabel={(o) => o.name}
       getOptionValue={(o) => o.id}
       getOptionSearchableText={(o) => `${o.name} ${o.email ?? ""} ${o.phone ?? ""}`}

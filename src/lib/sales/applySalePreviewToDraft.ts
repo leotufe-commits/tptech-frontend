@@ -146,6 +146,8 @@ export function applySalePreviewToDraft(
       pricingMeta: {
         ...line.pricingMeta,
         priceSource:             pl.priceSource,
+        // Passthrough display: "COMBO" señala combo comercial (estable vs promo).
+        costMode:                (pl as any).costMode ?? null,
         baseSource:              pl.pricingSnapshot?.baseSource,
         appliedPriceListId:      pl.appliedPriceListId,
         appliedPriceListName:    pl.appliedPriceListName,

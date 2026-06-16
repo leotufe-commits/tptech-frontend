@@ -84,10 +84,20 @@ export function buildSalePreviewPayload(
         // siguiente preview sea distinta → se dispara otro fetch → la
         // hidratación cambia `unitPrice` otra vez → LOOP INFINITO.
         // Bonificación e impuestos ya leían de `meta.X` por la misma razón.
-        const manualPriceOverride: number | null =
+        const manualPriceOverrideRaw: number | null =
           ov?.price === true
             ? (meta?.manualPrice != null ? meta.manualPrice : l.unitPrice)
             : null;
+        // Combo comercial: un override de 0 NO es un precio manual explícito
+        // (es el 0 inicial de una línea cuyo precio deriva de los componentes).
+        // No lo mandamos como override → el backend conserva COMBO_COMPONENTS.
+        // Combo-scoped (priceSource="COMBO_COMPONENTS"): artículos normales y
+        // un override real (> 0) NO cambian. Defensa en profundidad; el backend
+        // ya ignora el override 0 en combos (pricing-engine.sale.ts).
+        const manualPriceOverride: number | null =
+          manualPriceOverrideRaw === 0 && meta?.priceSource === "COMBO_COMPONENTS"
+            ? null
+            : manualPriceOverrideRaw;
 
         // Override de ajuste manual (bonif/recargo): si flag → reconstruimos
         // {mode,value,appliesTo,kind} desde la última config en

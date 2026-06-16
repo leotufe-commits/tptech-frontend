@@ -43,6 +43,7 @@ import {
 import { CSS } from "@dnd-kit/utilities";
 
 import { cn } from "./tp";
+import { LineTaxQuickPicker, type AvailableLineTax } from "./LineTaxQuickPicker";
 import { TPIconButton } from "./TPIconButton";
 import TPNumberInput from "./TPNumberInput";
 import TPQuantityField from "./TPQuantityField";
@@ -85,6 +86,7 @@ import {
   resolveLineBalanceMode,
   resolveLineMonetaryDisplay,
   resolveLineMonetaryRoundingDecomposition,
+  isAmountSignificantInBase,
 } from "../../lib/pricing/display/saleCompositionDisplay";
 
 export type TPDocumentLineAdvancedEditorProps = {
@@ -258,6 +260,14 @@ export type TPDocumentLineAdvancedEditorProps = {
     override: { mode: "PERCENT" | "AMOUNT"; value: number; appliesTo?: AppliesToScope } | null,
   ) => void;
   /**
+   * Impuestos existentes del tenant (`salesTaxes`, ya cargados en
+   * VentasFacturas vía `taxesApi.list()`). Alimentan el selector rápido del
+   * label "Impuestos" de cada línea: elegir uno autocompleta el `taxOverride`
+   * (PERCENT) con su `rate`. Solo UX — el contrato sigue siendo UN override por
+   * línea; sin esto, el label es plano (comportamiento previo).
+   */
+  availableTaxes?: AvailableLineTax[];
+  /**
    * Aplica un patch de overrides a la línea. Cada key es opcional; `null`
    * limpia ese override puntual. Backend recalcula y devuelve.
    */
@@ -371,6 +381,16 @@ export type TPDocumentLineAdvancedEditorProps = {
    * Solo aplica cuando `compositionView === "sale"`.
    */
   documentFxRate?: number;
+  /**
+   * Modo de saldo del DOCUMENTO (`balanceMode` resuelto por el backend:
+   * override del footer → cliente → preferencia → lista → tenant → unificado).
+   * Cuando se provee (solo Factura, `compositionView="sale"`), la VISTA de cada
+   * línea sigue este modo: el documento manda. Una línea con LISTA PROPIA por
+   * línea conserva su modo; una línea sin datos de metal nunca se fuerza a
+   * desglosada. SOLO presentación — los datos/cálculos no se tocan. `null`
+   * (default) ⇒ back-compat: cada línea resuelve su vista por su propia lista.
+   */
+  documentBalanceMode?: "UNIFIED" | "BREAKDOWN" | null;
   /**
    * Énfasis visual del bloque "Total línea c/imp." — passthrough del
    * preset de Factura (UX.19). `"STANDARD"` mantiene el tamaño actual
@@ -1012,6 +1032,10 @@ function derivePriceChip(
     if (src === "MANUAL_OVERRIDE" || src === "MANUAL_FALLBACK" || src === "MANUAL") {
       return { label: "Precio manual", tone: "warning" };
     }
+    if (src === "COMBO_COMPONENTS") {
+      // Combo comercial — precio derivado de la suma de sus componentes.
+      return { label: "Combo", tone: "info" };
+    }
     // Si llegó pricingMeta pero priceSource es desconocido / NONE → sin chip.
     return null;
   }
@@ -1206,6 +1230,7 @@ export function TPDocumentLineAdvancedEditor({
   articleStockBreakdown,
   calculatingLineIds,
   onSetLineTaxOverride,
+  availableTaxes,
   onApplyLineOverrides,
   onClearLineOverrides,
   enableLineSimulator = false,
@@ -1213,6 +1238,7 @@ export function TPDocumentLineAdvancedEditor({
   renderLineExtraToggle,
   showLineTotalWithTax = false,
   compositionView,
+  documentBalanceMode = null,
   advancedOpenIds: advancedOpenIdsProp,
   onToggleAdvancedOpen,
   unitNameByCode,
@@ -1232,6 +1258,28 @@ export function TPDocumentLineAdvancedEditor({
    *  elegida (ARS por USD). Se DIVIDE para expresar el amount en base
    *  como amount en la moneda del documento. */
   const mFmt = (amount: number) => fmtMoney((amount ?? 0) / displayRate, currency);
+
+  /** Factor que lleva un monto YA expresado en la moneda mostrada a su
+   *  equivalente en moneda BASE del tenant. Se usa SOLO para los cortes de
+   *  visibilidad de filas/bloques del Resumen Comercial (umbral "es ~0"), para
+   *  que el detalle muestre las mismas filas en moneda base y en cualquier otra
+   *  moneda. `documentFxRate` = unidades base por 1 unidad de la moneda del
+   *  documento (1 si es base); `displayRate` se trunca a 1 cuando el backend ya
+   *  convirtió, por eso el factor combina ambos:
+   *    · backend convirtió (USD): documentFxRate=446, displayRate=1 → 446
+   *    · moneda base:             1 / 1 → 1
+   *    · legacy sin convertir:    446 / 446 → 1
+   *  NO afecta ningún monto mostrado (eso lo hace `mFmt`); solo el corte de
+   *  visibilidad. Con factor = 1 (moneda base) el comportamiento es idéntico al
+   *  histórico. Cero matemática comercial. */
+  const visibilityBaseFactor = (() => {
+    const dr = Number.isFinite(displayRate) && displayRate > 0 ? displayRate : 1;
+    const fx =
+      typeof documentFxRate === "number" && Number.isFinite(documentFxRate) && documentFxRate > 0
+        ? documentFxRate
+        : 1;
+    return fx / dr;
+  })();
 
   // T34 — Renderiza el panel de detalle fiscal de una línea (header
   // impuesto + base imponible + monto + desglose multi-impuesto).
@@ -2052,12 +2100,36 @@ export function TPDocumentLineAdvancedEditor({
     // Solo presentación — cero cálculo. Los DATOS del desglose (gramos visibles,
     // monetario, total) siguen saliendo de las mismas fuentes passthrough.
     const explicitLineMode = resolveLineBalanceMode(lineMetaForHierarchy);
-    const isLineDesglosada =
+    // ── Vista por línea: el modo del DOCUMENTO manda (solo Factura) ──────────
+    // Cuando el caller provee `documentBalanceMode` (Factura, compositionView
+    // "sale"), la VISTA de TODAS las líneas sigue el modo del documento. El
+    // override de lista POR LÍNEA es solo de PRECIO, no de vista — por eso al
+    // cambiar la lista global / el cliente / el saldo del footer, todas las
+    // líneas re-sincronizan su vista (incluidas las que tienen lista propia).
+    // Única salvaguarda: una línea SIN datos de metal nunca se fuerza a
+    // desglosada (no se inventa metal). SOLO presentación — los datos/cálculos
+    // no cambian. Sin `documentBalanceMode` (Compras/Presupuestos) ⇒ back-compat.
+    const isComboLineForView =
+      l.pricingMeta?.costMode === "COMBO" ||
+      (l.pricingMeta as any)?.priceSource === "COMBO_COMPONENTS";
+    const lineHasMetalData =
+      !isComboLineForView &&
+      ((Array.isArray((lineMetaForHierarchy as any)?.composition?.metals) &&
+        (lineMetaForHierarchy as any).composition.metals.length > 0) ||
+        lineSummary?.metals != null);
+    // Back-compat exacto (sin modo de documento): la vista la decide la lista
+    // de la línea, tal como antes.
+    const backCompatDesglosada =
       explicitLineMode != null
         ? explicitLineMode === "BREAKDOWN"
         : lineSummary
           ? lineSummary.mode === "BREAKDOWN"
           : isLineDesglosadaView(lineMetaForHierarchy);
+    const isLineDesglosada =
+      compositionView !== "sale" || documentBalanceMode == null
+        ? backCompatDesglosada
+        // El modo del documento manda; cae a unificado si no hay metal que mostrar.
+        : documentBalanceMode === "BREAKDOWN" && lineHasMetalData;
 
     // Mini-toolbar contextual de la línea: [Colapsar] [Restablecer]
     // [Eliminar X] [Menú ...]. Misma JSX para ambas ubicaciones — solo
@@ -2336,7 +2408,7 @@ export function TPDocumentLineAdvancedEditor({
               // visualmente junto al monto del Total. Sigue siempre visible
               // dentro del bloque Total (que es la última columna del grid),
               // sin necesidad de scroll horizontal hasta el extremo derecho.
-              "lg:grid-cols-[14px_minmax(420px,1.575fr)_minmax(110px,0.45fr)_minmax(200px,0.85fr)_minmax(130px,0.5fr)_minmax(130px,0.5fr)_minmax(200px,auto)]",
+              "lg:grid-cols-[14px_minmax(420px,1.575fr)_minmax(110px,0.45fr)_minmax(200px,0.85fr)_minmax(130px,0.5fr)_minmax(130px,0.5fr)_minmax(240px,1fr)]",
             )}>
               {/* Drag handle */}
               {dnd && (
@@ -2476,7 +2548,7 @@ export function TPDocumentLineAdvancedEditor({
                     onChange={(v) => updateLine(l.id, { description: v })}
                   />
                 )}
-                {picked && lineManagesStock && (() => {
+                {picked && (lineManagesStock || l.itemKind === "SERVICE") && (() => {
                   // Breakdown del catálogo (sin id canónico).
                   const articleStock: ReadonlyArray<{ name: string; qty: number }> =
                     (picked.stockByWarehouse ?? []).map((s) => ({ name: s.warehouse, qty: s.qty }));
@@ -2520,6 +2592,11 @@ export function TPDocumentLineAdvancedEditor({
                   });
                   return (
                     <div className="flex flex-wrap items-center gap-x-2 gap-y-1 rounded-md border border-border/60 bg-surface2/30 px-2 py-1 text-[11px]">
+                      {/* Stock + almacén — solo líneas que administran stock.
+                          Los SERVICIOS saltan este sub-bloque pero conservan el
+                          selector de lista de precios (abajo), igual que los
+                          productos. */}
+                      {lineManagesStock && (<>
                       <span className="inline-flex items-center gap-1">
                         <Warehouse size={11} className="text-muted" />
                         <span className="text-muted">Stock:</span>
@@ -2551,14 +2628,18 @@ export function TPDocumentLineAdvancedEditor({
                           warehouseOverride: false,
                         })}
                       />
+                      <span aria-hidden className="text-muted/40 select-none">·</span>
+                      </>)}
                       {/* Lista de precios — comportamiento:
                           · onChangeLinePriceList provisto → picker per-línea
                             (override de esta línea; "Usar lista global"
                             limpia el override).
                           · onChangePriceList provisto sin onChangeLinePriceList
                             → picker document-scope (cambia toda la factura).
-                          · Sin callbacks → solo display. */}
-                      <span aria-hidden className="text-muted/40 select-none">·</span>
+                          · Sin callbacks → solo display.
+                          Se renderiza SIEMPRE (productos y servicios); el
+                          sub-bloque de stock de arriba es el único gateado por
+                          `lineManagesStock`. */}
                       {onChangeLinePriceList && priceListOptions ? (
                         <LineScopePricelistPicker
                           selectedName={effectiveList}
@@ -2740,15 +2821,23 @@ export function TPDocumentLineAdvancedEditor({
                 <div className="relative">
                   <TPNumberInput
                     formatType="MONEY"
-                    // Mostrar el override manual cuando exista. Si no, el
-                    // basePrice del backend (precio de lista). El `unitPrice`
-                    // como último fallback (líneas legacy sin pricingMeta).
+                    // El input PRECIO representa el VALOR COMERCIAL BASE
+                    // (pre-bonificación), coherente con "Composición del costo".
+                    // Precedencia:
+                    //   1. `manualPrice` → SOLO cuando el operador hizo un
+                    //      override EXPLÍCITO de precio (setea manualPrice +
+                    //      manualOverrides.price juntos; ver patchLineHelpers).
+                    //   2. `basePrice` (precio de lista del backend) — default.
+                    //   3. `unitPrice` — fallback legacy (líneas sin pricingMeta).
+                    // NO se cambia a `unitPrice` por existir una bonificación/
+                    // descuento: la bonif vive en su propia columna. El precio
+                    // NO muta visualmente por aplicar bonificaciones. (El flag
+                    // `manualOverride` ya no bifurca acá — antes mostraba el
+                    // unitPrice post-bonif y divergía de la composición.)
                     value={
                       l.pricingMeta?.manualPrice != null
                         ? l.pricingMeta.manualPrice
-                        : l.pricingMeta?.manualOverride
-                          ? l.unitPrice
-                          : (l.pricingMeta?.basePrice ?? l.unitPrice)
+                        : (l.pricingMeta?.basePrice ?? l.unitPrice)
                     }
                     onChange={(v) => {
                       // Fase 2 — Opción A: editar precio = override manual.
@@ -4020,9 +4109,24 @@ export function TPDocumentLineAdvancedEditor({
                         → TPNumber arranca a la misma altura → inputs
                         alineados verticalmente entre celdas. */}
                     <div className="flex h-[14px] items-center gap-1.5">
-                      <div className="text-[9px] font-semibold uppercase tracking-wide text-muted">
-                        Impuestos
-                      </div>
+                      {/* Selector rápido — click en "Impuestos" permite marcar
+                          uno o varios impuestos porcentuales existentes; la SUMA
+                          de sus tasas se carga en el ÚNICO `taxOverride` (PERCENT)
+                          que el contrato soporta. No es multi-impuesto real:
+                          el backend recibe un solo override. Sin impuestos o sin
+                          permiso de edición → label plano (comportamiento previo). */}
+                      <LineTaxQuickPicker
+                        taxes={availableTaxes ?? []}
+                        disabled={!canEdit}
+                        onApply={(sumPercent) => {
+                          setTaxType(l.id, "percent");
+                          onSetLineTaxOverride!(l.id, {
+                            mode:      "PERCENT",
+                            value:     sumPercent,
+                            appliesTo: getTaxAppliesTo(l.id),
+                          });
+                        }}
+                      />
                       <LineInfoPopover
                         hasContent={
                           !exempt && !taxZeroed
@@ -4321,7 +4425,12 @@ export function TPDocumentLineAdvancedEditor({
                   // (CLASSIC declara false). El caller decide el valor
                   // final como AND lógico.
                   stickyLineActions
-                    && "lg:sticky lg:right-0 lg:z-10 lg:bg-card lg:-mr-3 lg:pr-3 lg:pl-2 lg:shadow-[-12px_0_12px_-12px_rgba(0,0,0,0.12)]",
+                    // `lg:-mr-1` (antes `-mr-3`): el card de la línea usa `px-2.5`
+                    // (10px). Un `-mr-3` (12px) sangraba 2px MÁS que el padding y
+                    // tapaba el borde derecho del card. `-mr-1` (4px) mantiene un
+                    // bleed mínimo del fondo sticky dentro del padding y deja el
+                    // borde + sombra visibles. Sticky / shadow / pr / pl sin tocar.
+                    && "lg:sticky lg:right-0 lg:z-10 lg:bg-card lg:-mr-1 lg:pr-3 lg:pl-2 lg:shadow-[-12px_0_12px_-12px_rgba(0,0,0,0.12)]",
                 )}
               >
                 {/* IIFE outer — captura el contenido del total (label +
@@ -4788,9 +4897,27 @@ export function TPDocumentLineAdvancedEditor({
                             && (meta as any).previewQuantity > 0)
                             ? ((meta as any).previewQuantity as number)
                             : l.quantity;
-                        const metalParents = Array.isArray(metals) && metals.length > 0
+                        // BLINDAJE COMBO (defensa en profundidad) — un COMBO_COMMERCIAL
+                        // es saldo monetario puro: NUNCA deriva metalParents físicos,
+                        // aunque el backend (por regresión) emitiera composition.metals.
+                        // El guard canónico es el backend (forzar metals:[] en el
+                        // agregado del Redondeo Comercial); esto es belt-and-suspenders
+                        // del card. Identidad: costMode COMBO / priceSource COMBO_COMPONENTS.
+                        const isComboLine =
+                          l.pricingMeta?.costMode === "COMBO"
+                          || (l.pricingMeta as any)?.priceSource === "COMBO_COMPONENTS";
+                        const metalParents = !isComboLine && Array.isArray(metals) && metals.length > 0
                           ? buildMetalParentSaleLines(metals, previewQtyAnchor, metalSaleFactor)
                           : [];
+                        // LÍNEA MONETARIA PURA — sin metal físico real (servicio,
+                        // combo comercial, producto sin metales, o cualquier línea
+                        // con `metalParents.length === 0`). Se trata como saldo
+                        // monetario: "Ver detalle comercial" + descomposición
+                        // monetaria (Valor comercial → Redondeo → Valor redondeado)
+                        // igual que combo/unificada. Los artículos CON metal real
+                        // (`metalParents.length > 0`) NO entran → conservan su
+                        // detalle de metal. Generaliza lo que antes era solo combo.
+                        const isMonetaryOnlyLine = metalParents.length === 0;
                         // T30 — Hechura COHERENTE con el total final.
                         // Regla canónica del Simulador (HechuraSaleCard SSOT):
                         //   `Hechura display = totalWithTax − Σ(Metales)`
@@ -4979,28 +5106,6 @@ export function TPDocumentLineAdvancedEditor({
                                       ? ownDelta
                                       : 0)))
                           : 0;
-                        // ── Origen del valor del card (trazabilidad de dominio) ──────
-                        // El card es dominio ARTÍCULO: el redondeo comercial de metal
-                        // SIEMPRE proviene de un campo autónomo per-línea. Exponemos
-                        // qué campo ganó la cadena para (a) un chip de origen visible
-                        // y (b) un bloque debug solo-dev. Si en algún momento la cadena
-                        // cayera en un campo documental, este resolvedor lo marcaría
-                        // "documental" → la UI muestra el aviso en vez del chip "línea".
-                        const cardMetalImpactSource: "lineSummary" | "lineOwn" | "saleDelta" | "none" =
-                          !isLineDesglosada
-                            ? "none"
-                            : (typeof summaryMetalImpact === "number" && Number.isFinite(summaryMetalImpact))
-                              ? "lineSummary"
-                              : (typeof ownMetalImpact === "number" && Number.isFinite(ownMetalImpact))
-                                ? "lineOwn"
-                                : (typeof ownDelta === "number" && Number.isFinite(ownDelta))
-                                  ? "saleDelta"
-                                  : "none";
-                        const cardMetalImpactFieldName =
-                          cardMetalImpactSource === "lineSummary" ? "lineCommercialSummary.metals.roundingImpact"
-                            : cardMetalImpactSource === "lineOwn"   ? "lineOwnMetalRoundingMonetaryImpact"
-                              : cardMetalImpactSource === "saleDelta" ? "metalHechuraBreakdown.metalSaleRoundingDelta"
-                                : "—";
                         // Documento con listas mixtas (passthrough del backend; no se
                         // recalcula). Solo dispara el aviso "valor propio de la línea".
                         const isMixedDoc = (meta as any)?.priceListMixed === true;
@@ -5027,13 +5132,60 @@ export function TPDocumentLineAdvancedEditor({
                         // El redondeo comercial monetario sigue mostrándose como impacto
                         // dentro de la descomposición (`resolveLineMonetaryRoundingDecomposition`
                         // recibe este `cardMonetario` como `monetarioFinal`). Solo display.
-                        const metalFinalCard   = sumMetalSalePre + cardMetalImpact;
+                        // Valor final del metal RESIDUAL (estructural): cierra el
+                        // invariante con el TOTAL por construcción. Sigue siendo la
+                        // base del MONETARIO cuando NO hay saldo autoritativo o cuando
+                        // éste diverge materialmente del residual (MIXED degenerado).
+                        const metalFinalCardResidual = sumMetalSalePre + cardMetalImpact;
+                        const monetarioResidual = Math.round((cardTotal - metalFinalCardResidual) * 100) / 100;
+                        // FIX 2026-06-16 — SALDO MONETARIO POST AUTORITATIVO (mismo
+                        // patrón que el footer `TotalDelComprobanteCard.tsx:413-449`).
+                        // El backend YA emite el saldo limpio en
+                        // `lineSummary.monetary.amount` (= `lineCommercialSummary` /
+                        // `lineCommercialDisplaySummary`). El residual `cardTotal −
+                        // Σ valor final metal` arrastra el drift `Σ round` / coma
+                        // flotante (ej. 718659.38 − 517759.375 = 200900.005 →
+                        // round → 200900,01 en vez de 200900,00). Adoptamos el saldo
+                        // autoritativo SOLO cuando reconcilia con el residual (drift
+                        // ≤ 0,05, muy por encima del ~0,01 real y muy por debajo de
+                        // cualquier divergencia material). En MIXED degenerado donde
+                        // el `lineSummary` no coincide → cae al residual (comportamiento
+                        // actual intacto). Cero recálculo: passthrough del backend.
+                        const authoritativeLineSaldo: number | null =
+                          isLineDesglosada &&
+                          lineSummary != null &&
+                          typeof lineSummary.monetary?.amount === "number" &&
+                          Number.isFinite(lineSummary.monetary.amount)
+                            ? Math.round(lineSummary.monetary.amount * 100) / 100
+                            : null;
                         const cardMonetario    = isLineDesglosada
-                          ? Math.round((cardTotal - metalFinalCard) * 100) / 100
+                          ? (authoritativeLineSaldo != null &&
+                             Math.abs(authoritativeLineSaldo - monetarioResidual) <= 0.05
+                              ? authoritativeLineSaldo
+                              : monetarioResidual)
                           : hechuraDisplayTotal;
+                        // Valor final del metal del card RECONCILIADO: en DESGLOSADO se
+                        // DERIVA del saldo elegido para que METALES + MONETARIO = TOTAL
+                        // sea EXACTO (el metal absorbe el centavo del drift), análogo a
+                        // cómo el footer deriva `metalDeductionForSaldoBase`. Cuando se
+                        // usa el residual, equivale a `metalFinalCardResidual`. Este es
+                        // el valor que debe renderizar el "Valor final metales".
+                        const metalFinalCard   = isLineDesglosada
+                          ? Math.round((cardTotal - cardMonetario) * 100) / 100
+                          : metalFinalCardResidual;
                         const hasMetals  = metalParents.length > 0;
-                        const hasHechura = Math.abs(cardMonetario) > 0.005;
-                        if (!hasMetals && !hasHechura) return null;
+                        // Visibilidad INVARIANTE a la moneda: se decide sobre el
+                        // equivalente en base (ver `visibilityBaseFactor`). En
+                        // moneda base es idéntico a `> 0.005`; en moneda no-base
+                        // evita que un saldo de pocos pesos desaparezca por caer
+                        // bajo medio centavo de la moneda del documento.
+                        const hasHechura = isAmountSignificantInBase(cardMonetario, visibilityBaseFactor);
+                        // COMBO: el combo SIEMPRE tiene detalle comercial disponible
+                        // (su saldo monetario + composición de componentes), así que el
+                        // card del Resumen nunca se oculta — garantiza que el control
+                        // "Ver detalle comercial" exista por igual en saldo DESGLOSADO y
+                        // UNIFICADO. Para no-combos el comportamiento queda idéntico.
+                        if (!hasMetals && !hasHechura && !isComboLine) return null;
                         return (
                           // T45.3 — Card "Composición del total" con jerarquía
                           // visual premium. Layout:
@@ -5197,7 +5349,16 @@ export function TPDocumentLineAdvancedEditor({
                                       revela/oculta los DETALLES (redondeo comercial metal,
                                       valor final metales, sub-filas monetarias). Solo
                                       visibilidad — cero cálculo. */}
-                                  {metalParents.length > 0 && (
+                                  {/* COMBO: aunque `metalParents` esté vacío (el combo es
+                                      saldo monetario puro, sin metal a nivel de línea) la
+                                      sección se renderiza para mostrar el empty-state
+                                      explicativo — así el combo se ve IGUAL en saldo
+                                      DESGLOSADO y UNIFICADO (antes el empty-state quedaba
+                                      como código muerto, anidado bajo `metalParents > 0`). */}
+                                  {/* En UNIFICADO el resumen comercial (metales + monetario)
+                                      vive DETRÁS de "Ver detalle" (el total unificado ya es el
+                                      protagonista arriba). En DESGLOSADO se muestra siempre. */}
+                                  {(metalParents.length > 0 || isComboLine) && (isLineDesglosada || compositionDetailOpen) && (
                                     <div className="mt-1.5 space-y-1">
                                       <div className="text-[9px] font-semibold uppercase tracking-wide leading-tight text-muted/70">
                                         METALES
@@ -5209,6 +5370,19 @@ export function TPDocumentLineAdvancedEditor({
                                             operador necesita ver sin expandir. Las filas de
                                             redondeo ("Redondeo comercial metal" / "Valor final
                                             metales") siguen detrás de "Ver detalle". */}
+                                        {/* Combo (Modelo A): no posee metal a nivel
+                                            de línea — su metal vive dentro de los
+                                            componentes. Empty-state claro para que el
+                                            panel comercial/metal no parezca roto. Solo
+                                            display; los componentes se ven en el expand
+                                            de línea ("Composición del combo"). */}
+                                        {isComboLine && metalParents.length === 0 && (
+                                          <div className="rounded-md border border-border/40 bg-surface2/30 px-2.5 py-1.5 text-[10px] leading-snug text-muted/80">
+                                            Este combo no posee metales a nivel de línea.
+                                            La composición de sus componentes está disponible
+                                            en el detalle de línea.
+                                          </div>
+                                        )}
                                         {metalParents.map((m) => {
                                           // Lectura del snapshot D' por metal padre
                                           // (match por ID; fallback por nombre para
@@ -5264,8 +5438,10 @@ export function TPDocumentLineAdvancedEditor({
                                                   {m.name}
                                                 </span>
                                                 <span className={cn(
-                                                  "tabular-nums leading-tight text-primary",
-                                                  isLineDesglosada ? "text-base font-bold" : "text-[12px] font-semibold",
+                                                  "tabular-nums leading-tight",
+                                                  // DESGLOSADO: gramos protagonistas (foco azul).
+                                                  // UNIFICADO: neutro (el protagonista es el total).
+                                                  isLineDesglosada ? "text-base font-bold text-primary" : "text-[12px] font-semibold text-text",
                                                 )}>
                                                   {formatByType(displayGrams, "METAL_GRAMS")}
                                                 </span>
@@ -5341,13 +5517,17 @@ export function TPDocumentLineAdvancedEditor({
                                           y un "Redondeo comercial metal" que siempre sería 0).
                                           Solo gating visual — `metalRoundingImpact` / `sumMetalSale`
                                           no se tocan. Desglosada NO cambia (sigue colapsada→oculta,
-                                          expandida→visible). ── */}
-                                      {(isLineDesglosada && compositionDetailOpen) && (
+                                          expandida→visible).
+                                          LÍNEA MONETARIA PURA (servicio/combo/producto sin metal):
+                                          sin metal a nivel de línea → estas filas darían "Valor final
+                                          metales: $0" y un redondeo de metal siempre 0 (ruido). Se
+                                          ocultan; su detalle comercial es 100% el bloque MONETARIO. ── */}
+                                      {(isLineDesglosada && compositionDetailOpen && !isMonetaryOnlyLine) && (
                                         <>
                                           {/* Redondeo comercial metal — fila única a nivel LÍNEA
                                               (no por padre): `metalRoundingMonetaryImpact` es por
                                               línea (prorrateado por gramsPure). Passthrough. */}
-                                          {cardMetalImpact != null && Math.abs(cardMetalImpact) > 0.005 && (
+                                          {isAmountSignificantInBase(cardMetalImpact, visibilityBaseFactor) && (
                                             <div className="mt-1.5" data-tp-metal-rounding-line>
                                               {/* Fila label · importe. `min-w-0` permite que el label
                                                   envuelva sin pisar el importe (fix overflow); el
@@ -5375,21 +5555,20 @@ export function TPDocumentLineAdvancedEditor({
                                                   Comercial de esta línea (no documental).
                                                 </div>
                                               )}
-                                              {/* Debug SOLO en desarrollo — origen, campo backend y valor. */}
-                                              {import.meta.env.DEV && (
-                                                <div className="mt-0.5 rounded bg-amber-400/10 px-1 py-px font-mono text-[8px] leading-snug text-amber-700/80 break-all" data-tp-metal-rounding-debug>
-                                                  debug · origen={cardMetalImpactSource} · campo={cardMetalImpactFieldName} · valor={cardMetalImpact}
-                                                </div>
-                                              )}
                                             </div>
                                           )}
-                                          {/* Valor final metales = Σ saleAmountLine + redondeo.
-                                              Contribución del metal que CIERRA contra el total:
-                                              Valor final metales + Monetario = Total línea c/ imp. */}
+                                          {/* Valor final metales — contribución del metal que CIERRA
+                                              contra el total: Valor final metales + Monetario = Total
+                                              línea c/ imp. Usa `metalFinalCard` RECONCILIADO (derivado
+                                              de `cardTotal − cardMonetario` cuando el saldo es
+                                              autoritativo) — NO el residual crudo `sumMetalSalePre +
+                                              cardMetalImpact`. Así el metal absorbe el centavo del drift
+                                              y la suma visual cierra exacta (mismo valor reconciliado
+                                              que alimenta `cardMonetario`). */}
                                           <div className="mt-1 pt-1 border-t border-border/20 grid grid-cols-[1fr_auto] items-baseline gap-2" data-tp-metal-final>
                                             <span className="text-[10px] font-medium leading-tight text-muted">Valor final metales</span>
                                             <span className="tabular-nums text-[12px] font-semibold leading-tight text-foreground/80">
-                                              {mFmt(sumMetalSalePre + cardMetalImpact)}
+                                              {mFmt(metalFinalCard)}
                                             </span>
                                           </div>
                                         </>
@@ -5398,15 +5577,16 @@ export function TPDocumentLineAdvancedEditor({
                                   )}
 
                                   {/* ── Divisor METAL ↔ MONETARIO ─────────────────── */}
-                                  {metalParents.length > 0 && hasHechura && (
+                                  {metalParents.length > 0 && hasHechura && (isLineDesglosada || compositionDetailOpen) && (
                                     <div className="my-3 border-t border-border/25" />
                                   )}
 
                                   {/* ── Sección MONETARIO ───────────────────────── */}
-                                  {/* Visible SIEMPRE (básico): el monto monetario final de la
-                                      línea. Las sub-filas ("Valor comercial" + "Redondeo
-                                      comercial") viven detrás de `compositionDetailOpen`. */}
-                                  {hasHechura && (() => {
+                                  {/* DESGLOSADO: visible siempre (el monto monetario es
+                                      protagonista). UNIFICADO: detrás de "Ver detalle". Las
+                                      sub-filas ("Valor comercial" + "Redondeo comercial") ya
+                                      viven detrás de `compositionDetailOpen`. */}
+                                  {hasHechura && (isLineDesglosada || compositionDetailOpen) && (() => {
                                     // Opción A (descomposición FÍSICA) — MONETARIO =
                                     // SALDO MONETARIO POST-redondeo (`hechuraDisplayTotal`,
                                     // que arriba toma `lineMonetarySaldoPostCommercialRounding`
@@ -5434,7 +5614,11 @@ export function TPDocumentLineAdvancedEditor({
                                             className={cn(
                                               "tabular-nums leading-tight text-right",
                                               isLineDesglosada ? "text-lg font-bold" : "text-[12px] font-semibold",
-                                              cardMonetario < 0 ? vt.colors.discount : "text-primary",
+                                              // DESGLOSADO: monetario protagonista (foco azul).
+                                              // UNIFICADO: neutro. Negativo: siempre rojo.
+                                              cardMonetario < 0
+                                                ? vt.colors.discount
+                                                : (isLineDesglosada ? "text-primary" : "text-text"),
                                             )}
                                           >
                                             {mFmt(cardMonetario)}
@@ -5508,14 +5692,66 @@ export function TPDocumentLineAdvancedEditor({
                                             && typeof ar.unitAdjustment === "number" && Number.isFinite(ar.unitAdjustment)
                                               ? ar.unitAdjustment
                                               : null;
+                                          // Z (redondeo monetario UNIFICADA) — DOS mecanismos mutuamente
+                                          // excluyentes en runtime:
+                                          //   1. FINAL_PRICE (lista MARGIN_TOTAL, applyOn="TOTAL") →
+                                          //      `appliedRounding.unitAdjustment × qty`. Es el redondeo
+                                          //      PER_LINE propio de la lista unificada.
+                                          //   2. PER_DOCUMENT UNIFICADO → `hechuraRoundingMonetaryImpact`
+                                          //      (cuota prorrateada del ajuste documental). El PER_DOCUMENT
+                                          //      SUPRIME el PER_LINE, así que cuando este mecanismo está
+                                          //      activo NO hay `appliedRounding.applyOn="TOTAL"`.
+                                          // Por eso el orden es: FINAL_PRICE primero; PER_DOCUMENT como
+                                          // fallback SOLO cuando no hubo redondeo de línea. Nunca coexisten
+                                          // (el test los pone ambos para verificar la precedencia).
+                                          // Passthrough puro — cero matemática FE.
+                                          const hechuraImpactDoc = (meta as any)?.hechuraRoundingMonetaryImpact;
                                           const unificadoImpact =
-                                            unitAdjustment != null ? unitAdjustment * previewQtyAnchor : null;
+                                            unitAdjustment != null
+                                              ? unitAdjustment * previewQtyAnchor
+                                              : (isAmountSignificantInBase(hechuraImpactDoc, visibilityBaseFactor)
+                                                  ? hechuraImpactDoc
+                                                  : null);
+                                          // COMBO (saldo monetario puro) — su Redondeo Comercial es SIEMPRE
+                                          // monetario, sin importar si la lista es UNIFICADA o DESGLOSADA.
+                                          // Según la lista, el backend lo emite en campos distintos:
+                                          //   · FINAL_PRICE (MARGIN_TOTAL)  → `appliedRounding.unitAdjustment`.
+                                          //   · PER_DOCUMENT (METAL_HECHURA) → `lineOwnHechuraRoundingMonetaryImpact`
+                                          //     / `hechuraRoundingMonetaryImpact` / `lineSummary.monetary.roundingImpact`.
+                                          // En DESGLOSADA el camino `desglosadoImpact` puede quedar en 0
+                                          // (lo sombrea `summary.monetary.roundingImpact = 0`) y NO lee
+                                          // `appliedRounding` → el detalle no aparecía. Para el combo tomamos
+                                          // el PRIMER valor monetario disponible (cualquier fuente) y lo
+                                          // mostramos como pieza unificada. Passthrough puro — cero recálculo.
+                                          // Generalizado a TODA línea monetaria pura (servicio,
+                                          // combo, producto sin metal). Toma el PRIMER valor de
+                                          // redondeo monetario disponible (cualquier fuente).
+                                          const monetaryRedondeo = isMonetaryOnlyLine
+                                            ? (() => {
+                                                const cands = [
+                                                  unitAdjustment != null ? unitAdjustment * previewQtyAnchor : null,
+                                                  ownHechuraImpact,
+                                                  hechuraImpactDoc,
+                                                  lineSummary ? lineSummary.monetary?.roundingImpact : null,
+                                                ];
+                                                for (const c of cands) {
+                                                  if (isAmountSignificantInBase(c, visibilityBaseFactor)) return c;
+                                                }
+                                                return null;
+                                              })()
+                                            : null;
                                           // Descomposición SSOT (Y + Z = X). Display puro.
                                           const decomp = resolveLineMonetaryRoundingDecomposition({
-                                            isLineDesglosada,
+                                            // Línea monetaria pura → pieza UNIFICADA: el detalle se
+                                            // muestra igual en lista desglosada o unificada.
+                                            isLineDesglosada: isLineDesglosada && !isMonetaryOnlyLine,
                                             monetarioFinal:   cardMonetario,         // X (autónomo en Desglosada)
-                                            unificadoImpact,                         // Z UNIFICADA (saldo)
+                                            unificadoImpact:  isMonetaryOnlyLine ? monetaryRedondeo : unificadoImpact, // Z
                                             desglosadoImpact,                        // Z DESGLOSADA (autónomo)
+                                            // Umbral de visibilidad invariante a la moneda (ver
+                                            // `visibilityBaseFactor`): la descomposición del redondeo
+                                            // aparece/desaparece igual en base y en moneda no-base.
+                                            baseFactor:       visibilityBaseFactor,
                                           });
                                           if (!decomp) return null;
                                           return (
@@ -5534,11 +5770,15 @@ export function TPDocumentLineAdvancedEditor({
                                                   {decomp.redondeo > 0 ? "+" : ""}{mFmt(decomp.redondeo)}
                                                 </span>
                                               </div>
-                                              {/* Valor redondeado (= MONETARIO final) — X. SOLO en
-                                                  UNIFICADA: cierra Y + Z = X explícitamente. DESGLOSADA
-                                                  conserva su render actual (sin esta fila; el MONETARIO
-                                                  principal ya es el valor redondeado). */}
-                                              {!isLineDesglosada && (
+                                              {/* Valor redondeado (= MONETARIO final) — X. Cierra
+                                                  Y + Z = X explícitamente. En UNIFICADA siempre; en
+                                                  DESGLOSADA el MONETARIO principal ya ES el valor
+                                                  redondeado (fila redundante, oculta). EXCEPCIÓN COMBO:
+                                                  el combo es saldo monetario puro y NO muestra metales,
+                                                  así que cierra su detalle comercial como una pieza
+                                                  unificada (Valor comercial → Redondeo → Valor
+                                                  redondeado), igual que en saldo UNIFICADO. */}
+                                              {(!isLineDesglosada || isMonetaryOnlyLine) && (
                                                 <div className="grid grid-cols-[1fr_auto] items-baseline gap-2 mt-0.5 pt-1 border-t border-border/15" data-tp-hechura-rounded>
                                                   <span className="text-[10px] font-medium leading-tight text-muted/70">Valor redondeado</span>
                                                   <span className="not-italic tabular-nums text-[11px] font-semibold leading-tight text-foreground/80">
@@ -5558,7 +5798,7 @@ export function TPDocumentLineAdvancedEditor({
                                       redondeo; colapsado ya muestra METALES+MONETARIO).
                                       UNIFICADA → "Ver composición" (revela el desglose;
                                       colapsado muestra solo el Total). Solo estado UI. */}
-                                  {(metalParents.length > 0 || hasHechura) && (
+                                  {(metalParents.length > 0 || hasHechura || isMonetaryOnlyLine) && (
                                     <div className="mt-2 flex items-center justify-between gap-2">
                                       <button
                                         type="button"
@@ -5569,7 +5809,9 @@ export function TPDocumentLineAdvancedEditor({
                                         <HelpCircle size={11} />
                                         {compositionDetailOpen
                                           ? "Ver menos"
-                                          : (isLineDesglosada ? "Ver detalle" : "Ver composición")}
+                                          : (isMonetaryOnlyLine
+                                              ? "Ver detalle comercial"
+                                              : (isLineDesglosada ? "Ver detalle" : "Ver composición"))}
                                         <ChevronDown
                                           size={11}
                                           className={cn("transition-transform", compositionDetailOpen && "rotate-180")}
@@ -5627,9 +5869,16 @@ export function TPDocumentLineAdvancedEditor({
                   // row, con la toolbar como hermano. En el resto de presets
                   // pasamos el fragment directo (los hijos siguen el
                   // flex-col original del cell wrapper).
+                  // `min-w-0 w-full` en AMBOS modos: el bloque Total/Resumen se
+                  // acomoda DENTRO de la columna fija (`minmax(240px,1fr)`) en vez
+                  // de forzar su crecimiento — así las columnas quedan alineadas
+                  // entre líneas y el Resumen no pisa el borde. `items-end`
+                  // preserva el alineado a la derecha. No toca sticky/shadow.
                   return isClassicInline ? (
-                    <div className="flex flex-col items-end min-w-0">{totalContent}</div>
-                  ) : totalContent;
+                    <div className="flex flex-col items-end min-w-0 w-full">{totalContent}</div>
+                  ) : (
+                    <div className="flex flex-col items-end min-w-0 w-full">{totalContent}</div>
+                  );
                 })()}
 
                 {/* Mini-toolbar contextual (Colapsar/Restablecer/Eliminar/Menú).

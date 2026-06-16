@@ -204,21 +204,58 @@ export function TotalDelComprobanteCard({
   // / sin líneas) se preserva `resolvedMetals` tal cual (back-compat). Esta
   // copia alimenta ÚNICAMENTE el render de `MetalsSummary`.
   const metalsForDisplay = useMemo(() => {
-    if (!metalVisibleGramsByParent) return resolvedMetals;
+    // Override 1 — gramo visible del card (Σ `visibleGrams`), PRE redondeo
+    // financiero físico.
     const byName = new Map<string, number>();
-    for (const [name, g] of Object.entries(metalVisibleGramsByParent)) {
-      if (typeof g === "number" && Number.isFinite(g)) {
-        byName.set(name.trim().toLowerCase(), g);
+    if (metalVisibleGramsByParent) {
+      for (const [name, g] of Object.entries(metalVisibleGramsByParent)) {
+        if (typeof g === "number" && Number.isFinite(g)) {
+          byName.set(name.trim().toLowerCase(), g);
+        }
       }
     }
-    if (byName.size === 0) return resolvedMetals;
+    // Override 2 (PRIORIDAD) — gramo de venta POST redondeo financiero físico
+    // (capa 16, `metalDomain=PHYSICAL`). Cuando la capa actuó sobre el gramo de
+    // venta, el header del metal muestra el POST (ej. 2,30) para que coincida
+    // con la sub-fila "2,29 → 2,30" y con el comercial. Passthrough EXACTO del
+    // snapshot (`metalPhysical.metals[].postGrams`); el frontend NO calcula.
+    // Match por id (canónico) o nombre. Solo cuando hay delta real.
+    const postById   = new Map<string, number>();
+    const postByName = new Map<string, number>();
+    const finMetals =
+      (docRoundingResolved as any)?.breakdown?.metalDomain === "PHYSICAL"
+        ? (docRoundingResolved as any)?.breakdown?.metalPhysical?.metals
+        : null;
+    if (Array.isArray(finMetals)) {
+      for (const e of finMetals) {
+        const post  = e?.postGrams;
+        const delta = e?.deltaGrams;
+        if (typeof post !== "number" || !Number.isFinite(post)) continue;
+        if (typeof delta !== "number" || !Number.isFinite(delta) || Math.abs(delta) < 1e-9) continue;
+        if (typeof e.metalParentId === "string" && e.metalParentId.length > 0) {
+          postById.set(e.metalParentId, post);
+        }
+        if (typeof e.metalParentName === "string" && e.metalParentName.trim().length > 0) {
+          postByName.set(e.metalParentName.trim().toLowerCase(), post);
+        }
+      }
+    }
+    if (byName.size === 0 && postById.size === 0 && postByName.size === 0) {
+      return resolvedMetals;
+    }
     return resolvedMetals.map((m) => {
-      const v = byName.get((m.name ?? "").trim().toLowerCase());
+      const nameKey = (m.name ?? "").trim().toLowerCase();
+      // Prioridad: POST financiero (lo que se cobra) > gramo visible del card.
+      const postG = (m.id ? postById.get(m.id) : undefined) ?? postByName.get(nameKey);
+      if (typeof postG === "number" && Number.isFinite(postG)) {
+        return { ...m, displayGrams: postG };
+      }
+      const v = byName.get(nameKey);
       return typeof v === "number" && Number.isFinite(v)
         ? { ...m, displayGrams: v }
         : m;
     });
-  }, [resolvedMetals, metalVisibleGramsByParent]);
+  }, [resolvedMetals, metalVisibleGramsByParent, docRoundingResolved]);
 
   // ── Fase 1 (2026-06) — Metal a VALOR DE VENTA vía prop explícito ─────────
   // `metalSaleByParent` (venta, derivado de líneas por el caller) tiene
@@ -350,18 +387,73 @@ export function TotalDelComprobanteCard({
             : undefined,
       })
     : [];
-  // Σ valor final por metal padre — header del bloque METALES en DESGLOSADO.
+  // Σ valor final por metal padre — base de los sub-rows per-metal del bloque
+  // METALES y fuente del RESIDUAL del saldo cuando no hay POST autoritativo.
   const metalFinalTotal: number | null = isBreakdown
     ? Math.round(metalFinalRows.reduce((a, r) => a + r.finalMetalValue, 0) * 100) / 100
     : null;
-  // Header del bloque METALES: en DESGLOSADO = Σ valor final real (incluye
-  // financiero + ajuste manual). En UNIFICADO queda null (Etapa 1 lo suprime).
-  const metalHeaderFinalSum: number | null = isBreakdown ? metalFinalTotal : null;
-  // Deducción del saldo: en DESGLOSADO = Σ valor final (cierre estructural
-  // METALES + MONETARIO = TOTAL). En UNIFICADO no se usa (saldo = total).
+
+  // ── SALDO MONETARIO POST AUTORITATIVO (regla de oro — leer el backend) ─────
+  // El "Valor final monetario" debe ser el saldo POST-redondeo que el backend
+  // YA calculó (no reconstruirlo). El residual `total − Σ metal` arrastra el
+  // drift de `Σ round(línea)` vs `round(Σ)` (ej. 200.900,01 en vez de
+  // 200.900,00). Prioridad de fuentes autoritativas (passthrough puro):
+  //   1. Redondeo FINANCIERO del saldo: `docRoundingResolved.breakdown.hechura.postRounding`.
+  //   2. Redondeo COMERCIAL del saldo:
+  //      `commercialDocumentRoundingSnapshot.breakdown.hechura.postRoundingSaldoMonetario`.
+  // Si ninguno existe → null → el residual sigue siendo el fallback.
+  //
+  // RECONCILIACIÓN con el residual (anti-regresión): el POST autoritativo se
+  // adopta SOLO cuando representa el MISMO saldo que el residual — difiere de
+  // él en a lo sumo unos centavos (el drift `Σ round` que este fix corrige).
+  // Cuando divergen materialmente (caso degenerado donde el metal absorbe todo
+  // y el snapshot trae `postRoundingSaldoMonetario = 0` mientras el saldo real
+  // del documento es otro), el residual sigue siendo la fuente — así
+  // METALES + MONETARIO = TOTAL nunca se rompe.
+  const authoritativeMonetarySaldoPost: number | null = (() => {
+    if (!isBreakdown) return null;
+    const finPost = (docRoundingResolved as any)?.breakdown?.hechura?.postRounding;
+    if (typeof finPost === "number" && Number.isFinite(finPost)) {
+      return Math.round(finPost * 100) / 100;
+    }
+    const commPost = commercialDocumentRoundingSnapshot?.breakdown?.hechura?.postRoundingSaldoMonetario;
+    if (typeof commPost === "number" && Number.isFinite(commPost)) {
+      return Math.round(commPost * 100) / 100;
+    }
+    return null;
+  })();
+  // Residual estructural (fallback) — el saldo que cierra el invariante con el
+  // metal por construcción. Sigue siendo la fuente cuando no hay POST
+  // autoritativo o cuando éste diverge materialmente del residual.
+  const monetarySaldoResidual: number | null =
+    isBreakdown && typeof totalDocument === "number" && Number.isFinite(totalDocument)
+      ? Math.round((totalDocument - (metalFinalTotal ?? 0)) * 100) / 100
+      : null;
+  // Saldo monetario DESGLOSADO final: POST autoritativo si reconcilia con el
+  // residual (drift ≤ unos centavos), si no el residual. Tolerancia 0,05 —
+  // muy por encima del drift `Σ round` (~0,01) y muy por debajo de cualquier
+  // divergencia real.
+  const monetarySaldoBreakdown: number | null =
+    authoritativeMonetarySaldoPost != null &&
+    monetarySaldoResidual != null &&
+    Math.abs(authoritativeMonetarySaldoPost - monetarySaldoResidual) <= 0.05
+      ? authoritativeMonetarySaldoPost
+      : monetarySaldoResidual;
+
+  // Deducción del saldo / header del metal: en DESGLOSADO se DERIVA del saldo
+  // elegido para garantizar `METAL header + MONETARIO = TOTAL` EXACTO (incluido
+  // el "Total a cobrar en $" del MonetarySummary, que lee `metalsValuationSum =
+  // metalDeductionForSaldoBase`). Cuando se usa el POST autoritativo, el header
+  // del metal absorbe el centavo del drift → ambos cuadran al total exacto.
+  // En UNIFICADO no se usa (saldo = total).
   const metalDeductionForSaldoBase: number = isBreakdown
-    ? (metalFinalTotal ?? 0)
+    ? (typeof totalDocument === "number" && Number.isFinite(totalDocument) && monetarySaldoBreakdown != null
+        ? Math.round((totalDocument - monetarySaldoBreakdown) * 100) / 100
+        : (metalFinalTotal ?? 0))
     : metalDeductionForSaldoBasePre;
+  // Header del bloque METALES: en DESGLOSADO = deducción reconciliada (= Σ valor
+  // final metal salvo el centavo del drift absorbido). En UNIFICADO null.
+  const metalHeaderFinalSum: number | null = isBreakdown ? metalDeductionForSaldoBase : null;
 
   // ── Importe del header "Saldo monetario" ────────────────────────────────
   // El valor representa SIEMPRE el bucket "no metal" del comprobante:
@@ -382,21 +474,19 @@ export function TotalDelComprobanteCard({
     hechuraLines,
   );
 
-  // ── "Monetario (saldo)" — SSOT del valor mostrado (anti doble-conteo) ─────
+  // ── "Monetario (saldo)" — SSOT del valor mostrado (regla de oro) ──────────
   // Regla de negocio: METALES + MONETARIO (saldo) = TOTAL del comprobante.
-  // Esa identidad SOLO la garantiza `total − metal`. El header y el bloque de
-  // "Redondeo comercial monetario" leen ESTE valor único (no recalculan).
   //
-  // En BREAKDOWN, históricamente se usaba `commercialMonetarySaldoSum`
-  // (Σ `lineCommercialSummary.monetary.amount`) para paridad línea↔footer. Pero
-  // una línea UNIFIED aporta a `monetary.amount` su TOTAL COMPLETO (metal +
-  // monetario) — en un documento mixto eso DUPLICA el metal (que también se
-  // muestra en METALES). Guard: si `metal + Σmonetary` EXCEDE el total, hay
-  // doble conteo → cerramos el invariante con `total − metal`. Si no excede
-  // (desglosado homogéneo consistente), se respeta `commercialMonetarySaldoSum`
-  // (back-compat). Display-only: resta de dos valores ya emitidos por el motor.
+  // "Valor final monetario" = saldo POST autoritativo del backend
+  // (`hechura.postRounding` financiero / `postRoundingSaldoMonetario` comercial)
+  // cuando existe; el residual `total − Σ metal` es SOLO fallback sin snapshot.
+  // El residual arrastraba el drift `Σ round(línea)` vs `round(Σ)` (ej. el
+  // header mostraba 200.900,01 cuando el backend redondeó a 200.900,00 exacto):
+  // leer el POST autoritativo lo elimina. El invariante se cierra siempre porque
+  // `metalDeductionForSaldoBase` se DERIVA del saldo elegido (`total − saldo`),
+  // así el header del metal absorbe el centavo del drift y la suma cuadra exacta.
+  // Display-only — passthrough de valores ya emitidos por el motor; cero recálculo.
   const monetarioSaldoResolved: number | null = (() => {
-    const r2 = (n: number) => Math.round(n * 100) / 100;
     const totalN =
       typeof totalDocument === "number" && Number.isFinite(totalDocument) ? totalDocument : null;
     if (!isBreakdown) {
@@ -406,11 +496,13 @@ export function TotalDelComprobanteCard({
       // `totalDocument` no es finito (ahí también es null).
       return totalN ?? monetaryHeaderAmount;
     }
-    // DESGLOSADO — SSOT del "Valor final monetario": RESIDUAL `total − Σ valor
-    // final metal` (`metalDeductionForSaldoBase`). Es el ÚNICO valor que SIEMPRE
-    // representa el saldo monetario desglosado y cierra el invariante por
-    // construcción: METALES + MONETARIO = TOTAL (guard anti doble-conteo
-    // intrínseco — el metal nunca se cuenta dos veces).
+    // DESGLOSADO — "Valor final monetario" = saldo POST AUTORITATIVO del backend
+    // (`hechura.postRounding` financiero / `postRoundingSaldoMonetario` comercial)
+    // cuando existe y reconcilia con el residual; si no, RESIDUAL `total − Σ valor
+    // final metal`. El residual arrastraba el drift `Σ round(línea)` vs `round(Σ)`
+    // (ej. 200.900,01 en vez de 200.900,00) — el POST autoritativo lo elimina.
+    // Ambos caminos cierran el invariante METALES + MONETARIO = TOTAL porque
+    // `metalDeductionForSaldoBase` se deriva del saldo elegido.
     //
     // ⚠️ NO usar `commercialMonetarySaldoSum` (Σ `lineCommercialSummary.monetary.amount`
     // / `lineOwnMonetarySaldoPostCommercialRounding`) como fuente del FINAL: en
@@ -420,7 +512,7 @@ export function TotalDelComprobanteCard({
     // (`commercialMonetaryRoundingImpactSum`, prioridad `lineOwn`) SÍ se muestra
     // como IMPACTO dentro del monetario (sub-fila) y deriva el "Valor comercial"
     // (= final − redondeo), pero NO redefine el final. Passthrough puro.
-    return totalN != null ? r2(totalN - metalDeductionForSaldoBase) : null;
+    return monetarySaldoBreakdown;
   })();
 
   // ── Impacto del REDONDEO FINANCIERO sobre el patrimonio MONETARIO ──────────
@@ -620,6 +712,15 @@ export function TotalDelComprobanteCard({
                 Razón: el detalle financiero pesaba demasiado y competía con
                 el Total / Patrimonio metálico. Ahora la lectura rápida es
                 limpia y el detalle queda accesible bajo demanda. */}
+            {/* Mini-bloque "Monetario (saldo)" — espejo visual de cada metal:
+                superficie + borde para darle la MISMA jerarquía protagonista.
+                Solo BREAKDOWN (en UNIFICADO el saldo == total del header). El
+                toggle "Ver detalle financiero" y su detalle quedan FUERA. */}
+            {isBreakdown && (
+            <div
+              className="rounded-lg border border-border/30 bg-surface2/25 px-3 py-2"
+              data-tp-monetary-block
+            >
             {(() => {
               // ── Etapa 2F-C — eliminación de la DUPLICACIÓN del saldo ────────
               // En UNIFICADO `Monetario (saldo)` == `Total del comprobante`
@@ -664,7 +765,7 @@ export function TotalDelComprobanteCard({
                   data-testid="total-card-hechura-row"
                   data-tp-header-mode={isBreakdown ? "saldo-monetario" : "total-hechura"}
                 >
-                  <span className="text-[15px] font-medium text-text inline-flex items-center">
+                  <span className="text-base font-semibold text-text inline-flex items-center">
                     {headerLabel}
                     {/* Tooltip de trazabilidad del MONETARIO — cuenta completa:
                         valor comercial (Antes) → valor final (Después) ·
@@ -697,10 +798,10 @@ export function TotalDelComprobanteCard({
                   </span>
                   {headerAmount != null && Number.isFinite(headerAmount) && (
                     <span
-                      className={`tabular-nums text-[15px] font-semibold ${
+                      className={`tabular-nums text-lg font-bold ${
                         headerAmount < 0
                           ? vt.colors.discount
-                          : "text-text"
+                          : vt.colors.primary
                       }`}
                       data-testid="total-card-monetary-header-amount"
                     >
@@ -800,6 +901,8 @@ export function TotalDelComprobanteCard({
                 </div>
               );
             })()}
+            </div>
+            )}
 
             {/* Sub-toggle secundario — abre el detalle financiero (descuentos,
                 canal, base imponible, IVA, envío, redondeo). Estilo "link
@@ -887,6 +990,11 @@ export function TotalDelComprobanteCard({
                   // Etapa 2F — en UNIFICADO oculta la sección COMPOSICIÓN
                   // (Hechura/Productos): el detalle se enfoca en la cuenta monetaria.
                   isBreakdown={isBreakdown}
+                  // El detalle financiero del DESGLOSADO se ve PLANO como el del
+                  // UNIFICADO (sin encabezados de sección): el contenido sigue
+                  // siendo el de BREAKDOWN, solo cambia el layout.
+                  flatDetail
+
                   // Trazabilidad de auditoría por componente (tooltips con la
                   // cuenta completa). Passthrough puro desde el caller.
                   componentTraces={componentTraces}

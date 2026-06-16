@@ -22,38 +22,8 @@ import type { ReactElement } from "react";
 import { formatByType } from "../../../../lib/pricing/format";
 import { vt } from "../../../../lib/pricing/visualTokens";
 import { OriginTooltip } from "./OriginTooltip";
-import { TraceTooltipBody } from "./TraceTooltipBody";
-import type { ComponentTrace } from "../traceability";
 import type { DocumentMetalSummaryItem } from "../types";
 import type { MetalFinalRow, MetalPhysicalImpactDetail } from "../helpers";
-
-/** Construye el trace de auditoría de UN metal padre (modo DESGLOSADO) desde su
- *  composición final. PASSTHROUGH puro — proyecta los montos ya emitidos por el
- *  backend a la estructura `ComponentTrace`. El tooltip muestra la cuenta:
- *  gramos finales (note) · Valor comercial (Antes) → Valor final metal (Después)
- *  · Redondeo comercial (Impacto). */
-function buildMetalTrace(
-  row: MetalFinalRow,
-  metalName: string,
-  grams: number,
-  priceListName?: string | null,
-): ComponentTrace {
-  // Origen = nombre real de la lista aplicada (no un genérico técnico).
-  const listName =
-    typeof priceListName === "string" && priceListName.trim().length > 0
-      ? priceListName.trim()
-      : "Lista de precios";
-  return {
-    kind:  "METAL",
-    title: metalName,
-    origin: { sourceType: "PRICE_LIST", sourceName: listName },
-    note:  `Gramos finales de venta: ${formatByType(grams, "METAL_GRAMS")} g`,
-    preValue:  row.baseCommercialValue,
-    postValue: row.finalMetalValue,
-    impact:    row.commercialRoundingImpact,
-    completeness: "COMPLETE",
-  };
-}
 
 /** Subset del snapshot del redondeo físico de UN metal padre. Passthrough
  *  EXACTO de `documentRoundingSnapshot.breakdown.metalPhysical.metals[i]`. */
@@ -113,8 +83,8 @@ export interface MetalsSummaryProps {
    *  llega (UNIFICADO / callers viejos), el componente cae al comportamiento
    *  previo (degradación segura). Todos los montos son passthrough del backend. */
   finalRows?: ReadonlyArray<MetalFinalRow>;
-  /** Nombre de la lista de precios aplicada — alimenta el "Origen" del tooltip
-   *  de trazabilidad de cada metal. Passthrough del card. */
+  /** Aceptado por back-compat; ya NO se consume (el tooltip de metales muestra
+   *  la cuenta + artículos de origen, no el nombre de lista). */
   priceListName?: string | null;
 }
 
@@ -194,7 +164,6 @@ export function MetalsSummary({
   commercialMetalValueByParent,
   commercialRoundingByParent,
   finalRows,
-  priceListName,
 }: MetalsSummaryProps): ReactElement {
   if (metals.length === 0) {
     return (
@@ -208,7 +177,7 @@ export function MetalsSummary({
   }
   return (
     <ul
-      className="divide-y divide-border/15"
+      className="space-y-2"
       data-testid="total-card-metals"
     >
       {metals.map((m) => {
@@ -217,16 +186,23 @@ export function MetalsSummary({
         const fr = findFinalRow(m, finalRows);
         const physical = fr ? undefined : findPhysicalDetail(m, physicalRoundedMetals);
         const showPhysical = hasPhysicalDelta(physical);
+        // Artículos que componen este metal padre (origen de la cuenta). Con
+        // composición canónica (fr) se muestra en el tooltip ⓘ; sin fr (legacy)
+        // cae a la sub-fila del card.
+        const originNames = resolveOriginArticleNames(m.sourceLineIds, lineArticleNames);
         return (
           <li
             key={m.id}
-            className="py-2.5 first:pt-0 last:pb-0"
+            // Mini-bloque por metal padre — cada metal es un patrimonio propio
+            // (jerarquía elevada): superficie + borde sutil en vez de la lista
+            // divide-y plana. Solo presentación.
+            className="rounded-lg border border-border/30 bg-surface2/25 px-3 py-2.5"
             data-testid={`total-card-metal-${m.id}`}
             data-tp-physical-rounded={showPhysical ? "true" : "false"}
           >
-            {/* Fila principal: nombre del padre · gramos (primario). */}
+            {/* Fila principal: nombre del padre · gramos (primario, protagonista). */}
             <div className="flex items-baseline justify-between gap-3">
-              <span className="text-[15px] font-medium text-text inline-flex items-center">
+              <span className="text-base font-semibold text-text inline-flex items-center">
                 {m.name}
                 {/* Tooltip de trazabilidad del metal — solo cuando hay
                     composición final (DESGLOSADO con datos del backend). */}
@@ -234,16 +210,43 @@ export function MetalsSummary({
                   <OriginTooltip
                     title={m.name}
                     body={
-                      <TraceTooltipBody
-                        trace={buildMetalTrace(fr, m.name, m.displayGrams ?? m.grams, priceListName)}
-                        currency={currencyCode}
-                      />
+                      <div className="space-y-1.5">
+                        {/* LA CUENTA — protagonista del tooltip: gramos × precio/g =
+                            valor. Sin Antes/Después/Impacto (redundante con la cuenta)
+                            ni el nombre de lista ("Múltiples…"). */}
+                        {(() => {
+                          const grams = m.displayGrams ?? m.grams;
+                          const cur = `${currencyCode} `;
+                          return (
+                            <div className="text-[13px] font-bold leading-snug text-text tabular-nums break-words">
+                              {grams > 0
+                                ? `${formatByType(grams, "METAL_GRAMS")} × ${cur}${formatByType(fr.baseCommercialValue / grams, "MONEY")}/g = ${cur}${formatByType(fr.baseCommercialValue, "MONEY")}`
+                                : `${cur}${formatByType(fr.baseCommercialValue, "MONEY")}`}
+                            </div>
+                          );
+                        })()}
+                        {/* Origen — artículos/líneas que aportan a este metal padre. */}
+                        {originNames.length > 0 && (
+                          <div className="border-t border-border/30 pt-1.5">
+                            <div className="mb-0.5 text-[10px] font-semibold uppercase tracking-wider text-muted/55">
+                              {originNames.length === 1 ? "Origen" : `Origen · ${originNames.length} líneas`}
+                            </div>
+                            <ul className="space-y-px">
+                              {originNames.map((n) => (
+                                <li key={n} className="truncate text-[11px] text-muted/80">{n}</li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
+                      </div>
                     }
                   />
                 )}
               </span>
               <span className="tabular-nums">
-                <span className="text-[15px] font-semibold text-text">
+                {/* Foco de metal por criterio único (`vt.emphasisFor`) + tamaño
+                    local del footer. */}
+                <span className={`${vt.emphasisFor("BREAKDOWN", "metalGrams")} text-lg`}>
                   {/* GRAMO CANÓNICO = `displayGrams` (= `gramsEquivLine` /
                       `saleEquivGr` del card del artículo: metal padre equivalente
                       con pureza + merma + margen). SSOT compartida con el
@@ -251,10 +254,9 @@ export function MetalsSummary({
                       MISMO gramo. Fallback legacy: `grams` (físico) cuando el
                       caller no derivó displayGrams. Passthrough — cero recálculo,
                       sin saleValue/cotización. */}
+                  {/* El preset METAL_GRAMS ya emite el sufijo " g" — no agregar
+                      otro "gr" (evita el duplicado "4,59 g gr"). */}
                   {formatByType(m.displayGrams ?? m.grams, "METAL_GRAMS")}
-                </span>
-                <span className="ml-1.5 text-[10px] font-normal uppercase tracking-wider text-muted/60">
-                  gr
                 </span>
               </span>
             </div>
@@ -363,7 +365,10 @@ export function MetalsSummary({
                 `sourceLineIds` del balance + nombres pasados por el caller.
                 Se omite cuando no hay datos suficientes (degradación segura). */}
             {(() => {
-              const originNames = resolveOriginArticleNames(m.sourceLineIds, lineArticleNames);
+              // Con composición canónica (fr) el Origen vive en el tooltip ⓘ del
+              // metal (card minimalista) → no duplicar acá. Sin fr (legacy) se
+              // mantiene como sub-fila del card.
+              if (fr) return null;
               if (originNames.length === 0) return null;
               const count = originNames.length;
               return (
@@ -431,10 +436,17 @@ function MetalFinalComposition({
     !!row.financial &&
     (Math.abs(row.financial.deltaGrams) > EPS_GRAMS ||
       Math.abs(row.financial.monetaryEquivalent) > EPS);
+  // Pedido UX (2026-06) — el card del metal muestra SOLO "Valor final metal";
+  // las filas "Valor de venta metal" + redondeo aparecen SOLO cuando hay algún
+  // ajuste (comercial / financiero / manual). Sin ajuste venta == final →
+  // mostrar ambas sería redundante.
+  const hasAnyAdjustment = showCommercialRounding || showFinancial || !!row.manual;
   return (
     <>
-      {/* Valor de venta del metal (base, pre-redondeos). En DESGLOSADO el metal
-          es patrimonio que se cobra al cliente → el label refleja "venta". */}
+      {/* Valor de venta del metal (base, pre-redondeos) — SOLO cuando hay un
+          ajuste que lo distinga del valor final. En DESGLOSADO el metal es
+          patrimonio que se cobra al cliente → el label refleja "venta". */}
+      {hasAnyAdjustment && (
       <div
         className="mt-0.5 flex items-baseline justify-between gap-2"
         data-testid={`total-card-metal-${metalId}-commercial-value`}
@@ -444,6 +456,7 @@ function MetalFinalComposition({
           {currencyCode} {formatByType(row.baseCommercialValue, "MONEY")}
         </span>
       </div>
+      )}
 
       {/* Redondeo comercial (monetario), solo si ≠ 0. */}
       {showCommercialRounding && (

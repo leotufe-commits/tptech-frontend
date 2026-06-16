@@ -803,9 +803,15 @@ Nunca usar HTML nativo si existe componente TP.
   `resolveDefaultWarehouseId`). Backend: `GET`/`PUT /api/user-preferences/me`.
 - Pantalla: **Configuración → Mis preferencias** (`MisPreferencias.tsx`,
   ruta `/configuracion/mis-preferencias`). Sin permiso especial.
-- **Scope actual:** `SALES_INVOICE`. **Campos:** `defaultWarehouseId`,
-  `defaultSellerId`, `defaultPriceListId`, `defaultChannelId`,
-  `defaultCurrencyId`.
+- **Scope actual:** `SALES_INVOICE`. **Campos que edita esta pantalla:**
+  `defaultWarehouseId`, `defaultSellerId`, `defaultPriceListId`,
+  `defaultChannelId`, `defaultCurrencyId`, `defaultBalanceMode`. Otros campos
+  del modelo (`defaultGlobalDiscountType`, `invoiceLayoutConfig`,
+  `preferredInvoiceViewPreset`, `invoiceUiPreferences`) los editan otras
+  pantallas de Factura, no "Mis preferencias".
+  - **Gap conocido:** `invoiceLayoutPresets` ("Mis vistas") se envía desde el
+    frontend (`useInvoiceLayout`) pero el backend no lo persiste; hoy sobrevive
+    solo por `localStorage`. Requiere sprint propio (migración Prisma).
 - Solo precargan defaults al **crear una Factura de ventas nueva**
   (`VentasFacturas.openNew()`, que trae la preferencia **fresca** vía
   `userPreferencesApi.get()`).

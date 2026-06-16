@@ -10,7 +10,7 @@
 // Pricing-engine NO se toca: este módulo solo configura display/input.
 // ============================================================================
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
 import { TPCard } from "../../components/ui/TPCard";
 import { TPField } from "../../components/ui/TPField";
 import TPComboFixed from "../../components/ui/TPComboFixed";
@@ -48,24 +48,78 @@ const SAMPLE: Record<NumberFormatType, number> = {
   PURITY: 0.75, WEIGHT: 1.25, DIMENSION: 10.5, INTEGER: 10,
 };
 
-export type NumericFormatSectionProps = {
-  /** Callback opcional: se invoca cada vez que cambia la config local
-   *  (incluido el preview en vivo, antes de guardar). El contenedor con
-   *  tabs lo usa para alimentar un panel de previews globales sin tener
-   *  que duplicar fetch. Si no se provee, la sección funciona stand-alone. */
-  onConfigChange?: (config: NumberFormatConfig) => void;
+// Agrupación VISUAL de la tabla de decimales (mejora de presentación — no
+// cambia datos, guardado ni modelo). Los tipos siguen siendo los mismos de
+// PRESET_ORDER; solo se renderizan bajo subtítulos. "Otros" se calcula como
+// el RESTO de PRESET_ORDER, así ningún tipo (presente o futuro) queda fuera.
+const DECIMAL_GROUPS: Array<{ title: string; types: NumberFormatType[] }> = (() => {
+  // Agrupación por la lógica del negocio (joyería), no por unidad técnica:
+  //  · Moneda incluye la cotización (Tipo de cambio).
+  //  · Metales = lo esencial del metal (gramos finos, merma en gramos, pureza).
+  //  · Medidas y cantidades = peso/medida físicos del artículo + conteos.
+  const explicit: Array<{ title: string; types: NumberFormatType[] }> = [
+    { title: "Moneda",               types: ["MONEY", "MONEY_EXTENDED", "AJUSTE_AMOUNT", "FX_RATE"] },
+    { title: "Metales",              types: ["METAL_GRAMS", "MERMA_GRAMS", "PURITY"] },
+    { title: "Porcentajes",          types: ["PERCENT", "MARGIN_PERCENT", "TAX_PERCENT", "AJUSTE_PERCENT", "MERMA_PERCENT"] },
+    { title: "Medidas y cantidades", types: ["WEIGHT", "DIMENSION", "QUANTITY", "INTEGER"] },
+  ];
+  // Catch-all: cualquier tipo de PRESET_ORDER no asignado arriba (p.ej. tipos
+  // futuros) se muestra igual bajo "Otros" para no desaparecer de la UI.
+  // Hoy todos están clasificados → queda vacío y NO se renderiza.
+  const assigned = new Set<NumberFormatType>(explicit.flatMap((g) => g.types));
+  const otros = PRESET_ORDER.filter((t) => !assigned.has(t));
+  return otros.length ? [...explicit, { title: "Otros", types: otros }] : explicit;
+})();
+
+// Ayuda contextual de UNA línea bajo el label — responde "¿DÓNDE se aplican
+// estos decimales?" (no "qué es el dato"). Limpieza final: SOLO en los campos
+// cuyo alcance genera una duda real. Los claros o auto-explicativos (Dinero,
+// Gramos de metal, Pureza, Cantidad, Porcentaje general, Margen, Impuesto, etc.)
+// NO llevan ayuda. Es texto de presentación: no cambia datos ni lógica.
+const TYPE_HELP: Partial<Record<NumberFormatType, string>> = {
+  MONEY_EXTENDED: "Se aplica a importes con decimales extra (precios unitarios).",
+  FX_RATE:        "Se aplica a las cotizaciones de monedas.",
+  WEIGHT:         "Se aplica al peso mostrado en artículos y documentos.",
+  DIMENSION:      "Se aplica a las medidas mostradas de los artículos.",
+  INTEGER:        "Se aplica a valores enteros del sistema.",
 };
 
-export default function NumericFormatSection({ onConfigChange }: NumericFormatSectionProps = {}) {
+/** API imperativa para que el contenedor unificado coordine el guardado
+ *  sin relocar lógica: la sección sigue siendo dueña de su estado, su save
+ *  y su validación. */
+export type NumericFormatSectionHandle = {
+  /** ¿Hay cambios sin guardar respecto del último valor cargado/guardado? */
+  isDirty: () => boolean;
+  /** Guarda SOLO este dominio. true = OK; false = el PATCH falló (ya mostró su
+   *  toast de error). No emite toast de éxito: en modo embedded el contenedor
+   *  muestra el toast único. */
+  save: () => Promise<boolean>;
+};
+
+export type NumericFormatSectionProps = {
+  /** Callback opcional: se invoca cada vez que cambia la config local
+   *  (incluido el preview en vivo, antes de guardar). Si no se provee, la
+   *  sección funciona stand-alone. */
+  onConfigChange?: (config: NumberFormatConfig) => void;
+  /** Embebido en la pantalla unificada: oculta el botón propio (el guardado lo
+   *  coordina el contenedor vía ref). Standalone/legacy = false → botón visible. */
+  embedded?: boolean;
+};
+
+const NumericFormatSection = forwardRef<NumericFormatSectionHandle, NumericFormatSectionProps>(
+  function NumericFormatSection({ onConfigChange, embedded = false }, ref) {
   const { reload } = useNumberFormat();
   const [config, setConfig] = useState<NumberFormatConfig>(DEFAULT_NUMBER_FORMAT_CONFIG);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  // Snapshot del último valor cargado/guardado — base del dirty-tracking.
+  const initialRef = useRef<NumberFormatConfig | null>(null);
 
   useEffect(() => {
     fetchNumberFormat()
       .then((cfg) => {
         setConfig(cfg);
+        initialRef.current = cfg;
         onConfigChange?.(cfg);
       })
       .catch((err) => {
@@ -95,24 +149,45 @@ export default function NumericFormatSection({ onConfigChange }: NumericFormatSe
     }));
   }
 
-  async function handleSave() {
+  // Guarda SOLO este dominio. Sin toast de éxito (lo decide el caller).
+  // Reutilizado por el botón standalone y por el ref embebido.
+  async function doSave(): Promise<boolean> {
     setSaving(true);
     try {
       const updated = await updateNumberFormat(config);
       setConfig(updated);
+      initialRef.current = updated;
       onConfigChange?.(updated);
       reload();
-      toast.success("Configuración de formato numérico guardada.");
+      return true;
     } catch (err) {
       if (err instanceof ApiError && err.status === 403) {
         toast.error("No tenés permisos para guardar esta configuración.");
       } else {
         toast.error("Error al guardar la configuración.");
       }
+      return false;
     } finally {
       setSaving(false);
     }
   }
+
+  // Botón propio (standalone/legacy): guarda y muestra éxito.
+  async function handleSave() {
+    if (await doSave()) toast.success("Configuración de formato numérico guardada.");
+  }
+
+  useImperativeHandle(
+    ref,
+    () => ({
+      isDirty: () =>
+        initialRef.current != null &&
+        JSON.stringify(config) !== JSON.stringify(initialRef.current),
+      save: doSave,
+    }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [config],
+  );
 
   const isCustom = config.region === "CUSTOM";
 
@@ -126,7 +201,7 @@ export default function NumericFormatSection({ onConfigChange }: NumericFormatSe
   }
 
   return (
-    <div className="space-y-6 max-w-2xl">
+    <div className={embedded ? "space-y-6" : "space-y-6 max-w-2xl"}>
       <TPCard title="Región">
         <div className="space-y-4">
           <TPField
@@ -174,41 +249,71 @@ export default function NumericFormatSection({ onConfigChange }: NumericFormatSe
       </TPCard>
 
       <TPCard title="Decimales por tipo de dato">
-        <p className="text-xs text-muted leading-relaxed mb-3">
+        <p className="text-xs text-muted leading-relaxed mb-4">
           Ajustá cuántos decimales se muestran por tipo. El prefijo, sufijo y
           ceros finales usan los valores recomendados del sistema.
         </p>
-        <div className="space-y-2">
-          {PRESET_ORDER.map((type) => {
-            const decimals =
-              config.presets[type]?.decimals ?? DEFAULT_PRESETS[type].decimals;
-            return (
-              <div
-                key={type}
-                className="grid grid-cols-[1fr_auto_auto] items-center gap-3 py-1.5 border-b border-border/40 last:border-0"
-              >
-                <span className="text-sm text-text">{PRESET_LABELS[type]}</span>
-                <div className="w-36">
-                  <TPComboFixed
-                    value={String(decimals)}
-                    onChange={(v: string) => setDecimals(type, Number(v) || 0)}
-                    options={DECIMALS_OPTIONS}
-                  />
-                </div>
-                <span className="text-xs font-mono text-muted tabular-nums min-w-[7rem] text-right">
-                  {formatNumber(SAMPLE[type], type, config)}
+        {/* Cada grupo es una sub-card con encabezado propio → separación clara
+            y menos sensación de tabla larga. En embedded las sub-cards fluyen
+            en 2 columnas (aprovechan el ancho); standalone/mobile apilan. */}
+        <div className={embedded ? "grid gap-4 xl:grid-cols-2" : "space-y-4"}>
+          {DECIMAL_GROUPS.map((group) => (
+            <div
+              key={group.title}
+              className="rounded-xl border border-border overflow-hidden"
+            >
+              <div className="bg-surface2 px-4 py-2 border-b border-border">
+                <span className="text-xs font-semibold uppercase tracking-wide text-text">
+                  {group.title}
                 </span>
               </div>
-            );
-          })}
+              <div className="px-4 py-1">
+                {group.types.map((type) => {
+                  const decimals =
+                    config.presets[type]?.decimals ?? DEFAULT_PRESETS[type].decimals;
+                  return (
+                    <div
+                      key={type}
+                      className="flex flex-col gap-1 py-2 border-b border-border/40 last:border-0 sm:flex-row sm:items-center sm:gap-3"
+                    >
+                      <div className="sm:flex-1 sm:min-w-0">
+                        <span className="text-sm text-text block">{PRESET_LABELS[type]}</span>
+                        {TYPE_HELP[type] && (
+                          <span className="block text-[11px] text-muted leading-snug">
+                            {TYPE_HELP[type]}
+                          </span>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-3">
+                        <div className="w-32 shrink-0 sm:w-36">
+                          <TPComboFixed
+                            value={String(decimals)}
+                            onChange={(v: string) => setDecimals(type, Number(v) || 0)}
+                            options={DECIMALS_OPTIONS}
+                          />
+                        </div>
+                        <span className="flex-1 text-xs font-mono text-muted tabular-nums text-right sm:flex-none sm:min-w-[6rem]">
+                          {formatNumber(SAMPLE[type], type, config)}
+                        </span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          ))}
         </div>
       </TPCard>
 
-      <div className="flex justify-end pt-2">
-        <TPButton variant="primary" onClick={handleSave} disabled={saving}>
-          {saving ? "Guardando…" : "Guardar cambios"}
-        </TPButton>
-      </div>
+      {!embedded && (
+        <div className="flex justify-end pt-2">
+          <TPButton variant="primary" onClick={handleSave} disabled={saving}>
+            {saving ? "Guardando…" : "Guardar cambios"}
+          </TPButton>
+        </div>
+      )}
     </div>
   );
-}
+});
+
+export default NumericFormatSection;

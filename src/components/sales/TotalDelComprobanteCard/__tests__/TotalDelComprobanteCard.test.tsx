@@ -359,7 +359,7 @@ describe("TotalDelComprobanteCard — modo BREAKDOWN", () => {
     ).toBeTruthy();
   });
 
-  it("MetalsSummary muestra nombre + gramos + sufijo 'gr' sin labels técnicos", () => {
+  it("MetalsSummary muestra nombre + gramos (sufijo ' g', sin duplicar 'gr') sin labels técnicos", () => {
     render(
       <TotalDelComprobanteCard
         totalDocument={50000}
@@ -372,8 +372,10 @@ describe("TotalDelComprobanteCard — modo BREAKDOWN", () => {
     const oroRow = screen.getByTestId("total-card-metal-oro-fino");
     // Nombre humano del padre — NO el id interno.
     expect(oroRow.textContent).toMatch(/Oro Fino/);
-    // El sufijo "gr" aparece en la fila.
-    expect(oroRow.textContent).toMatch(/gr/);
+    // El preset METAL_GRAMS ya emite el sufijo " g" (ej. "2,770 g"); NO debe
+    // duplicarse con otro "gr" ("2,770 g gr").
+    expect(oroRow.textContent).toMatch(/\d\s*g/);
+    expect(oroRow.textContent ?? "").not.toMatch(/g\s*gr/i);
     // No se filtran labels técnicos del DTO al render.
     expect(oroRow.textContent).not.toMatch(/metalBalance/i);
     expect(oroRow.textContent).not.toMatch(/monetaryBalance/i);
@@ -2202,7 +2204,7 @@ describe("TotalDelComprobanteCard — Etapa UX (filtro de ceros + cierre Total f
     expect(discountAmount?.className).not.toMatch(/text-primary/);
   });
 
-  it("(c4) en BREAKDOWN los metales NO se colorean como dinero (sin text-primary)", () => {
+  it("(c4) en BREAKDOWN los GRAMOS del metal toman el acento de foco (text-primary)", () => {
     render(
       <TotalDelComprobanteCard
         totalDocument={50000}
@@ -2214,10 +2216,14 @@ describe("TotalDelComprobanteCard — Etapa UX (filtro de ceros + cierre Total f
     );
     // Los metales se renderizan con su id slug (oro-fino, plata-925).
     const metalRow = screen.getByTestId("total-card-metal-oro-fino");
-    // Ni el nombre ni los gramos ni el monto secundario deben usar
-    // `text-primary` (eso queda reservado para el total monetario y el
-    // cierre del desglose).
-    expect(metalRow.outerHTML).not.toMatch(/text-primary/);
+    // Los GRAMOS (patrimonio físico) son el protagonista del desglosado → acento
+    // de foco (text-primary, vía vt.emphasisFor) + apenas más grandes (text-lg).
+    // El nombre y el monto "Valor final metal" quedan en neutro (no compiten).
+    const html = metalRow.outerHTML;
+    expect(html).toMatch(/text-primary/);
+    expect(html).toMatch(/text-lg/);
+    const finalAmount = screen.getByTestId("total-card-metal-oro-fino-final").lastElementChild;
+    expect(finalAmount?.className ?? "").not.toMatch(/text-primary/);
   });
 
   it("(c5b) total maestro del header usa tamaño grande (override !text-2xl/3xl) para protagonismo del card", () => {

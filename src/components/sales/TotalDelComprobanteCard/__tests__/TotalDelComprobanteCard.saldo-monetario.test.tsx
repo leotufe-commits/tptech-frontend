@@ -510,10 +510,10 @@ describe("MonetarySummary — Total a cobrar en $ al pie del detalle", () => {
         onBalanceModeOverrideChange={noop}
       />,
     );
-    const oroRow = screen.getByTestId("total-card-metal-oro-fino-commercial-value");
-    expect(oroRow.textContent).toMatch(/Valor de venta metal/i);
+    const oroRow = screen.getByTestId("total-card-metal-oro-fino-final");
+    expect(oroRow.textContent).toMatch(/Valor final metal/i);
     expect(oroRow.textContent).toMatch(/309[.,]?375/);
-    const plataRow = screen.getByTestId("total-card-metal-plata-commercial-value");
+    const plataRow = screen.getByTestId("total-card-metal-plata-final");
     expect(plataRow.textContent).toMatch(/156[.,]?000/);
   });
 
@@ -534,8 +534,8 @@ describe("MonetarySummary — Total a cobrar en $ al pie del detalle", () => {
       />,
     );
     // Sub-fila por padre: AHORA renderizada también con 1 metal.
-    const oroRow = screen.getByTestId("total-card-metal-oro-fino-commercial-value");
-    expect(oroRow.textContent).toMatch(/Valor de venta metal/i);
+    const oroRow = screen.getByTestId("total-card-metal-oro-fino-final");
+    expect(oroRow.textContent).toMatch(/Valor final metal/i);
     expect(oroRow.textContent).toMatch(/309[.,]?375/);
     // Header del bloque: SÍ sigue presente con el total agregado.
     expect(screen.getByTestId("total-card-metals-header-total").textContent)
@@ -564,7 +564,7 @@ describe("MonetarySummary — Total a cobrar en $ al pie del detalle", () => {
         // commercialMetalValueByParent omitido → base = valuación (210.937,50)
       />,
     );
-    const valor = screen.getByTestId("total-card-metal-oro-fino-commercial-value");
+    const valor = screen.getByTestId("total-card-metal-oro-fino-final");
     expect(valor.textContent).toMatch(/210[.,]?937[.,]50/);
     // Header del bloque = Σ valor final metal = 210.937,50.
     expect(screen.getByTestId("total-card-metals-header-total").textContent)
@@ -928,7 +928,7 @@ describe("Fase 1 — metalSaleByParent (venta) con fallback a costo", () => {
       />,
     );
     expect(screen.getByTestId("total-card-metals-header-total").textContent).toMatch(/340[.,]?312/);
-    const oroRow = screen.getByTestId("total-card-metal-oro-fino-commercial-value");
+    const oroRow = screen.getByTestId("total-card-metal-oro-fino-final");
     expect(oroRow.textContent).toMatch(/340[.,]?312/);
   });
 
@@ -945,7 +945,7 @@ describe("Fase 1 — metalSaleByParent (venta) con fallback a costo", () => {
         onBalanceModeOverrideChange={noop}
       />,
     );
-    const oroRow = screen.getByTestId("total-card-metal-oro-fino-commercial-value");
+    const oroRow = screen.getByTestId("total-card-metal-oro-fino-final");
     expect(oroRow.textContent).toMatch(/340[.,]?312/);      // venta
     expect(oroRow.textContent).not.toMatch(/309[.,]?375/);  // NO costo
   });
@@ -962,7 +962,7 @@ describe("Fase 1 — metalSaleByParent (venta) con fallback a costo", () => {
         onBalanceModeOverrideChange={noop}
       />,
     );
-    expect(screen.getByTestId("total-card-metal-oro-fino-commercial-value").textContent)
+    expect(screen.getByTestId("total-card-metal-oro-fino-final").textContent)
       .toMatch(/309[.,]?375/);
   });
 
@@ -981,7 +981,7 @@ describe("Fase 1 — metalSaleByParent (venta) con fallback a costo", () => {
         onBalanceModeOverrideChange={noop}
       />,
     );
-    expect(screen.getByTestId("total-card-metal-oro-fino-commercial-value").textContent)
+    expect(screen.getByTestId("total-card-metal-oro-fino-final").textContent)
       .toMatch(/210[.,]?937[.,]50/);
   });
 

@@ -127,7 +127,6 @@ export function jewelryToDraft(j: any): { existing: ExistingBody; company: Compa
       emailAddressLine:   s(j?.emailAddressLine),
       emailBusinessHours: s(j?.emailBusinessHours),
       emailWebsite:       s(j?.emailWebsite),
-      emailInstagram:     s(j?.emailInstagram),
       emailFooter:        String(j?.emailFooter ?? ""),
     },
   };
@@ -155,7 +154,6 @@ export function buildPayload(existing: ExistingBody, company: CompanyBody, email
     emailAddressLine:   s(emailConfig.emailAddressLine),
     emailBusinessHours: s(emailConfig.emailBusinessHours),
     emailWebsite:       s(emailConfig.emailWebsite),
-    emailInstagram:     s(emailConfig.emailInstagram),
     emailFooter:        String(emailConfig.emailFooter ?? ""),
   };
 }

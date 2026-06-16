@@ -256,6 +256,10 @@ export interface DocumentLine {
    */
   pricingMeta?: {
     priceSource?:           string;   // PRICE_LIST | PROMOTION | MANUAL_OVERRIDE | etc.
+    /** Modo de costo del motor (passthrough display). "COMBO" para combos
+     *  comerciales — señal estable (independiente de promo) para encabezados/
+     *  empty-states. No participa en cálculos. */
+    costMode?:              string | null;
     baseSource?:            string;
     appliedPriceListId?:    string | null;
     appliedPriceListName?:  string | null;

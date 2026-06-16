@@ -136,15 +136,4 @@ describe("Card — trazabilidad visual del origen del redondeo (UI)", () => {
     expect(note).not.toBeNull();
     expect((note!.textContent ?? "").toLowerCase()).toContain("no documental");
   });
-
-  it("el debug de desarrollo expone el campo backend usado (autónomo) y el valor 2.650", () => {
-    const container = renderCard(makeMixedDesglosadaLine());
-    const dbg = container.querySelector("[data-tp-metal-rounding-debug]");
-    expect(dbg).not.toBeNull();
-    const txt = dbg!.textContent ?? "";
-    // Origen autónomo (contrato FASE 1) y valor de línea, nunca el prorrateo.
-    expect(txt).toContain("lineCommercialSummary.metals.roundingImpact");
-    expect(txt).toMatch(/2650/);
-    expect(txt).not.toMatch(/675/);
-  });
 });

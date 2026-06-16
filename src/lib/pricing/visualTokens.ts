@@ -142,6 +142,61 @@ export const card = {
   totalAccent: "bg-primary/5 border-t-2 border-primary/20 px-2 py-1 rounded mt-1",
 } as const;
 
+// ─── ÉNFASIS POR MODO (UNIFICADO / DESGLOSADO) ───────────────────────────────
+//
+// Criterio visual ÚNICO de "qué se prende (foco azul) y qué se apaga (neutro)"
+// según el modo de saldo + el rol del elemento. Lo consumen el card de línea
+// (Resumen Comercial del Artículo) y el footer (Total del comprobante) para que
+// la jerarquía visual sea idéntica en ambos.
+//
+// Regla: SOLO devuelve strings de Tailwind compuestos de los tokens de arriba.
+// Cero matemática, cero lógica de negocio. La VISIBILIDAD la siguen gobernando
+// los gates de cada componente (isLineDesglosada / hasMetals / hasHechura); este
+// helper solo decide el ÉNFASIS (color/peso/tamaño) cuando el elemento se muestra.
+
+export type BalanceViewMode = "UNIFIED" | "BREAKDOWN";
+
+export type EmphasisRole =
+  /** Total del comprobante (hero del footer). */
+  | "documentTotal"
+  /** Total de metales / "Total a cobrar" / total de bloque (acompaña, no compite). */
+  | "sectionTotal"
+  /** Gramos del metal padre — protagonista del DESGLOSADO. */
+  | "metalGrams"
+  /** Saldo monetario / hechura — protagonista del DESGLOSADO. */
+  | "monetaryAmount"
+  /** "Total línea c/imp." — protagonista en UNIFICADO, secundario en DESGLOSADO. */
+  | "lineTotal";
+
+/**
+ * Énfasis (COLOR + peso) para `role` según `mode`. El TAMAÑO lo aporta el caller
+ * según su contexto (el card de línea es más denso que el footer), salvo el hero
+ * `documentTotal` que sí define su tamaño porque es específico del footer.
+ *
+ * - `metalGrams` / `monetaryAmount`: protagonistas del DESGLOSADO → foco azul.
+ *   (Solo se renderizan en DESGLOSADO, por eso no dependen del modo.)
+ * - `documentTotal`: protagonista (hero) en UNIFICADO; apagado/chico en DESGLOSADO.
+ * - `lineTotal`: protagonista en UNIFICADO (color/peso; el caller agrega su tamaño
+ *   según preset); apagado en DESGLOSADO (queda informativo, colapsado).
+ * - `sectionTotal`: SIEMPRE neutro (acompaña a los protagonistas, no compite).
+ */
+export function emphasisFor(mode: BalanceViewMode, role: EmphasisRole): string {
+  const isBreak = mode === "BREAKDOWN";
+  switch (role) {
+    case "metalGrams":
+    case "monetaryAmount":
+      return `font-bold ${colors.primary}`;
+    case "documentTotal":
+      return isBreak
+        ? `text-xs font-bold ${colors.labelSoft} leading-tight`
+        : `${text.totalGrand} ${colors.primary} !text-3xl sm:!text-4xl leading-tight`;
+    case "lineTotal":
+      return isBreak ? "text-muted/65" : `font-bold ${colors.primary}`;
+    case "sectionTotal":
+      return "font-medium text-muted/80";
+  }
+}
+
 // ─── BARREL ────────────────────────────────────────────────────────────────
 
 /**
@@ -150,6 +205,6 @@ export const card = {
  * Preferir esta forma sobre destructuring para que el código sea grep-able
  * y los reviews vean fácil cuál es el rol semántico de cada className.
  */
-export const vt = { colors, text, row, card } as const;
+export const vt = { colors, text, row, card, emphasisFor } as const;
 
 export type VisualTokens = typeof vt;

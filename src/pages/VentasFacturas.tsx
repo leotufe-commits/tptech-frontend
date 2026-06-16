@@ -161,7 +161,6 @@ import {
 import { priceListsApi, type PriceListRow } from "../services/price-lists";
 import { salesChannelsApi, type SalesChannelRow } from "../services/sales-channels";
 import {
-  resolveDefaultWarehouseId,
   resolveDefaultId,
   resolveDefaultChannelId,
   resolveDefaultCurrencyCode,
@@ -661,6 +660,10 @@ function expandArticleToLite(
     groupName:    row.group?.name    || undefined,
     brand:        row.brand          || undefined,
     manufacturer: row.manufacturer   || undefined,
+    // Combo: config del ajuste del combo (display de la composición). No es cálculo.
+    commercialMode:        row.commercialMode as TPArticleLite["commercialMode"],
+    comboAdjustmentKind:   (row as any).comboAdjustmentKind ?? null,
+    comboAdjustmentValue:  (row as any).comboAdjustmentValue != null ? parseFloat(String((row as any).comboAdjustmentValue)) : null,
   }];
 }
 
@@ -807,7 +810,6 @@ export default function VentasFacturas() {
   const [parentSalesChannels, setParentSalesChannels] = useState<SalesChannelRow[]>([]);
   const [parentSellers,       setParentSellers]       = useState<SellerRow[]>([]);
   const [parentCurrencies,    setParentCurrencies]    = useState<CurrencyRow[]>([]);
-  const { favoriteWarehouseId: parentFavoriteWarehouseId } = useInventory();
 
   useEffect(() => {
     let cancelled = false;
@@ -1019,7 +1021,11 @@ export default function VentasFacturas() {
     const favChannel = parentSalesChannels.find((c) => c.isFavorite && c.isActive && !c.deletedAt);
     const favSeller  = parentSellers.find((sx) => sx.isFavorite && sx.isActive && !sx.deletedAt);
 
-    const favWh        = resolveDefaultWarehouseId(parentFavoriteWarehouseId, parentWarehouses);
+    // Almacén por defecto: preferencia PERSONAL (UserPreference) → favorito
+    // GENERAL de la joyería (Warehouse.isFavorite) → primer almacén activo.
+    // `resolveDefaultId` valida "activo" en cada nivel.
+    const jewelryFavWh = parentWarehouses.find((w) => w.isFavorite)?.id;
+    const favWh        = resolveDefaultId(pref?.defaultWarehouseId, jewelryFavWh, parentWarehouses);
     const sellerId     = resolveDefaultId(pref?.defaultSellerId, favSeller?.id, parentSellers);
     const listId       = resolveDefaultId(pref?.defaultPriceListId, favList?.id, parentPriceLists);
     // Canal de venta: NO cae a "primer activo" — un canal sin elección
@@ -3052,6 +3058,18 @@ function InvoiceEditorModal(props: {
   // su `taxAmount` calculado por el backend).
   const [salesTaxes, setSalesTaxes] = useState<TaxRow[]>([]);
 
+  // Selector rápido de impuestos por línea (UX) — impuestos del tenant con tasa
+  // porcentual, aplicables a venta y activos. Elegir uno autocompleta el
+  // `taxOverride` (PERCENT) de la línea. No suma ni combina: un único override.
+  const availableLineTaxes = useMemo(
+    () =>
+      salesTaxes
+        .filter((t) => t.isActive && t.appliesOnSale && t.rate != null && Number(t.rate) > 0)
+        .sort((a, b) => a.sortOrder - b.sortOrder)
+        .map((t) => ({ id: t.id, name: t.name, rate: Number(t.rate) })),
+    [salesTaxes],
+  );
+
   const listLabel = priceLists.find((p) => p.id === draft.priceListId)?.name ?? "Sin lista";
   // Resolución del label del almacén global desde el catálogo real (state
   // `warehouses`, ya filtrado por `isActive`). Reemplaza el lookup contra
@@ -3715,6 +3733,13 @@ function InvoiceEditorModal(props: {
       partial:     true, // motor real aún no respondió
       resolvedAt:  Date.now(),
     };
+    // Combo: propagamos la config del ajuste del combo al `pricingMeta` para que
+    // la composición lo muestre. Display only — el preview backend (que spreadea
+    // `...line.pricingMeta`) lo preserva; no afecta cálculo ni snapshot.
+    if (item.commercialMode === "COMBO_COMMERCIAL") {
+      (meta as any).comboAdjustmentKind  = item.comboAdjustmentKind  ?? null;
+      (meta as any).comboAdjustmentValue = item.comboAdjustmentValue ?? null;
+    }
     const { subtotal, lineTotal } = calcLineTotalsFromSnapshot({
       quantity:       qty,
       unitPrice,
@@ -3781,6 +3806,47 @@ function InvoiceEditorModal(props: {
     },
     [],
   );
+
+  /**
+   * Búsqueda server-side de clientes para el combo de cliente (Etapa 1 perf).
+   * Reemplaza el filtrado en memoria sobre el bloque inicial: al tipear, pega
+   * contra `commercialEntitiesApi.list` con `q` (debounce 200ms + anti-stale,
+   * mismo patrón que `searchArticles`). Así los clientes fuera del primer
+   * bloque también aparecen al buscar. NO toca pricing ni snapshots.
+   */
+  const clientSearchTimerRef = useRef<number | null>(null);
+  const clientSearchReqIdRef = useRef(0);
+  useEffect(
+    () => () => {
+      if (clientSearchTimerRef.current != null) {
+        window.clearTimeout(clientSearchTimerRef.current);
+      }
+    },
+    [],
+  );
+  const searchClients = useCallback((query: string) => {
+    if (clientSearchTimerRef.current != null) {
+      window.clearTimeout(clientSearchTimerRef.current);
+    }
+    const term = query.trim();
+    clientSearchTimerRef.current = window.setTimeout(() => {
+      const reqId = ++clientSearchReqIdRef.current;
+      setClientsLoading(true);
+      commercialEntitiesApi
+        .list({ role: "client", q: term || undefined, take: 50, sortKey: "displayName", sortDir: "asc" })
+        .then((resp) => {
+          if (reqId !== clientSearchReqIdRef.current) return; // anti-stale
+          setClientOptions(resp.rows.map(entityRowToLite));
+        })
+        .catch(() => {
+          // Error puntual de búsqueda: conservamos las opciones previas.
+        })
+        .finally(() => {
+          if (reqId !== clientSearchReqIdRef.current) return;
+          setClientsLoading(false);
+        });
+    }, 200);
+  }, []);
 
   /**
    * Lookup exacto por código escaneado. Se invoca desde el combo cuando
@@ -5902,6 +5968,7 @@ function InvoiceEditorModal(props: {
           onPickClient={handleClientPick}
           onCreateNewClient={() => setClientCreateOpen(true)}
           onOpenEditClient={handleOpenEditClient}
+          onClientSearch={searchClients}
 
           onDateChange={handleDateChange}
           onDueDateChange={handleDueDateChange}
@@ -6416,6 +6483,7 @@ function InvoiceEditorModal(props: {
               priceLists={priceLists.map((p) => ({ id: p.id, name: p.name }))}
               channels={salesChannels.map((c) => ({ id: c.id, name: c.name }))}
               warehouses={warehouses.map((w) => ({ id: w.id, name: w.name }))}
+              availableTaxes={availableLineTaxes}
               unitNameByCode={unitNameByCode}
               currencyById={currencyById}
               saleGlobalAdjustments={saleGlobalAdjustments}
@@ -6488,6 +6556,10 @@ function InvoiceEditorModal(props: {
               // se trunca a 1 cuando `currencyConverted=true`, pero
               // `unitValueBase` del backend SIEMPRE viene en base.
               documentFxRate={draft.fxRate}
+              // El modo de saldo del DOCUMENTO (misma fuente que el footer) hace
+              // que la VISTA de cada línea siga al documento: footer/cliente/lista
+              // mandan en sincronía. Solo presentación — los números no cambian.
+              documentBalanceMode={backendPreview?.result?.balanceMode}
               // UX.19 — passthrough del énfasis del Total línea desde el
               // preset. CLASSIC tiene `EMPHASIZED` (líneas full-width →
               // aprovecha ancho extra). El resto: `STANDARD`.

@@ -90,6 +90,12 @@ export function applyGlobalPriceListChange(
   return {
     ...draft,
     priceListId: normalizedId,
+    // Cambiar la LISTA GLOBAL vuelve el modo de saldo a AUTOMÁTICO: se descarta
+    // el override manual del footer para que el modo de la NUEVA lista (o el
+    // del cliente, que tiene prioridad mayor) resuelva por jerarquía y el footer
+    // + las líneas se actualicen en sincronía. (Un ajuste manual BREAKDOWN sigue
+    // forzando BREAKDOWN en `buildSalePreviewPayload` — sin riesgo de 400.)
+    balanceModeOverride: null,
     // P0.1 — Coordinación con el useEffect de favoritos.
     //   · "Sin lista" (normalizedId === undefined) → flag = true.
     //   · Lista nueva                              → flag = false.

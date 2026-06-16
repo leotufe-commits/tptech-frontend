@@ -402,7 +402,7 @@ export default function ConfiguracionSistema() {
           {
             to: "/configuracion/mis-preferencias",
             title: "Mis preferencias",
-            desc: "Valores por defecto al crear facturas (almacén, vendedor, lista, canal, moneda). Por usuario.",
+            desc: "Valores predeterminados del usuario para nuevos comprobantes. Se guardan por usuario y no afectan los cálculos de precios.",
             icon: <Sliders size={18} />,
           },
           {

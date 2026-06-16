@@ -81,6 +81,8 @@ export type LinesEditorSectionProps = {
   setLineTaxOverride:   React.ComponentProps<typeof TPDocumentLineAdvancedEditor>["onSetLineTaxOverride"];
   applyLineOverrides:   React.ComponentProps<typeof TPDocumentLineAdvancedEditor>["onApplyLineOverrides"];
   clearLineOverrides:   React.ComponentProps<typeof TPDocumentLineAdvancedEditor>["onClearLineOverrides"];
+  /** Impuestos del tenant para el selector rápido del label "Impuestos". */
+  availableTaxes?:      React.ComponentProps<typeof TPDocumentLineAdvancedEditor>["availableTaxes"];
 
   // ── Lista por línea / canal / cambio de header ─────────────────────────
   onChangePriceList:      (id: string | null) => void;
@@ -109,6 +111,12 @@ export type LinesEditorSectionProps = {
    * (= `draft.fxRate`). En moneda base es 1.
    */
   documentFxRate?: React.ComponentProps<typeof TPDocumentLineAdvancedEditor>["documentFxRate"];
+
+  /**
+   * Modo de saldo del documento (`balanceMode` del backend). Passthrough: hace
+   * que la VISTA de cada línea siga el modo del documento (footer/cliente/lista).
+   */
+  documentBalanceMode?: React.ComponentProps<typeof TPDocumentLineAdvancedEditor>["documentBalanceMode"];
 
   /**
    * Énfasis visual del Total línea c/imp. — passthrough del preset de
@@ -154,12 +162,12 @@ export function LinesEditorSection(props: LinesEditorSectionProps): React.ReactE
     currentPriceListId, currentPriceListLabel, currentChannelId, currentChannelLabel, currentWarehouseId,
     expandedLineIds, advancedOpenLineIds, onToggleExpand, onToggleAdvancedOpen,
     patchLine, removeLine, duplicateLine, reorderLines, resetLine, isReorderable, onAddLine,
-    setLineTaxOverride, applyLineOverrides, clearLineOverrides,
+    setLineTaxOverride, availableTaxes, applyLineOverrides, clearLineOverrides,
     onChangePriceList, onChangeLinePriceList, onChangeChannel,
     handleEditArticle, handleLineArticlePick, handleCreateManualLine,
     searchArticles, exactLookupArticle,
     focusedLineId, focusSignal, editorScopeRef, previewLoading,
-    documentFxRate, lineTotalEmphasis, inlineLineActions, stickyLineActions,
+    documentFxRate, documentBalanceMode, lineTotalEmphasis, inlineLineActions, stickyLineActions,
     commercialLevelByLineId, commercialInfoByLineId,
   } = props;
 
@@ -238,6 +246,7 @@ export function LinesEditorSection(props: LinesEditorSectionProps): React.ReactE
           warehouses={warehouses}
           articleStockBreakdown={articleStockBreakdown}
           onSetLineTaxOverride={setLineTaxOverride}
+          availableTaxes={availableTaxes}
           onApplyLineOverrides={applyLineOverrides}
           onClearLineOverrides={clearLineOverrides}
           compositionView="sale"
@@ -255,6 +264,9 @@ export function LinesEditorSection(props: LinesEditorSectionProps): React.ReactE
           // Etapa E2 — FIX FX para sub-líneas equivalentes en facturas
           // no-base. Passthrough hasta `SaleCompositionEditableGrid`.
           documentFxRate={documentFxRate}
+          // El modo del documento manda en la vista de cada línea (sincronía
+          // con el footer). Solo presentación.
+          documentBalanceMode={documentBalanceMode}
           // UX.19 — passthrough del énfasis del Total línea desde el
           // preset de Factura (`resolveInvoiceViewPreset`). Solo CLASSIC
           // usa "EMPHASIZED" hoy; los demás presets son "STANDARD"

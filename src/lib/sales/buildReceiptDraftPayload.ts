@@ -8,10 +8,14 @@
 // catálogo de monedas, devuelve el `CreateReceiptDraftPayload` listo para
 // enviar al backend.
 //
-// Cero lógica comercial: solo mapeo de shapes + assembly del snapshot
-// versionado. Las matemáticas (subtotales, taxes, totales) ya vinieron
-// resueltas por el motor — acá solo se redondean con `round2` para evitar
-// floating-point garbage en el payload.
+// No calcula pricing nuevo (no toca lista, promo, cliente, impuesto,
+// descuento, redondeo ni composición — eso es exclusivo del pricing-engine).
+// PERO sí RECONSTRUYE totales de línea/documento (`qty * unit - disc`,
+// `subtotal + tax`, `total * fxRate`) a partir de valores YA RESUELTOS por el
+// backend, redondeando con `round2`, solo para armar el snapshot del BORRADOR.
+// Es seguro porque el draft no es autoritativo: al confirmar, `confirmSale`
+// (backend) recalcula todo desde cero vía pricing-engine. NO copiar este patrón
+// a un path de confirmación ni asumir que estos números definen el total.
 // ============================================================================
 
 import { round2 } from "../document-helpers";

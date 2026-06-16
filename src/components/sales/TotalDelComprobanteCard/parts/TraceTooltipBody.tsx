@@ -88,11 +88,16 @@ function AccountBlock({
 }): ReactElement | null {
   const hasBaseRule =
     (typeof trace.base === "number" && Number.isFinite(trace.base)) || !!trace.rule;
-  const hasPrePost =
-    (typeof trace.preValue === "number" && Number.isFinite(trace.preValue)) ||
-    (typeof trace.postValue === "number" && Number.isFinite(trace.postValue));
+  const pre  = trace.preValue;
+  const post = trace.postValue;
+  // Antes/Después SOLO cuando hay un cambio real entre ambos. Si son iguales
+  // (sin redondeo/ajuste) las filas son redundantes y se omiten.
+  const hasChange =
+    typeof pre === "number" && Number.isFinite(pre) &&
+    typeof post === "number" && Number.isFinite(post) &&
+    Math.abs(post - pre) > 0.005;
 
-  if (!hasBaseRule && !hasPrePost) return null;
+  if (!hasBaseRule && !hasChange) return null;
 
   return (
     <>
@@ -102,11 +107,11 @@ function AccountBlock({
       {trace.rule && (
         <Row label="Regla">{ruleText(trace.rule, currency)}</Row>
       )}
-      {typeof trace.preValue === "number" && Number.isFinite(trace.preValue) && (
-        <Row label="Antes">{money(currency, trace.preValue)}</Row>
-      )}
-      {typeof trace.postValue === "number" && Number.isFinite(trace.postValue) && (
-        <Row label="Después">{money(currency, trace.postValue)}</Row>
+      {hasChange && (
+        <>
+          <Row label="Antes">{money(currency, pre as number)}</Row>
+          <Row label="Después">{money(currency, post as number)}</Row>
+        </>
       )}
     </>
   );
@@ -171,13 +176,18 @@ export function TraceTooltipBody({ trace, currency }: TraceTooltipBodyProps): Re
         </>
       )}
 
-      {/* (4) IMPACTO */}
-      <Divider />
-      <Row label="Impacto" bold>
-        <span className={trace.impact < 0 ? "text-red-500" : "text-text"}>
-          {money(currency, trace.impact)}
-        </span>
-      </Row>
+      {/* (4) IMPACTO — solo si es significativo (≠ 0). Sin redondeo/ajuste se
+          omite junto con Antes/Después (cuenta sin movimiento). */}
+      {Math.abs(trace.impact) > 0.005 && (
+        <>
+          <Divider />
+          <Row label="Impacto" bold>
+            <span className={trace.impact < 0 ? "text-red-500" : "text-text"}>
+              {money(currency, trace.impact)}
+            </span>
+          </Row>
+        </>
+      )}
 
       {/* Aviso de dato parcial — lenguaje orientado al operador (sin nombres
           técnicos del backend). El detalle exacto del campo faltante queda

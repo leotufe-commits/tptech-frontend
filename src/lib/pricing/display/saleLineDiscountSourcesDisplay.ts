@@ -707,12 +707,19 @@ export function lineEffectiveAdjustmentSigned(line: LineLikeForDiscount): number
 /** Steps que sirven para calcular la BASE INICIAL del pipeline. El primero
  *  con `value != null` define la base inicial. Orden coincide con el orden
  *  del motor: list → manual override de artículo → fallback → override de
- *  precio en línea. */
+ *  precio en línea → precio del combo.
+ *
+ *  `COMBO_PRICE` va ÚLTIMO a propósito: un Combo Comercial no tiene
+ *  `PRICE_LIST` (su precio canónico es `comboDerivedPrice`), así que su base
+ *  del pipeline es el step `COMBO_PRICE` que el motor ya emite. Para líneas
+ *  normales nunca se alcanza (matchea `PRICE_LIST`/`MANUAL_*` antes), por eso
+ *  no las afecta. Passthrough puro: el valor sale del step del motor. */
 const BASE_STEP_KEYS = [
   "PRICE_LIST",
   "MANUAL_OVERRIDE",
   "MANUAL_FALLBACK",
   "MANUAL_PRICE_OVERRIDE",
+  "COMBO_PRICE",
 ] as const;
 
 /** Steps que se renderizan como pasos del pipeline. El orden VIENE DEL MOTOR

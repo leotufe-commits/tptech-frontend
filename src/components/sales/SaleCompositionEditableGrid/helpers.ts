@@ -169,3 +169,93 @@ export function sumGroupLineSaleDisplay(
   }
   return null;
 }
+
+// ── Ajuste global del ARTÍCULO sobre el COSTO — DISPLAY de composición ───────
+// Para explicar visualmente el ajuste global (bonif/recargo del artículo) en la
+// columna Costo total, se reaplica su PORCENTAJE sobre el costo de cada
+// componente: base → ±%·base → costo final. Como el % es uniforme, aplicarlo a
+// cada costo de fila es aritméticamente consistente (Σ filas = costoLínea × %),
+// sin prorrateo. NATURALEZA: display de composición/costo, NO motor (el cálculo
+// del costo ajustado ya existe; esto solo descompone el porcentaje para mostrar
+// la cadena). `null` cuando no hay ajuste porcentual.
+export function computeGlobalCostImpact(
+  costTotal: number | null | undefined,
+  pct: number | null | undefined,
+  kind: "BONUS" | "SURCHARGE",
+): { after: number; impact: number } | null {
+  if (costTotal == null || !Number.isFinite(Number(costTotal))) return null;
+  if (pct == null || !Number.isFinite(Number(pct)) || Number(pct) === 0) return null;
+  const c = Number(costTotal);
+  const impact = (c * Number(pct)) / 100;
+  const after = kind === "SURCHARGE" ? c + impact : c - impact;
+  return { after, impact };
+}
+
+// ── Mapeo `comboAdjustment*` → shape del bloque "AJUSTE GLOBAL" ──────────────
+// El combo guarda su ajuste comercial en `comboAdjustmentKind/Value` (config del
+// artículo, propagada al `pricingMeta`). Esta función lo traduce al MISMO shape
+// que consume el bloque existente "AJUSTE GLOBAL" (`CostAdjustmentDetailSection`:
+// `{kind, type, value, amount}`), para REUSAR ese bloque — sin tarjeta nueva.
+// Fuente única: combos → este mapeo; normales → `composition.costAdjustment`.
+// NO calcula montos: `amount` queda `null` (el monto en pesos del ajuste del
+// combo no está disponible en el frontend; sí se ve la bonif/recargo). El precio
+// del input ya viene post-ajuste del motor. `null` ⇒ no hay ajuste que mostrar.
+export function comboAdjustmentToCostAdjustmentData(
+  kind: string | null | undefined,
+  value: number | null | undefined,
+  // Monto del ajuste (motor, `COMBO_PRICE.meta.adjustmentAmount`). Cuando llega,
+  // el bloque muestra "Bonificación 10%: −$Y". Cuando no (preview legacy sin el
+  // step), queda `null` y solo se ve la etiqueta. NUNCA se calcula en el FE.
+  amount: number | null = null,
+): {
+  kind:   "BONUS" | "SURCHARGE" | null;
+  type:   "PERCENTAGE" | "FIXED_AMOUNT" | null;
+  value:  number | null;
+  amount: number | null;
+} | null {
+  if (!kind || kind === "NONE") return null;
+  if (value == null || !Number.isFinite(value)) return null;
+  const amt = amount != null && Number.isFinite(amount) ? amount : null;
+  switch (kind) {
+    case "DISCOUNT_PERCENT":  return { kind: "BONUS",     type: "PERCENTAGE",   value, amount: amt };
+    case "DISCOUNT_FIXED":    return { kind: "BONUS",     type: "FIXED_AMOUNT", value, amount: amt };
+    case "SURCHARGE_PERCENT": return { kind: "SURCHARGE", type: "PERCENTAGE",   value, amount: amt };
+    default: return null;
+  }
+}
+
+// ── Lectura del step COMBO_PRICE (Modelo A) — passthrough puro ───────────────
+// El motor emite `pricing.steps[COMBO_PRICE].meta` con la trazabilidad completa
+// del precio del combo. El mapper backend (`sales.service.ts`, whitelist) ya lo
+// serializa dentro de `pricingMeta.pricingSteps`. Esta función SOLO lo localiza
+// y normaliza a número — cero matemática comercial: no divide %, no deriva, no
+// reconstruye. Devuelve `null` si el step no llegó (combo sin ajuste resuelto o
+// preview legacy) → el frontend cae al comportamiento anterior.
+export type ComboPriceMeta = {
+  subtotal:         number;   // precio PRE-ajuste (Σ componentes), POR UNIDAD
+  adjustmentKind:   string;   // NONE | DISCOUNT_PERCENT | DISCOUNT_FIXED | SURCHARGE_PERCENT
+  adjustmentValue:  number | null;
+  adjustmentAmount: number;   // monto del ajuste (magnitud), POR UNIDAD
+  finalPrice:       number;   // precio POST-ajuste (= comboDerivedPrice), POR UNIDAD
+};
+
+export function extractComboPriceMeta(pricingSteps: unknown): ComboPriceMeta | null {
+  if (!Array.isArray(pricingSteps)) return null;
+  const step = pricingSteps.find((s: any) => s?.key === "COMBO_PRICE");
+  const m = (step as any)?.meta;
+  if (!m) return null;
+  const subtotal   = Number(m.subtotal);
+  const finalPrice = Number(m.finalPrice);
+  if (!Number.isFinite(subtotal) || !Number.isFinite(finalPrice)) return null;
+  const adjustmentAmount = Number(m.adjustmentAmount);
+  const adjustmentValue  = m.adjustmentValue != null && Number.isFinite(Number(m.adjustmentValue))
+    ? Number(m.adjustmentValue)
+    : null;
+  return {
+    subtotal,
+    adjustmentKind:   typeof m.adjustmentKind === "string" ? m.adjustmentKind : "NONE",
+    adjustmentValue,
+    adjustmentAmount: Number.isFinite(adjustmentAmount) ? adjustmentAmount : 0,
+    finalPrice,
+  };
+}
