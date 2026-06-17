@@ -159,6 +159,20 @@ export function SaleCompositionEditableGrid({
     ? extractComboPriceMeta((meta as any)?.pricingSteps)
     : null;
 
+  // Factor del AJUSTE del combo (display puro) = `finalPrice / subtotal` del step
+  // COMBO_PRICE (ej. 0,9 para un combo con −10%). Ambos vienen del motor. Se usa
+  // para repartir el PRECIO del combo entre sus componentes: la "Venta total" de
+  // cada componente = su venta de lista × este factor, de modo que la SUMA de las
+  // filas = el precio del combo (footer). El combo NO cambia su total — solo se
+  // distribuye para display, igual que el caso de 1 componente ya hacía con
+  // `comboSingleRowFinalSale`. `1` cuando no hay ajuste / step ausente.
+  const comboAdjFactor: number =
+    comboPriceMeta != null &&
+    Number.isFinite(comboPriceMeta.subtotal) && comboPriceMeta.subtotal > 0 &&
+    Number.isFinite(comboPriceMeta.finalPrice)
+      ? comboPriceMeta.finalPrice / comboPriceMeta.subtotal
+      : 1;
+
   // ── Ajuste global del ARTÍCULO (bonif/recargo) — fuente ÚNICA ──────────────
   // El mismo dato que alimenta el bloque inferior "AJUSTE GLOBAL": combo →
   // `comboAdjustment*` (vía COMBO_PRICE); normal → `composition.costAdjustment`.
@@ -426,20 +440,15 @@ export function SaleCompositionEditableGrid({
       precioUnitVentaText = fmt(saleLineValue / qtyComp);
     }
     // Margen — helper compartido (también usado por el Simulador a futuro).
-    // ARTÍCULO NORMAL: el margen de lista se mide contra el COSTO AJUSTADO (post
-    // ajuste global), porque el motor construye `saleLineValue` sobre el costo
-    // ajustado → `(sale − costoAjustado)/costoAjustado` = margen de la lista (85%).
-    //
-    // COMBO: la venta de cada componente viene de la LISTA, anclada al costo de
-    // LISTA (pre ajuste global), no al costo post-global. El "Ajuste Global"
-    // (−10%) baja el costo pero NO la venta del componente, así que medir contra
-    // el costo post-global INFLA el margen (ej. 105,56% en vez del 85% de la
-    // lista). Por eso el combo mide contra `lineCost` (costo de lista, pre-global)
-    // → muestra el margen real de la lista. El artículo normal queda igual.
+    // El margen de lista se mide contra el COSTO AJUSTADO (post ajuste global):
+    // tanto el costo como la venta entran POST-ajuste, así que el ajuste se
+    // cancela en el ratio → `(ventaPost − costoPost)/costoPost` = margen de la
+    // lista (ej. 85%). En el combo, `saleLineValue` ya viene POST-ajuste del combo
+    // (repartido desde `comboPriceMeta` — ver `comboAdjFactor`), igual que el
+    // costo. Reutiliza `buildGlobalCost` (mismo helper que la columna "Costo
+    // Total"). Sin ajuste → `after == lineCost` → idéntico al comportamiento previo.
     const adjForMargin = buildGlobalCost(lineCost);
-    const costForMargin = isComboLine
-      ? lineCost
-      : (adjForMargin != null ? adjForMargin.after : lineCost);
+    const costForMargin = adjForMargin != null ? adjForMargin.after : lineCost;
     const margin = resolveMarginForRowDisplay(
       costForMargin,
       saleLineValue,
@@ -1392,7 +1401,7 @@ export function SaleCompositionEditableGrid({
                 currencyById,
                 documentFxRate,
               );
-              const { saleForRow: productSaleForRow, isUnified: isUnifiedSaleRow } =
+              const { saleForRow: productSaleForRowRaw, isUnified: isUnifiedSaleRow } =
                 resolveSaleForRowDisplay(
                   productLineCostNum,
                   productCanonicalSale,
@@ -1401,6 +1410,15 @@ export function SaleCompositionEditableGrid({
                   // lineSale derivan de `hechuraSaleFactor`). Mismo flag.
                   isHechuraMarginUnattributable,
                 );
+              // COMBO — "Venta total" del componente = su venta de lista ×
+              // `comboAdjFactor` (su parte del PRECIO del combo, POST-ajuste). Así
+              // Σ filas = precio del combo (footer) y el margen queda contra el
+              // costo POST-ajuste = margen real de la lista. Reparto de DISPLAY del
+              // precio que ya calculó el motor — el total del combo NO cambia.
+              const productSaleForRow =
+                isComboLine && comboAdjFactor !== 1 && productSaleForRowRaw != null
+                  ? productSaleForRowRaw * comboAdjFactor
+                  : productSaleForRowRaw;
               const commercialCells = buildCommercialCells(
                 productLineCostNum,
                 productSaleForRow,

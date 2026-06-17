@@ -1,18 +1,16 @@
 // src/components/sales/SaleCompositionEditableGrid/__tests__/combo-margin.test.tsx
 // ============================================================================
-// Combos — la columna Margen muestra el margen de la LISTA (no el inflado por
-// el ajuste global).
+// Combos — Venta total por componente = su parte del PRECIO del combo
+// (post-ajuste), y Margen = margen de la LISTA.
 //
-// En un combo, la venta de cada componente viene de la lista, anclada al costo
-// de LISTA (pre ajuste global). El "Ajuste Global" (−10%) baja el costo pero NO
-// la venta, así que medir el margen contra el costo POST-global lo infla
-// (105,56% en vez del 85% de la lista). El combo debe medir contra el costo de
-// lista (pre-global) → muestra 85%. El artículo normal NO cambia.
+// La venta de cada componente se reparte desde el precio del combo
+// (`comboPriceMeta.finalPrice / subtotal`), de modo que:
+//   · Σ "Venta total" de las filas = precio del combo (footer), y
+//   · Margen = (ventaPost − costoPost)/costoPost = margen de lista (NO inflado
+//     por el ajuste del combo).
 //
-// Fixture: componente con costo de lista 319.850,937 y venta 591.724,23345
-// (= costo × 1,85 → margen lista 85%). Ajuste global −10% (COMBO_PRICE meta
-// DISCOUNT_PERCENT 10) → costo post-global 287.865,84. Sin el fix daría
-// 591.724 / 287.865 = 105,56%.
+// Es un reparto de DISPLAY del precio que ya calculó el motor — el total NO
+// cambia, el frontend no inventa números.
 // ============================================================================
 
 import React from "react";
@@ -22,51 +20,75 @@ import { SaleCompositionEditableGrid } from "../index";
 
 const noop = () => undefined;
 
-function makeComboWithGlobalAdj(): any {
+// Combo de 2 componentes con margen de lista 85% y ajuste del combo −10%.
+//   subtotal (Σ ventas de lista) = 185.000 + 370.000 = 555.000
+//   finalPrice (precio combo)    = 555.000 × 0,9       = 499.500
+//   venta post por fila          = 166.500 + 333.000   = 499.500 (= footer)
+//   margen                       = (166.500 − 90.000)/90.000 = 85%
+function makeCombo2Components(): any {
   return {
     id: "L1", type: "ARTICLE", article: "Combo", variant: "",
-    articleId: "combo-1", quantity: 1, unitPrice: 591724.23,
-    discountAmount: 0, subtotal: 591724.23, taxAmount: 0,
-    lineTotal: 591724.23, lineTotalWithTax: 591724.23,
+    articleId: "combo-1", quantity: 1, unitPrice: 499500,
+    discountAmount: 0, subtotal: 499500, taxAmount: 0,
+    lineTotal: 499500, lineTotalWithTax: 499500,
     pricingMeta: {
       costMode: "COMBO",
       priceSource: "PROMOTION",
-      // Ajuste global del combo (−10%) — alimenta `buildGlobalCost`.
       pricingSteps: [{
         key: "COMBO_PRICE",
         meta: {
-          subtotal: 657471.37,
-          finalPrice: 591724.23,
+          subtotal: 555000,
+          finalPrice: 499500,
           adjustmentKind: "DISCOUNT_PERCENT",
           adjustmentValue: 10,
-          adjustmentAmount: 65747.14,
+          adjustmentAmount: 55500,
         },
       }],
       composition: {
         metals: [], hechuras: [],
-        products: [{
-          costLineId: "cl-prod-1",
-          catalogItemName: "ANILLOS SOLITARIO BRILLANTE",
-          quantity: 1, quantityUnit: "u",
-          unitValue: 355389.93, unitValueBase: 355389.93,
-          totalValue: 319850.937,        // costo de LISTA (pre ajuste global)
-          lineSale: 591724.23345,        // = 319850.937 × 1,85 → margen lista 85%
-        }],
+        products: [
+          {
+            costLineId: "cl-1", catalogItemName: "COMP 1",
+            quantity: 1, quantityUnit: "u",
+            unitValue: 100000, unitValueBase: 100000,
+            totalValue: 100000, lineSale: 185000,    // 85% lista
+          },
+          {
+            costLineId: "cl-2", catalogItemName: "COMP 2",
+            quantity: 1, quantityUnit: "u",
+            unitValue: 200000, unitValueBase: 200000,
+            totalValue: 200000, lineSale: 370000,    // 85% lista
+          },
+        ],
         services: [],
       },
     },
   };
 }
 
-describe("Combo — Margen = margen de la lista (no inflado por el ajuste global)", () => {
-  it("muestra ~85% (lista) y NO ~105,56% (inflado por el −10% global)", () => {
+describe("Combo — venta por fila post-ajuste + margen de lista", () => {
+  it("la Venta total por fila es post-ajuste (166.500 / 333.000) y suma el footer (499.500)", () => {
     const { container } = render(
-      <SaleCompositionEditableGrid line={makeComboWithGlobalAdj()} currency="$" onApply={noop} />,
+      <SaleCompositionEditableGrid line={makeCombo2Components()} currency="$" onApply={noop} />,
     );
     const text = container.textContent ?? "";
-    // Margen de la lista (85%) presente.
+    // Ventas post-ajuste por fila.
+    expect(text).toMatch(/166[.,]?500/);
+    expect(text).toMatch(/333[.,]?000/);
+    // Footer = precio del combo (Σ filas).
+    expect(text).toMatch(/499[.,]?500/);
+    // NO aparece la venta de lista PRE-ajuste como total de fila (185.000 / 370.000).
+    expect(text).not.toMatch(/185[.,]?000/);
+    expect(text).not.toMatch(/370[.,]?000/);
+  });
+
+  it("el Margen muestra el de la LISTA (85%), no el inflado por el ajuste del combo", () => {
+    const { container } = render(
+      <SaleCompositionEditableGrid line={makeCombo2Components()} currency="$" onApply={noop} />,
+    );
+    const text = container.textContent ?? "";
     expect(text).toMatch(/85[.,]?0?0?\s*%/);
-    // El margen inflado (105,56% — contra el costo post-global) NO aparece.
+    // El inflado (venta pre / costo post = 105,56%) NO aparece.
     expect(text).not.toMatch(/105[.,]?5/);
   });
 });
