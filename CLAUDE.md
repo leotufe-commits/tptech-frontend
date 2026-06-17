@@ -849,6 +849,29 @@ Reglas:
 
 > Contrato canónico de los 3 mecanismos en el `CLAUDE.md` raíz + backend. Esta sección define únicamente cómo el frontend los **muestra**.
 
+## ⚡ Overhaul display redondeo 2026-06 (CRÍTICO)
+
+1. **"Valor final monetario" = POST autoritativo del backend, NO el residual.**
+   Footer (`TotalDelComprobanteCard`) y card de línea (`TPDocumentLineAdvancedEditor`)
+   leen el saldo POST que ya calculó el backend
+   (`documentRoundingApplied.breakdown.hechura.postRounding` /
+   `commercialDocumentRoundingSnapshot.breakdown.hechura.postRoundingSaldoMonetario` /
+   `lineCommercialSummary.monetary.amount`). PROHIBIDO reconstruirlo como
+   `total − Σ(valor final metal)` — ese residual arrastra drift `round(Σ)` (FP) y
+   muestra `200.900,01` en vez de `200.900`. Guard de reconciliación: adoptar el
+   autoritativo solo si `|auth − residual| ≤ 0.05`; derivar la deducción del metal
+   del saldo elegido para mantener `METAL + MONETARIO = TOTAL` exacto.
+2. **Etiqueta del `ROUNDING_MONETARY` = `c.roundingSource` (LIST/DOCUMENT)**, NO
+   `documentRoundingApplied != null`. Con "opción B" el componente `ROUNDING_MONETARY`
+   puede ser COMERCIAL (LIST → "Redondeo comercial") aunque el financiero
+   (`documentRoundingApplied`) esté presente. `MonetarySummary.RoundingRow` prioriza
+   `roundingSource` y cae al heurístico legacy solo como fallback.
+3. **Comercial → card de línea; financiero → footer (regla del operador).** El
+   redondeo comercial se atribuye a la LÍNEA (card de artículos) vía
+   `appliedRounding.unitAdjustment`; el footer es resumen (puede mostrar ambos). El
+   header del metal muestra el gramo POST (gramo de venta redondeado, del snapshot
+   `metalPhysical.metals[].postGrams`).
+
 ## Los 3 mecanismos que el backend puede informar
 
 1. **Redondeo Comercial** (por línea) — viene en el preview por línea, parte del breakdown de precio de lista.

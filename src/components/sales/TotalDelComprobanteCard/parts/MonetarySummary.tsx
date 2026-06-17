@@ -457,6 +457,7 @@ function RoundingRow({
   displayCurrency,
   testId,
   documentRoundingApplied,
+  roundingSource,
   trace,
 }: {
   label:           string;
@@ -464,11 +465,26 @@ function RoundingRow({
   displayCurrency: string;
   testId:          string;
   documentRoundingApplied?: DocumentRoundingAppliedSummary | null;
+  /** POLICY §R-Rounding-3 — origen REAL del componente emitido por el backend.
+   *  Cuando viene, DECIDE el label (independiente de `documentRoundingApplied`):
+   *    · `"LIST"`     → "Redondeo comercial" (lista de precios).
+   *    · `"DOCUMENT"` → "Redondeo financiero" (comprobante / tenant).
+   *  Con opción B (financiero diferido a capa 16), el `roundingAdjustment` es el
+   *  COMERCIAL aunque `documentRoundingApplied` (financiero) esté presente — por
+   *  eso NO se puede inferir el origen de `documentRoundingApplied`. Cuando falta
+   *  `roundingSource` (snapshots legacy), se cae al heurístico previo. */
+  roundingSource?: "LIST" | "DOCUMENT" | null;
   /** Trazabilidad de auditoría — si llega, el tooltip ⓘ reconstruye la cuenta
    *  completa (pre → post · impacto) en vez del cuerpo legacy. */
   trace?:          ComponentTrace | null;
 }): ReactElement {
-  const isComprobante = documentRoundingApplied != null;
+  // POLICY §R-Rounding-3 — el ORIGEN del componente manda. Si el backend lo
+  // emite (`roundingSource`), se usa tal cual; si no (back-compat), se infiere
+  // de la presencia de `documentRoundingApplied` (heurístico legacy).
+  const isComprobante =
+    roundingSource != null
+      ? roundingSource === "DOCUMENT"
+      : documentRoundingApplied != null;
   const source: "DOCUMENT" | "LIST" = isComprobante ? "DOCUMENT" : "LIST";
 
   // POLICY §R-Rounding-12 — dominios oficiales:
@@ -745,6 +761,9 @@ function SectionGroups({
                     displayCurrency={displayCurrency}
                     testId={testId}
                     documentRoundingApplied={documentRoundingApplied}
+                    // POLICY §R-Rounding-3 — origen REAL del componente. Tiene
+                    // prioridad sobre `documentRoundingApplied` para el label.
+                    roundingSource={c.roundingSource ?? null}
                     trace={trace}
                   />
                 );

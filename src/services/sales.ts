@@ -1194,6 +1194,11 @@ export interface BalanceBreakdownMonetaryComponentDTO {
   amount:  number;
   sourceLineId?: string;
   source?: string;
+  /** Solo para `type="ROUNDING_MONETARY"`. Origen REAL del redondeo monetario:
+   *  `"LIST"` → Redondeo comercial (lista); `"DOCUMENT"` → Redondeo financiero
+   *  (comprobante). Cuando falta, el render cae al heurístico legacy
+   *  (`documentRoundingApplied != null`). POLICY §R-Rounding-3. */
+  roundingSource?: "LIST" | "DOCUMENT";
 }
 
 export interface BalanceBreakdownMonetaryDTO {
