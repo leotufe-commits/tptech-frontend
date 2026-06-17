@@ -48,7 +48,7 @@ const DOC_ROUNDING_DIRECTION_OPTIONS: Array<{ value: DocumentRoundingDirection; 
 const DOC_ROUNDING_SCOPE_OPTIONS: Array<{ value: DocumentRoundingScope; label: string }> = [
   { value: "UNIFIED",   label: "Unificado — total final" },
   { value: "BREAKDOWN", label: "Desglosado — metal + hechura" },
-  { value: "BOTH",      label: "Ambos — desglose y luego total" },
+  { value: "BOTH",      label: "Ambos — usa el que corresponda al comprobante" },
 ];
 
 // ── Etapa D4 — Opciones del redondeo físico de metales ─────────────────────
@@ -355,7 +355,7 @@ export default function ConfiguracionSistemaPoliticaPrecios() {
               {/* Selector de Modo */}
               <TPField
                 label="Modo de redondeo financiero"
-                hint="Unificado redondea el total final. Desglosado redondea metal y hechura por separado. Ambos aplica primero el desglose y después el total final."
+                hint="Unificado redondea el total final del comprobante. Desglosado redondea el metal y la hechura por separado. Ambos no redondea dos veces: cada comprobante usa automáticamente el modo que le corresponde — desglosado si el comprobante va desglosado, unificado si va unificado."
               >
                 <TPSelect
                   value={docRounding.documentRoundingScope}
@@ -370,7 +370,7 @@ export default function ConfiguracionSistemaPoliticaPrecios() {
                 <div className="rounded-lg border border-border/60 bg-surface2/20 px-3 py-3 space-y-3">
                   <div className="text-[12px] font-semibold text-text">
                     Redondeo del total final {docRounding.documentRoundingScope === "BOTH" && (
-                      <span className="text-muted font-normal italic">(se aplica después del desglose)</span>
+                      <span className="text-muted font-normal italic">(se usa cuando el comprobante va unificado)</span>
                     )}
                   </div>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -409,7 +409,7 @@ export default function ConfiguracionSistemaPoliticaPrecios() {
                   <div className="text-[12px] font-semibold text-text">
                     Redondeo desglosado por componente
                     {docRounding.documentRoundingScope === "BOTH" && (
-                      <span className="text-muted font-normal italic"> (se aplica antes del unificado)</span>
+                      <span className="text-muted font-normal italic"> (se usa cuando el comprobante va desglosado)</span>
                     )}
                   </div>
                   <p className="text-[11px] text-muted leading-relaxed">
@@ -594,8 +594,10 @@ export default function ConfiguracionSistemaPoliticaPrecios() {
 
                   {docRounding.documentRoundingScope === "BOTH" && (
                     <p className="text-[11px] italic text-muted">
-                      TPTech aplica primero el redondeo desglosado y luego el
-                      redondeo final unificado sobre el total resultante.
+                      En "Ambos", TPTech elige automáticamente por comprobante:
+                      aplica el redondeo desglosado a los comprobantes que van
+                      desglosados y el unificado a los que van unificados. No los
+                      encadena — cada comprobante recibe un solo redondeo.
                     </p>
                   )}
                 </div>
