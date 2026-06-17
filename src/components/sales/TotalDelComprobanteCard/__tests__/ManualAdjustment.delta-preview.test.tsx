@@ -1,13 +1,18 @@
 // src/components/sales/TotalDelComprobanteCard/__tests__/ManualAdjustment.delta-preview.test.tsx
 // =============================================================================
-// Etapa 2E — UX segura del editor de Ajuste Manual de Metales.
+// UX del editor de Ajuste Manual de Metales (BREAKDOWN).
 //
-//   · "Ajuste resultante" (Δ) en vivo = targetGrams − preGrams (display puro).
+//   · El input ES un DELTA en gramos: arranca en 0 y lo que se tipea se
+//     SUMA / RESTA a los gramos actuales del metal. Emite `deltaGrams`.
+//   · "Resultado" en vivo = gramos actuales + delta (display puro). El backend
+//     recalcula y clampa (postGrams = max(0, pre + delta)).
 //   · Warning no bloqueante ante ajuste inusualmente grande.
-//   · El input SIGUE siendo targetGrams (gramos finales) — payload intacto.
+//   · Back-compat: un draft viejo con `targetGrams` se muestra como su delta
+//     equivalente (target − pre).
 //   · El display del snapshot pone el delta como protagonista (Final secundario).
 //
-// NO toca backend, snapshot, payload ni cálculo.
+// NO toca backend, snapshot ni cálculo — el payload ahora lleva `deltaGrams`
+// (soportado de punta a punta por sanitize.ts + buildSnapshot.ts).
 // =============================================================================
 
 import { describe, it, expect, vi } from "vitest";
@@ -17,14 +22,14 @@ import type { ManualAdjustmentApiSnapshot } from "../../../../services/sales";
 
 const ORO = { metalParentId: "oro", metalParentName: "Oro", preGrams: 1.10 };
 
-/** Render del editor con un draft que ya trae `targetGrams` (simula el valor
- *  ingresado por el operador) → el Δ en vivo se deriva de ese valor. */
-function renderEditor(preGrams: number, targetGrams: number) {
+/** Render del editor con un draft que ya trae `deltaGrams` (simula el valor
+ *  ingresado por el operador) → el "Resultado" en vivo se deriva como pre+delta. */
+function renderEditor(preGrams: number, deltaGrams: number) {
   return render(
     <ManualAdjustmentSection
       mode="BREAKDOWN"
       breakdownMetals={[{ metalParentId: "oro", metalParentName: "Oro", preGrams }]}
-      draft={{ scope: "BREAKDOWN", metals: [{ metalParentId: "oro", metalParentName: "Oro", targetGrams }] }}
+      draft={{ scope: "BREAKDOWN", metals: [{ metalParentId: "oro", metalParentName: "Oro", deltaGrams }] }}
       engineTotal={1000}
       displayCurrency="ARS"
       onChange={vi.fn()}
@@ -32,45 +37,46 @@ function renderEditor(preGrams: number, targetGrams: number) {
   );
 }
 
-describe("Etapa 2E — Ajuste resultante (Δ) en vivo", () => {
-  it("Caso 1: 1,10 → 1,30 → Δ +0,20 g, SIN warning", () => {
-    renderEditor(1.10, 1.30);
-    const delta = screen.getByTestId("total-card-manual-adjustment-delta-preview");
-    expect(delta.textContent).toMatch(/\+.*0[.,]?20/);
+describe("Editor de metal — Resultado en vivo (pre + delta)", () => {
+  it("Caso 1: actual 1,10 + delta +0,20 → Resultado 1,30 g, SIN warning", () => {
+    renderEditor(1.10, 0.20);
+    const preview = screen.getByTestId("total-card-manual-adjustment-delta-preview");
+    expect(preview.textContent).toMatch(/1[.,]?30/);   // Resultado (final)
+    expect(preview.textContent).toMatch(/\+.*0[.,]?20/); // delta con signo
     expect(screen.queryByTestId("total-card-manual-adjustment-warning")).toBeNull();
   });
 
-  it("Caso 2: 1,10 → 13,50 → Δ +12,40 g, CON warning", () => {
-    renderEditor(1.10, 13.50);
-    const delta = screen.getByTestId("total-card-manual-adjustment-delta-preview");
-    expect(delta.textContent).toMatch(/\+.*12[.,]?40/);
+  it("Caso 2: actual 1,10 + delta +12,40 → Resultado 13,50 g, CON warning", () => {
+    renderEditor(1.10, 12.40);
+    const preview = screen.getByTestId("total-card-manual-adjustment-delta-preview");
+    expect(preview.textContent).toMatch(/13[.,]?50/);
     expect(screen.getByTestId("total-card-manual-adjustment-warning")).toBeTruthy();
     expect(screen.getByTestId("total-card-manual-adjustment-warning").textContent)
       .toMatch(/inusualmente grande/i);
   });
 
-  it("Caso 3: 13,50 → 1,35 → Δ −12,15 g, CON warning", () => {
-    renderEditor(13.50, 1.35);
-    const delta = screen.getByTestId("total-card-manual-adjustment-delta-preview");
-    expect(delta.textContent).toMatch(/[−-].*12[.,]?15/);
+  it("Caso 3: actual 13,50 + delta −12,15 → Resultado 1,35 g, CON warning", () => {
+    renderEditor(13.50, -12.15);
+    const preview = screen.getByTestId("total-card-manual-adjustment-delta-preview");
+    expect(preview.textContent).toMatch(/1[.,]?35/);
+    expect(preview.textContent).toMatch(/[−-].*12[.,]?15/);
     expect(screen.getByTestId("total-card-manual-adjustment-warning")).toBeTruthy();
   });
 
-  it("delta negativo SIN warning (variación moderada): 2,00 → 1,80", () => {
-    renderEditor(2.00, 1.80);
-    const delta = screen.getByTestId("total-card-manual-adjustment-delta-preview");
-    expect(delta.textContent).toMatch(/[−-].*0[.,]?20/);
+  it("delta negativo SIN warning (variación moderada): actual 2,00 + delta −0,20", () => {
+    renderEditor(2.00, -0.20);
+    const preview = screen.getByTestId("total-card-manual-adjustment-delta-preview");
+    expect(preview.textContent).toMatch(/1[.,]?80/);     // Resultado
+    expect(preview.textContent).toMatch(/[−-].*0[.,]?20/); // delta
     expect(screen.queryByTestId("total-card-manual-adjustment-warning")).toBeNull();
   });
 
-  it("sin movimiento (target == pre) → no muestra Δ ni warning", () => {
-    // Igual a preGrams → no hay ajuste; el draft no tendría entry, pero forzamos
-    // el caso de igualdad para confirmar que el Δ no aparece.
+  it("sin movimiento (delta 0) → no muestra Resultado ni warning", () => {
     render(
       <ManualAdjustmentSection
         mode="BREAKDOWN"
         breakdownMetals={[ORO]}
-        draft={{ scope: "BREAKDOWN", metals: [{ metalParentId: "oro", metalParentName: "Oro", targetGrams: 1.10 }] }}
+        draft={{ scope: "BREAKDOWN", metals: [{ metalParentId: "oro", metalParentName: "Oro", deltaGrams: 0 }] }}
         engineTotal={1000}
         displayCurrency="ARS"
         onChange={vi.fn()}
@@ -79,10 +85,27 @@ describe("Etapa 2E — Ajuste resultante (Δ) en vivo", () => {
     expect(screen.queryByTestId("total-card-manual-adjustment-delta-preview")).toBeNull();
     expect(screen.queryByTestId("total-card-manual-adjustment-warning")).toBeNull();
   });
+
+  it("back-compat: un draft con targetGrams se muestra como su delta (target − pre)", () => {
+    render(
+      <ManualAdjustmentSection
+        mode="BREAKDOWN"
+        breakdownMetals={[ORO]}
+        draft={{ scope: "BREAKDOWN", metals: [{ metalParentId: "oro", metalParentName: "Oro", targetGrams: 1.30 }] }}
+        engineTotal={1000}
+        displayCurrency="ARS"
+        onChange={vi.fn()}
+      />,
+    );
+    // El input muestra el delta equivalente (+0,20) y el Resultado el final (1,30).
+    const preview = screen.getByTestId("total-card-manual-adjustment-delta-preview");
+    expect(preview.textContent).toMatch(/1[.,]?30/);
+    expect(preview.textContent).toMatch(/\+.*0[.,]?20/);
+  });
 });
 
-describe("Etapa 2E — el input sigue emitiendo targetGrams (payload intacto)", () => {
-  it("editar el input emite { targetGrams }, NO { deltaGrams }", () => {
+describe("Editor de metal — el input emite deltaGrams (no targetGrams)", () => {
+  it("editar el input emite { deltaGrams }, NO { targetGrams }", () => {
     const onChange = vi.fn();
     render(
       <ManualAdjustmentSection
@@ -98,19 +121,19 @@ describe("Etapa 2E — el input sigue emitiendo targetGrams (payload intacto)", 
     if (chip) fireEvent.click(chip);
     const row = screen.getByTestId("total-card-manual-adjustment-metal-row");
     const input = row.querySelector("input") as HTMLInputElement;
-    fireEvent.change(input, { target: { value: "1,30" } });
+    fireEvent.change(input, { target: { value: "0,30" } });
     fireEvent.blur(input);
 
     expect(onChange).toHaveBeenCalled();
     const last = onChange.mock.calls.at(-1)![0];
     expect(last.scope).toBe("BREAKDOWN");
-    expect(last.metals[0].targetGrams).toBeCloseTo(1.30, 2);
-    // NO se emite deltaGrams desde el editor (lo deriva el backend).
-    expect(last.metals[0].deltaGrams).toBeUndefined();
+    expect(last.metals[0].deltaGrams).toBeCloseTo(0.30, 2);
+    // El editor ya NO emite targetGrams (el backend deriva postGrams = pre + delta).
+    expect(last.metals[0].targetGrams).toBeUndefined();
   });
 });
 
-describe("Etapa 2E — snapshot reordenado (Δ protagonista, snapshot intacto)", () => {
+describe("Snapshot reordenado (Δ protagonista, snapshot intacto)", () => {
   const snapshot: ManualAdjustmentApiSnapshot = {
     scope: "BREAKDOWN",
     breakdown: {

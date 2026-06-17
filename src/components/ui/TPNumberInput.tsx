@@ -388,7 +388,11 @@ export default function TPNumberInput({
   const hasRight = Boolean(rightAddon);
   const hasSuffix = Boolean(suffix);
   const hasClear = Boolean(onClear);
-  const wantSelectAll = Boolean(selectAllOnFocus || autoSelect);
+  // Seleccionar todo al enfocar es el comportamiento POR DEFECTO (UX estándar de
+  // inputs numéricos): al hacer click/Tab el valor queda seleccionado y el primer
+  // dígito REEMPLAZA en vez de insertarse dentro del número ya formateado. Se
+  // puede desactivar explícitamente con `selectAllOnFocus={false}`.
+  const wantSelectAll = (selectAllOnFocus ?? autoSelect) ?? true;
 
   return (
     <div className={cn("w-full space-y-1", wrapClassName)}>

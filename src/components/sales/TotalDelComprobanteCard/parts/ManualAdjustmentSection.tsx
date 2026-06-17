@@ -203,7 +203,7 @@ export function ManualAdjustmentSection(props: ManualAdjustmentSectionProps): Re
 
   return (
     <section
-      className="border-t border-border/20 pt-3 border-l-2 border-primary/40 pl-3 space-y-2"
+      className="rounded-lg border border-primary/30 bg-primary/[0.04] p-3 space-y-2"
       data-testid="total-card-manual-adjustment"
       data-tp-manual-scope={snapshot?.scope ?? (mode === "BREAKDOWN" ? "BREAKDOWN" : "UNIFIED")}
     >
@@ -403,27 +403,30 @@ function BreakdownEditor(props: {
     });
   };
 
-  const handleMetalChange = (
+  // El input del metal es un DELTA en gramos (arranca en 0): lo que el operador
+  // tipea se SUMA/RESTA a los gramos actuales del metal. Emite `deltaGrams`
+  // (cualquier signo); el backend deriva `postGrams = max(0, preGrams + delta)`.
+  const handleMetalDelta = (
     ref: ManualAdjustmentBreakdownMetalRef,
-    nextTarget: number | null,
+    nextDelta: number | null,
   ) => {
     const existingMetals = draft?.metals ?? [];
     const others = existingMetals.filter((m) => m !== findEntry(ref));
     const monetary = draft?.monetaryAmount ?? null;
 
-    if (nextTarget == null || !Number.isFinite(nextTarget)) {
-      emit(others, monetary);
-      return;
-    }
-    // Solo emit como ajuste si el target difiere de los preGrams.
-    if (Math.abs(nextTarget - ref.preGrams) <= EPS_GRAMS) {
+    // Sin valor o delta insignificante → quitar el ajuste de este metal.
+    if (
+      nextDelta == null ||
+      !Number.isFinite(nextDelta) ||
+      Math.abs(nextDelta) <= EPS_GRAMS
+    ) {
       emit(others, monetary);
       return;
     }
     const next: ManualAdjustmentDraftBreakdownMetal = {
       metalParentId:   ref.metalParentId,
       metalParentName: ref.metalParentName,
-      targetGrams:     nextTarget,
+      deltaGrams:      nextDelta,
     };
     emit([...others, next], monetary);
   };
@@ -446,18 +449,25 @@ function BreakdownEditor(props: {
       )}
       {metals.map((ref) => {
         const entry = findEntry(ref);
-        const value =
-          typeof entry?.targetGrams === "number" && Number.isFinite(entry.targetGrams)
-            ? entry.targetGrams
-            : null;
-        // Etapa 2E — Δ en vivo (display puro): targetGrams − preGrams. Solo se
-        // muestra cuando el operador ingresó un valor que difiere del actual.
-        const hasTargetValue = typeof value === "number" && Number.isFinite(value);
-        const deltaPreview = hasTargetValue
-          ? Math.round((value - ref.preGrams) * 10000) / 10000
-          : null;
-        const showDelta = deltaPreview != null && Math.abs(deltaPreview) > EPS_GRAMS;
-        const showWarning = hasTargetValue && isLargeMetalAdjustment(ref.preGrams, value);
+        // El input ES el delta. Back-compat: si un draft viejo trae `targetGrams`
+        // (gramos finales), lo convertimos a delta para mostrarlo (target − pre).
+        const deltaValue =
+          typeof entry?.deltaGrams === "number" && Number.isFinite(entry.deltaGrams)
+            ? entry.deltaGrams
+            : typeof entry?.targetGrams === "number" && Number.isFinite(entry.targetGrams)
+              ? Math.round((entry.targetGrams - ref.preGrams) * 10000) / 10000
+              : null;
+        const hasDeltaValue =
+          typeof deltaValue === "number" &&
+          Number.isFinite(deltaValue) &&
+          Math.abs(deltaValue) > EPS_GRAMS;
+        // Resultado en vivo (display-only): gramos actuales + delta. El backend
+        // recalcula y clampa (postGrams = max(0, pre + delta)).
+        const finalGrams = hasDeltaValue
+          ? Math.max(0, ref.preGrams + (deltaValue as number))
+          : ref.preGrams;
+        const showWarning =
+          hasDeltaValue && isLargeMetalAdjustment(ref.preGrams, ref.preGrams + (deltaValue as number));
         return (
           <div
             key={`${ref.metalParentId ?? "null"}-${ref.metalParentName}`}
@@ -465,46 +475,45 @@ function BreakdownEditor(props: {
             data-testid="total-card-manual-adjustment-metal-row"
             data-tp-metal-id={ref.metalParentId ?? ""}
           >
-            <div className="flex items-center gap-2">
-              <div className="flex-1 min-w-0">
-                <div className="text-[11px] text-text truncate">{ref.metalParentName}</div>
-                <div className="text-[10px] text-muted/70 tabular-nums">
-                  Actual: {fmtGrams(ref.preGrams)}
-                </div>
-              </div>
-              <div className="w-32">
-                <TPNumberInput
-                  value={value}
-                  onChange={(n) => handleMetalChange(ref, n)}
-                  formatType="METAL_GRAMS"
-                  placeholder={fmtGrams(ref.preGrams)}
-                  disabled={disabled}
-                  onClear={value != null ? () => handleMetalChange(ref, null) : undefined}
-                  clearAriaLabel={`Quitar ajuste de ${ref.metalParentName}`}
-                  clearTitle="Quitar"
-                  aria-label={`Gramos finales de ${ref.metalParentName}`}
-                />
-              </div>
+            <div className="flex items-baseline justify-between gap-2">
+              <span className="text-[11px] text-text truncate">{ref.metalParentName}</span>
+              <span className="text-[10px] text-muted/70 tabular-nums shrink-0">
+                Actual: {fmtGrams(ref.preGrams)}
+              </span>
             </div>
-            {/* Etapa 2E — "Ajuste resultante" en vivo (display-only, NO se envía
-                ni persiste; el backend recalcula deltaGrams = target − pre). */}
-            {showDelta && (
+            <TPNumberInput
+              value={hasDeltaValue ? (deltaValue as number) : null}
+              onChange={(n) => handleMetalDelta(ref, n)}
+              formatType="METAL_GRAMS"
+              placeholder="0,00 gr (+ / −)"
+              step={0.01}
+              compact
+              disabled={disabled}
+              onClear={hasDeltaValue ? () => handleMetalDelta(ref, null) : undefined}
+              clearAriaLabel={`Quitar ajuste de ${ref.metalParentName}`}
+              clearTitle="Quitar"
+              aria-label={`Ajuste en gramos de ${ref.metalParentName}`}
+            />
+            {/* Resultado en vivo (display-only): suma del delta a los gramos
+                actuales. NO se envía ni persiste — el backend recalcula. */}
+            {hasDeltaValue && (
               <div
                 className="flex items-baseline justify-between gap-2 pl-0.5"
                 data-testid="total-card-manual-adjustment-delta-preview"
                 data-tp-metal-id={ref.metalParentId ?? ""}
               >
                 <span className="text-[10px] uppercase tracking-wider text-muted/60">
-                  Ajuste resultante
+                  Resultado
                 </span>
-                <span
-                  className={`tabular-nums text-[11px] font-medium ${deltaPreview! < 0 ? vt.colors.discount : "text-text"}`}
-                >
-                  {fmtSignedGrams(deltaPreview!)}
+                <span className="tabular-nums text-[11px] font-medium text-text">
+                  {fmtGrams(finalGrams)}
+                  <span className={`ml-1 ${(deltaValue as number) < 0 ? vt.colors.discount : "text-muted/55"}`}>
+                    ({fmtSignedGrams(deltaValue as number)})
+                  </span>
                 </span>
               </div>
             )}
-            {/* Etapa 2E — Warning no bloqueante de ajuste inusual (anti-tipeo). */}
+            {/* Warning no bloqueante de ajuste inusual (anti-tipeo). */}
             {showWarning && (
               <div
                 className="flex items-start gap-1 text-[10px] leading-snug text-amber-600 dark:text-amber-400"
@@ -527,34 +536,31 @@ function BreakdownEditor(props: {
           de pago, redondeos monetarios. El ajuste solo afecta este bucket
           — no contamina los gramos de ningún metal. */}
       <div
-        className="flex items-center gap-2 pt-1 border-t border-border/15"
+        className="space-y-1 pt-2 border-t border-border/15"
         data-testid="total-card-manual-adjustment-hechura-row"
         title="Bucket no-metal: hechura + productos + servicios + impuestos + envío + descuentos + cupones + canal + forma de pago + redondeos monetarios."
       >
-        <div className="flex-1 min-w-0">
-          <div className="text-[11px] text-text">Hechura / saldo monetario</div>
-          <div className="text-[10px] text-muted/70">
-            Bucket no-metal del comprobante
-          </div>
+        <div className="flex items-baseline justify-between gap-2">
+          <span className="text-[11px] text-text">Hechura / saldo monetario</span>
+          <span className="text-[10px] text-muted/70 shrink-0">Bucket no-metal · +/−</span>
         </div>
-        <div className="w-32">
-          <TPNumberInput
-            value={hasMonetary ? (monetaryDraft as number) : null}
-            onChange={handleMonetaryChange}
-            formatType="MONEY"
-            placeholder="0,00"
-            disabled={disabled}
-            leftIcon={
-              <span className="text-[11px] text-muted/70 px-1">
-                {displayCurrency || ""}
-              </span>
-            }
-            onClear={hasMonetary ? () => handleMonetaryChange(null) : undefined}
-            clearAriaLabel="Quitar ajuste de hechura / saldo monetario"
-            clearTitle="Quitar"
-            aria-label="Ajuste manual de hechura / saldo monetario"
-          />
-        </div>
+        <TPNumberInput
+          value={hasMonetary ? (monetaryDraft as number) : null}
+          onChange={handleMonetaryChange}
+          formatType="MONEY"
+          placeholder="0,00"
+          compact
+          disabled={disabled}
+          leftIcon={
+            <span className="text-[11px] text-muted/70">
+              {displayCurrency || ""}
+            </span>
+          }
+          onClear={hasMonetary ? () => handleMonetaryChange(null) : undefined}
+          clearAriaLabel="Quitar ajuste de hechura / saldo monetario"
+          clearTitle="Quitar"
+          aria-label="Ajuste manual de hechura / saldo monetario"
+        />
       </div>
     </div>
   );

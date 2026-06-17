@@ -186,6 +186,14 @@ export function MetalsSummary({
         const fr = findFinalRow(m, finalRows);
         const physical = fr ? undefined : findPhysicalDetail(m, physicalRoundedMetals);
         const showPhysical = hasPhysicalDelta(physical);
+        // Gramo VISIBLE del metal (comercial — SSOT con el card de línea).
+        const visibleGrams = m.displayGrams ?? m.grams;
+        // Δ del AJUSTE MANUAL de gramos sobre este metal padre (si actuó). El
+        // gramo titular se MUEVE con el ajuste: gramo visible + Δ manual. Suma
+        // de dos campos ya emitidos por el backend — cero recálculo de negocio.
+        const manualDeltaGrams =
+          fr?.manual && Number.isFinite(fr.manual.deltaGrams) ? fr.manual.deltaGrams : 0;
+        const headlineGrams = visibleGrams + manualDeltaGrams;
         // Artículos que componen este metal padre (origen de la cuenta). Con
         // composición canónica (fr) se muestra en el tooltip ⓘ; sin fr (legacy)
         // cae a la sub-fila del card.
@@ -255,8 +263,10 @@ export function MetalsSummary({
                       caller no derivó displayGrams. Passthrough — cero recálculo,
                       sin saleValue/cotización. */}
                   {/* El preset METAL_GRAMS ya emite el sufijo " g" — no agregar
-                      otro "gr" (evita el duplicado "4,59 g gr"). */}
-                  {formatByType(m.displayGrams ?? m.grams, "METAL_GRAMS")}
+                      otro "gr" (evita el duplicado "4,59 g gr").
+                      `headlineGrams` = gramo visible + Δ del ajuste manual de
+                      gramos (si lo hubo) → el número se MUEVE con el ajuste. */}
+                  {formatByType(headlineGrams, "METAL_GRAMS")}
                 </span>
               </span>
             </div>
@@ -281,7 +291,7 @@ export function MetalsSummary({
                 de los `monetaryEquivalent` ya emitidos por el backend. Cuando
                 existe, suprime los bloques legacy de abajo (gate `!fr`). */}
             {fr && currencyCode && (
-              <MetalFinalComposition row={fr} metalId={m.id} currencyCode={currencyCode} />
+              <MetalFinalComposition row={fr} metalId={m.id} currencyCode={currencyCode} visibleGrams={visibleGrams} />
             )}
             {/* Etapa UX.32 (2026-05-30) — sub-fila terciaria "Valor comercial"
                 por metal padre. Lookup contra `commercialMetalValueByParent`
@@ -422,10 +432,16 @@ function MetalFinalComposition({
   row,
   metalId,
   currencyCode,
+  visibleGrams,
 }: {
   row:          MetalFinalRow;
   metalId:      string;
   currencyCode: string;
+  /** Gramo VISIBLE del metal (comercial). La sub-fila del ajuste manual se
+   *  muestra en términos visibles (`visible → visible + Δ`), coherente con el
+   *  gramo titular — NO con el gramo físico interno. El Δ y el equivalente $
+   *  siguen siendo passthrough del backend. */
+  visibleGrams: number;
 }): ReactElement {
   const EPS = 0.005;
   const EPS_GRAMS = 1e-9;
@@ -485,13 +501,19 @@ function MetalFinalComposition({
         />
       )}
 
-      {/* Ajuste manual (físico): pre→post · Δ · ppg · equivalente. El ajuste
-          es del METAL (físico) — su equivalente $ se suma al valor final, pero
-          NO se mueve a hechura. */}
+      {/* Ajuste manual: pre→post · Δ · ppg · equivalente. Se muestra en
+          términos del gramo VISIBLE (`visible → visible + Δ`) para que coincida
+          con el gramo titular del metal. El Δ y el equivalente $ son passthrough
+          del backend; el ajuste es del METAL — su equivalente $ se suma al valor
+          final pero NO se mueve a hechura. */}
       {row.manual && (
         <MetalPhysicalImpactRow
           label="Ajuste manual"
-          detail={row.manual}
+          detail={{
+            ...row.manual,
+            preGrams:  visibleGrams,
+            postGrams: visibleGrams + row.manual.deltaGrams,
+          }}
           currencyCode={currencyCode}
           testId={`total-card-metal-${metalId}-manual`}
           metalId={metalId}
