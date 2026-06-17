@@ -1,15 +1,15 @@
 // src/components/sales/SaleCompositionEditableGrid/__tests__/combo-readonly.test.tsx
 // ============================================================================
-// Opción A (combos) — la composición de un COMBO es INFORMATIVA (solo lectura).
+// Combos — edición PARCIAL de la composición.
 //
-// El precio del combo sale de su lista; editar los componentes acá no lo cambia
-// (y generaba inconsistencias). Por eso, cuando la línea es un combo
-// (`costMode === "COMBO"` o `priceSource === "COMBO_COMPONENTS"`):
-//   · se muestra una nota informativa (`combo-composition-readonly-note`),
-//   · el header dice "Composición del combo",
-//   · todos los inputs de la composición quedan en SOLO LECTURA.
+// En un COMBO comercial, la composición permite editar Cantidad y Merma/Ajuste
+// de cada componente; el Valor unitario queda BLOQUEADO (sale de la lista del
+// combo). Al editar, el override viaja al backend y el motor recalcula
+// Costo total / Margen / precio — el frontend NO calcula.
 //
-// Un artículo normal mantiene la composición editable (sin nota).
+//   · combo  → nota informativa + header "Composición del combo";
+//              hay inputs editables (Cantidad) Y al menos uno bloqueado (Valor).
+//   · normal → sin nota; composición totalmente editable.
 // ============================================================================
 
 import React from "react";
@@ -63,31 +63,34 @@ function makeNormalLine(): any {
   };
 }
 
-describe("Opción A — composición del combo de solo lectura", () => {
-  it("combo: muestra la nota informativa + header 'Composición del combo'", () => {
+describe("Combos — edición parcial de la composición", () => {
+  it("combo: muestra la nota + header 'Composición del combo'", () => {
     const { getByTestId, container } = render(
       <SaleCompositionEditableGrid line={makeComboLine()} currency="$" onApply={noop} />,
     );
-    expect(getByTestId("combo-composition-readonly-note")).toBeTruthy();
+    expect(getByTestId("combo-composition-note")).toBeTruthy();
     expect(container.textContent ?? "").toMatch(/Composición del combo/);
   });
 
-  it("combo: TODOS los inputs de la composición quedan en solo lectura", () => {
+  it("combo: edición PARCIAL — hay inputs editables (Cantidad) y al menos uno bloqueado (Valor unitario)", () => {
     const { container } = render(
       <SaleCompositionEditableGrid line={makeComboLine()} currency="$" onApply={noop} />,
     );
-    const inputs = Array.from(container.querySelectorAll("input"));
+    const inputs = Array.from(container.querySelectorAll("input")) as HTMLInputElement[];
     expect(inputs.length).toBeGreaterThan(0);
-    expect(inputs.every((i) => (i as HTMLInputElement).readOnly)).toBe(true);
+    // Cantidad / Merma-Ajuste editables → algún input NO es read-only.
+    expect(inputs.some((i) => !i.readOnly)).toBe(true);
+    // Valor unitario bloqueado → al menos un input read-only.
+    expect(inputs.some((i) => i.readOnly)).toBe(true);
   });
 
-  it("artículo normal: NO muestra la nota y mantiene inputs editables", () => {
+  it("artículo normal: NO muestra la nota y mantiene la composición editable", () => {
     const { queryByTestId, container } = render(
       <SaleCompositionEditableGrid line={makeNormalLine()} currency="$" onApply={noop} />,
     );
-    expect(queryByTestId("combo-composition-readonly-note")).toBeNull();
+    expect(queryByTestId("combo-composition-note")).toBeNull();
     expect(container.textContent ?? "").toMatch(/Composición del costo del artículo/);
-    const inputs = Array.from(container.querySelectorAll("input"));
-    expect(inputs.some((i) => !(i as HTMLInputElement).readOnly)).toBe(true);
+    const inputs = Array.from(container.querySelectorAll("input")) as HTMLInputElement[];
+    expect(inputs.some((i) => !i.readOnly)).toBe(true);
   });
 });

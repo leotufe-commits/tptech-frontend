@@ -542,20 +542,21 @@ export function SaleCompositionEditableGrid({
           usa el mismo patrón de grupo (PRODUCTOS · N líneas → filas → Total
           productos) que el resto. La identidad de combo sigue viva en la
           lógica (`isComboLine`) para Venta total / Margen / AJUSTE GLOBAL. */}
-      {/* Opción A (combos) — nota informativa. La composición del combo es de
-          SOLO LECTURA: el precio sale de la lista del combo y se actualiza solo
-          con cotizaciones / precios de artículos. Editar los componentes acá no
-          cambiaba el precio (y generaba inconsistencias), por eso quedan como
-          referencia. */}
+      {/* Combos — nota de edición parcial. Cantidad y Merma/Ajuste de cada
+          componente son editables; el Valor unitario queda fijo (sale de la
+          lista del combo). Al editar, el override viaja al backend y el motor
+          recalcula Costo total / Margen / precio — el frontend NO calcula. */}
       {isComboLine && (
         <div
           className="rounded-md border border-border/30 bg-surface2/30 px-2.5 py-1.5 text-[10px] leading-snug text-muted/85"
-          data-testid="combo-composition-readonly-note"
+          data-testid="combo-composition-note"
         >
-          <span className="font-semibold text-text/90">Composición del combo (informativa).</span>{" "}
-          El precio del combo sale de su lista y se actualiza solo con las
-          cotizaciones y los precios de los artículos. Los componentes se
-          muestran como referencia — editarlos acá no cambia el precio.
+          <span className="font-semibold text-text/90">Composición del combo.</span>{" "}
+          Podés editar <span className="text-text/90">Cantidad</span> y{" "}
+          <span className="text-text/90">Merma / Ajuste</span> de cada componente;
+          el precio y el costo los recalcula el sistema. El{" "}
+          <span className="text-text/90">Valor unitario</span> queda fijo (sale de
+          la lista del combo).
         </div>
       )}
       {/* ── Header ────────────────────────────────────────────────────── */}
@@ -627,7 +628,7 @@ export function SaleCompositionEditableGrid({
           {/* FASE 12.4 — switch "Vista costo / Vista comercial" eliminado.
               La tabla siempre se muestra en modo comercial: Margen embebido
               debajo de Costo Total, Costo unit. con Merma/Ajuste debajo. */}
-          {hasAnyOverride && !isComboLine && (
+          {hasAnyOverride && (
             <button
               type="button"
               // Fase 4.2 — acciones del header fuera del flujo TAB.
@@ -782,14 +783,7 @@ export function SaleCompositionEditableGrid({
             <div className="divide-y divide-slate-200/40 dark:divide-slate-700/25">
             {metals.map((m: any, idx: number) => {
               const costLineId = m?.costLineId ?? null;
-              // Opción A (combos) — la composición de un COMBO es INFORMATIVA
-              // (solo lectura): el precio del combo sale de su lista / la
-              // valorización metal+hechura, NO de editar sus componentes acá.
-              // Editar generaba inconsistencias (precio que no cambiaba, costo y
-              // metal con cantidades distintas, etc.). El combo se sigue
-              // actualizando solo con cotizaciones/artículos; lo único que se
-              // saca es la edición manual que no movía el precio.
-              const isEditable = costLineId != null && !isComboLine;
+              const isEditable = costLineId != null;
               const ov = costLineId
                 ? findCostLineOverride(activeCostLineOverrides, costLineId)
                 : undefined;
@@ -1038,7 +1032,7 @@ export function SaleCompositionEditableGrid({
                   totalTooltip={isUnifiedSaleRow ? "Valor unificado del artículo" : null}
                   manual={!!ov}
                   onResetRow={costLineId ? () => resetCostLine(costLineId) : () => {}}
-                  canResetRow={!isComboLine && !!ov}
+                  canResetRow={!!ov}
                   // Fórmula auxiliar "qty × unitario" debajo de los totales.
                   // `formulaQuantity` es la cantidad EFECTIVA de la fila de
                   // composición escalada a la línea de factura
@@ -1103,14 +1097,7 @@ export function SaleCompositionEditableGrid({
             <div className="divide-y divide-slate-200/40 dark:divide-slate-700/25">
             {hechuras.map((h: any, idx: number) => {
               const costLineId = h?.costLineId ?? null;
-              // Opción A (combos) — la composición de un COMBO es INFORMATIVA
-              // (solo lectura): el precio del combo sale de su lista / la
-              // valorización metal+hechura, NO de editar sus componentes acá.
-              // Editar generaba inconsistencias (precio que no cambiaba, costo y
-              // metal con cantidades distintas, etc.). El combo se sigue
-              // actualizando solo con cotizaciones/artículos; lo único que se
-              // saca es la edición manual que no movía el precio.
-              const isEditable = costLineId != null && !isComboLine;
+              const isEditable = costLineId != null;
               const ov = costLineId
                 ? findCostLineOverride(activeCostLineOverrides, costLineId)
                 : undefined;
@@ -1287,7 +1274,7 @@ export function SaleCompositionEditableGrid({
                   totalTooltip={isUnifiedSaleRow ? "Valor unificado del artículo" : null}
                   manual={!!ov}
                   onResetRow={costLineId ? () => resetCostLine(costLineId) : () => {}}
-                  canResetRow={!isComboLine && !!ov}
+                  canResetRow={!!ov}
                   formulaQuantity={qtyValue != null && Number.isFinite(qtyValue) && Number(qtyValue) > 0
                     ? Number(qtyValue) * qtyLine
                     : null}
@@ -1334,14 +1321,7 @@ export function SaleCompositionEditableGrid({
             <div className="divide-y divide-slate-200/40 dark:divide-slate-700/25">
             {products.map((p: any, idx: number) => {
               const costLineId = p?.costLineId ?? null;
-              // Opción A (combos) — la composición de un COMBO es INFORMATIVA
-              // (solo lectura): el precio del combo sale de su lista / la
-              // valorización metal+hechura, NO de editar sus componentes acá.
-              // Editar generaba inconsistencias (precio que no cambiaba, costo y
-              // metal con cantidades distintas, etc.). El combo se sigue
-              // actualizando solo con cotizaciones/artículos; lo único que se
-              // saca es la edición manual que no movía el precio.
-              const isEditable = costLineId != null && !isComboLine;
+              const isEditable = costLineId != null;
               const ov = costLineId
                 ? findCostLineOverride(activeCostLineOverrides, costLineId)
                 : undefined;
@@ -1482,14 +1462,16 @@ export function SaleCompositionEditableGrid({
                   unitValueCell={
                     <CellNumberInput
                       value={unitValValue}
-                      onChange={isEditable && costLineId
+                      // Combos: el VALOR UNITARIO queda bloqueado (sale de la
+                      // lista del combo). Cantidad y Merma/Ajuste sí son editables.
+                      onChange={isEditable && !isComboLine && costLineId
                         ? (v) => applyCostLinePatch(costLineId, "PRODUCT", { unitValueOverride: v ?? 0 })
                         : () => {}}
                       formatType="MONEY"
                       decimals={2}
                       step={1}
-                      readOnly={!isEditable}
-                      tooltip={!isEditable ? READ_ONLY_TOOLTIP : undefined}
+                      readOnly={!isEditable || isComboLine}
+                      tooltip={(!isEditable || isComboLine) ? READ_ONLY_TOOLTIP : undefined}
                       original={p?.unitValue ?? null}
                     />
                   }
@@ -1527,7 +1509,7 @@ export function SaleCompositionEditableGrid({
                   totalTooltip={isUnifiedSaleRow ? "Valor unificado del artículo" : null}
                   manual={!!ov}
                   onResetRow={costLineId ? () => resetCostLine(costLineId) : () => {}}
-                  canResetRow={!isComboLine && !!ov}
+                  canResetRow={!!ov}
                   formulaQuantity={qtyValue != null && Number.isFinite(qtyValue) && Number(qtyValue) > 0
                     ? Number(qtyValue) * qtyLine
                     : null}
@@ -1581,14 +1563,7 @@ export function SaleCompositionEditableGrid({
             <div className="divide-y divide-slate-200/40 dark:divide-slate-700/25">
             {services.map((s: any, idx: number) => {
               const costLineId = s?.costLineId ?? null;
-              // Opción A (combos) — la composición de un COMBO es INFORMATIVA
-              // (solo lectura): el precio del combo sale de su lista / la
-              // valorización metal+hechura, NO de editar sus componentes acá.
-              // Editar generaba inconsistencias (precio que no cambiaba, costo y
-              // metal con cantidades distintas, etc.). El combo se sigue
-              // actualizando solo con cotizaciones/artículos; lo único que se
-              // saca es la edición manual que no movía el precio.
-              const isEditable = costLineId != null && !isComboLine;
+              const isEditable = costLineId != null;
               const ov = costLineId
                 ? findCostLineOverride(activeCostLineOverrides, costLineId)
                 : undefined;
@@ -1740,7 +1715,7 @@ export function SaleCompositionEditableGrid({
                   totalTooltip={isUnifiedSaleRow ? "Valor unificado del artículo" : null}
                   manual={!!ov}
                   onResetRow={costLineId ? () => resetCostLine(costLineId) : () => {}}
-                  canResetRow={!isComboLine && !!ov}
+                  canResetRow={!!ov}
                   formulaQuantity={qtyValue != null && Number.isFinite(qtyValue) && Number(qtyValue) > 0
                     ? Number(qtyValue) * qtyLine
                     : null}
