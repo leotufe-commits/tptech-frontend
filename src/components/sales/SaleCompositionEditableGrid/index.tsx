@@ -1038,7 +1038,7 @@ export function SaleCompositionEditableGrid({
                   totalTooltip={isUnifiedSaleRow ? "Valor unificado del artículo" : null}
                   manual={!!ov}
                   onResetRow={costLineId ? () => resetCostLine(costLineId) : () => {}}
-                  canResetRow={!!ov}
+                  canResetRow={isComboLine || !!ov}
                   // Fórmula auxiliar "qty × unitario" debajo de los totales.
                   // `formulaQuantity` es la cantidad EFECTIVA de la fila de
                   // composición escalada a la línea de factura
@@ -1280,7 +1280,7 @@ export function SaleCompositionEditableGrid({
                   totalTooltip={isUnifiedSaleRow ? "Valor unificado del artículo" : null}
                   manual={!!ov}
                   onResetRow={costLineId ? () => resetCostLine(costLineId) : () => {}}
-                  canResetRow={!!ov}
+                  canResetRow={isComboLine || !!ov}
                   formulaQuantity={qtyValue != null && Number.isFinite(qtyValue) && Number(qtyValue) > 0
                     ? Number(qtyValue) * qtyLine
                     : null}
@@ -1515,7 +1515,7 @@ export function SaleCompositionEditableGrid({
                   totalTooltip={isUnifiedSaleRow ? "Valor unificado del artículo" : null}
                   manual={!!ov}
                   onResetRow={costLineId ? () => resetCostLine(costLineId) : () => {}}
-                  canResetRow={!!ov}
+                  canResetRow={isComboLine || !!ov}
                   formulaQuantity={qtyValue != null && Number.isFinite(qtyValue) && Number(qtyValue) > 0
                     ? Number(qtyValue) * qtyLine
                     : null}
@@ -1721,7 +1721,7 @@ export function SaleCompositionEditableGrid({
                   totalTooltip={isUnifiedSaleRow ? "Valor unificado del artículo" : null}
                   manual={!!ov}
                   onResetRow={costLineId ? () => resetCostLine(costLineId) : () => {}}
-                  canResetRow={!!ov}
+                  canResetRow={isComboLine || !!ov}
                   formulaQuantity={qtyValue != null && Number.isFinite(qtyValue) && Number(qtyValue) > 0
                     ? Number(qtyValue) * qtyLine
                     : null}
