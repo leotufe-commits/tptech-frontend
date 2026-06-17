@@ -426,14 +426,20 @@ export function SaleCompositionEditableGrid({
       precioUnitVentaText = fmt(saleLineValue / qtyComp);
     }
     // Margen — helper compartido (también usado por el Simulador a futuro).
-    // El margen de lista se mide contra el COSTO AJUSTADO (post ajuste global),
-    // no el base: el motor construye `saleLineValue` sobre el costo ajustado, así
-    // que `(sale − costoAjustado)/costoAjustado` = margen comercial de la lista
-    // (ej. 85%). Reutiliza `buildGlobalCost` (mismo helper que la columna "Costo
-    // Total" de la fila). Sin ajuste global → `after == lineCost` → idéntico al
-    // comportamiento previo (los márgenes por componente de los tests se preservan).
+    // ARTÍCULO NORMAL: el margen de lista se mide contra el COSTO AJUSTADO (post
+    // ajuste global), porque el motor construye `saleLineValue` sobre el costo
+    // ajustado → `(sale − costoAjustado)/costoAjustado` = margen de la lista (85%).
+    //
+    // COMBO: la venta de cada componente viene de la LISTA, anclada al costo de
+    // LISTA (pre ajuste global), no al costo post-global. El "Ajuste Global"
+    // (−10%) baja el costo pero NO la venta del componente, así que medir contra
+    // el costo post-global INFLA el margen (ej. 105,56% en vez del 85% de la
+    // lista). Por eso el combo mide contra `lineCost` (costo de lista, pre-global)
+    // → muestra el margen real de la lista. El artículo normal queda igual.
     const adjForMargin = buildGlobalCost(lineCost);
-    const costForMargin = adjForMargin != null ? adjForMargin.after : lineCost;
+    const costForMargin = isComboLine
+      ? lineCost
+      : (adjForMargin != null ? adjForMargin.after : lineCost);
     const margin = resolveMarginForRowDisplay(
       costForMargin,
       saleLineValue,
