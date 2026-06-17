@@ -218,6 +218,16 @@ export interface TotalDelComprobanteCardProps {
    *  se omite. POLICY §Tax.1 paso 11. */
   taxableBase?: number | null;
 
+  /** Passthrough EXACTO de `documentTotals.subtotalBeforeDiscounts` (backend).
+   *  Subtotal BRUTO del comprobante ANTES de cualquier descuento (promociones,
+   *  cupones, descuento global). Solo se muestra en el detalle financiero del
+   *  modo UNIFICADO, como fila "Valor bruto" al inicio (arriba de "Promociones
+   *  y descuentos"), para que el detalle quede auto-reconciliable:
+   *    bruto − descuentos + IVA + redondeo financiero = total.
+   *  `null`/undefined o ≤ 0 → la fila se omite (degradación segura). En
+   *  DESGLOSADO no se muestra (decisión del operador). Passthrough puro. */
+  grossSubtotal?: number | null;
+
   /** Passthrough EXACTO de `documentTotals.documentRoundingApplied` (Etapa 1B).
    *
    *  Determina cómo el card renderiza el component ROUNDING_MONETARY del

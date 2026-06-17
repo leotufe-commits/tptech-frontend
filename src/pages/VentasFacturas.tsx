@@ -6906,6 +6906,13 @@ function InvoiceEditorModal(props: {
                         // dos quedan undefined y el card omite las filas.
                         subtotalCommercial={backendPreview?.result?.documentTotals?.subtotalAfterLineDiscounts ?? null}
                         taxableBase={backendPreview?.result?.documentTotals?.taxableBase ?? null}
+                        // "Valor bruto" del detalle financiero UNIFICADO —
+                        // passthrough EXACTO de `documentTotals.subtotalBeforeDiscounts`
+                        // (subtotal ANTES de descuentos). El card lo muestra al
+                        // inicio del detalle (arriba de "Promociones y descuentos")
+                        // SOLO en UNIFICADO, así el detalle queda auto-reconciliable:
+                        // bruto − descuentos + IVA + redondeo financiero = total.
+                        grossSubtotal={backendPreview?.result?.documentTotals?.subtotalBeforeDiscounts ?? null}
                         // POLICY §R-Rounding-3 — passthrough EXACTO del
                         // `documentRoundingApplied` que emite el motor en
                         // Etapa 1B. El card lo usa para distinguir

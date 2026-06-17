@@ -41,16 +41,21 @@ export function TPCheckbox({
   return (
     <label
       className={cn(
-        "inline-flex cursor-pointer items-center gap-2 text-sm",
+        "relative inline-flex cursor-pointer items-center gap-2 text-sm",
         disabled && "cursor-not-allowed opacity-60",
         className
       )}
     >
-      {/* Input nativo oculto — mantiene accesibilidad y submit de formularios */}
+      {/* Input nativo oculto — mantiene accesibilidad y submit de formularios.
+          Se superpone al label (absolute inset-0 opacity-0) en vez de `sr-only`:
+          el `clip` de sr-only hace que Chrome considere el input "fuera de vista"
+          al enfocarlo (click) y scrollee la página hacia él (salto visible en
+          pantallas largas). Superpuesto y sin clip, el navegador lo ve en vista
+          y no scrollea. Mismo comportamiento de toggle/teclado/submit. */}
       <input
         ref={ref}
         type="checkbox"
-        className="sr-only"
+        className="absolute inset-0 m-0 cursor-pointer opacity-0 disabled:cursor-not-allowed"
         checked={checked}
         disabled={disabled}
         onChange={(e) => onChange(e.target.checked)}

@@ -90,6 +90,7 @@ export function TotalDelComprobanteCard({
   hechuraLines,
   subtotalCommercial,
   taxableBase,
+  grossSubtotal,
   documentRoundingApplied,
   engineTotal,
   manualAdjustment,
@@ -940,6 +941,13 @@ export function TotalDelComprobanteCard({
                   // el `MonetarySummary` los omite (degradación segura).
                   subtotalCommercial={subtotalCommercial}
                   taxableBase={taxableBase}
+                  // "Valor bruto" (UNIFICADO) — passthrough EXACTO de
+                  // `documentTotals.subtotalBeforeDiscounts`. MonetarySummary
+                  // lo renderiza al inicio del detalle (arriba de "Promociones
+                  // y descuentos") SOLO en modo UNIFICADO y cuando es > 0, para
+                  // que el detalle quede auto-reconciliable. En DESGLOSADO no
+                  // se muestra. Cero matemática — el card no recalcula.
+                  grossSubtotal={grossSubtotal}
                   // POLICY §R-Rounding-3 — discrimina rounding lista
                   // (ya incluido en subtotal) vs comprobante (modifica el
                   // total). Passthrough EXACTO del backend, cero matemática.

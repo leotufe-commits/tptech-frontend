@@ -83,6 +83,12 @@ export interface MonetarySummaryProps {
   /** Fila "BASE IMPONIBLE" — passthrough EXACTO de `documentTotals.taxableBase`
    *  (POLICY §Tax.1 paso 11). Si null/undefined, se omite. */
   taxableBase?: number | null;
+  /** Fila "Valor bruto" — passthrough EXACTO de
+   *  `documentTotals.subtotalBeforeDiscounts` (subtotal ANTES de descuentos).
+   *  Solo se renderiza en modo UNIFICADO/compact, al INICIO del detalle
+   *  (arriba de "Promociones y descuentos"), cuando es un número finito > 0.
+   *  En DESGLOSADO NO se muestra. Passthrough puro — el componente NO calcula. */
+  grossSubtotal?: number | null;
   /** POLICY §R-Rounding-1 — discriminador para el render del ROUNDING_MONETARY.
    *   · !=null → "Redondeo del comprobante" (modifica el total, prominente).
    *   · null   → "Redondeo de lista" (ya incluido en subtotal, secundario). */
@@ -868,6 +874,7 @@ export function MonetarySummary({
   displayCurrency,
   subtotalCommercial,
   taxableBase,
+  grossSubtotal,
   documentRoundingApplied,
   monetaryResult,
   metalsValuationSum,
@@ -951,8 +958,31 @@ export function MonetarySummary({
   // layout es plano pero el CONTENIDO sigue siendo el de BREAKDOWN (Composición
   // incluida, gracias a que `sections` ya se resolvió con `isBreakdown`).
   const compact = flatDetail || !isBreakdown;
+
+  // "Valor bruto" — subtotal ANTES de descuentos (passthrough EXACTO de
+  // `documentTotals.subtotalBeforeDiscounts`). Se muestra al INICIO del detalle
+  // (arriba de "Promociones y descuentos") SOLO en modo UNIFICADO y cuando es un
+  // número finito > 0. Así el detalle queda auto-reconciliable:
+  //   bruto − descuentos + IVA + redondeo financiero = total.
+  // En DESGLOSADO no se muestra (decisión del operador): el guard exige
+  // `!isBreakdown` (NO `compact`, que también es true en BREAKDOWN con
+  // `flatDetail`). Cero matemática — se LEE `grossSubtotal` tal cual.
+  const showGrossSubtotal =
+    !isBreakdown
+    && typeof grossSubtotal === "number"
+    && Number.isFinite(grossSubtotal)
+    && grossSubtotal > 0;
+
   return (
     <div className={compact ? "space-y-0.5" : "space-y-2"} data-testid="total-card-monetary">
+      {showGrossSubtotal && (
+        <SectionSummaryRow
+          label="Precio"
+          amount={grossSubtotal as number}
+          displayCurrency={displayCurrency}
+          testId="total-card-gross-subtotal"
+        />
+      )}
       {sections.map(({ section, groups: secGroups }, secIdx) => {
         // Etapa UX-premium v3 — los headers/captions de sección se ELIMINARON.
         // El operador entiende el contexto por agrupación (sub-headers de
@@ -1077,6 +1107,78 @@ export function MonetarySummary({
               metals={physicalMetals}
               displayCurrency={displayCurrency}
             />
+          </section>
+        );
+      })()}
+
+      {/* I2-UNIFIED — Fallback del REDONDEO FINANCIERO UNIFICADO.
+          Análogo al fallback I2 PHYSICAL de arriba, pero para el caso UNIFIED:
+          en la capa 16 el delta unificado NO se emite como component
+          `ROUNDING_MONETARY` (queda solo en
+          `documentRoundingApplied.unified.adjustment`), así que sin este
+          fallback el operador ve el total ya redondeado sin saber de dónde
+          sale. Acá renderizamos un renglón "Redondeo financiero" con ese
+          delta (passthrough puro — sin recalcular).
+
+          Guard (específico de UNIFIED financiero, sin component):
+            · |unified.adjustment| > 0.005           (delta significativo)
+            · NO hay component ROUNDING_MONETARY       (mismo guard que I2 —
+              si lo hay, el RoundingRow ya lo muestra → no duplicar)
+            · NO es BREAKDOWN                          (en BREAKDOWN el metal
+              físico / saldo ya se muestran arriba → `breakdown == null` o
+              sin `metalDomain`)
+          Si no se cumple, no renderiza nada (degradación segura). */}
+      {(() => {
+        const unifiedAdjustment = documentRoundingApplied?.unified?.adjustment;
+        const hasUnifiedAdjustment =
+          typeof unifiedAdjustment === "number"
+          && Number.isFinite(unifiedAdjustment)
+          && Math.abs(unifiedAdjustment) > 0.005;
+        if (!hasUnifiedAdjustment) return null;
+        // BREAKDOWN financiero → el metal físico / saldo ya se muestran (I2 o
+        // RoundingRow). Este fallback es para el UNIFIED. El indicador real es el
+        // SCOPE: en UNIFIED la capa 16 igual emite `breakdown` como objeto VACÍO
+        // (`{ metal:null, hechura:null, metalPhysical:{metals:[]} }`), así que
+        // `breakdown != null` NO sirve para distinguir — hay que mirar `scope`.
+        const isBreakdownFinancial =
+          documentRoundingApplied?.scope === "BREAKDOWN";
+        if (isBreakdownFinancial) return null;
+        // ¿Ya hay un component ROUNDING_MONETARY? (RoundingRow ya lo rinde.)
+        const hasRoundingMonetaryComponent = filteredGroups.some((g) =>
+          g.components.some((c) => c.type === "ROUNDING_MONETARY"),
+        );
+        if (hasRoundingMonetaryComponent) return null;
+        return (
+          <section
+            className="mt-1 border-t border-border/15 pt-2"
+            data-testid="total-card-rounding-unified-section"
+            data-tp-rounding-source="DOCUMENT"
+          >
+            <div className="flex items-baseline justify-between gap-3">
+              <span className="flex flex-col gap-0">
+                <span className={`${vt.text.label} inline-flex items-center`}>
+                  Redondeo financiero
+                  <OriginTooltip
+                    title="Redondeo financiero"
+                    body={buildRoundingOriginBody(
+                      documentRoundingApplied,
+                      displayCurrency,
+                      unifiedAdjustment as number,
+                    )}
+                  />
+                </span>
+                <span className="text-[10px] text-muted/65 leading-tight">
+                  {buildComprobanteCaption(documentRoundingApplied)}
+                </span>
+              </span>
+              <span
+                className={`${vt.text.rowAmount} ${amountColorClass(unifiedAdjustment as number)}`}
+                data-testid="total-card-rounding-unified-amount"
+              >
+                {displayCurrency ? `${displayCurrency} ` : ""}
+                {formatByType(unifiedAdjustment as number, "MONEY")}
+              </span>
+            </div>
           </section>
         );
       })()}

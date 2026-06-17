@@ -2865,9 +2865,29 @@ export function TPDocumentLineAdvancedEditor({
                     }}
                     decimals={2}
                     min={0}
-                    {...(showLineTotalWithTax ? { step: 0.05 } : {})}
+                    {...(showLineTotalWithTax ? { step: 1 } : {})}
                     compact
-                    showArrows={false}
+                    // Arrows + X igual que el resto de los inputs de la fila.
+                    // La X sólo aparece cuando hay un precio MANUAL activo
+                    // (`pricingMeta.manualPrice != null`) y, al limpiarlo,
+                    // vuelve al precio de lista del backend: `manualPrice:null`
+                    // → `applyLineOverrides` restaura `unitPrice` desde
+                    // `basePrice` y apaga el flag `manualOverrides.price`.
+                    onClear={
+                      l.pricingMeta?.manualPrice != null
+                        ? () => {
+                            if (onApplyLineOverrides && (l.articleId || l.isManual)) {
+                              onApplyLineOverrides(l.id, { manualPrice: null });
+                            } else {
+                              updateLine(l.id, {
+                                unitPrice: l.pricingMeta?.basePrice ?? l.unitPrice,
+                              });
+                            }
+                          }
+                        : undefined
+                    }
+                    clearTitle="Volver al precio de lista"
+                    clearAriaLabel="Volver al precio de lista"
                     className={cn("tp-input-dense", isCalculating && "opacity-60")}
                   />
                   {isCalculating && (
