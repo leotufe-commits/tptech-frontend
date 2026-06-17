@@ -871,6 +871,19 @@ Reglas:
    `appliedRounding.unitAdjustment`; el footer es resumen (puede mostrar ambos). El
    header del metal muestra el gramo POST (gramo de venta redondeado, del snapshot
    `metalPhysical.metals[].postGrams`).
+4. **Detalle UNIFICADO auto-reconciliable (2026-06-17).** En modo UNIFICADO el
+   `MonetarySummary` (`TotalDelComprobanteCard`) muestra dos renglones nuevos,
+   ambos **passthrough puro** del backend (cero matemática):
+   - Fila inicial **"Precio"** = `documentTotals.subtotalBeforeDiscounts` (prop
+     `grossSubtotal`), el subtotal BRUTO antes de descuentos. Solo en UNIFICADO y
+     cuando es `> 0`; en DESGLOSADO NO se muestra (guard `!isBreakdown`). Deja el
+     detalle reconciliable: `bruto − descuentos + IVA + redondeo financiero = total`.
+   - Fila **"Redondeo financiero"** (fallback) cuando el delta unificado vive solo
+     en `documentRoundingApplied.unified.adjustment` y NO se emitió como component
+     `ROUNDING_MONETARY`. Guard: `|unified.adjustment| > 0.005`, `scope !== "BREAKDOWN"`
+     y sin component `ROUNDING_MONETARY` (si lo hay, lo muestra `RoundingRow` → no
+     duplicar). Sin esto el operador vería el total ya redondeado sin saber de dónde
+     sale.
 
 ## Los 3 mecanismos que el backend puede informar
 
