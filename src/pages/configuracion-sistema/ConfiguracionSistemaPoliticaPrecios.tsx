@@ -206,9 +206,10 @@ export default function ConfiguracionSistemaPoliticaPrecios() {
         <div className="text-sm text-muted py-8 text-center">Cargando…</div>
       ) : (
         <div className="space-y-4">
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
+          <div className="grid grid-cols-1 lg:grid-cols-5 gap-6 items-start">
 
-            {/* ── Columna izquierda — Márgenes y riesgos (unificado) ── */}
+            {/* ── Columna izquierda (2/5) — Márgenes y riesgos (unificado) ── */}
+            <div className="lg:col-span-2">
             <TPCard title="Márgenes y riesgos">
               <div className="space-y-5">
                 <TPField
@@ -258,10 +259,12 @@ export default function ConfiguracionSistemaPoliticaPrecios() {
                 </div>
               </div>
             </TPCard>
+            </div>
 
-            {/* ── Columna derecha — Redondeo financiero ──
+            {/* ── Columna derecha (3/5) — Redondeo financiero ──
                 Se aplica sobre el total final luego de impuestos; distinto del
                 "Redondeo comercial" de la lista de precios (antes de impuestos). */}
+            <div className="lg:col-span-3">
             <TPCard title="Redondeo financiero">
             <div className="space-y-4">
               {/* Activar — switch prominente con estado visual (card que se
@@ -442,6 +445,7 @@ export default function ConfiguracionSistemaPoliticaPrecios() {
               )}
             </div>
           </TPCard>
+          </div>
           </div>
 
           {/* Autoguardado — sin botón. Indicador sutil del estado. */}
