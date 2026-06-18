@@ -23,7 +23,6 @@ import {
   type DocumentRoundingConfig,
   type DocumentRoundingMode,
   type DocumentRoundingDirection,
-  type DocumentRoundingMetalDomain,
   type DocumentPhysicalRoundingConfig,
   type PhysicalRoundingMode,
   type PhysicalRoundingDirection,
@@ -53,11 +52,8 @@ const DOC_ROUNDING_DIRECTION_OPTIONS: Array<{ value: DocumentRoundingDirection; 
 // (UNIFIED/BREAKDOWN) se coercionan a BOTH al cargar (ver useEffect).
 
 // ── Etapa D4 — Opciones del redondeo físico de metales ─────────────────────
-const METAL_DOMAIN_OPTIONS: Array<{ value: DocumentRoundingMetalDomain; label: string }> = [
-  { value: "MONETARY", label: "Monetario — redondea el subtotal $ del metal" },
-  { value: "PHYSICAL", label: "Físico por gramos — redondea los gramos por metal padre" },
-];
-
+// El selector de "Dominio del metal" se eliminó de la UI: el dominio queda fijo
+// en PHYSICAL (por gramos). Por eso ya no existe METAL_DOMAIN_OPTIONS.
 const PHYSICAL_MODE_OPTIONS: Array<{ value: PhysicalRoundingMode; label: string }> = [
   { value: "NONE",      label: "Sin redondeo" },
   { value: "INTEGER",   label: "Al gramo (1)" },
@@ -87,7 +83,9 @@ const DOC_ROUNDING_DEFAULTS: DocumentRoundingConfig = {
   documentRoundingDirectionMetal:   "NEAREST",
   documentRoundingModeHechura:      "NONE",
   documentRoundingDirectionHechura: "NEAREST",
-  documentRoundingMetalDomain:    "MONETARY",
+  // El dominio del metal quedó fijo en PHYSICAL (por gramos). El selector se
+  // ocultó de la UI; los valores legacy MONETARY se coercionan al cargar.
+  documentRoundingMetalDomain:    "PHYSICAL",
   documentPhysicalRoundingConfig: null,
 };
 
@@ -119,11 +117,12 @@ export default function ConfiguracionSistemaPoliticaPrecios() {
     ])
       .then(([pol, dr, metals]) => {
         setConfig(pol);
-        // Simplificación: el modo de redondeo financiero se ofrece solo en
-        // "Automático" (BOTH). Tenants con valor legacy (UNIFIED/BREAKDOWN)
-        // se coercionan a BOTH — que ya elige el redondeo correcto por
-        // comprobante, así que el comportamiento se preserva o mejora.
-        setDocRounding({ ...dr, documentRoundingScope: "BOTH" });
+        // Simplificación: scope siempre "Automático" (BOTH) y dominio del metal
+        // siempre PHYSICAL (por gramos). Tenants con valores legacy
+        // (UNIFIED/BREAKDOWN, o MONETARY) se coercionan acá. PHYSICAL con
+        // fallback "Sin redondeo" (default) no redondea nada hasta que el
+        // operador lo configure — sin sorpresas.
+        setDocRounding({ ...dr, documentRoundingScope: "BOTH", documentRoundingMetalDomain: "PHYSICAL" });
         setMetalParents(metals);
       })
       .catch((err) => {
@@ -344,9 +343,7 @@ export default function ConfiguracionSistemaPoliticaPrecios() {
                   <div className="min-w-0">
                     <div className="text-sm font-semibold text-text">Redondeo financiero</div>
                     <div className="text-xs text-muted mt-0.5">
-                      {docRounding.documentRoundingEnabled
-                        ? "Activado — se redondea el total a cobrar de cada comprobante (automático según el comprobante)."
-                        : "Desactivado — el total se cobra tal cual lo calcula el sistema, sin redondear."}
+                      Redondea el total a cobrar de cada comprobante.
                     </div>
                   </div>
                 </div>
@@ -367,14 +364,10 @@ export default function ConfiguracionSistemaPoliticaPrecios() {
                 </div>
               </div>
 
-              {/* Explicación del modo automático (reemplaza al selector de modo). */}
-              <div className="rounded-lg border border-dashed border-border/60 bg-surface2/20 px-3 py-2.5 text-[11px] leading-relaxed text-muted">
-                <span className="font-semibold text-text">Funciona en automático.</span>{" "}
-                Cada comprobante usa el redondeo que le corresponde: el del{" "}
-                <span className="font-medium text-text">total final</span> si va unificado, o el{" "}
-                <span className="font-medium text-text">desglosado (metal + hechura)</span> si va desglosado.
-                Nunca se redondea dos veces.
-              </div>
+              {/* Nota corta del modo automático (reemplaza al selector). */}
+              <p className="text-[11px] text-muted">
+                Automático: cada comprobante usa el redondeo que le corresponde.
+              </p>
 
               {/* Config del TOTAL FINAL — comprobantes unificados (scope = BOTH) */}
               {(docRounding.documentRoundingScope === "UNIFIED" || docRounding.documentRoundingScope === "BOTH") && (
@@ -384,10 +377,7 @@ export default function ConfiguracionSistemaPoliticaPrecios() {
                     <span className="text-muted font-normal italic">(comprobantes unificados)</span>
                   </div>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                    <TPField
-                      label="Granularidad"
-                      hint="A qué nivel se redondea el total final del comprobante."
-                    >
+                    <TPField label="Redondear a">
                       <TPSelect
                         value={docRounding.documentRoundingMode}
                         onChange={v => setDr("documentRoundingMode", v as DocumentRoundingMode)}
@@ -395,10 +385,7 @@ export default function ConfiguracionSistemaPoliticaPrecios() {
                         disabled={!docRounding.documentRoundingEnabled}
                       />
                     </TPField>
-                    <TPField
-                      label="Dirección"
-                      hint='Qué hacer cuando el total cae entre dos valores: "Más cercano" elige el más próximo, "Hacia arriba" siempre suma, "Hacia abajo" siempre resta.'
-                    >
+                    <TPField label="Dirección">
                       <TPSelect
                         value={docRounding.documentRoundingDirection}
                         onChange={v => setDr("documentRoundingDirection", v as DocumentRoundingDirection)}
@@ -420,150 +407,71 @@ export default function ConfiguracionSistemaPoliticaPrecios() {
                     Redondeo desglosado{" "}
                     <span className="text-muted font-normal italic">(comprobantes desglosados)</span>
                   </div>
-                  <p className="text-[11px] text-muted leading-relaxed">
-                    Metales y hechura se redondean de forma independiente a nivel
-                    comprobante. Si un componente queda en "Sin redondeo", el
-                    sistema deja ese subtotal intacto.
-                  </p>
-
-                  {/* METALES — sección dentro del card unificado */}
-                  <div className="space-y-3" data-testid="rounding-metales-block">
+                  {/* METALES — siempre por gramos (PHYSICAL). El selector de
+                      dominio se ocultó; el dominio queda fijo en PHYSICAL. */}
+                  <div className="space-y-2" data-testid="rounding-metales-block">
                     <div className="text-[11px] font-semibold uppercase tracking-wide text-text/80">
-                      Metales
+                      Metales <span className="font-normal normal-case text-muted">· por gramos</span>
                     </div>
 
-                    {/* Etapa D4 — Selector dominio del metal en BREAKDOWN.
-                        MONETARY (default histórico) → redondea $ del metal.
-                        PHYSICAL → redondea gramos por metal padre vía capa 16.
-                        El bucket Hechura/Monetario siempre se redondea
-                        monetariamente — no tiene sentido físico. */}
-                    <TPField
-                      label="Dominio del metal"
-                      hint="Monetario redondea el subtotal $. Físico por gramos redondea los gramos consolidados por metal padre — el impacto monetario se calcula automáticamente con la cotización del documento."
-                    >
-                      <TPSelect
-                        value={docRounding.documentRoundingMetalDomain}
-                        onChange={v => setDr("documentRoundingMetalDomain", v as DocumentRoundingMetalDomain)}
-                        options={METAL_DOMAIN_OPTIONS}
-                        disabled={!docRounding.documentRoundingEnabled}
-                        data-testid="rounding-metal-domain-select"
-                      />
-                    </TPField>
-
-                    {/* MONETARIO — layout histórico (capa 15). */}
-                    {docRounding.documentRoundingMetalDomain === "MONETARY" && (
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4" data-testid="rounding-metales-monetary">
-                        <TPField
-                          label="Precisión metal"
-                          hint="A qué nivel se redondea el subtotal de metal del comprobante."
-                        >
-                          <TPSelect
-                            value={docRounding.documentRoundingModeMetal}
-                            onChange={v => setDr("documentRoundingModeMetal", v as DocumentRoundingMode)}
-                            options={DOC_ROUNDING_MODE_OPTIONS}
-                            disabled={!docRounding.documentRoundingEnabled}
-                          />
-                        </TPField>
-                        <TPField
-                          label="Dirección metal"
-                          hint='"Más cercano", "Hacia arriba" o "Hacia abajo" aplicado al subtotal de metal.'
-                        >
-                          <TPSelect
-                            value={docRounding.documentRoundingDirectionMetal}
-                            onChange={v => setDr("documentRoundingDirectionMetal", v as DocumentRoundingDirection)}
-                            options={DOC_ROUNDING_DIRECTION_OPTIONS}
-                            disabled={!docRounding.documentRoundingEnabled || docRounding.documentRoundingModeMetal === "NONE"}
-                          />
-                        </TPField>
-                      </div>
-                    )}
-
-                    {/* FÍSICO POR GRAMOS — tabla por metal padre + fallback. */}
-                    {docRounding.documentRoundingMetalDomain === "PHYSICAL" && (
-                      <div className="space-y-3" data-testid="rounding-metales-physical">
-                        <p className="text-[11px] text-muted leading-relaxed">
-                          Cada metal padre se redondea de manera independiente.
-                          El impacto monetario del delta de gramos se calcula con
-                          la cotización al momento del comprobante y se suma al
-                          total final — los gramos del documento NUNCA se mezclan
-                          con la hechura.
-                        </p>
-
-                        {/* Tabla de metales padre activos */}
-                        <div className="space-y-2" data-testid="rounding-metales-physical-table">
-                          {metalParents.length === 0 && (
-                            <p className="text-[11px] italic text-muted">
-                              No hay metales padre cargados. Configurá los metales
-                              del tenant en Configuración → Valuación de metales.
-                              Mientras tanto, los ajustes caen al fallback de abajo.
-                            </p>
-                          )}
-                          {metalParents.map((mp) => {
-                            const entry = getPhysicalCfg().byMetalParentId[mp.id]
-                              ?? { mode: "NONE" as PhysicalRoundingMode, direction: "NEAREST" as PhysicalRoundingDirection };
-                            return (
-                              <div
-                                key={mp.id}
-                                className="grid grid-cols-1 sm:grid-cols-[1fr_1fr_1fr] gap-3 items-end"
-                                data-testid={`rounding-metal-row-${mp.id}`}
-                              >
-                                <div className="text-[12px] text-text font-medium pb-2">{mp.name}</div>
-                                <TPField label="Modo">
-                                  <TPSelect
-                                    value={entry.mode}
-                                    onChange={v => setPhysicalMetal(mp.id, { mode: v as PhysicalRoundingMode })}
-                                    options={PHYSICAL_MODE_OPTIONS}
-                                    disabled={!docRounding.documentRoundingEnabled}
-                                  />
-                                </TPField>
-                                <TPField label="Dirección">
-                                  <TPSelect
-                                    value={entry.direction}
-                                    onChange={v => setPhysicalMetal(mp.id, { direction: v as PhysicalRoundingDirection })}
-                                    options={PHYSICAL_DIRECTION_OPTIONS}
-                                    disabled={!docRounding.documentRoundingEnabled || entry.mode === "NONE"}
-                                  />
-                                </TPField>
-                              </div>
-                            );
-                          })}
-                        </div>
-
-                        {/* Fallback general */}
-                        <div
-                          className="rounded-md border border-dashed border-border/50 bg-surface2/30 px-3 py-3 space-y-3"
-                          data-testid="rounding-metales-physical-fallback"
-                        >
-                          <div className="text-[11px] font-semibold uppercase tracking-wide text-text/80">
-                            Fallback general
-                          </div>
-                          <p className="text-[11px] text-muted leading-relaxed">
-                            Modo y dirección que se aplican a cualquier metal padre
-                            que NO aparezca en la tabla de arriba. Útil cuando se
-                            agrega un metal nuevo y todavía no se configuró su modo
-                            específico.
+                    <div className="space-y-2" data-testid="rounding-metales-physical">
+                      <div className="space-y-2" data-testid="rounding-metales-physical-table">
+                        {metalParents.length === 0 ? (
+                          <p className="text-[11px] italic text-muted">
+                            No hay metales cargados — se usa el de "Otros metales".
                           </p>
-                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                            <TPField label="Modo fallback">
+                        ) : (
+                          <div className="hidden sm:grid sm:grid-cols-[1fr_1fr_1fr] gap-3 text-[11px] font-medium text-muted">
+                            <span>Metal</span><span>Redondear a</span><span>Dirección</span>
+                          </div>
+                        )}
+                        {metalParents.map((mp) => {
+                          const entry = getPhysicalCfg().byMetalParentId[mp.id]
+                            ?? { mode: "NONE" as PhysicalRoundingMode, direction: "NEAREST" as PhysicalRoundingDirection };
+                          return (
+                            <div
+                              key={mp.id}
+                              className="grid grid-cols-1 sm:grid-cols-[1fr_1fr_1fr] gap-3 items-center"
+                              data-testid={`rounding-metal-row-${mp.id}`}
+                            >
+                              <div className="text-[12px] text-text font-medium">{mp.name}</div>
                               <TPSelect
-                                value={getPhysicalCfg().fallback.mode}
-                                onChange={v => setPhysicalFallback({ mode: v as PhysicalRoundingMode })}
+                                value={entry.mode}
+                                onChange={v => setPhysicalMetal(mp.id, { mode: v as PhysicalRoundingMode })}
                                 options={PHYSICAL_MODE_OPTIONS}
                                 disabled={!docRounding.documentRoundingEnabled}
                               />
-                            </TPField>
-                            <TPField label="Dirección fallback">
                               <TPSelect
-                                value={getPhysicalCfg().fallback.direction}
-                                onChange={v => setPhysicalFallback({ direction: v as PhysicalRoundingDirection })}
+                                value={entry.direction}
+                                onChange={v => setPhysicalMetal(mp.id, { direction: v as PhysicalRoundingDirection })}
                                 options={PHYSICAL_DIRECTION_OPTIONS}
-                                disabled={!docRounding.documentRoundingEnabled || getPhysicalCfg().fallback.mode === "NONE"}
+                                disabled={!docRounding.documentRoundingEnabled || entry.mode === "NONE"}
                               />
-                            </TPField>
-                          </div>
+                            </div>
+                          );
+                        })}
+
+                        {/* Otros metales (fallback) — misma fila, sin caja aparte. */}
+                        <div
+                          className="grid grid-cols-1 sm:grid-cols-[1fr_1fr_1fr] gap-3 items-center border-t border-border/30 pt-2"
+                          data-testid="rounding-metales-physical-fallback"
+                        >
+                          <div className="text-[12px] text-muted">Otros metales</div>
+                          <TPSelect
+                            value={getPhysicalCfg().fallback.mode}
+                            onChange={v => setPhysicalFallback({ mode: v as PhysicalRoundingMode })}
+                            options={PHYSICAL_MODE_OPTIONS}
+                            disabled={!docRounding.documentRoundingEnabled}
+                          />
+                          <TPSelect
+                            value={getPhysicalCfg().fallback.direction}
+                            onChange={v => setPhysicalFallback({ direction: v as PhysicalRoundingDirection })}
+                            options={PHYSICAL_DIRECTION_OPTIONS}
+                            disabled={!docRounding.documentRoundingEnabled || getPhysicalCfg().fallback.mode === "NONE"}
+                          />
                         </div>
                       </div>
-                    )}
+                    </div>
                   </div>
 
                   {/* HECHURA / MONETARIO — sección dentro del MISMO card,
@@ -574,10 +482,7 @@ export default function ConfiguracionSistemaPoliticaPrecios() {
                       Hechura / Monetario
                     </div>
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                      <TPField
-                        label="Precisión hechura"
-                        hint="A qué nivel se redondea el subtotal de hechura del comprobante."
-                      >
+                      <TPField label="Redondear a">
                         <TPSelect
                           value={docRounding.documentRoundingModeHechura}
                           onChange={v => setDr("documentRoundingModeHechura", v as DocumentRoundingMode)}
@@ -585,10 +490,7 @@ export default function ConfiguracionSistemaPoliticaPrecios() {
                           disabled={!docRounding.documentRoundingEnabled}
                         />
                       </TPField>
-                      <TPField
-                        label="Dirección hechura"
-                        hint='"Más cercano", "Hacia arriba" o "Hacia abajo" aplicado al subtotal de hechura.'
-                      >
+                      <TPField label="Dirección">
                         <TPSelect
                           value={docRounding.documentRoundingDirectionHechura}
                           onChange={v => setDr("documentRoundingDirectionHechura", v as DocumentRoundingDirection)}
@@ -601,16 +503,6 @@ export default function ConfiguracionSistemaPoliticaPrecios() {
 
                 </div>
               )}
-
-              {/* Advertencia anti doble-rounding — dominios oficiales */}
-              <p className="text-[11px] italic text-muted/80">
-                Cuando el <span className="font-medium not-italic">redondeo financiero</span> está activo,
-                las listas con <span className="font-medium not-italic">redondeo comercial</span> al neto o al total
-                se desactivan automáticamente para evitar redondear dos veces los
-                mismos importes. Las listas que solo redondean gramos (cantidad
-                física) siguen funcionando — son un dominio distinto y no entran
-                en conflicto.
-              </p>
             </div>
           </TPCard>
 
