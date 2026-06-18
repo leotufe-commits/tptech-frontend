@@ -1,14 +1,16 @@
 // src/pages/configuracion-sistema/ConfiguracionSistemaPoliticaPrecios.tsx
 // Configuración de alertas y política de bloqueo del motor de pricing
 import React, { useEffect, useState } from "react";
-import { ShieldAlert } from "lucide-react";
+import { ShieldAlert, Coins } from "lucide-react";
 import { TPSectionShell } from "../../components/ui/TPSectionShell";
 import { TPCard } from "../../components/ui/TPCard";
 import { TPField } from "../../components/ui/TPField";
 import TPNumberInput from "../../components/ui/TPNumberInput";
 import TPCheckbox from "../../components/ui/TPCheckbox";
+import TPSwitch from "../../components/ui/TPSwitch";
 import { TPButton } from "../../components/ui/TPButton";
 import TPSelect from "../../components/ui/TPSelect";
+import { cn } from "../../components/ui/tp";
 import { toast } from "../../lib/toast";
 import { ApiError } from "../../lib/api";
 import {
@@ -21,7 +23,6 @@ import {
   type DocumentRoundingConfig,
   type DocumentRoundingMode,
   type DocumentRoundingDirection,
-  type DocumentRoundingScope,
   type DocumentRoundingMetalDomain,
   type DocumentPhysicalRoundingConfig,
   type PhysicalRoundingMode,
@@ -45,15 +46,11 @@ const DOC_ROUNDING_DIRECTION_OPTIONS: Array<{ value: DocumentRoundingDirection; 
   { value: "DOWN",    label: "Hacia abajo" },
 ];
 
-// Simplificación 2026-06-17: el redondeo financiero se ofrece SOLO en modo
-// "Ambos" (BOTH). Desde la redefinición del operador, BOTH no encadena: cada
-// comprobante usa automáticamente el redondeo que le corresponde (desglosado si
-// va desglosado, unificado si va unificado). Es el único modo que un usuario
-// necesita; "Unificado"/"Desglosado" sueltos quedan fuera de la pantalla. Los
-// valores legacy se coercionan a BOTH al cargar (ver useEffect).
-const DOC_ROUNDING_SCOPE_OPTIONS: Array<{ value: DocumentRoundingScope; label: string }> = [
-  { value: "BOTH",      label: "Automático — cada comprobante usa el que le corresponde" },
-];
+// Simplificación 2026-06-17: el redondeo financiero ya no expone un selector de
+// modo. Funciona SIEMPRE en automático (scope = BOTH): cada comprobante usa el
+// redondeo que le corresponde (desglosado si va desglosado, unificado si va
+// unificado) — el único modo que un usuario necesita. Los valores legacy
+// (UNIFIED/BREAKDOWN) se coercionan a BOTH al cargar (ver useEffect).
 
 // ── Etapa D4 — Opciones del redondeo físico de metales ─────────────────────
 const METAL_DOMAIN_OPTIONS: Array<{ value: DocumentRoundingMetalDomain; label: string }> = [
@@ -322,42 +319,69 @@ export default function ConfiguracionSistemaPoliticaPrecios() {
               impuestos sobre el precio publicable). */}
           <TPCard title="Redondeo financiero">
             <div className="space-y-4">
-              {/* Activar */}
-              <div className="flex items-start justify-between gap-4 py-3 border-b border-border/50">
-                <div className="min-w-0">
-                  <div className="text-sm font-medium text-text">Activar redondeo financiero</div>
-                  <div className="text-xs text-muted mt-0.5">
-                    Si está apagado, el total se muestra tal cual lo calcula el motor.
-                    Si está encendido, se aplica el modo elegido abajo al importe final a cobrar.
+              {/* Activar — switch prominente con estado visual (card que se
+                  "enciende"). El control sigue siendo un checkbox nativo bajo
+                  el capó (TPSwitch) → accesible y encontrable en tests. */}
+              <div
+                className={cn(
+                  "flex items-center justify-between gap-4 rounded-xl border px-4 py-3.5 transition-colors",
+                  docRounding.documentRoundingEnabled
+                    ? "border-primary/50 bg-primary/5"
+                    : "border-border bg-surface2/20",
+                )}
+              >
+                <div className="flex items-start gap-3 min-w-0">
+                  <span
+                    className={cn(
+                      "mt-0.5 inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full transition-colors",
+                      docRounding.documentRoundingEnabled
+                        ? "bg-primary/15 text-primary"
+                        : "bg-surface2 text-muted",
+                    )}
+                  >
+                    <Coins size={18} />
+                  </span>
+                  <div className="min-w-0">
+                    <div className="text-sm font-semibold text-text">Redondeo financiero</div>
+                    <div className="text-xs text-muted mt-0.5">
+                      {docRounding.documentRoundingEnabled
+                        ? "Activado — se redondea el total a cobrar de cada comprobante (automático según el comprobante)."
+                        : "Desactivado — el total se cobra tal cual lo calcula el sistema, sin redondear."}
+                    </div>
                   </div>
                 </div>
-                <TPCheckbox
-                  checked={docRounding.documentRoundingEnabled}
-                  onChange={v => setDr("documentRoundingEnabled", v)}
-                  label=""
-                />
+                <div className="flex items-center gap-2.5 shrink-0">
+                  <span
+                    className={cn(
+                      "text-[11px] font-semibold uppercase tracking-wide",
+                      docRounding.documentRoundingEnabled ? "text-primary" : "text-muted",
+                    )}
+                  >
+                    {docRounding.documentRoundingEnabled ? "Activado" : "Desactivado"}
+                  </span>
+                  <TPSwitch
+                    checked={docRounding.documentRoundingEnabled}
+                    onChange={v => setDr("documentRoundingEnabled", v)}
+                    ariaLabel="Activar redondeo financiero"
+                  />
+                </div>
               </div>
 
-              {/* Selector de Modo */}
-              <TPField
-                label="Modo de redondeo financiero"
-                hint="Cada comprobante usa automáticamente el redondeo que le corresponde: el del total final si va unificado, o el de metal y hechura por separado si va desglosado. Nunca se redondea dos veces. Configurá abajo cómo redondear en cada caso."
-              >
-                <TPSelect
-                  value={docRounding.documentRoundingScope}
-                  onChange={v => setDr("documentRoundingScope", v as DocumentRoundingScope)}
-                  options={DOC_ROUNDING_SCOPE_OPTIONS}
-                  disabled={!docRounding.documentRoundingEnabled}
-                />
-              </TPField>
+              {/* Explicación del modo automático (reemplaza al selector de modo). */}
+              <div className="rounded-lg border border-dashed border-border/60 bg-surface2/20 px-3 py-2.5 text-[11px] leading-relaxed text-muted">
+                <span className="font-semibold text-text">Funciona en automático.</span>{" "}
+                Cada comprobante usa el redondeo que le corresponde: el del{" "}
+                <span className="font-medium text-text">total final</span> si va unificado, o el{" "}
+                <span className="font-medium text-text">desglosado (metal + hechura)</span> si va desglosado.
+                Nunca se redondea dos veces.
+              </div>
 
-              {/* Config UNIFIED — visible en UNIFIED y BOTH */}
+              {/* Config del TOTAL FINAL — comprobantes unificados (scope = BOTH) */}
               {(docRounding.documentRoundingScope === "UNIFIED" || docRounding.documentRoundingScope === "BOTH") && (
                 <div className="rounded-lg border border-border/60 bg-surface2/20 px-3 py-3 space-y-3">
                   <div className="text-[12px] font-semibold text-text">
-                    Redondeo del total final {docRounding.documentRoundingScope === "BOTH" && (
-                      <span className="text-muted font-normal italic">(se usa cuando el comprobante va unificado)</span>
-                    )}
+                    Redondeo del total final{" "}
+                    <span className="text-muted font-normal italic">(comprobantes unificados)</span>
                   </div>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     <TPField
@@ -393,22 +417,17 @@ export default function ConfiguracionSistemaPoliticaPrecios() {
               {(docRounding.documentRoundingScope === "BREAKDOWN" || docRounding.documentRoundingScope === "BOTH") && (
                 <div className="rounded-lg border border-border/60 bg-surface2/20 px-3 py-3 space-y-4">
                   <div className="text-[12px] font-semibold text-text">
-                    Redondeo desglosado por componente
-                    {docRounding.documentRoundingScope === "BOTH" && (
-                      <span className="text-muted font-normal italic"> (se usa cuando el comprobante va desglosado)</span>
-                    )}
+                    Redondeo desglosado{" "}
+                    <span className="text-muted font-normal italic">(comprobantes desglosados)</span>
                   </div>
                   <p className="text-[11px] text-muted leading-relaxed">
-                    Metales y hechura pueden redondearse de forma independiente
-                    a nivel comprobante. Si un componente queda en "Sin redondeo",
-                    el sistema deja ese subtotal intacto.
+                    Metales y hechura se redondean de forma independiente a nivel
+                    comprobante. Si un componente queda en "Sin redondeo", el
+                    sistema deja ese subtotal intacto.
                   </p>
 
-                  {/* METALES */}
-                  <div
-                    className="rounded-md border border-border/40 bg-surface/40 px-3 py-3 space-y-3"
-                    data-testid="rounding-metales-block"
-                  >
+                  {/* METALES — sección dentro del card unificado */}
+                  <div className="space-y-3" data-testid="rounding-metales-block">
                     <div className="text-[11px] font-semibold uppercase tracking-wide text-text/80">
                       Metales
                     </div>
@@ -547,8 +566,10 @@ export default function ConfiguracionSistemaPoliticaPrecios() {
                     )}
                   </div>
 
-                  {/* HECHURA / MONETARIO */}
-                  <div className="rounded-md border border-border/40 bg-surface/40 px-3 py-3 space-y-3">
+                  {/* HECHURA / MONETARIO — sección dentro del MISMO card,
+                      separada del metal por un divisor sutil (antes era una
+                      sub-caja con su propio borde). */}
+                  <div className="space-y-3 border-t border-border/40 pt-4">
                     <div className="text-[11px] font-semibold uppercase tracking-wide text-text/80">
                       Hechura / Monetario
                     </div>
@@ -578,14 +599,6 @@ export default function ConfiguracionSistemaPoliticaPrecios() {
                     </div>
                   </div>
 
-                  {docRounding.documentRoundingScope === "BOTH" && (
-                    <p className="text-[11px] italic text-muted">
-                      En "Ambos", TPTech elige automáticamente por comprobante:
-                      aplica el redondeo desglosado a los comprobantes que van
-                      desglosados y el unificado a los que van unificados. No los
-                      encadena — cada comprobante recibe un solo redondeo.
-                    </p>
-                  )}
                 </div>
               )}
 
