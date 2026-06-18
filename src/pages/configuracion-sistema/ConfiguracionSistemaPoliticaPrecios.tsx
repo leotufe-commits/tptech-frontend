@@ -205,102 +205,64 @@ export default function ConfiguracionSistemaPoliticaPrecios() {
       {loading ? (
         <div className="text-sm text-muted py-8 text-center">Cargando…</div>
       ) : (
-        <div className="space-y-6 max-w-2xl">
+        <div className="space-y-4">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
 
-          {/* A — Márgenes recomendados */}
-          <TPCard title="Márgenes recomendados">
-            <p className="text-xs text-muted mb-4">
-              Umbrales que TPTech usa para clasificar cada línea de venta.
-              <span className="font-medium text-text"> El operador siempre puede
-              confirmar</span> — la política solo advierte y, en casos críticos,
-              solicita confirmación reforzada antes de cerrar el comprobante.
-            </p>
-            <div className="space-y-4">
-              <TPField
-                label="Margen mínimo recomendado"
-                hint="Si el margen queda por debajo de este porcentaje, la línea se marcará como margen bajo para advertir al operador."
-              >
-                <TPNumberInput
-                  value={config.pricingLowMarginWarningPercent}
-                  onChange={v => set("pricingLowMarginWarningPercent", v)}
-                  min={0}
-                  max={100}
-                  step={0.5}
-                  decimals={1}
-                  placeholder="15"
-                  suffix="%"
-                />
-              </TPField>
-            </div>
-          </TPCard>
+            {/* ── Columna izquierda — Márgenes y riesgos (unificado) ── */}
+            <TPCard title="Márgenes y riesgos">
+              <div className="space-y-5">
+                <TPField
+                  label="Margen mínimo recomendado"
+                  hint="Por debajo de este %, la línea se marca como margen bajo."
+                >
+                  <TPNumberInput
+                    value={config.pricingLowMarginWarningPercent}
+                    onChange={v => set("pricingLowMarginWarningPercent", v)}
+                    min={0}
+                    max={100}
+                    step={0.5}
+                    decimals={1}
+                    placeholder="15"
+                    suffix="%"
+                  />
+                </TPField>
 
-          {/* B — Riesgos comerciales */}
-          <TPCard title="Riesgos comerciales">
-            <p className="text-xs text-muted mb-4">
-              Situaciones que TPTech detecta automáticamente sobre el
-              resultado final del motor de precios (después de descuentos,
-              impuestos, promociones y overrides). Cuando están activadas,
-              se muestran como <span className="font-medium text-text">advertencia
-              en la línea</span> y se incluyen en el resumen comercial del
-              comprobante.
-            </p>
-
-            <div className="space-y-4">
-              <div className="flex items-start justify-between gap-4 py-3 border-b border-border/50">
-                <div className="min-w-0">
-                  <div className="text-sm font-medium text-text">Considerar crítica la venta con pérdida</div>
-                  <div className="text-xs text-muted mt-0.5">
-                    Cuando el precio final queda menor o igual al costo
-                    calculado por el motor, la línea se marcará como crítica y
-                    requerirá confirmación para continuar.
+                <div>
+                  <p className="text-[11px] font-semibold uppercase tracking-wide text-muted mb-1">
+                    Marcar la venta como crítica si…
+                  </p>
+                  <div className="flex items-center justify-between gap-3 py-2 border-b border-border/40">
+                    <span className="text-sm text-text">Hay pérdida (precio ≤ costo)</span>
+                    <TPCheckbox
+                      checked={config.pricingBlockLossSale}
+                      onChange={v => set("pricingBlockLossSale", v)}
+                      label=""
+                    />
+                  </div>
+                  <div className="flex items-center justify-between gap-3 py-2 border-b border-border/40">
+                    <span className="text-sm text-text">El precio final es cero o negativo</span>
+                    <TPCheckbox
+                      checked={config.pricingBlockZeroOrNegativePrice}
+                      onChange={v => set("pricingBlockZeroOrNegativePrice", v)}
+                      label=""
+                    />
+                  </div>
+                  <div className="flex items-center justify-between gap-3 py-2">
+                    <span className="text-sm text-text">El cálculo es parcial (faltan datos o cotizaciones)</span>
+                    <TPCheckbox
+                      checked={config.pricingBlockPartialData}
+                      onChange={v => set("pricingBlockPartialData", v)}
+                      label=""
+                    />
                   </div>
                 </div>
-                <TPCheckbox
-                  checked={config.pricingBlockLossSale}
-                  onChange={v => set("pricingBlockLossSale", v)}
-                  label=""
-                />
               </div>
+            </TPCard>
 
-              <div className="flex items-start justify-between gap-4 py-3 border-b border-border/50">
-                <div className="min-w-0">
-                  <div className="text-sm font-medium text-text">Considerar crítico el precio cero o negativo</div>
-                  <div className="text-xs text-muted mt-0.5">
-                    Cuando el precio final resultante sea cero o negativo,
-                    TPTech solicitará confirmación reforzada antes de cerrar el
-                    comprobante.
-                  </div>
-                </div>
-                <TPCheckbox
-                  checked={config.pricingBlockZeroOrNegativePrice}
-                  onChange={v => set("pricingBlockZeroOrNegativePrice", v)}
-                  label=""
-                />
-              </div>
-
-              <div className="flex items-start justify-between gap-4 py-3">
-                <div className="min-w-0">
-                  <div className="text-sm font-medium text-text">Considerar crítico el cálculo parcial</div>
-                  <div className="text-xs text-muted mt-0.5">
-                    Cuando el motor no pueda resolver completamente el costo o
-                    el precio por falta de datos o cotizaciones, la venta se
-                    marcará como crítica.
-                  </div>
-                </div>
-                <TPCheckbox
-                  checked={config.pricingBlockPartialData}
-                  onChange={v => set("pricingBlockPartialData", v)}
-                  label=""
-                />
-              </div>
-            </div>
-          </TPCard>
-
-          {/* Redondeo financiero — POLICY §R-Rounding-12 dominio FINANCIERO:
-              se aplica sobre el total final luego de impuestos. Distinto del
-              "Redondeo comercial" de Lista de precios (que opera antes de
-              impuestos sobre el precio publicable). */}
-          <TPCard title="Redondeo financiero">
+            {/* ── Columna derecha — Redondeo financiero ──
+                Se aplica sobre el total final luego de impuestos; distinto del
+                "Redondeo comercial" de la lista de precios (antes de impuestos). */}
+            <TPCard title="Redondeo financiero">
             <div className="space-y-4">
               {/* Activar — switch prominente con estado visual (card que se
                   "enciende"). El control sigue siendo un checkbox nativo bajo
@@ -480,6 +442,7 @@ export default function ConfiguracionSistemaPoliticaPrecios() {
               )}
             </div>
           </TPCard>
+          </div>
 
           {/* Autoguardado — sin botón. Indicador sutil del estado. */}
           <div className="flex justify-end items-center gap-2 text-xs text-muted">
