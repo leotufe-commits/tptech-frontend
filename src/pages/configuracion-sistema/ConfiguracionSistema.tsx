@@ -36,7 +36,6 @@ import {
   KeyRound,
   ChevronRight,
   ChevronDown,
-  Palette,
   Users,
   Shield,
   Building2,
@@ -404,12 +403,6 @@ export default function ConfiguracionSistema() {
             title: "Mis preferencias",
             desc: "Valores predeterminados del usuario para nuevos comprobantes. Se guardan por usuario y no afectan los cálculos de precios.",
             icon: <Sliders size={18} />,
-          },
-          {
-            to: "/configuracion-sistema/tema",
-            title: "Tema",
-            desc: "Elegí el estilo visual del sistema (claro / oscuro).",
-            icon: <Palette size={18} />,
           },
           // Grupo visual: pantalla unificada con tabs Números/Campos.
           // Cada sub-link apunta a la misma ruta con `?tab=...` para que

@@ -327,7 +327,7 @@ export default function ConfiguracionSistemaPoliticaPrecios() {
                   <div className="min-w-0">
                     <div className="text-sm font-semibold text-text">Redondeo financiero</div>
                     <div className="text-xs text-muted mt-0.5">
-                      Redondea el total a cobrar de cada comprobante.
+                      Redondea el total a cobrar de cada comprobante, sobre la moneda base.
                     </div>
                   </div>
                 </div>
@@ -451,10 +451,10 @@ export default function ConfiguracionSistemaPoliticaPrecios() {
                     </div>
                   </div>
 
-                  {/* HECHURA Y RESTO — MISMO formato de campos que total final. */}
+                  {/* HECHURA Y RESTO} — MISMO formato de campos que total final. */}
                   <div className="space-y-3 border-t border-border/40 pt-4">
                     <div className="text-[11px] font-semibold uppercase tracking-wide text-text/80">
-                      Hechura y resto <span className="font-normal normal-case text-muted">· en $</span>
+                      Hechura
                     </div>
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                       <TPField label="Redondear a">
