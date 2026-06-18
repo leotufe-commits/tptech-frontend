@@ -3,7 +3,6 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { ExternalLink, Plus, Save, X } from "lucide-react";
 
-import { cn } from "../../components/ui/tp";
 import { TPSectionShell } from "../../components/ui/TPSectionShell";
 import { TPButton } from "../../components/ui/TPButton";
 import TPInput from "../../components/ui/TPInput";
@@ -32,44 +31,7 @@ import {
   type RoundingDirection,
   type RoundingApplyOn,
 } from "../../services/price-lists";
-import {
-  fetchDocumentRoundingConfig,
-  type DocumentRoundingConfig,
-  type DocumentRoundingMode,
-  type DocumentRoundingDirection,
-} from "../../services/company";
-
-// Labels para mostrar la política doc en modo lectura dentro del card.
-const DOC_ROUNDING_MODE_LABELS: Record<DocumentRoundingMode, string> = {
-  NONE:      "Sin redondeo",
-  DECIMAL_2: "Al centavo (0,01)",
-  DECIMAL_1: "Al décimo (0,10)",
-  INTEGER:   "Al entero (1)",
-  TEN:       "A la decena (10)",
-  HUNDRED:   "A la centena (100)",
-};
-
-const DOC_ROUNDING_DIRECTION_LABELS: Record<DocumentRoundingDirection, string> = {
-  NEAREST: "Más cercano",
-  UP:      "Hacia arriba",
-  DOWN:    "Hacia abajo",
-};
-
-type RoundingScope = "LINE" | "DOCUMENT" | "BOTH";
-
-// Etiqueta corta usada en el pill del header del card y en el ejemplo.
-const DOC_ROUNDING_MODE_SHORT: Record<DocumentRoundingMode, string> = {
-  NONE:      "—",
-  DECIMAL_2: "Centavo",
-  DECIMAL_1: "Décimo",
-  INTEGER:   "Entero",
-  TEN:       "Decena",
-  HUNDRED:   "Centena",
-};
-
-// Misma representación corta para los modos de redondeo de PriceList — los
-// valores son idénticos a `DocumentRoundingMode`. Se duplica el mapping a
-// propósito para no acoplar tipos de dos servicios distintos.
+// Representación corta de los modos de redondeo de PriceList (pill del card).
 const LINE_ROUNDING_MODE_SHORT: Record<RoundingMode, string> = {
   NONE:      "—",
   DECIMAL_2: "Centavo",
@@ -79,73 +41,14 @@ const LINE_ROUNDING_MODE_SHORT: Record<RoundingMode, string> = {
   HUNDRED:   "Centena",
 };
 
-const DOC_ROUNDING_DIRECTION_SHORT: Record<DocumentRoundingDirection, string> = {
-  NEAREST: "más cercano",
-  UP:      "hacia arriba",
-  DOWN:    "hacia abajo",
-};
-
-const DOC_ROUNDING_MODE_DESCRIPTION: Record<DocumentRoundingMode, string> = {
-  NONE:      "Sin redondeo",
-  DECIMAL_2: "Al centavo",
-  DECIMAL_1: "Al décimo",
-  INTEGER:   "Al entero",
-  TEN:       "A la decena",
-  HUNDRED:   "A la centena",
-};
-
-/** Aplica la política doc a un valor numérico (mismo algoritmo que el motor
- *  backend pero en JS para mostrar el ejemplo en UI). */
-function applyDocRoundExample(
-  value: number,
-  mode: DocumentRoundingMode,
-  direction: DocumentRoundingDirection,
-): number {
-  if (mode === "NONE") return value;
-  const step =
-    mode === "INTEGER"   ? 1
-    : mode === "DECIMAL_1" ? 0.1
-    : mode === "DECIMAL_2" ? 0.01
-    : mode === "TEN"       ? 10
-    : 100;
-  if (direction === "UP")   return Math.ceil (value / step) * step;
-  if (direction === "DOWN") return Math.floor(value / step) * step;
-  return Math.round(value / step) * step;
-}
-
-/** "A la decena (más cercano)" / "Sin redondeo". */
-function describeDocRounding(
-  mode: DocumentRoundingMode,
-  direction: DocumentRoundingDirection,
-): string {
-  if (mode === "NONE") return "Sin redondeo";
-  return `${DOC_ROUNDING_MODE_DESCRIPTION[mode]} (${DOC_ROUNDING_DIRECTION_SHORT[direction]})`;
-}
-
 /** Texto del pill del header del card. Resume el alcance + el modo activo.
  *  Reusa los campos del draft (no inventa lógica nueva): la granularidad de
  *  línea sale de `roundingModeHechura` cuando la lista es unificada
  *  (MARGIN_TOTAL / COST_PER_GRAM) y de la combinación Metal+Hechura cuando
  *  la lista es METAL_HECHURA. */
-function describeRoundingScope(
-  scope: RoundingScope,
-  draft: Draft,
-  doc: DocumentRoundingConfig | null,
-): string {
-  // POLICY §R-Rounding-12 — dominios oficiales:
-  //   · LINE      → "Redondeo comercial"   (sobre el precio antes de impuestos)
-  //   · DOCUMENT  → "Redondeo financiero"  (sobre el total después de impuestos)
-  //   · BOTH      → ambos coexisten
-  const docActive = !!(doc?.documentRoundingEnabled && doc.documentRoundingMode !== "NONE");
-  if (scope === "DOCUMENT") {
-    return docActive
-      ? `Redondeo financiero (${DOC_ROUNDING_MODE_SHORT[doc!.documentRoundingMode]})`
-      : "Redondeo financiero (Sin redondeo)";
-  }
-  if (scope === "BOTH") {
-    return "Redondeo: comercial + financiero";
-  }
-  // LINE
+function describeCommercialRounding(draft: Draft): string {
+  // Redondeo COMERCIAL de la lista (sobre el precio, antes de impuestos). El
+  // redondeo financiero del comprobante vive en Política de precios.
   const hasLine = draft.roundingTarget !== "NONE";
   if (!hasLine) return "Redondeo comercial: sin aplicar";
 
@@ -823,30 +726,10 @@ function PriceListFormModal({
   onClose: () => void;
   onKey: (e: React.KeyboardEvent) => void;
 }) {
-  // ── UI local del card "Redondeo" ──────────────────────────────────────
-  // `roundingScope` decide qué bloque ver dentro del card. NO se persiste
-  // en PriceList: el redondeo por comprobante vive en Jewelry / Política
-  // de precios y este card solo lo muestra en lectura.
-  const [roundingScope, setRoundingScope] = useState<RoundingScope>("LINE");
-
-  // Política doc del tenant (lectura). Se carga al montar el modal y se
-  // muestra como tarjeta informativa cuando el operador elige "Por
-  // comprobante" o "Ambos". Si la lectura falla (ej. permisos), el bloque
-  // muestra un fallback y siempre permite navegar a Política de precios.
-  const [docPolicy, setDocPolicy] = useState<DocumentRoundingConfig | null>(null);
-  const [docPolicyLoading, setDocPolicyLoading] = useState(true);
-
+  // El card "Redondeo" de la lista configura SOLO el redondeo comercial
+  // (sobre el precio, antes de impuestos). El redondeo financiero del
+  // comprobante vive en Política de precios; este card solo enlaza ahí.
   const navigate = useNavigate();
-
-  useEffect(() => {
-    let cancelled = false;
-    setDocPolicyLoading(true);
-    fetchDocumentRoundingConfig()
-      .then((p) => { if (!cancelled) setDocPolicy(p); })
-      .catch(() => { if (!cancelled) setDocPolicy(null); })
-      .finally(() => { if (!cancelled) setDocPolicyLoading(false); });
-    return () => { cancelled = true; };
-  }, []);
 
   const nameError = submitted && !draft.name.trim() ? "Campo requerido." : null;
   const marginTotalError =
@@ -1077,64 +960,19 @@ function PriceListFormModal({
         {/* C. Redondeo */}
         <TPCard title="Redondeo">
           <div className="space-y-4">
-            {/* Pill resumen — refuerza el alcance elegido en el header del card. */}
+            {/* Pill resumen del redondeo comercial de la lista. */}
             <div className="flex items-center justify-between gap-2">
               <span className="inline-flex items-center rounded-full border border-primary/30 bg-primary/10 px-2.5 py-0.5 text-[11px] font-semibold text-primary">
-                {describeRoundingScope(roundingScope, draft, docPolicy)}
+                {describeCommercialRounding(draft)}
               </span>
             </div>
 
             <p className="text-xs text-muted">
-              El redondeo <span className="font-semibold text-text">por artículo</span> afecta el precio de cada línea de esta lista.
-              {" "}El redondeo <span className="font-semibold text-text">por comprobante</span> afecta el total final del documento y es una política general de la joyería.
+              Redondea el precio de cada línea de esta lista (antes de impuestos).
             </p>
 
-            {/* Selector visual de alcance — local al modal, no se persiste */}
-            <div
-              role="tablist"
-              aria-label="Alcance del redondeo"
-              className="grid grid-cols-3 gap-1 rounded-lg border border-border bg-card p-1"
-            >
-              {([
-                { value: "LINE",     label: "Por artículo / línea" },
-                { value: "DOCUMENT", label: "Por comprobante" },
-                { value: "BOTH",     label: "Ambos" },
-              ] as const).map((t) => {
-                const active = roundingScope === t.value;
-                return (
-                  <button
-                    key={t.value}
-                    type="button"
-                    role="tab"
-                    aria-selected={active}
-                    onClick={() => setRoundingScope(t.value)}
-                    className={cn(
-                      "rounded-md px-3 py-1.5 text-xs font-semibold transition",
-                      active
-                        ? "bg-primary/15 text-primary"
-                        : "text-muted hover:text-text",
-                    )}
-                  >
-                    {t.label}
-                  </button>
-                );
-              })}
-            </div>
-
-            {/* ── Bloque "Por artículo / línea" ─────────────────────────── */}
-            {(roundingScope === "LINE" || roundingScope === "BOTH") && (
-              <div className={cn(
-                // UX (2026-06-14): sin fondo coloreado — borde neutro para
-                // unificar con el resto del modal. Se mantiene borde, rounded,
-                // padding y espaciado; solo se quita el relleno de color.
-                "space-y-4 rounded-lg border p-3",
-                "border-border",
-              )}>
-                {roundingScope === "BOTH" && (
-                  <p className="text-[11px] font-semibold uppercase tracking-wide text-muted">
-                    Redondeo por artículo / línea
-                  </p>
-                )}
+            {/* Configuración del redondeo comercial (por artículo / línea). */}
+            <div className="space-y-4 rounded-lg border border-border p-3">
                 {/* Selector principal: Sin redondear / Redondear */}
                 <TPField label="Redondeo">
                   <TPComboFixed
@@ -1157,7 +995,7 @@ function PriceListFormModal({
                 {/* applyOn + precisión metal/hechura: solo en alcance "LINE" puro.
                     En "BOTH" simplificamos para no abrumar — el operador puede
                     cambiar a "Por línea" si necesita esa granularidad. */}
-                {roundingScope === "LINE" && hasRounding && (
+                {hasRounding && (
                   <>
                     {/* UX (2026-06-14): el selector "Aplicar sobre" se OCULTA
                         para reducir ruido visual. Se deja de renderizar
@@ -1291,7 +1129,7 @@ function PriceListFormModal({
                 {/* Resumen dinámico del redondeo (LINE puro). En BOTH se omite
                     para no duplicar info — el bloque doc abajo ya muestra el
                     resumen con ejemplo del comprobante. */}
-                {roundingScope === "LINE" && hasRounding && roundingLines && roundingLines.length > 0 && (
+                {hasRounding && roundingLines && roundingLines.length > 0 && (
                   <div className="rounded-xl border border-primary/20 bg-primary/5 px-4 py-3 space-y-1">
                     {roundingLines.map((l, i) => (
                       <div key={i} className="flex items-baseline gap-1.5 text-sm">
@@ -1303,97 +1141,22 @@ function PriceListFormModal({
                   </div>
                 )}
 
-                {/* En BOTH avisamos que la edición fina vive en "Por línea" */}
-                {roundingScope === "BOTH" && hasRounding && (
-                  <p className="text-[11px] italic text-muted/70">
-                    Para editar precisión por componente o el momento de aplicación, cambiá a “Por artículo / línea”.
-                  </p>
-                )}
-              </div>
-            )}
+            </div>
 
-            {/* ── Bloque "Por comprobante" — solo lectura + link ───────── */}
-            {(roundingScope === "DOCUMENT" || roundingScope === "BOTH") && (() => {
-              const docMode      = docPolicy?.documentRoundingMode      ?? "NONE";
-              const docDirection = docPolicy?.documentRoundingDirection ?? "NEAREST";
-              const docActive    = !!(docPolicy?.documentRoundingEnabled && docMode !== "NONE");
-              const exampleSrc   = 192065;
-              const exampleDst   = applyDocRoundExample(exampleSrc, docMode, docDirection);
-              const fmtN         = (v: number) => v.toLocaleString("es-AR");
-              return (
-                <div className={cn(
-                  // UX (2026-06-14): sin fondo coloreado — borde neutro para
-                  // unificar con el resto del modal. Se mantienen título, badge
-                  // Activo, descripción, ejemplo, link, borde, rounded, padding
-                  // y espaciado; solo se quita el relleno de color.
-                  "space-y-2 rounded-lg border p-3",
-                  "border-border",
-                )}>
-                  <div className="flex items-baseline justify-between gap-2">
-                    <p className="text-[11px] font-semibold uppercase tracking-wide text-muted">
-                      Redondeo financiero
-                    </p>
-                  </div>
-                  {/* POLICY §R-Rounding-12 — distinción de dominio. Esta
-                      lista define un "Redondeo comercial" (antes de
-                      impuestos); el "Redondeo financiero" se aplica al total
-                      final luego de impuestos y se configura en Política de
-                      precios. Texto explícito para evitar confusión. */}
-                  <p className="text-[10px] text-muted/70 italic -mt-1">
-                    Se aplica sobre el total final luego de impuestos.
-                    Configurable en Política de precios.
-                  </p>
-
-                  {docPolicyLoading ? (
-                    <div className="text-xs italic text-muted">Cargando política…</div>
-                  ) : !docPolicy ? (
-                    <div className="text-xs italic text-muted">
-                      No se pudo cargar la política. Verificá tus permisos o
-                      configurala desde Política de precios.
-                    </div>
-                  ) : (
-                    <>
-                      <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1 text-sm">
-                        <span className={cn(
-                          "inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider",
-                          docActive
-                            ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400"
-                            : "bg-muted/15 text-muted",
-                        )}>
-                          {docActive ? "Activo" : "Sin redondeo"}
-                        </span>
-                        <span className="font-medium text-text">
-                          {describeDocRounding(docMode, docDirection)}
-                        </span>
-                      </div>
-                      {docActive && (
-                        <div className="text-xs text-muted">
-                          Ejemplo:{" "}
-                          <span className="font-medium tabular-nums text-text">
-                            {fmtN(exampleSrc)} → {fmtN(exampleDst)}
-                          </span>
-                        </div>
-                      )}
-                    </>
-                  )}
-
-                  <div className="mt-1 flex justify-end">
-                    <TPButton
-                      variant="ghost"
-                      className="!px-2.5 !py-1 !text-xs"
-                      iconRight={<ExternalLink size={12} />}
-                      onClick={() => navigate("/configuracion-sistema/politica-precios")}
-                    >
-                      Configurar en Política de precios
-                    </TPButton>
-                  </div>
-
-                  <p className="text-[11px] italic text-muted/70">
-                    Esta configuración afecta a todos los comprobantes, no solo a esta lista.
-                  </p>
-                </div>
-              );
-            })()}
+            {/* Nota + link al redondeo financiero (vive en Política de precios). */}
+            <div className="flex items-center justify-between gap-2">
+              <p className="text-[11px] italic text-muted/70">
+                El redondeo del total final (después de impuestos) se configura en Política de precios.
+              </p>
+              <TPButton
+                variant="ghost"
+                className="!px-2.5 !py-1 !text-xs shrink-0"
+                iconRight={<ExternalLink size={12} />}
+                onClick={() => navigate("/configuracion-sistema/politica-precios")}
+              >
+                Política de precios
+              </TPButton>
+            </div>
           </div>
         </TPCard>
 

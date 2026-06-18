@@ -82,6 +82,11 @@ async function setup(roundingOverrides: any = {}) {
 
   render(<ConfiguracionSistemaPoliticaPrecios />);
   await waitFor(() => expect(mockCompany.fetchDocumentRoundingConfig).toHaveBeenCalled());
+  // Esperar a que termine la HIDRATACIÓN (no solo el fetch) antes de
+  // interactuar. El autoguardado se saltea la primera corrida post-carga; si el
+  // test edita antes de que `loading` pase a false, ese primer cambio no
+  // dispararía el save y el waitFor del payload quedaría colgado (flaky).
+  await waitFor(() => expect(screen.queryByTestId("rounding-metales-block")).not.toBeNull());
 }
 
 beforeEach(() => {
