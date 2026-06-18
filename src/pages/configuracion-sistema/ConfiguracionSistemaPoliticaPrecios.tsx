@@ -92,7 +92,8 @@ const DOC_ROUNDING_DEFAULTS: DocumentRoundingConfig = {
 // Solo se usan durante el loading inicial — apenas responde GET /company/me
 // el estado se sobrescribe con los valores reales del tenant.
 const DEFAULTS: PricingPolicyConfig = {
-  pricingLowMarginWarningPercent:  15,
+  // null = sin advertencia de margen (ya no hay default 15% en el motor).
+  pricingLowMarginWarningPercent:  null,
   pricingLowMarginBlockPercent:    null,
   pricingBlockLossSale:            false,
   pricingBlockZeroOrNegativePrice: true,
@@ -214,7 +215,7 @@ export default function ConfiguracionSistemaPoliticaPrecios() {
               <div className="space-y-5">
                 <TPField
                   label="Margen mínimo recomendado"
-                  hint="Por debajo de este %, la línea se marca como margen bajo."
+                  hint="Por debajo de este %, la línea se marca como margen bajo. Dejalo vacío para no advertir por margen."
                 >
                   <TPNumberInput
                     value={config.pricingLowMarginWarningPercent}
@@ -223,14 +224,17 @@ export default function ConfiguracionSistemaPoliticaPrecios() {
                     max={100}
                     step={0.5}
                     decimals={1}
-                    placeholder="15"
+                    placeholder="Sin advertencia"
                     suffix="%"
                   />
                 </TPField>
 
                 <div>
-                  <p className="text-[11px] font-semibold uppercase tracking-wide text-muted mb-1">
-                    Marcar la venta como crítica si…
+                  <p className="text-[11px] font-semibold uppercase tracking-wide text-muted">
+                    Pedir confirmación reforzada al cerrar si…
+                  </p>
+                  <p className="text-[11px] text-muted/70 mb-2">
+                    Las advertencias se muestran siempre; esto define cuáles exigen confirmación extra para cerrar la venta.
                   </p>
                   <div className="flex items-center justify-between gap-3 py-2 border-b border-border/40">
                     <span className="text-sm text-text">Hay pérdida (precio ≤ costo)</span>
