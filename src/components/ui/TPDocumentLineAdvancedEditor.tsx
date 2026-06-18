@@ -4590,7 +4590,7 @@ export function TPDocumentLineAdvancedEditor({
                         `Margen: ${formatByType(commercialInfo.marginPercent, "MARGIN_PERCENT", { bare: true })}%`,
                       );
                     }
-                    if (commercialInfo.recommendedMarginPercent != null) {
+                    if (commercialInfo.recommendedMarginPercent != null && commercialInfo.recommendedMarginPercent > 0) {
                       lines.push(
                         `Recomendado: ${formatByType(commercialInfo.recommendedMarginPercent, "MARGIN_PERCENT", { bare: true })}%`,
                       );
@@ -4761,7 +4761,7 @@ export function TPDocumentLineAdvancedEditor({
                               {formatByType(commercialInfo.marginPercent, "MARGIN_PERCENT", { bare: true })}%
                             </span>
                           </div>
-                          {commercialInfo.recommendedMarginPercent != null && (
+                          {commercialInfo.recommendedMarginPercent != null && commercialInfo.recommendedMarginPercent > 0 && (
                             <div className="text-muted/70">
                               Recomendado:{" "}
                               <span className="font-mono tabular-nums">
