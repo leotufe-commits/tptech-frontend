@@ -125,10 +125,9 @@ describe("Editar metal + guardar envía shape canónico (PHYSICAL)", () => {
     fireEvent.change(selects[0]!, { target: { value: "INTEGER" } });
     fireEvent.change(selects[1]!, { target: { value: "NEAREST" } });
 
-    fireEvent.click(screen.getByRole("button", { name: /guardar/i }));
-
-    await waitFor(() => expect(mockCompany.updateDocumentRoundingConfig).toHaveBeenCalled());
-    const sent = mockCompany.updateDocumentRoundingConfig.mock.calls[0]![0];
+    // Autoguardado (sin botón).
+    await waitFor(() => expect(mockCompany.updateDocumentRoundingConfig).toHaveBeenCalled(), { timeout: 3000 });
+    const sent = mockCompany.updateDocumentRoundingConfig.mock.calls.at(-1)![0];
     expect(sent.documentRoundingMetalDomain).toBe("PHYSICAL");
     expect(sent.documentPhysicalRoundingConfig).toEqual({
       byMetalParentId: {
@@ -155,10 +154,9 @@ describe("Fallback se guarda", () => {
     fireEvent.change(selects[0]!, { target: { value: "HALF" } });
     fireEvent.change(selects[1]!, { target: { value: "UP" } });
 
-    fireEvent.click(screen.getByRole("button", { name: /guardar/i }));
-
-    await waitFor(() => expect(mockCompany.updateDocumentRoundingConfig).toHaveBeenCalled());
-    const sent = mockCompany.updateDocumentRoundingConfig.mock.calls[0]![0];
+    // Autoguardado (sin botón).
+    await waitFor(() => expect(mockCompany.updateDocumentRoundingConfig).toHaveBeenCalled(), { timeout: 3000 });
+    const sent = mockCompany.updateDocumentRoundingConfig.mock.calls.at(-1)![0];
     expect(sent.documentPhysicalRoundingConfig.fallback).toEqual({
       mode: "HALF", direction: "UP",
     });
@@ -170,7 +168,7 @@ describe("Fallback se guarda", () => {
 // ──────────────────────────────────────────────────────────────────────────
 
 describe("Payload final cumple el shape canónico", () => {
-  it("el patch enviado tiene { byMetalParentId, fallback } + domain PHYSICAL", async () => {
+  it("editar un metal conserva el resto y manda { byMetalParentId, fallback } + PHYSICAL", async () => {
     await setup({
       documentRoundingMetalDomain: "PHYSICAL",
       documentPhysicalRoundingConfig: {
@@ -181,14 +179,20 @@ describe("Payload final cumple el shape canónico", () => {
         fallback: { mode: "NONE", direction: "NEAREST" },
       },
     });
-    fireEvent.click(screen.getByRole("button", { name: /guardar/i }));
-    await waitFor(() => expect(mockCompany.updateDocumentRoundingConfig).toHaveBeenCalled());
-    const sent = mockCompany.updateDocumentRoundingConfig.mock.calls[0]![0];
+
+    // Editar el modo de Plata (HALF → INTEGER) dispara el autoguardado; el
+    // resto de la config (Oro + fallback) debe preservarse en el patch.
+    const row = screen.getByTestId("rounding-metal-row-plata-925");
+    const selects = row.querySelectorAll("select");
+    fireEvent.change(selects[0]!, { target: { value: "INTEGER" } });
+
+    await waitFor(() => expect(mockCompany.updateDocumentRoundingConfig).toHaveBeenCalled(), { timeout: 3000 });
+    const sent = mockCompany.updateDocumentRoundingConfig.mock.calls.at(-1)![0];
     expect(sent.documentRoundingMetalDomain).toBe("PHYSICAL");
     expect(sent.documentPhysicalRoundingConfig).toEqual({
       byMetalParentId: {
         "oro-fino":  { mode: "INTEGER", direction: "NEAREST" },
-        "plata-925": { mode: "HALF",    direction: "DOWN" },
+        "plata-925": { mode: "INTEGER", direction: "DOWN" },
       },
       fallback: { mode: "NONE", direction: "NEAREST" },
     });

@@ -1,6 +1,6 @@
 // src/pages/configuracion-sistema/ConfiguracionSistemaPoliticaPrecios.tsx
 // Configuración de alertas y política de bloqueo del motor de pricing
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { ShieldAlert, Coins } from "lucide-react";
 import { TPSectionShell } from "../../components/ui/TPSectionShell";
 import { TPCard } from "../../components/ui/TPCard";
@@ -8,7 +8,6 @@ import { TPField } from "../../components/ui/TPField";
 import TPNumberInput from "../../components/ui/TPNumberInput";
 import TPCheckbox from "../../components/ui/TPCheckbox";
 import TPSwitch from "../../components/ui/TPSwitch";
-import { TPButton } from "../../components/ui/TPButton";
 import TPSelect from "../../components/ui/TPSelect";
 import { cn } from "../../components/ui/tp";
 import { toast } from "../../lib/toast";
@@ -132,28 +131,22 @@ export default function ConfiguracionSistemaPoliticaPrecios() {
       .finally(() => setLoading(false));
   }, []);
 
-  async function handleSave() {
+  // Persiste la config en el backend. La UI simplificada solo expone "Margen
+  // mínimo recomendado" (warning); el umbral crítico legacy
+  // (`pricingLowMarginBlockPercent`) se neutraliza en cada save (queda null en
+  // DB). NO re-aplica la respuesta al estado local (evita un loop con el
+  // autoguardado): el estado del form ya es la fuente de verdad de lo editado.
+  const saveConfig = useCallback(async () => {
     setSaving(true);
     try {
-      // La UI simplificada solo expone "Margen mínimo recomendado" (warning).
-      // El umbral crítico legacy (`pricingLowMarginBlockPercent`) ya no se
-      // puede editar desde acá — lo neutralizamos en cada save para que la
-      // experiencia sea coherente con lo que el operador ve: solo los toggles
-      // de "Considerar crítico..." escalan a CRITICAL. El campo sigue vivo
-      // en DB por compatibilidad backend, simplemente queda en null.
       const patch = { ...config, pricingLowMarginBlockPercent: null };
-      const [updatedPol, updatedDr] = await Promise.all([
+      await Promise.all([
         updatePricingPolicyConfig(patch),
         updateDocumentRoundingConfig(docRounding),
       ]);
-      setConfig(updatedPol);
-      setDocRounding(updatedDr);
       // Notificar a otras pantallas abiertas (ej: Factura de ventas) que la
-      // política del tenant cambió. Consumidores que cachean preview o leen
-      // los umbrales deben invalidar y volver a pedir. Sin payload — el
-      // listener vuelve a llamar al backend para obtener el estado fresco.
+      // política del tenant cambió, para que invaliden su caché de preview.
       window.dispatchEvent(new Event("tptech:pricing-policy-changed"));
-      toast.success("Configuración guardada.");
     } catch (err) {
       if (err instanceof ApiError && err.status === 403) {
         toast.error("No tenés permisos para guardar esta configuración.");
@@ -163,7 +156,18 @@ export default function ConfiguracionSistemaPoliticaPrecios() {
     } finally {
       setSaving(false);
     }
-  }
+  }, [config, docRounding]);
+
+  // Autoguardado: persiste con debounce cada vez que cambia la config. Se
+  // saltea la primera corrida posterior a la carga (hidratación) para no
+  // guardar inmediatamente lo recién leído del backend.
+  const hydratedRef = useRef(false);
+  useEffect(() => {
+    if (loading) return;
+    if (!hydratedRef.current) { hydratedRef.current = true; return; }
+    const t = setTimeout(() => { void saveConfig(); }, 500);
+    return () => clearTimeout(t);
+  }, [config, docRounding, loading, saveConfig]);
 
   function set<K extends keyof PricingPolicyConfig>(key: K, value: PricingPolicyConfig[K]) {
     setConfig(prev => ({ ...prev, [key]: value }));
@@ -292,26 +296,6 @@ export default function ConfiguracionSistemaPoliticaPrecios() {
             </div>
           </TPCard>
 
-          {/* C — Confirmación reforzada */}
-          <TPCard title="Confirmación reforzada">
-            <p className="text-xs text-muted mb-4">
-              Al cerrar una venta con líneas marcadas como críticas (por
-              margen muy bajo o por un riesgo comercial activado arriba),
-              TPTech abre un modal pidiendo confirmación explícita. El
-              operador puede <span className="font-medium text-text">volver
-              y revisar</span> o <span className="font-medium text-text">confirmar
-              igualmente</span> — la venta nunca se bloquea automáticamente,
-              y queda registrada la decisión para trazabilidad futura.
-            </p>
-            <div className="rounded-lg border border-border bg-surface2/40 px-3 py-3 text-[12px] text-text/80 leading-relaxed">
-              <span className="font-semibold text-text">Siempre activa.</span>{" "}
-              La confirmación reforzada es parte del flujo estándar de
-              Factura de ventas — no requiere configuración adicional. En
-              próximas versiones se podrá pedir un motivo de excepción o
-              autorización adicional para ventas críticas.
-            </div>
-          </TPCard>
-
           {/* Redondeo financiero — POLICY §R-Rounding-12 dominio FINANCIERO:
               se aplica sobre el total final luego de impuestos. Distinto del
               "Redondeo comercial" de Lista de precios (que opera antes de
@@ -402,91 +386,93 @@ export default function ConfiguracionSistemaPoliticaPrecios() {
                     Redondeo desglosado{" "}
                     <span className="text-muted font-normal italic">(comprobantes desglosados)</span>
                   </div>
-                  {/* Mini-tabla alineada: fila | Redondear a | Dirección.
-                      Metal y Hechura comparten el MISMO grid de 3 columnas. */}
-                  {/* Encabezado de columnas (solo desktop) */}
-                  <div className="hidden sm:grid sm:grid-cols-[1.2fr_1fr_1fr] gap-3 text-[11px] font-medium text-muted">
-                    <span />
-                    <span>Redondear a</span>
-                    <span>Dirección</span>
-                  </div>
-
-                  {/* METALES — siempre por gramos (PHYSICAL). El selector de
-                      dominio se ocultó; el dominio queda fijo en PHYSICAL. */}
-                  <div className="space-y-2" data-testid="rounding-metales-block">
+                  {/* METALES — por gramos (PHYSICAL). MISMO formato de campos que
+                      "Redondeo del total final": grid de 2 columnas con labels
+                      "Redondear a" / "Dirección". */}
+                  <div className="space-y-3" data-testid="rounding-metales-block">
                     <div className="text-[11px] font-semibold uppercase tracking-wide text-text/80">
                       Metales <span className="font-normal normal-case text-muted">· por gramos</span>
                     </div>
-                    <div className="space-y-2" data-testid="rounding-metales-physical">
-                      <div className="space-y-2" data-testid="rounding-metales-physical-table">
+                    <div className="space-y-3" data-testid="rounding-metales-physical">
+                      <div className="space-y-3" data-testid="rounding-metales-physical-table">
                         {metalParents.map((mp) => {
                           const entry = getPhysicalCfg().byMetalParentId[mp.id]
                             ?? { mode: "NONE" as PhysicalRoundingMode, direction: "NEAREST" as PhysicalRoundingDirection };
                           return (
-                            <div
-                              key={mp.id}
-                              className="grid grid-cols-1 sm:grid-cols-[1.2fr_1fr_1fr] gap-3 items-center"
-                              data-testid={`rounding-metal-row-${mp.id}`}
-                            >
+                            <div key={mp.id} className="space-y-1" data-testid={`rounding-metal-row-${mp.id}`}>
                               <div className="text-[12px] text-text font-medium">{mp.name}</div>
-                              <TPSelect
-                                value={entry.mode}
-                                onChange={v => setPhysicalMetal(mp.id, { mode: v as PhysicalRoundingMode })}
-                                options={PHYSICAL_MODE_OPTIONS}
-                                disabled={!docRounding.documentRoundingEnabled}
-                              />
-                              <TPSelect
-                                value={entry.direction}
-                                onChange={v => setPhysicalMetal(mp.id, { direction: v as PhysicalRoundingDirection })}
-                                options={PHYSICAL_DIRECTION_OPTIONS}
-                                disabled={!docRounding.documentRoundingEnabled || entry.mode === "NONE"}
-                              />
+                              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                                <TPField label="Redondear a">
+                                  <TPSelect
+                                    value={entry.mode}
+                                    onChange={v => setPhysicalMetal(mp.id, { mode: v as PhysicalRoundingMode })}
+                                    options={PHYSICAL_MODE_OPTIONS}
+                                    disabled={!docRounding.documentRoundingEnabled}
+                                  />
+                                </TPField>
+                                <TPField label="Dirección">
+                                  <TPSelect
+                                    value={entry.direction}
+                                    onChange={v => setPhysicalMetal(mp.id, { direction: v as PhysicalRoundingDirection })}
+                                    options={PHYSICAL_DIRECTION_OPTIONS}
+                                    disabled={!docRounding.documentRoundingEnabled || entry.mode === "NONE"}
+                                  />
+                                </TPField>
+                              </div>
                             </div>
                           );
                         })}
 
-                        {/* Otros metales (fallback) — una fila más de la tabla. */}
-                        <div
-                          className="grid grid-cols-1 sm:grid-cols-[1.2fr_1fr_1fr] gap-3 items-center"
-                          data-testid="rounding-metales-physical-fallback"
-                        >
-                          <div className="text-[12px] text-muted">Otros metales</div>
-                          <TPSelect
-                            value={getPhysicalCfg().fallback.mode}
-                            onChange={v => setPhysicalFallback({ mode: v as PhysicalRoundingMode })}
-                            options={PHYSICAL_MODE_OPTIONS}
-                            disabled={!docRounding.documentRoundingEnabled}
-                          />
-                          <TPSelect
-                            value={getPhysicalCfg().fallback.direction}
-                            onChange={v => setPhysicalFallback({ direction: v as PhysicalRoundingDirection })}
-                            options={PHYSICAL_DIRECTION_OPTIONS}
-                            disabled={!docRounding.documentRoundingEnabled || getPhysicalCfg().fallback.mode === "NONE"}
-                          />
+                        {/* Fallback (todos los metales si no hay específicos). */}
+                        <div className="space-y-1" data-testid="rounding-metales-physical-fallback">
+                          {metalParents.length > 0 && (
+                            <div className="text-[12px] text-muted">Resto de metales</div>
+                          )}
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                            <TPField label="Redondear a">
+                              <TPSelect
+                                value={getPhysicalCfg().fallback.mode}
+                                onChange={v => setPhysicalFallback({ mode: v as PhysicalRoundingMode })}
+                                options={PHYSICAL_MODE_OPTIONS}
+                                disabled={!docRounding.documentRoundingEnabled}
+                              />
+                            </TPField>
+                            <TPField label="Dirección">
+                              <TPSelect
+                                value={getPhysicalCfg().fallback.direction}
+                                onChange={v => setPhysicalFallback({ direction: v as PhysicalRoundingDirection })}
+                                options={PHYSICAL_DIRECTION_OPTIONS}
+                                disabled={!docRounding.documentRoundingEnabled || getPhysicalCfg().fallback.mode === "NONE"}
+                              />
+                            </TPField>
+                          </div>
                         </div>
                       </div>
                     </div>
                   </div>
 
-                  {/* HECHURA Y RESTO — misma tabla/alineación que metales. */}
-                  <div className="space-y-2 border-t border-border/40 pt-3">
+                  {/* HECHURA Y RESTO — MISMO formato de campos que total final. */}
+                  <div className="space-y-3 border-t border-border/40 pt-4">
                     <div className="text-[11px] font-semibold uppercase tracking-wide text-text/80">
                       Hechura y resto <span className="font-normal normal-case text-muted">· en $</span>
                     </div>
-                    <div className="grid grid-cols-1 sm:grid-cols-[1.2fr_1fr_1fr] gap-3 items-center">
-                      <div className="text-[12px] text-text font-medium">Hechura</div>
-                      <TPSelect
-                        value={docRounding.documentRoundingModeHechura}
-                        onChange={v => setDr("documentRoundingModeHechura", v as DocumentRoundingMode)}
-                        options={DOC_ROUNDING_MODE_OPTIONS}
-                        disabled={!docRounding.documentRoundingEnabled}
-                      />
-                      <TPSelect
-                        value={docRounding.documentRoundingDirectionHechura}
-                        onChange={v => setDr("documentRoundingDirectionHechura", v as DocumentRoundingDirection)}
-                        options={DOC_ROUNDING_DIRECTION_OPTIONS}
-                        disabled={!docRounding.documentRoundingEnabled || docRounding.documentRoundingModeHechura === "NONE"}
-                      />
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      <TPField label="Redondear a">
+                        <TPSelect
+                          value={docRounding.documentRoundingModeHechura}
+                          onChange={v => setDr("documentRoundingModeHechura", v as DocumentRoundingMode)}
+                          options={DOC_ROUNDING_MODE_OPTIONS}
+                          disabled={!docRounding.documentRoundingEnabled}
+                        />
+                      </TPField>
+                      <TPField label="Dirección">
+                        <TPSelect
+                          value={docRounding.documentRoundingDirectionHechura}
+                          onChange={v => setDr("documentRoundingDirectionHechura", v as DocumentRoundingDirection)}
+                          options={DOC_ROUNDING_DIRECTION_OPTIONS}
+                          disabled={!docRounding.documentRoundingEnabled || docRounding.documentRoundingModeHechura === "NONE"}
+                        />
+                      </TPField>
                     </div>
                   </div>
 
@@ -495,10 +481,11 @@ export default function ConfiguracionSistemaPoliticaPrecios() {
             </div>
           </TPCard>
 
-          <div className="flex justify-end">
-            <TPButton variant="primary" loading={saving} onClick={handleSave}>
-              Guardar configuración
-            </TPButton>
+          {/* Autoguardado — sin botón. Indicador sutil del estado. */}
+          <div className="flex justify-end items-center gap-2 text-xs text-muted">
+            {saving
+              ? <span>Guardando…</span>
+              : <span>Los cambios se guardan automáticamente.</span>}
           </div>
 
         </div>

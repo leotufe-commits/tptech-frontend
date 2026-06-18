@@ -110,29 +110,23 @@ describe("ConfiguracionSistemaPoliticaPrecios — Riesgos comerciales", () => {
       expect((checkboxes[1] as HTMLInputElement).checked).toBe(true);
       expect((checkboxes[2] as HTMLInputElement).checked).toBe(true);
 
-      // Click "Guardar configuración".
-      fireEvent.click(screen.getByRole("button", { name: /guardar configuración/i }));
-
-      // Verificar que el service recibió los 3 toggles en true.
+      // Autoguardado (debounce) — ya no hay botón. El service recibe los 3
+      // toggles en true.
       await waitFor(() => {
-        expect(mockCompany.updatePricingPolicyConfig).toHaveBeenCalledTimes(1);
-      });
-      const arg = mockCompany.updatePricingPolicyConfig.mock.calls[0][0];
+        expect(mockCompany.updatePricingPolicyConfig).toHaveBeenCalled();
+      }, { timeout: 3000 });
+      const arg = mockCompany.updatePricingPolicyConfig.mock.calls.at(-1)![0];
       expect(arg.pricingBlockLossSale).toBe(true);
       expect(arg.pricingBlockZeroOrNegativePrice).toBe(true);
       expect(arg.pricingBlockPartialData).toBe(true);
-      // La UI simplificada neutraliza el umbral crítico legacy en cada
-      // save — el operador ya no lo puede editar y mantener un valor
-      // viejo escalaría a CRITICAL por margen bajo de forma invisible.
+      // La UI neutraliza el umbral crítico legacy en cada save.
       expect(arg.pricingLowMarginBlockPercent).toBeNull();
 
-      // El evento global se emite tras el save exitoso — esto es lo que
-      // gatilla el re-preview en Factura de ventas para que la caché stale
-      // no sirva datos con `policy.blockingAlerts` viejos.
+      // El evento global se emite tras el save exitoso — gatilla el re-preview
+      // en Factura de ventas para invalidar la caché stale.
       await waitFor(() => {
-        expect(eventListener).toHaveBeenCalledTimes(1);
-      });
-      expect(mockToast.success).toHaveBeenCalledWith("Configuración guardada.");
+        expect(eventListener).toHaveBeenCalled();
+      }, { timeout: 3000 });
     } finally {
       window.removeEventListener("tptech:pricing-policy-changed", eventListener);
     }
@@ -152,12 +146,11 @@ describe("ConfiguracionSistemaPoliticaPrecios — Riesgos comerciales", () => {
 
       const checkboxes = screen.getAllByRole("checkbox");
       fireEvent.click(checkboxes[0]);
-      fireEvent.click(screen.getByRole("button", { name: /guardar configuración/i }));
 
-      // Espera a que el save resuelva (rechaza) — el botón vuelve a estar habilitado.
+      // El autoguardado dispara y falla → toast de error, sin evento global.
       await waitFor(() => {
         expect(mockToast.error).toHaveBeenCalled();
-      });
+      }, { timeout: 3000 });
 
       expect(eventListener).not.toHaveBeenCalled();
     } finally {
