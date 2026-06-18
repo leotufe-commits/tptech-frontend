@@ -130,7 +130,6 @@ export default function SystemUiCatalog() {
         items: [
           { name: "ThemeContext", file: "src/context/ThemeContext.tsx" },
           { name: "themes.css", file: "src/styles/themes.css" },
-          { name: "SystemThemeSettings", file: "src/pages/SystemThemeSettings.tsx" },
           { name: "SystemUiCatalog", file: "src/pages/SystemUiCatalog.tsx" },
         ],
       },

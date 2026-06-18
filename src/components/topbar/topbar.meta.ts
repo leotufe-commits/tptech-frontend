@@ -22,17 +22,6 @@ export const getTopbarMeta = (pathname: string): RouteMeta => {
         ],
       };
     }
-    if (p.startsWith("/configuracion-sistema/tema")) {
-      return {
-        title: "Tema",
-        crumbs: [
-          { label: "Dashboard", to: "/dashboard" },
-          { label: "Configuración", to: "/configuracion-sistema" },
-          { label: "Tema" },
-        ],
-      };
-    }
-
     return {
       title: "Configuración del sistema",
       crumbs: [{ label: "Dashboard", to: "/dashboard" }, { label: "Configuración" }],

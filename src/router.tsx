@@ -65,7 +65,6 @@ import UserView from "./components/users/UserView";
 
 import ConfiguracionSistema from "./pages/configuracion-sistema/ConfiguracionSistema";
 import SystemPinSettings from "./pages/configuracion-sistema/SystemPinSettings";
-import SystemThemeSettings from "./pages/configuracion-sistema/SystemThemeSettings";
 import SystemUiCatalog from "./pages/configuracion-sistema/SystemUiCatalog";
 import ConfiguracionSistemaVendedor from "./pages/configuracion-sistema/ConfiguracionSistemaVendedor";
 // `ConfiguracionSistemaItems/Unidades/Categorias` ya no se montan
@@ -277,7 +276,6 @@ const router = createBrowserRouter([
           // ✅ HUB (Configuración del Sistema)
           { path: "configuracion-sistema", element: <ConfiguracionSistema /> },
           { path: "configuracion-sistema/pin", element: <SystemPinSettings /> },
-          { path: "configuracion-sistema/tema", element: <SystemThemeSettings /> },
 
           // ✅ APARIENCIA: Catálogo UI (pantalla real)
           { path: "configuracion/apariencia/ui", element: <SystemUiCatalog /> },
@@ -379,7 +377,6 @@ const router = createBrowserRouter([
           ===================== */
           { path: "configuracion/sistema", element: <Navigate to="/configuracion-sistema" replace /> },
           { path: "configuracion/sistema/pin", element: <Navigate to="/configuracion-sistema/pin" replace /> },
-          { path: "configuracion/sistema/tema", element: <Navigate to="/configuracion-sistema/tema" replace /> },
           { path: "configuracion", element: <Navigate to="/configuracion-sistema" replace /> },
 
           // ✅ COMPAT: aliases que usaste antes
