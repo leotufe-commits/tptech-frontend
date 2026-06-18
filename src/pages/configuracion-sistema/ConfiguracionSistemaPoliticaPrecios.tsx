@@ -364,11 +364,6 @@ export default function ConfiguracionSistemaPoliticaPrecios() {
                 </div>
               </div>
 
-              {/* Nota corta del modo automático (reemplaza al selector). */}
-              <p className="text-[11px] text-muted">
-                Automático: cada comprobante usa el redondeo que le corresponde.
-              </p>
-
               {/* Config del TOTAL FINAL — comprobantes unificados (scope = BOTH) */}
               {(docRounding.documentRoundingScope === "UNIFIED" || docRounding.documentRoundingScope === "BOTH") && (
                 <div className="rounded-lg border border-border/60 bg-surface2/20 px-3 py-3 space-y-3">
@@ -407,31 +402,30 @@ export default function ConfiguracionSistemaPoliticaPrecios() {
                     Redondeo desglosado{" "}
                     <span className="text-muted font-normal italic">(comprobantes desglosados)</span>
                   </div>
+                  {/* Mini-tabla alineada: fila | Redondear a | Dirección.
+                      Metal y Hechura comparten el MISMO grid de 3 columnas. */}
+                  {/* Encabezado de columnas (solo desktop) */}
+                  <div className="hidden sm:grid sm:grid-cols-[1.2fr_1fr_1fr] gap-3 text-[11px] font-medium text-muted">
+                    <span />
+                    <span>Redondear a</span>
+                    <span>Dirección</span>
+                  </div>
+
                   {/* METALES — siempre por gramos (PHYSICAL). El selector de
                       dominio se ocultó; el dominio queda fijo en PHYSICAL. */}
                   <div className="space-y-2" data-testid="rounding-metales-block">
                     <div className="text-[11px] font-semibold uppercase tracking-wide text-text/80">
                       Metales <span className="font-normal normal-case text-muted">· por gramos</span>
                     </div>
-
                     <div className="space-y-2" data-testid="rounding-metales-physical">
                       <div className="space-y-2" data-testid="rounding-metales-physical-table">
-                        {metalParents.length === 0 ? (
-                          <p className="text-[11px] italic text-muted">
-                            No hay metales cargados — se usa el de "Otros metales".
-                          </p>
-                        ) : (
-                          <div className="hidden sm:grid sm:grid-cols-[1fr_1fr_1fr] gap-3 text-[11px] font-medium text-muted">
-                            <span>Metal</span><span>Redondear a</span><span>Dirección</span>
-                          </div>
-                        )}
                         {metalParents.map((mp) => {
                           const entry = getPhysicalCfg().byMetalParentId[mp.id]
                             ?? { mode: "NONE" as PhysicalRoundingMode, direction: "NEAREST" as PhysicalRoundingDirection };
                           return (
                             <div
                               key={mp.id}
-                              className="grid grid-cols-1 sm:grid-cols-[1fr_1fr_1fr] gap-3 items-center"
+                              className="grid grid-cols-1 sm:grid-cols-[1.2fr_1fr_1fr] gap-3 items-center"
                               data-testid={`rounding-metal-row-${mp.id}`}
                             >
                               <div className="text-[12px] text-text font-medium">{mp.name}</div>
@@ -451,9 +445,9 @@ export default function ConfiguracionSistemaPoliticaPrecios() {
                           );
                         })}
 
-                        {/* Otros metales (fallback) — misma fila, sin caja aparte. */}
+                        {/* Otros metales (fallback) — una fila más de la tabla. */}
                         <div
-                          className="grid grid-cols-1 sm:grid-cols-[1fr_1fr_1fr] gap-3 items-center border-t border-border/30 pt-2"
+                          className="grid grid-cols-1 sm:grid-cols-[1.2fr_1fr_1fr] gap-3 items-center"
                           data-testid="rounding-metales-physical-fallback"
                         >
                           <div className="text-[12px] text-muted">Otros metales</div>
@@ -474,30 +468,25 @@ export default function ConfiguracionSistemaPoliticaPrecios() {
                     </div>
                   </div>
 
-                  {/* HECHURA / MONETARIO — sección dentro del MISMO card,
-                      separada del metal por un divisor sutil (antes era una
-                      sub-caja con su propio borde). */}
-                  <div className="space-y-3 border-t border-border/40 pt-4">
+                  {/* HECHURA Y RESTO — misma tabla/alineación que metales. */}
+                  <div className="space-y-2 border-t border-border/40 pt-3">
                     <div className="text-[11px] font-semibold uppercase tracking-wide text-text/80">
-                      Hechura / Monetario
+                      Hechura y resto <span className="font-normal normal-case text-muted">· en $</span>
                     </div>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                      <TPField label="Redondear a">
-                        <TPSelect
-                          value={docRounding.documentRoundingModeHechura}
-                          onChange={v => setDr("documentRoundingModeHechura", v as DocumentRoundingMode)}
-                          options={DOC_ROUNDING_MODE_OPTIONS}
-                          disabled={!docRounding.documentRoundingEnabled}
-                        />
-                      </TPField>
-                      <TPField label="Dirección">
-                        <TPSelect
-                          value={docRounding.documentRoundingDirectionHechura}
-                          onChange={v => setDr("documentRoundingDirectionHechura", v as DocumentRoundingDirection)}
-                          options={DOC_ROUNDING_DIRECTION_OPTIONS}
-                          disabled={!docRounding.documentRoundingEnabled || docRounding.documentRoundingModeHechura === "NONE"}
-                        />
-                      </TPField>
+                    <div className="grid grid-cols-1 sm:grid-cols-[1.2fr_1fr_1fr] gap-3 items-center">
+                      <div className="text-[12px] text-text font-medium">Hechura</div>
+                      <TPSelect
+                        value={docRounding.documentRoundingModeHechura}
+                        onChange={v => setDr("documentRoundingModeHechura", v as DocumentRoundingMode)}
+                        options={DOC_ROUNDING_MODE_OPTIONS}
+                        disabled={!docRounding.documentRoundingEnabled}
+                      />
+                      <TPSelect
+                        value={docRounding.documentRoundingDirectionHechura}
+                        onChange={v => setDr("documentRoundingDirectionHechura", v as DocumentRoundingDirection)}
+                        options={DOC_ROUNDING_DIRECTION_OPTIONS}
+                        disabled={!docRounding.documentRoundingEnabled || docRounding.documentRoundingModeHechura === "NONE"}
+                      />
                     </div>
                   </div>
 
