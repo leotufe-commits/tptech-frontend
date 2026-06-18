@@ -45,10 +45,14 @@ const DOC_ROUNDING_DIRECTION_OPTIONS: Array<{ value: DocumentRoundingDirection; 
   { value: "DOWN",    label: "Hacia abajo" },
 ];
 
+// Simplificación 2026-06-17: el redondeo financiero se ofrece SOLO en modo
+// "Ambos" (BOTH). Desde la redefinición del operador, BOTH no encadena: cada
+// comprobante usa automáticamente el redondeo que le corresponde (desglosado si
+// va desglosado, unificado si va unificado). Es el único modo que un usuario
+// necesita; "Unificado"/"Desglosado" sueltos quedan fuera de la pantalla. Los
+// valores legacy se coercionan a BOTH al cargar (ver useEffect).
 const DOC_ROUNDING_SCOPE_OPTIONS: Array<{ value: DocumentRoundingScope; label: string }> = [
-  { value: "UNIFIED",   label: "Unificado — total final" },
-  { value: "BREAKDOWN", label: "Desglosado — metal + hechura" },
-  { value: "BOTH",      label: "Ambos — usa el que corresponda al comprobante" },
+  { value: "BOTH",      label: "Automático — cada comprobante usa el que le corresponde" },
 ];
 
 // ── Etapa D4 — Opciones del redondeo físico de metales ─────────────────────
@@ -79,7 +83,7 @@ const PHYSICAL_CONFIG_DEFAULTS: DocumentPhysicalRoundingConfig = {
 
 const DOC_ROUNDING_DEFAULTS: DocumentRoundingConfig = {
   documentRoundingEnabled:   false,
-  documentRoundingScope:     "UNIFIED",
+  documentRoundingScope:     "BOTH",
   documentRoundingMode:      "NONE",
   documentRoundingDirection: "NEAREST",
   documentRoundingModeMetal:        "NONE",
@@ -118,7 +122,11 @@ export default function ConfiguracionSistemaPoliticaPrecios() {
     ])
       .then(([pol, dr, metals]) => {
         setConfig(pol);
-        setDocRounding(dr);
+        // Simplificación: el modo de redondeo financiero se ofrece solo en
+        // "Automático" (BOTH). Tenants con valor legacy (UNIFIED/BREAKDOWN)
+        // se coercionan a BOTH — que ya elige el redondeo correcto por
+        // comprobante, así que el comportamiento se preserva o mejora.
+        setDocRounding({ ...dr, documentRoundingScope: "BOTH" });
         setMetalParents(metals);
       })
       .catch((err) => {
@@ -313,28 +321,6 @@ export default function ConfiguracionSistemaPoliticaPrecios() {
               "Redondeo comercial" de Lista de precios (que opera antes de
               impuestos sobre el precio publicable). */}
           <TPCard title="Redondeo financiero">
-            <p className="text-xs text-muted mb-4">
-              <span className="font-semibold text-text">Se aplica sobre el total final luego de impuestos.</span>{" "}
-              Define cómo se redondea el importe a cobrar de cada comprobante
-              al cerrarse — es el redondeo de caja / cierre financiero.
-              El <span className="font-medium text-text">redondeo comercial</span>
-              {" "}(sobre el precio antes de impuestos) se configura
-              independientemente en{" "}
-              <span className="font-medium text-text">Lista de precios</span>;
-              TPTech evita el doble redondeo automáticamente.
-            </p>
-
-            {/* Jerarquía de aplicación — alineada con POLICY §R-Rounding-12 */}
-            <div className="rounded-lg border border-border/60 bg-surface2/30 px-3 py-3 text-[11px] leading-relaxed text-muted mb-4">
-              <div className="font-semibold text-text mb-1">Orden de aplicación</div>
-              <ol className="list-decimal pl-4 space-y-0.5">
-                <li>Motor de precios (costo, listas, descuentos, promociones, canal, cupón).</li>
-                <li><span className="font-medium text-text">Redondeo comercial</span> — antes de impuestos (Lista de precios).</li>
-                <li>Impuestos, envío, forma de pago.</li>
-                <li><span className="font-medium text-text">Redondeo financiero</span> — después de impuestos (este bloque).</li>
-              </ol>
-            </div>
-
             <div className="space-y-4">
               {/* Activar */}
               <div className="flex items-start justify-between gap-4 py-3 border-b border-border/50">
@@ -355,7 +341,7 @@ export default function ConfiguracionSistemaPoliticaPrecios() {
               {/* Selector de Modo */}
               <TPField
                 label="Modo de redondeo financiero"
-                hint="Unificado redondea el total final del comprobante. Desglosado redondea el metal y la hechura por separado. Ambos no redondea dos veces: cada comprobante usa automáticamente el modo que le corresponde — desglosado si el comprobante va desglosado, unificado si va unificado."
+                hint="Cada comprobante usa automáticamente el redondeo que le corresponde: el del total final si va unificado, o el de metal y hechura por separado si va desglosado. Nunca se redondea dos veces. Configurá abajo cómo redondear en cada caso."
               >
                 <TPSelect
                   value={docRounding.documentRoundingScope}
