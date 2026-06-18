@@ -74,27 +74,20 @@ export type CommercialPolicyLineLike = {
   [key: string]: unknown;
 };
 
-/** Códigos que escalan automáticamente a `RISK` (naranja, no-bloqueante)
- *  cuando aparecen en `alerts[]` sin estar en `policy.blockingAlerts`.
+/** Códigos que escalan automáticamente a `RISK` (naranja) cuando aparecen en
+ *  `alerts[]` sin estar bloqueando.
  *
- *  Antes incluía `LOSS_SALE`, lo que volvía RISK cualquier venta marginal
- *  apenas el operador no tuviera el toggle "Considerar crítica la venta con
- *  pérdida" activo — absorbía el rango WARNING del operador y resultaba en
- *  "casi nunca aparece WARNING puro". La decisión actual: si el operador
- *  no activó el toggle, la venta a pérdida no es lo suficientemente seria
- *  como para escalar a RISK; cae a WARNING junto con LOW_MARGIN. El toggle
- *  sigue funcionando para escalar a CRITICAL cuando el tenant quiere
- *  bloquear ventas con pérdida.
+ *  OPCIÓN C (2026-06): las situaciones que tienen un check de política
+ *  (`LOSS_SALE`, `ZERO_OR_NEGATIVE_PRICE`, `PARTIAL_DATA`) ya NO escalan solas.
+ *  Solo se muestran cuando el operador activó su check — y ahí son bloqueantes,
+ *  así que entran por la rama CRITICAL. Con el check apagado no se muestran
+ *  (pantalla limpia, decisión del operador).
  *
- *  COST_UNRESOLVED y PARTIAL_DATA se mantienen porque son problemas REALES
- *  de datos (el motor no pudo resolver costo/precio) y siguen siendo
- *  útiles como señal naranja. ZERO_OR_NEGATIVE_PRICE también se mantiene
- *  como RISK porque un precio cero/negativo sin toggle activo es una
- *  situación que merece destacarse del WARNING común. */
+ *  El único código que sigue escalando a RISK por sí mismo es `COST_UNRESOLVED`:
+ *  es un error de datos REAL (el motor no pudo resolver el costo, el margen no
+ *  existe) y no tiene check propio — mostrarlo en verde sería engañoso. */
 const RISK_CODES = new Set<string>([
   "COST_UNRESOLVED",
-  "PARTIAL_DATA",
-  "ZERO_OR_NEGATIVE_PRICE",
 ]);
 
 /** Traduce una línea normalizada del preview a su nivel comercial.
@@ -133,11 +126,12 @@ export function deriveCommercialLevel(line: CommercialPolicyLineLike | null | un
 
   const alerts = line.alerts ?? [];
   if (alerts.some((a) => RISK_CODES.has(a.code))) return "RISK";
-  // WARNING: LOW_MARGIN siempre y LOSS_SALE no bloqueante (cuando el
-  // operador no activó "Considerar crítica venta con pérdida"). Antes
-  // LOSS_SALE caía a RISK, lo que absorbía visualmente cualquier línea
-  // marginal y hacía que WARNING "puro" no apareciera nunca.
-  if (alerts.some((a) => a.code === "LOW_MARGIN" || a.code === "LOSS_SALE")) return "WARNING";
+  // WARNING: SOLO `LOW_MARGIN` (margen por debajo del umbral recomendado).
+  // OPCIÓN C: la venta a pérdida (`LOSS_SALE`) ya NO cae a WARNING — si su
+  // check está activo es CRITICAL (bloqueante, "Venta con pérdida"); si está
+  // apagado, no se muestra. Así "Margen bajo" (WARNING) significa de verdad
+  // margen bajo, y no se confunde con una venta a pérdida.
+  if (alerts.some((a) => a.code === "LOW_MARGIN")) return "WARNING";
   return "OK";
 }
 

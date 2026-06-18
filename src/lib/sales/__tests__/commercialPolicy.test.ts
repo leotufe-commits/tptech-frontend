@@ -74,39 +74,52 @@ describe("deriveCommercialLevel", () => {
     }))).toBe("CRITICAL");
   });
 
-  // Política comercial 2026: LOSS_SALE sin toggle activo cae a WARNING.
-  // Antes esto era RISK pero absorbía el WARNING común y daba la sensación
-  // "casi nunca WARNING puro". Si el operador quiere bloqueo, activa el
-  // toggle `pricingBlockLossSale` → escala a CRITICAL.
-  it("WARNING — LOSS_SALE no bloqueante (sin toggle) cae a WARNING", () => {
+  // OPCIÓN C (2026-06): las situaciones con check (LOSS_SALE, ZERO_OR_NEGATIVE,
+  // PARTIAL_DATA) solo se muestran si el check está ACTIVO → ahí son CRITICAL.
+  // Con el check apagado NO se muestran (OK).
+  it("OK — LOSS_SALE no bloqueante (check apagado) no se muestra", () => {
     expect(deriveCommercialLevel(makeLine({
       alerts: [{ code: "LOSS_SALE", level: "warning", message: "Venta a pérdida" }],
-    }))).toBe("WARNING");
+    }))).toBe("OK");
   });
 
-  it("CRITICAL — LOSS_SALE con toggle activo (blocking) escala a CRITICAL", () => {
+  it("CRITICAL — LOSS_SALE con check activo (blocking) escala a CRITICAL", () => {
     expect(deriveCommercialLevel(makeLine({
       alerts: [{ code: "LOSS_SALE", level: "error", message: "Venta a pérdida" }],
       policy: { canConfirm: false, blockingAlerts: ["LOSS_SALE"] },
     }))).toBe("CRITICAL");
   });
 
-  it("RISK — COST_UNRESOLVED no bloqueante", () => {
+  it("RISK — COST_UNRESOLVED no bloqueante (error de datos, sin check propio)", () => {
     expect(deriveCommercialLevel(makeLine({
       alerts: [{ code: "COST_UNRESOLVED", level: "warning", message: "Costo no resuelto" }],
     }))).toBe("RISK");
   });
 
-  it("RISK — PARTIAL_DATA no bloqueante", () => {
+  it("OK — PARTIAL_DATA no bloqueante (check apagado) no se muestra", () => {
     expect(deriveCommercialLevel(makeLine({
       alerts: [{ code: "PARTIAL_DATA", level: "info", message: "Cálculo parcial" }],
-    }))).toBe("RISK");
+    }))).toBe("OK");
   });
 
-  it("RISK — ZERO_OR_NEGATIVE_PRICE no bloqueante", () => {
+  it("CRITICAL — PARTIAL_DATA bloqueante (check activo)", () => {
+    expect(deriveCommercialLevel(makeLine({
+      alerts: [{ code: "PARTIAL_DATA", level: "info", message: "Cálculo parcial" }],
+      policy: { canConfirm: false, blockingAlerts: ["PARTIAL_DATA"] },
+    }))).toBe("CRITICAL");
+  });
+
+  it("OK — ZERO_OR_NEGATIVE_PRICE no bloqueante (check apagado) no se muestra", () => {
     expect(deriveCommercialLevel(makeLine({
       alerts: [{ code: "ZERO_OR_NEGATIVE_PRICE", level: "warning", message: "Precio cero" }],
-    }))).toBe("RISK");
+    }))).toBe("OK");
+  });
+
+  it("CRITICAL — ZERO_OR_NEGATIVE_PRICE bloqueante (check activo)", () => {
+    expect(deriveCommercialLevel(makeLine({
+      alerts: [{ code: "ZERO_OR_NEGATIVE_PRICE", level: "warning", message: "Precio cero" }],
+      policy: { canConfirm: false, blockingAlerts: ["ZERO_OR_NEGATIVE_PRICE"] },
+    }))).toBe("CRITICAL");
   });
 
   it("WARNING — solo LOW_MARGIN", () => {
