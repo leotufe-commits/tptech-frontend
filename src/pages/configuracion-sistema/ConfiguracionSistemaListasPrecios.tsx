@@ -1,7 +1,6 @@
 // src/pages/configuracion-sistema/ConfiguracionSistemaListasPrecios.tsx
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate } from "react-router-dom";
-import { ExternalLink, Plus, Save, X } from "lucide-react";
+import { Plus, Save, X } from "lucide-react";
 
 import { TPSectionShell } from "../../components/ui/TPSectionShell";
 import { TPButton } from "../../components/ui/TPButton";
@@ -31,39 +30,6 @@ import {
   type RoundingDirection,
   type RoundingApplyOn,
 } from "../../services/price-lists";
-// Representación corta de los modos de redondeo de PriceList (pill del card).
-const LINE_ROUNDING_MODE_SHORT: Record<RoundingMode, string> = {
-  NONE:      "—",
-  DECIMAL_2: "Centavo",
-  DECIMAL_1: "Décimo",
-  INTEGER:   "Entero",
-  TEN:       "Decena",
-  HUNDRED:   "Centena",
-};
-
-/** Texto del pill del header del card. Resume el alcance + el modo activo.
- *  Reusa los campos del draft (no inventa lógica nueva): la granularidad de
- *  línea sale de `roundingModeHechura` cuando la lista es unificada
- *  (MARGIN_TOTAL / COST_PER_GRAM) y de la combinación Metal+Hechura cuando
- *  la lista es METAL_HECHURA. */
-function describeCommercialRounding(draft: Draft): string {
-  // Redondeo COMERCIAL de la lista (sobre el precio, antes de impuestos). El
-  // redondeo financiero del comprobante vive en Política de precios.
-  const hasLine = draft.roundingTarget !== "NONE";
-  if (!hasLine) return "Redondeo comercial: sin aplicar";
-
-  // METAL_HECHURA: la lista redondea por componente; mostramos eso explícito
-  // sin elegir un único modo (la spec lo pide así).
-  if (draft.mode === "METAL_HECHURA") {
-    return "Redondeo comercial (Metal/Hechura)";
-  }
-
-  // MARGIN_TOTAL / COST_PER_GRAM: la precisión efectiva vive en
-  // `roundingModeHechura` (ver el bloque "Precio final" del card).
-  const mode = draft.roundingModeHechura;
-  if (mode === "NONE") return "Redondeo comercial";
-  return `Redondeo comercial (${LINE_ROUNDING_MODE_SHORT[mode]})`;
-}
 
 /* =========================================================
    Label maps
@@ -728,8 +694,7 @@ function PriceListFormModal({
 }) {
   // El card "Redondeo" de la lista configura SOLO el redondeo comercial
   // (sobre el precio, antes de impuestos). El redondeo financiero del
-  // comprobante vive en Política de precios; este card solo enlaza ahí.
-  const navigate = useNavigate();
+  // comprobante vive en Política de precios.
 
   const nameError = submitted && !draft.name.trim() ? "Campo requerido." : null;
   const marginTotalError =
@@ -960,17 +925,6 @@ function PriceListFormModal({
         {/* C. Redondeo */}
         <TPCard title="Redondeo">
           <div className="space-y-4">
-            {/* Pill resumen del redondeo comercial de la lista. */}
-            <div className="flex items-center justify-between gap-2">
-              <span className="inline-flex items-center rounded-full border border-primary/30 bg-primary/10 px-2.5 py-0.5 text-[11px] font-semibold text-primary">
-                {describeCommercialRounding(draft)}
-              </span>
-            </div>
-
-            <p className="text-xs text-muted">
-              Redondea el precio de cada línea de esta lista (antes de impuestos).
-            </p>
-
             {/* Configuración del redondeo comercial (por artículo / línea). */}
             <div className="space-y-4 rounded-lg border border-border p-3">
                 {/* Selector principal: Sin redondear / Redondear */}
@@ -984,13 +938,6 @@ function PriceListFormModal({
                     ]}
                   />
                 </TPField>
-
-                {/* Sin redondeo — nota descriptiva */}
-                {!hasRounding && (
-                  <p className="text-xs text-muted mt-1">
-                    Los valores se mantendrán tal como fueron calculados.
-                  </p>
-                )}
 
                 {/* applyOn + precisión metal/hechura: solo en alcance "LINE" puro.
                     En "BOTH" simplificamos para no abrumar — el operador puede
@@ -1141,21 +1088,6 @@ function PriceListFormModal({
                   </div>
                 )}
 
-            </div>
-
-            {/* Nota + link al redondeo financiero (vive en Política de precios). */}
-            <div className="flex items-center justify-between gap-2">
-              <p className="text-[11px] italic text-muted/70">
-                El redondeo del total final (después de impuestos) se configura en Política de precios.
-              </p>
-              <TPButton
-                variant="ghost"
-                className="!px-2.5 !py-1 !text-xs shrink-0"
-                iconRight={<ExternalLink size={12} />}
-                onClick={() => navigate("/configuracion-sistema/politica-precios")}
-              >
-                Política de precios
-              </TPButton>
             </div>
           </div>
         </TPCard>
